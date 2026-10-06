@@ -1,0 +1,117 @@
+# Llama Stack 0.7.x config for the RAG setup — plain Pods, no RHOAI operator.
+#
+# Derived from src/openshift/llamastack/run.yaml (the operator's config) with
+# two changes so it runs standalone:
+#   1. storage backends are SQLite on a PVC instead of PostgreSQL, so the setup
+#      is two pods (Milvus + Llama Stack) rather than three.
+#   2. registered_resources.tool_groups is emptied — the MCP servers it named
+#      are not deployed here, and a toolgroup pointing at an absent endpoint is
+#      a startup risk for no benefit.
+#
+# vector_io stays remote::milvus, pointing at the Milvus pod.
+version: 2
+image_name: rh
+apis:
+- responses
+- inference
+- tool_runtime
+- vector_io
+- files
+providers:
+  inference:
+  - provider_id: ${env.VLLM_URL:+vllm-inference}
+    provider_type: remote::vllm
+    config:
+      base_url: ${env.VLLM_URL:=}
+      max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
+      api_token: ${env.VLLM_API_TOKEN:=fake}
+      tls_verify: ${env.VLLM_TLS_VERIFY:=true}
+      refresh_models: ${env.VLLM_REFRESH_MODELS:=false}
+  - provider_id: ${env.ENABLE_SENTENCE_TRANSFORMERS:+sentence-transformers}
+    provider_type: inline::sentence-transformers
+    config:
+      trust_remote_code: false
+  vector_io:
+  - provider_id: ${env.MILVUS_ENDPOINT:+milvus-remote}
+    provider_type: remote::milvus
+    config:
+      uri: ${env.MILVUS_ENDPOINT:=}
+      token: ${env.MILVUS_TOKEN:=}
+      consistency_level: ${env.MILVUS_CONSISTENCY_LEVEL:=Bounded}
+      persistence:
+        backend: kv_default
+        namespace: vector_io::milvus_remote
+  responses:
+  - provider_id: meta-reference
+    provider_type: inline::builtin
+    config:
+      persistence:
+        agent_state:
+          backend: kv_default
+          namespace: agents::meta_reference
+        responses:
+          backend: sql_default
+          table_name: agents_responses
+          max_write_queue_size: 10000
+          num_writers: 4
+  files:
+  - provider_id: meta-reference-files
+    provider_type: inline::localfs
+    config:
+      storage_dir: /opt/app-root/src/.llama/distributions/rh/files
+      metadata_store:
+        backend: sql_default
+        table_name: files_metadata
+  tool_runtime:
+  - provider_id: file-search
+    provider_type: inline::file-search
+    config: {}
+  - provider_id: model-context-protocol
+    provider_type: remote::model-context-protocol
+    config: {}
+storage:
+  backends:
+    kv_default:
+      type: kv_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=/opt/app-root/src/.llama/rh}/kvstore.db
+    sql_default:
+      type: sql_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=/opt/app-root/src/.llama/rh}/sql_store.db
+  stores:
+    metadata:
+      backend: kv_default
+      namespace: registry
+    inference:
+      table_name: inference_store
+      backend: sql_default
+      max_write_queue_size: 10000
+      num_writers: 4
+    conversations:
+      table_name: openai_conversations
+      backend: sql_default
+    prompts:
+      namespace: prompts
+      backend: kv_default
+    connectors:
+      backend: kv_default
+      namespace: connectors
+registered_resources:
+  models:
+  - metadata:
+      embedding_dimension: 768
+    model_id: nomic-ai/nomic-embed-text-v1.5
+    provider_id: sentence-transformers
+    provider_model_id: nomic-ai/nomic-embed-text-v1.5
+    model_type: embedding
+  vector_dbs: []
+  tool_groups: []
+vector_stores:
+  default_provider_id: milvus-remote
+  default_embedding_model:
+    provider_id: sentence-transformers
+    model_id: nomic-ai/nomic-embed-text-v1.5
+telemetry:
+  enabled: true
+server:
+  port: 8321
+  registry_refresh_interval_seconds: ${env.REGISTRY_REFRESH_INTERVAL_SECONDS:=300}

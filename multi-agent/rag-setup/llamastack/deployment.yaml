@@ -1,0 +1,119 @@
+# Llama Stack as a plain Deployment — no RHOAI operator, no LlamaStackDistribution CR.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llamastack
+  labels:
+    app: llamastack
+    app.kubernetes.io/part-of: rag-setup
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: llamastack
+  template:
+    metadata:
+      labels:
+        app: llamastack
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: llamastack
+          image: quay.io/opendatahub/llama-stack:latest
+          imagePullPolicy: IfNotPresent
+          # The 0.7.x entrypoint resolves its config from $RUN_CONFIG_PATH, so the
+          # ConfigMap mounts as a directory rather than overwriting a shipped file.
+          ports:
+            - name: http
+              containerPort: 8321
+          env:
+            - name: RUN_CONFIG_PATH
+              value: /etc/llama-stack/run.yaml
+            - name: SQLITE_STORE_DIR
+              value: /opt/app-root/src/.llama/rh
+            # Conditional provider_ids in run.yaml (${env.X:+id}) only resolve
+            # when these are non-empty.
+            - name: ENABLE_SENTENCE_TRANSFORMERS
+              value: "true"
+            - name: VLLM_REFRESH_MODELS
+              value: "true"
+            # HuggingFace caches the embedding model here; must be writable.
+            - name: HF_HOME
+              value: /opt/app-root/src/.cache/huggingface
+            - name: MILVUS_ENDPOINT
+              value: http://milvus-service:19530
+            - name: MILVUS_TOKEN
+              value: ""
+            - name: MILVUS_CONSISTENCY_LEVEL
+              value: Bounded
+            - name: VLLM_MAX_TOKENS
+              value: "4096"
+            - name: INFERENCE_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: llamastack-inference-secret
+                  key: INFERENCE_MODEL
+            - name: VLLM_URL
+              valueFrom:
+                secretKeyRef:
+                  name: llamastack-inference-secret
+                  key: VLLM_URL
+            - name: VLLM_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llamastack-inference-secret
+                  key: VLLM_API_TOKEN
+            - name: VLLM_TLS_VERIFY
+              valueFrom:
+                secretKeyRef:
+                  name: llamastack-inference-secret
+                  key: VLLM_TLS_VERIFY
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8321
+            # First start downloads the embedding model, so be generous.
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 40
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8321
+            initialDelaySeconds: 600
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/llama-stack
+              readOnly: true
+            - name: data
+              mountPath: /opt/app-root/src/.llama
+            - name: hf-cache
+              mountPath: /opt/app-root/src/.cache
+      volumes:
+        - name: config
+          configMap:
+            name: llamastack-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: llamastack-pvc
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: llamastack-hf-cache

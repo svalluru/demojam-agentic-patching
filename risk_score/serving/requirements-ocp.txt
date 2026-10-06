@@ -1,0 +1,11 @@
+# Container image deps for the plain OpenShift deployment (risk_score/Dockerfile).
+# Same as requirements-local.txt except xgboost-cpu replaces xgboost:
+# plain xgboost 3.x pulls nvidia-nccl-cu12 (~469 MB of CUDA libraries) that
+# CPU-only inference never uses. xgboost-cpu is the same package and the same
+# import namespace, built without GPU support — predictions are bit-identical.
+fastapi>=0.100.0
+uvicorn>=0.24.0
+xgboost-cpu>=2.0.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
+joblib>=1.3.0

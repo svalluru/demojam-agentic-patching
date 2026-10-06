@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llamastack-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Separate claim so re-deploying the stack does not re-download the ~500 MB
+# embedding model.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llamastack-hf-cache
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi

@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentic Patching Console</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0b1020;
+      --panel:   #151c33;
+      --surface: #1a2340;
+      --text:    #e7ecff;
+      --muted:   #8492b8;
+      --accent:  #6ea8fe;
+      --border:  #2a355f;
+      --red:     #ff6b6b;
+      --orange:  #ffa94d;
+      --green:   #51cf66;
+      --yellow:  #ffd43b;
+      --purple:  #c084fc;
+      --blue:    #6ea8fe;
+      --radius:  14px;
+      --red-glow: rgba(255,107,107,0.15);
+    }
+
+    body {
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .header-logo {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: grid; place-items: center;
+      font-weight: 800; font-size: 16px; color: var(--bg);
+    }
+    .header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+    .header-right { display: flex; align-items: center; gap: 8px; }
+    .header-status {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--muted); margin-right: 8px;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .status-dot.offline { background: var(--red); }
+    .topbar-btn {
+      padding: 6px 14px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .topbar-btn:hover { background: var(--border); }
+    .topbar-btn svg { width: 14px; height: 14px; }
+
+    /* ── Pipeline Bar ─────────────────────────────────── */
+    .pipeline-bar {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      height: 46px;
+      gap: 0;
+      flex-shrink: 0;
+    }
+    .pipe-stages { display: flex; align-items: center; flex: 1; gap: 0; }
+    /* The stages describe one CVE's run, not global state — name it so a
+       second concurrent run can't be mistaken for this one. */
+    .pipe-cve {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px; font-weight: 700; color: var(--text);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 10px; margin-right: 14px;
+      white-space: nowrap; transition: all 0.2s;
+    }
+    .pipe-cve.idle { color: var(--muted); font-weight: 600; font-style: italic; }
+    .pipe-cve.more {
+      border-color: var(--orange); color: var(--orange);
+      background: rgba(255,169,77,0.08); cursor: help;
+    }
+    .pipe-stage {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; padding: 6px 10px; border-radius: 8px;
+      transition: all 0.25s; user-select: none;
+    }
+    .pipe-stage:hover { background: rgba(255,255,255,0.04); }
+    .pipe-num {
+      width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700;
+      background: var(--surface); color: var(--muted);
+      transition: all 0.25s; flex-shrink: 0;
+    }
+    .pipe-label {
+      font-size: 10px; font-weight: 700; color: var(--muted);
+      letter-spacing: 0.5px; transition: color 0.25s; white-space: nowrap;
+    }
+    .pipe-stage.active .pipe-num { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+    .pipe-stage.active .pipe-label { color: var(--red); }
+    .pipe-stage.done .pipe-num { background: var(--green); color: #fff; }
+    .pipe-stage.done .pipe-label { color: var(--green); }
+    .pipe-stage.waiting .pipe-num { background: var(--orange); color: #fff; animation: pulse 2s ease-in-out infinite; }
+    .pipe-stage.waiting .pipe-label { color: var(--orange); }
+    .pipe-stage.failed .pipe-num { background: var(--red); color: #fff; }
+    .pipe-stage.failed .pipe-label { color: var(--red); }
+    .pipe-arrow { color: var(--border); font-size: 11px; padding: 0 2px; }
+    .pipe-status-bar { margin-left: auto; padding-left: 16px; border-left: 1px solid var(--border); }
+    .flow-status-pill {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    }
+    .flow-status-pill.idle { background: var(--surface); color: var(--muted); }
+    .flow-status-pill.in-progress { background: rgba(110,168,254,0.12); color: var(--accent); }
+    .flow-status-pill.waiting { background: rgba(255,169,77,0.12); color: var(--orange); }
+    .flow-status-pill.complete { background: rgba(81,207,102,0.12); color: var(--green); }
+    .flow-status-pill.failed { background: rgba(255,107,107,0.12); color: var(--red); }
+    .flow-status-pill .sdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .flow-status-pill.in-progress .sdot, .flow-status-pill.waiting .sdot { animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    /* ── Main layout ──────────────────────────────────── */
+    .main-wrap { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Agent Sidebar ────────────────────────────────── */
+    .agent-sidebar {
+      width: 0; min-width: 0; overflow: hidden;
+      background: var(--panel); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      transition: width 0.25s, min-width 0.25s;
+    }
+    .agent-sidebar.open { width: 300px; min-width: 300px; }
+    .sidebar-header {
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .sidebar-header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .sidebar-header .dot.live { background: var(--green); animation: pulse 2s ease-in-out infinite; }
+    .sidebar-body { flex:1; overflow-y:auto; padding:8px; scrollbar-width:thin; scrollbar-color: var(--border) transparent; }
+    .sidebar-body::-webkit-scrollbar { width:5px; }
+    .sidebar-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+    .agent-msg {
+      padding: 8px 10px; margin-bottom: 6px; border-radius: 8px;
+      font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      border-left: 3px solid var(--border); background: var(--surface);
+      line-height: 1.5; animation: slideIn 0.3s ease-out;
+    }
+    @keyframes slideIn { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
+    .agent-msg.request  { border-left-color: var(--accent); background: rgba(110,168,254,0.06); }
+    .agent-msg.response { border-left-color: var(--green);  background: rgba(81,207,102,0.06); }
+    .agent-msg.event    { border-left-color: var(--orange); background: rgba(255,169,77,0.06); }
+    .agent-msg.error    { border-left-color: var(--red);    background: rgba(255,107,107,0.06); }
+    .agent-msg .msg-time  { color: var(--muted); font-size: 10px; display:block; margin-bottom:2px; }
+    .agent-msg .msg-route { font-weight: 600; color: var(--text); font-size: 11px; }
+
+    /* ── Dashboard grid ────────────────────────────────── */
+    .dashboard-area { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 16px;
+      padding: 16px 20px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Card ────────────────────────────────────────── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column;
+      overflow: hidden; min-height: 0;
+    }
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .card-title { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; }
+    .card-body { flex:1; overflow-y:auto; padding:12px 16px; min-height:0; }
+
+    /* ── Filter pills ───────────────────────────────── */
+    .filters { display: flex; gap: 5px; flex-wrap: wrap; }
+    .pill {
+      padding: 4px 12px; border: 1px solid var(--border); border-radius: 20px;
+      background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .pill:hover { border-color: var(--accent); color: var(--text); }
+    .pill.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+    .pill .badge {
+      display: inline-block; min-width: 16px; text-align: center;
+      padding: 0 4px; margin-left: 4px; border-radius: 10px;
+      font-size: 10px; font-weight: 700; line-height: 16px;
+      background: rgba(255,255,255,0.15);
+    }
+    .pill.active .badge { background: rgba(0,0,0,0.2); }
+
+    /* ── CVE table ──────────────────────────────────── */
+    .cve-table { width: 100%; border-collapse: collapse; }
+    .cve-table th {
+      text-align:left; padding:7px 8px; font-size:10px; font-weight:700;
+      text-transform:uppercase; letter-spacing:0.5px; color:var(--muted);
+      border-bottom:1px solid var(--border); position:sticky; top:0;
+      background:var(--panel); z-index:1;
+    }
+    .cve-table td {
+      padding:8px 8px; font-size:12px;
+      border-bottom:1px solid rgba(42,53,95,0.5); vertical-align:middle;
+    }
+    .cve-table tbody tr { cursor:pointer; transition:background 0.12s; }
+    .cve-table tbody tr:hover { background:var(--surface); }
+    .cve-table tbody tr:last-child td { border-bottom:none; }
+
+    .severity-badge {
+      display:inline-block; padding:2px 8px; border-radius:10px;
+      font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
+    }
+    .severity-critical { background:rgba(255,107,107,0.15); color:var(--red); }
+    .severity-high     { background:rgba(255,169,77,0.15); color:var(--orange); }
+    .severity-medium   { background:rgba(255,212,59,0.15); color:var(--yellow); }
+    .severity-low      { background:rgba(81,207,102,0.15); color:var(--green); }
+
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { color: var(--muted); }
+
+    .btn-patch {
+      padding:3px 10px; background:var(--accent); color:var(--bg);
+      border:none; border-radius:6px; font-size:11px; font-weight:700;
+      cursor:pointer; transition:opacity 0.15s; white-space:nowrap;
+    }
+    .btn-patch:hover { opacity: 0.85; }
+
+    /* ── Patches list ───────────────────────────────── */
+    .patch-item {
+      display:flex; align-items:flex-start; gap:10px;
+      padding:10px 0; border-bottom:1px solid rgba(42,53,95,0.5);
+    }
+    .patch-item:last-child { border-bottom:none; }
+    .patch-icon {
+      width:32px; height:32px; border-radius:8px;
+      display:grid; place-items:center; font-size:14px; flex-shrink:0;
+    }
+    .patch-icon.approval  { background:rgba(255,169,77,0.15); }
+    .patch-icon.progress  { background:rgba(110,168,254,0.15); }
+    .patch-icon.completed { background:rgba(81,207,102,0.15); }
+    .patch-info { flex:1; min-width:0; }
+    .patch-cve { font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; }
+    .patch-detail {
+      font-size:11px; color:var(--muted); margin-top:2px;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .patch-status {
+      flex-shrink:0; padding:3px 8px; border-radius:6px;
+      font-size:10px; font-weight:700; text-transform:uppercase;
+      letter-spacing:0.3px; align-self:center;
+    }
+    .patch-status.waiting { background:rgba(255,169,77,0.15); color:var(--orange); }
+    .patch-status.running { background:rgba(110,168,254,0.15); color:var(--accent); }
+    .patch-status.success { background:rgba(81,207,102,0.15); color:var(--green); }
+    .patch-status.failed  { background:rgba(255,107,107,0.15); color:var(--red); }
+
+    .patch-actions { display:flex; gap:5px; flex-shrink:0; align-self:center; }
+    .btn-approve {
+      padding:4px 10px; background:var(--green); color:var(--bg);
+      border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;
+    }
+    .btn-deny {
+      padding:4px 10px; background:var(--red); color:#fff;
+      border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;
+    }
+    .btn-approve:disabled, .btn-deny:disabled { opacity:0.4; cursor:not-allowed; }
+
+    /* ── Summary stats ──────────────────────────────── */
+    .summary-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .stat-card { background:var(--surface); border-radius:10px; padding:14px; }
+    .stat-label {
+      font-size:11px; font-weight:600; color:var(--muted);
+      text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;
+    }
+    .stat-value { font-size:26px; font-weight:800; letter-spacing:-1px; line-height:1.1; }
+    .stat-change { font-size:11px; margin-top:3px; }
+    .stat-change.up   { color:var(--red); }
+    .stat-change.down { color:var(--green); }
+    .stat-change.neutral { color:var(--muted); }
+
+    /* ── Events timeline ────────────────────────────── */
+    .event-item {
+      display:flex; gap:10px; padding:8px 0;
+      border-bottom:1px solid rgba(42,53,95,0.4); font-size:12px;
+    }
+    .event-item:last-child { border-bottom:none; }
+    .event-dot-col { display:flex; flex-direction:column; align-items:center; padding-top:3px; }
+    .event-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .event-line { width:2px; flex:1; background:var(--border); min-height:8px; }
+    .event-dot.info    { background:var(--accent); }
+    .event-dot.success { background:var(--green); }
+    .event-dot.warning { background:var(--orange); }
+    .event-dot.error   { background:var(--red); }
+    .event-dot.a2a     { background:var(--purple); }
+    .event-body { flex:1; min-width:0; }
+    .event-time { font-size:10px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .event-msg { margin-top:1px; line-height:1.4; }
+    .event-tag {
+      display:inline-block; padding:1px 5px; border-radius:4px;
+      font-size:9px; font-weight:700; text-transform:uppercase;
+      margin-right:3px; letter-spacing:0.3px;
+    }
+    .event-tag.a2a { background:rgba(192,132,252,0.15); color:var(--purple); }
+
+    /* ── Empty / Spinner ─────────────────────────────── */
+    .empty-state {
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      height:100%; color:var(--muted); font-size:13px; text-align:center; gap:6px;
+    }
+    .empty-icon { font-size:28px; opacity:0.5; }
+    .spinner {
+      width:18px; height:18px; border:2px solid var(--border);
+      border-top-color:var(--accent); border-radius:50%;
+      animation:spin 0.8s linear infinite; margin:0 auto;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ── Scrollbar ───────────────────────────────────── */
+    .card-body::-webkit-scrollbar { width:5px; }
+    .card-body::-webkit-scrollbar-track { background:transparent; }
+    .card-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+    /* ── Stage detail cards ──────────────────────────── */
+    .stage-card {
+      background: var(--surface); border:1px solid var(--border);
+      border-radius:12px; margin-bottom:12px; overflow:hidden;
+    }
+    .stage-card-head {
+      padding:10px 14px; display:flex; align-items:center; gap:10px;
+      border-bottom:1px solid var(--border);
+    }
+    .stage-badge-sm {
+      padding:3px 10px; border-radius:6px; font-size:9px; font-weight:700;
+      letter-spacing:0.6px; text-transform:uppercase;
+    }
+    .stage-badge-sm.discover { background:rgba(255,107,107,0.12); color:var(--red); }
+    .stage-badge-sm.predict  { background:rgba(255,169,77,0.12); color:var(--orange); }
+    .stage-badge-sm.reason   { background:rgba(110,168,254,0.12); color:var(--accent); }
+    .stage-badge-sm.execute  { background:rgba(192,132,252,0.12); color:var(--purple); }
+    .stage-badge-sm.learn    { background:rgba(81,207,102,0.12); color:var(--green); }
+    .stage-card-head h4 { margin:0; font-size:13px; font-weight:700; }
+    .stage-card-body { padding:12px 14px; }
+
+    .stats-grid-sm { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px,1fr)); gap:8px; margin-bottom:10px; }
+    .stat-box-sm {
+      background:var(--panel); border:1px solid var(--border); border-radius:8px;
+      padding:10px; text-align:center;
+    }
+    .stat-box-sm .sv { font-size:22px; font-weight:800; letter-spacing:-0.5px; }
+    .stat-box-sm .sl { font-size:9px; color:var(--muted); margin-top:3px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; }
+
+    /* Host risk table */
+    .host-table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .host-table th {
+      text-align:left; padding:6px 8px; font-size:10px; font-weight:700;
+      text-transform:uppercase; letter-spacing:0.4px; color:var(--muted);
+      border-bottom:1px solid var(--border);
+    }
+    .host-table td { padding:6px 8px; font-size:11px; border-bottom:1px solid rgba(42,53,95,0.4); }
+    .host-badge {
+      padding:2px 8px; border-radius:6px; font-size:10px; font-weight:700;
+    }
+    .host-badge.ok     { background:rgba(81,207,102,0.12); color:var(--green); }
+    .host-badge.review { background:rgba(255,169,77,0.12); color:var(--orange); }
+
+    /* Execution progress */
+    .exec-phases { display:flex; gap:8px; margin:8px 0; }
+    .exec-phase {
+      flex:1; background:var(--panel); border:1px solid var(--border);
+      border-radius:8px; padding:10px; text-align:center;
+    }
+    .exec-phase.running { border-color:var(--accent); background:rgba(110,168,254,0.06); }
+    .exec-phase.complete { border-color:var(--green); background:rgba(81,207,102,0.06); }
+    .exec-phase.paused { border-color:var(--red); background:rgba(255,107,107,0.06); }
+    .exec-phase h5 { margin:0 0 4px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:var(--muted); }
+    .exec-phase .count { font-size:20px; font-weight:800; }
+    .progress-bar { background:var(--surface); border-radius:4px; height:6px; overflow:hidden; margin-top:4px; }
+    .progress-fill { height:100%; border-radius:4px; transition:width 0.6s ease; }
+    .progress-fill.green { background:var(--green); }
+    .progress-fill.blue  { background:var(--accent); }
+
+    /* Alerts */
+    .alert {
+      padding:10px 14px; border-radius:10px; margin:8px 0;
+      border-left:3px solid; font-size:12px; line-height:1.5;
+    }
+    .alert-danger  { background:rgba(255,107,107,0.08); border-left-color:var(--red); color:var(--red); }
+    .alert-success { background:rgba(81,207,102,0.08); border-left-color:var(--green); color:var(--green); }
+    .alert-info    { background:rgba(110,168,254,0.08); border-left-color:var(--accent); color:var(--accent); }
+    .alert-warning { background:rgba(255,169,77,0.08); border-left-color:var(--orange); color:var(--orange); }
+
+    /* What-if / Why buttons */
+    .btn-sm {
+      padding:4px 10px; background:var(--surface); color:var(--text);
+      border:1px solid var(--border); border-radius:6px;
+      font-size:11px; font-weight:600; cursor:pointer; transition:all 0.15s;
+    }
+    .btn-sm:hover { background:var(--border); }
+    .btn-action {
+      padding:5px 12px; border:none; border-radius:6px;
+      font-size:11px; font-weight:700; cursor:pointer; transition:all 0.15s;
+    }
+    .btn-action.green { background:var(--green); color:var(--bg); }
+    .btn-action.red   { background:var(--red); color:#fff; }
+    .btn-action:hover { opacity:0.85; }
+
+    /* ── ROI Dashboard ──────────────────────────────── */
+    .roi-card { border-radius:14px; overflow:hidden; margin-bottom:12px; border:1px solid rgba(81,207,102,0.2); }
+    .roi-hero {
+      background:linear-gradient(135deg, #0a2f1f 0%, #0d3b25 40%, #0f4a2e 100%);
+      color:#fff; padding:24px 28px; text-align:center; position:relative; overflow:hidden;
+    }
+    .roi-hero-eyebrow { font-size:10px; letter-spacing:2px; text-transform:uppercase; opacity:0.7; margin-bottom:4px; }
+    .roi-hero-value { font-size:44px; font-weight:900; letter-spacing:-2px; }
+    .roi-hero-label { font-size:12px; font-weight:600; opacity:0.8; margin-top:2px; }
+    .roi-hero-chips { display:flex; justify-content:center; gap:14px; margin-top:16px; flex-wrap:wrap; }
+    .roi-chip {
+      background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+      border-radius:10px; padding:8px 14px; text-align:center; min-width:70px;
+    }
+    .roi-chip-val { font-size:20px; font-weight:900; }
+    .roi-chip-label { font-size:8px; font-weight:600; letter-spacing:0.8px; text-transform:uppercase; opacity:0.7; margin-top:2px; }
+    .roi-body { padding:20px; background:var(--panel); }
+    .roi-section { margin-bottom:20px; }
+    .roi-section:last-child { margin-bottom:0; }
+    .roi-section-title {
+      font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase;
+      color:var(--muted); margin-bottom:10px; display:flex; align-items:center; gap:8px;
+    }
+    .roi-section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+    .roi-dim { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+    .roi-dim-label { width:120px; font-size:10px; font-weight:600; color:var(--muted); text-align:right; flex-shrink:0; }
+    .roi-dim-bar-bg { flex:1; height:24px; background:var(--surface); border-radius:6px; overflow:hidden; }
+    .roi-dim-bar {
+      height:100%; border-radius:6px; display:flex; align-items:center; justify-content:flex-end;
+      padding-right:8px; font-size:10px; font-weight:800; color:#fff;
+      transition:width 1.2s ease; min-width:40px;
+    }
+    .roi-timeline { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .roi-tl-col { background:var(--surface); border-radius:10px; padding:14px; border:1px solid var(--border); }
+    .roi-tl-col h5 { margin:0 0 10px; font-size:11px; font-weight:800; letter-spacing:0.5px; }
+    .roi-tl-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+    .roi-tl-time { font-size:9px; font-weight:700; color:var(--muted); width:36px; font-family:monospace; }
+    .roi-tl-event { font-size:10px; color:var(--muted); }
+    .roi-tl-bar { height:3px; border-radius:2px; flex-shrink:0; }
+    .roi-tl-total { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-size:18px; font-weight:900; text-align:center; }
+    .roi-cost-compare { display:flex; justify-content:center; align-items:center; gap:24px; padding:12px; text-align:center; }
+    .roi-cost-box { padding:12px 20px; border-radius:10px; min-width:100px; }
+    .roi-cost-val { font-size:28px; font-weight:900; }
+    .roi-cost-label { font-size:9px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; margin-top:3px; }
+    .roi-cost-arrow { font-size:24px; color:var(--green); font-weight:900; }
+    .roi-contrib-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+    .roi-contrib-item { background:var(--surface); border-radius:8px; padding:8px 10px; border:1px solid var(--border); text-align:center; }
+    .roi-contrib-val { font-size:18px; font-weight:900; }
+    .roi-contrib-label { font-size:8px; font-weight:600; color:var(--muted); letter-spacing:0.3px; margin-top:1px; }
+    .roi-shift { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .roi-shift-col { padding:12px; border-radius:10px; }
+    .roi-shift-title { font-size:10px; font-weight:800; letter-spacing:0.5px; margin-bottom:8px; }
+    .roi-shift-bar { height:6px; border-radius:3px; margin-bottom:6px; }
+    .roi-shift-items { font-size:10px; line-height:1.8; color:var(--muted); }
+    .roi-bench { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    .roi-bench-item { padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); }
+    .roi-bench-metric { font-size:10px; font-weight:600; color:var(--text); margin-bottom:3px; }
+    .roi-bench-val { font-size:16px; font-weight:900; color:var(--green); }
+    .roi-bench-source { font-size:8px; color:var(--muted); margin-top:2px; font-style:italic; }
+    .roi-qual {
+      font-size:9px; color:var(--muted); text-align:center; padding:10px 14px;
+      background:var(--surface); border-radius:6px; margin-top:12px; line-height:1.5;
+      border:1px solid var(--border); font-style:italic;
+    }
+
+    /* ── Overlays ────────────────────────────────────── */
+    .overlay {
+      display:none; position:fixed; inset:0;
+      background:rgba(0,0,0,0.6); backdrop-filter:blur(4px);
+      z-index:200; justify-content:center; align-items:flex-start;
+      padding-top:50px; overflow-y:auto;
+    }
+    .overlay.open { display:flex; }
+    .overlay-content {
+      background:var(--panel); border-radius:16px;
+      width:92%; max-width:900px; max-height:85vh;
+      overflow-y:auto; padding:28px; position:relative;
+      box-shadow:0 25px 60px rgba(0,0,0,0.5); border:1px solid var(--border);
+    }
+    .overlay-content::-webkit-scrollbar { width:6px; }
+    .overlay-content::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+    .overlay-close {
+      position:absolute; top:12px; right:16px;
+      background:var(--surface); border:1px solid var(--border); color:var(--muted);
+      font-size:18px; cursor:pointer; width:30px; height:30px;
+      border-radius:8px; display:flex; align-items:center; justify-content:center;
+      transition:all 0.15s;
+    }
+    .overlay-close:hover { background:var(--border); color:var(--text); }
+
+    /* ── Analysis Modal ──────────────────────────────── */
+    .analysis-overlay {
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px);
+      z-index:300; justify-content:center; align-items:center; padding:24px;
+    }
+    .analysis-overlay.open { display:flex; }
+    .analysis-modal {
+      background:var(--panel); border-radius:16px; max-width:640px; width:100%;
+      max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.5);
+      border:1px solid var(--border);
+    }
+    .analysis-header {
+      padding:20px 24px 14px; border-bottom:1px solid var(--border);
+      display:flex; justify-content:space-between; align-items:flex-start;
+    }
+    .analysis-header h3 { margin:0; font-size:16px; font-weight:800; }
+    .analysis-badge {
+      padding:3px 8px; border-radius:12px; font-size:9px; font-weight:700;
+      text-transform:uppercase; letter-spacing:0.5px;
+    }
+    .badge-live { background:rgba(81,207,102,0.15); color:var(--green); }
+    .badge-fallback { background:rgba(255,169,77,0.15); color:var(--orange); }
+    .analysis-close {
+      background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted);
+      padding:0 4px; line-height:1;
+    }
+    .analysis-close:hover { color:var(--text); }
+    .analysis-body { padding:16px 24px 24px; }
+    .analysis-loading { text-align:center; padding:40px; color:var(--muted); }
+    .analysis-loading .spinner { width:32px; height:32px; margin:0 auto 12px; }
+    .scenario-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:12px;
+      padding:14px 16px; margin-bottom:10px; transition:all 0.2s;
+    }
+    .scenario-card:hover { transform:translateX(3px); }
+    .scenario-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+    .scenario-icon { font-size:18px; }
+    .scenario-title { font-size:13px; font-weight:700; flex:1; }
+    .scenario-impact { padding:3px 8px; border-radius:12px; font-size:11px; font-weight:800; }
+    .impact-down { background:rgba(81,207,102,0.15); color:var(--green); }
+    .impact-up { background:rgba(255,107,107,0.15); color:var(--red); }
+    .scenario-change {
+      font-size:11px; color:var(--muted); background:var(--panel);
+      padding:5px 8px; border-radius:6px; margin-bottom:6px; border-left:2px solid var(--red);
+    }
+    .scenario-detail { font-size:12px; color:var(--muted); line-height:1.5; margin-bottom:4px; }
+    .scenario-meta { display:flex; gap:10px; font-size:10px; color:var(--muted); }
+    .factor-card {
+      display:flex; gap:12px; padding:12px 14px; background:var(--surface);
+      border:1px solid var(--border); border-radius:12px; margin-bottom:8px; align-items:flex-start;
+    }
+    .factor-icon { font-size:20px; flex-shrink:0; margin-top:2px; }
+    .factor-content { flex:1; }
+    .factor-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
+    .factor-name { font-size:13px; font-weight:700; }
+    .factor-weight { padding:2px 6px; border-radius:8px; font-size:9px; font-weight:700; background:rgba(255,107,107,0.12); color:var(--red); }
+    .factor-value { font-size:12px; font-weight:600; color:var(--red); margin-bottom:3px; }
+    .factor-detail { font-size:11px; color:var(--muted); line-height:1.4; }
+    .analysis-recommendation {
+      margin-top:12px; padding:12px 16px; border-radius:12px;
+      background:rgba(255,169,77,0.08); border:1px solid rgba(255,169,77,0.2);
+    }
+    .analysis-recommendation strong { color:var(--orange); font-size:11px; text-transform:uppercase; letter-spacing:0.5px; }
+    .analysis-recommendation p { margin:4px 0 0; font-size:12px; color:var(--muted); line-height:1.5; }
+
+    /* ── Settings ────────────────────────────────────── */
+    .setting-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); }
+    .setting-row:last-child { border-bottom:none; }
+    .setting-label { min-width:140px; font-weight:600; font-size:12px; color:var(--muted); }
+    .setting-input {
+      flex:1; padding:7px 10px; background:var(--surface); color:var(--text);
+      border:1px solid var(--border); border-radius:6px; font-size:12px;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace; transition:all 0.2s;
+    }
+    .setting-input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(110,168,254,0.2); }
+    .setting-input.changed { border-color:var(--orange); background:rgba(255,169,77,0.05); }
+    .setting-hint { font-size:10px; color:var(--muted); margin-top:2px; }
+    .setting-section {
+      font-weight:700; font-size:12px; color:var(--accent);
+      margin-top:16px; margin-bottom:8px; padding:5px 10px;
+      background:rgba(110,168,254,0.08); border-radius:6px; letter-spacing:0.3px;
+    }
+    .setting-section:first-child { margin-top:0; }
+
+    /* ── Guide Tabs ──────────────────────────────────── */
+    .guide-tabs {
+      display:flex; gap:3px; margin-bottom:20px; border-bottom:2px solid var(--border);
+      overflow-x:auto;
+    }
+    .guide-tab {
+      padding:8px 14px; background:transparent; border:none; border-bottom:3px solid transparent;
+      color:var(--muted); font-size:12px; font-weight:700; cursor:pointer;
+      white-space:nowrap; transition:all 0.2s; border-radius:6px 6px 0 0;
+    }
+    .guide-tab:hover { background:rgba(255,255,255,0.03); color:var(--text); }
+    .guide-tab.active { color:var(--accent); border-bottom-color:var(--accent); background:rgba(110,168,254,0.06); }
+    .guide-tab-panel { display:none; }
+    .guide-tab-panel.active { display:block; }
+    .guide-hero {
+      background:linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 50%, #3d1515 100%);
+      color:#fff; border-radius:14px; padding:28px 24px; margin-bottom:24px;
+      position:relative; overflow:hidden; border:1px solid rgba(255,107,107,0.2);
+    }
+    .guide-hero-eyebrow { font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:0.7; margin-bottom:6px; }
+    .guide-hero h2 { margin:0 0 10px; font-size:24px; font-weight:900; letter-spacing:-0.5px; }
+    .guide-hero p { margin:0; font-size:13px; opacity:0.85; line-height:1.7; max-width:600px; }
+    .guide-hero-stats { display:flex; gap:16px; margin-top:16px; flex-wrap:wrap; }
+    .ghs {
+      display:flex; flex-direction:column; align-items:center; gap:2px;
+      background:rgba(255,255,255,0.08); border-radius:8px; padding:8px 14px; min-width:60px;
+      border:1px solid rgba(255,255,255,0.1);
+    }
+    .ghs-num { font-size:18px; font-weight:900; }
+    .ghs-label { font-size:8px; font-weight:600; letter-spacing:0.7px; text-transform:uppercase; opacity:0.7; }
+    .guide-section-title {
+      display:flex; align-items:center; gap:8px;
+      font-size:14px; font-weight:800; color:var(--text); letter-spacing:-0.2px;
+      margin:24px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);
+    }
+    .guide-stage-card { border-radius:12px; overflow:hidden; margin-bottom:12px; border:1px solid var(--border); }
+    .guide-stage-head { padding:12px 16px; display:flex; align-items:center; gap:10px; }
+    .guide-stage-head .gs-num {
+      width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+      font-size:12px; font-weight:800; color:#fff; flex-shrink:0;
+    }
+    .guide-stage-head .gs-title { font-size:14px; font-weight:800; }
+    .guide-stage-head .gs-badge {
+      margin-left:auto; padding:3px 8px; border-radius:6px;
+      font-size:9px; font-weight:700; letter-spacing:0.4px;
+    }
+    .guide-stage-body { padding:14px 16px; background:var(--panel); }
+    .guide-stage-body p { margin:0 0 6px; font-size:12px; line-height:1.6; color:var(--muted); }
+    .guide-stage-body code { background:var(--surface); padding:1px 5px; border-radius:3px; font-size:11px; color:var(--text); }
+    .gs-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+    .gs-detail-item { background:var(--surface); border-radius:6px; padding:8px 10px; border:1px solid var(--border); }
+    .gs-detail-item .gs-dl { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px; }
+    .gs-detail-item .gs-dv { font-size:11px; color:var(--muted); line-height:1.4; }
+    .ds-scene { border-radius:12px; overflow:hidden; margin-bottom:10px; border:1px solid var(--border); }
+    .ds-scene-head { padding:10px 14px; display:flex; align-items:center; gap:10px; background:var(--surface); }
+    .ds-scene-num {
+      width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+      font-size:12px; font-weight:800; color:#fff; flex-shrink:0; background:var(--red);
+    }
+    .ds-scene-title { font-size:13px; font-weight:800; }
+    .ds-scene-time { margin-left:auto; font-size:9px; font-weight:600; color:var(--muted); padding:2px 8px; border-radius:4px; background:var(--panel); border:1px solid var(--border); }
+    .ds-scene-body { padding:12px 16px; background:var(--panel); }
+    .ds-say { font-size:12px; line-height:1.6; padding:10px 14px; margin-bottom:8px; background:rgba(110,168,254,0.06); border-radius:8px; border-left:2px solid var(--accent); font-style:italic; color:var(--text); }
+    .ds-do { font-size:11px; line-height:1.5; color:var(--muted); padding:6px 10px; margin-bottom:4px; border-radius:6px; background:rgba(81,207,102,0.06); }
+    .ds-watch { font-size:11px; line-height:1.5; color:var(--muted); padding:6px 10px; margin-bottom:4px; border-radius:6px; background:rgba(255,169,77,0.06); }
+    .ds-tip { font-size:11px; line-height:1.5; color:var(--muted); padding:6px 10px; border-radius:6px; background:rgba(192,132,252,0.06); border-left:2px solid var(--purple); }
+    .ds-faq { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
+    .ds-faq-item { padding:12px 14px; background:var(--surface); border-radius:10px; border:1px solid var(--border); }
+    .ds-faq-q { font-size:12px; font-weight:700; margin-bottom:4px; }
+    .ds-faq-a { font-size:11px; color:var(--muted); line-height:1.5; }
+
+    /* ── Log Panel ───────────────────────────────────── */
+    .log-panel {
+      display:none; background:var(--panel); border-top:1px solid var(--border);
+      flex-shrink:0; flex-direction:column;
+    }
+    .log-panel.open { display:flex; height:200px; }
+    .log-panel-header {
+      display:flex; align-items:center; padding:6px 14px; gap:8px;
+      border-bottom:1px solid var(--border); flex-shrink:0;
+    }
+    .log-panel-header h4 { margin:0; font-size:11px; font-weight:700; }
+    .log-panel-body {
+      flex:1; overflow-y:auto; padding:8px 14px;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      font-size:10px; line-height:1.6; color:var(--muted);
+      white-space:pre-wrap; word-break:break-all;
+    }
+
+    /* ── Responsive ──────────────────────────────────── */
+    @media (max-width: 900px) {
+      .dashboard { grid-template-columns:1fr; grid-template-rows:auto; }
+      .card { min-height:280px; }
+      .agent-sidebar.open { width:240px; min-width:240px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="header-logo">AP</div>
+      <h1>Agentic Patching Console</h1>
+    </div>
+    <div class="header-right">
+      <div class="header-status">
+        <span class="status-dot" id="api_dot"></span>
+        <span id="api_status_text">Connecting...</span>
+      </div>
+      <button class="topbar-btn" id="toggle_sidebar_btn" onclick="toggleSidebar()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Agents
+      </button>
+      <button class="topbar-btn" id="toggle_log_btn" onclick="toggleLogPanel()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Logs
+      </button>
+      <button class="topbar-btn" onclick="openGuide()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        Guide
+      </button>
+      <button class="topbar-btn" onclick="openSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </button>
+    </div>
+  </header>
+
+  <!-- Pipeline Bar -->
+  <div class="pipeline-bar" id="pipeline">
+    <div class="pipe-stages">
+      <span class="pipe-cve" id="pipe_cve">No CVE selected</span>
+      <div class="pipe-stage" data-stage="discover" onclick="scrollToStage('discover')"><span class="pipe-num">1</span><span class="pipe-label">DISCOVER</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="predict" onclick="scrollToStage('predict')"><span class="pipe-num">2</span><span class="pipe-label">PREDICT</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="reason" onclick="scrollToStage('reason')"><span class="pipe-num">3</span><span class="pipe-label">REASON</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="execute" onclick="scrollToStage('execute')"><span class="pipe-num">4</span><span class="pipe-label">EXECUTE</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="learn" onclick="scrollToStage('learn')"><span class="pipe-num">5</span><span class="pipe-label">LEARN</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="notify" onclick="scrollToStage('notify')"><span class="pipe-num">6</span><span class="pipe-label">NOTIFY</span></div>
+      <span class="pipe-arrow">&#9655;</span>
+      <div class="pipe-stage" data-stage="roi" onclick="scrollToStage('roi')"><span class="pipe-num">$</span><span class="pipe-label">ROI</span></div>
+    </div>
+    <div class="pipe-status-bar" id="flow_status_bar">
+      <div class="flow-status-pill idle"><span class="sdot"></span>Ready</div>
+    </div>
+  </div>
+
+  <!-- Main layout: sidebar + dashboard -->
+  <div class="main-wrap">
+    <!-- Agent Activity Sidebar -->
+    <aside class="agent-sidebar" id="agentSidebar">
+      <div class="sidebar-header">
+        <div class="dot" id="agentDot"></div>
+        Agent Activity
+        <span class="text-muted" style="margin-left:auto;font-size:10px;" id="agentCount">0</span>
+      </div>
+      <div class="sidebar-body" id="a2a_stream">
+        <div class="empty-state" style="padding:16px;">No agent messages yet.<br>Start a patch to see A2A communication.</div>
+      </div>
+    </aside>
+
+    <!-- Dashboard area -->
+    <div class="dashboard-area">
+      <main class="dashboard">
+
+        <!-- Top-left: CVE list -->
+        <section class="card" id="card_cves">
+          <div class="card-header">
+            <span class="card-title">CVE</span>
+            <div class="filters" id="cve_filters">
+              <button class="pill active" data-severity="all">All</button>
+              <button class="pill" data-severity="critical">Critical</button>
+              <button class="pill" data-severity="high">High</button>
+              <button class="pill" data-severity="medium">Medium</button>
+              <button class="pill" data-severity="low">Low</button>
+            </div>
+          </div>
+          <div class="card-body" id="cve_body">
+            <div class="empty-state"><div class="spinner"></div><span>Loading CVEs from Insights...</span></div>
+          </div>
+        </section>
+
+        <!-- Top-right: Patches / Flow Detail -->
+        <section class="card" id="card_patches">
+          <div class="card-header">
+            <span class="card-title">Patches</span>
+            <div class="filters" id="patch_filters">
+              <button class="pill active" data-status="all">All</button>
+              <button class="pill" data-status="approval">Approval Required</button>
+              <button class="pill" data-status="progress">In Progress</button>
+              <button class="pill" data-status="completed">Completed</button>
+            </div>
+          </div>
+          <div class="card-body" id="patches_body">
+            <div class="empty-state"><div class="spinner"></div><span>Loading patch runs...</span></div>
+          </div>
+        </section>
+
+        <!-- Bottom-left: Summary -->
+        <section class="card" id="card_summary">
+          <div class="card-header">
+            <span class="card-title">Today's Summary</span>
+            <span class="text-muted" style="font-size:11px;" id="summary_date"></span>
+          </div>
+          <div class="card-body" id="summary_body">
+            <div class="empty-state"><div class="spinner"></div><span>Computing summary...</span></div>
+          </div>
+        </section>
+
+        <!-- Bottom-right: Events -->
+        <section class="card" id="card_events">
+          <div class="card-header">
+            <span class="card-title">Events</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select id="event_cve_filter" style="padding:3px 8px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;outline:none;">
+                <option value="all">All CVEs</option>
+              </select>
+              <span class="text-muted" style="font-size:11px;" id="event_count"></span>
+            </div>
+          </div>
+          <div class="card-body" id="events_body">
+            <div class="empty-state"><div class="spinner"></div><span>Loading event stream...</span></div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Log Panel -->
+      <div class="log-panel" id="logPanel">
+        <div class="log-panel-header">
+          <div class="status-dot" style="width:5px;height:5px;"></div>
+          <h4>Server Log</h4>
+          <div style="margin-left:auto;"><button class="btn-sm" onclick="loadFlowLog()" style="font-size:9px;padding:2px 8px;">Refresh</button></div>
+        </div>
+        <div class="log-panel-body" id="flow_log_content">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Overlay -->
+  <div class="overlay" id="settingsOverlay">
+    <div class="overlay-content">
+      <button class="overlay-close" onclick="closeSettings()">&times;</button>
+      <h2 style="margin-top:0;color:var(--accent);font-size:18px;font-weight:800;">Settings</h2>
+      <div id="settings_form"></div>
+      <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+        <button class="btn-action green" onclick="saveSettings()">Save</button>
+        <span id="settings_msg" class="text-muted" style="font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Guide Overlay -->
+  <div class="overlay" id="guideOverlay">
+    <div class="overlay-content" style="max-width:940px;">
+      <button class="overlay-close" onclick="closeGuide()">&times;</button>
+      <div class="guide-hero">
+        <div class="guide-hero-eyebrow">Red Hat &times; AI-Powered Operations</div>
+        <h2>Autonomous Intelligent Patching</h2>
+        <p>From zero-day to fully patched in minutes. Six AI agents discover vulnerabilities, predict risk, reason about history, execute phased rollouts, self-heal on failure, and learn from every outcome.</p>
+        <div class="guide-hero-stats">
+          <div class="ghs"><span class="ghs-num">7</span><span class="ghs-label">AI Agents</span></div>
+          <div class="ghs"><span class="ghs-num">6</span><span class="ghs-label">Stages</span></div>
+          <div class="ghs"><span class="ghs-num">A2A</span><span class="ghs-label">Message Bus</span></div>
+          <div class="ghs"><span class="ghs-num">&infin;</span><span class="ghs-label">Feedback Loop</span></div>
+        </div>
+      </div>
+      <div class="guide-tabs">
+        <button class="guide-tab active" data-gtab="stages">Stages</button>
+        <button class="guide-tab" data-gtab="quickstart">Quick Start</button>
+        <button class="guide-tab" data-gtab="demoscript">Demo Script</button>
+      </div>
+      <!-- Stages tab -->
+      <div class="guide-tab-panel active" id="gtab_stages">
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(255,107,107,0.08);"><span class="gs-num" style="background:var(--red);">1</span><span class="gs-title" style="color:var(--red);">DISCOVER</span><span class="gs-badge" style="background:rgba(255,107,107,0.12);color:var(--red);">Vulnerability Agent</span></div><div class="guide-stage-body"><p>Queries <strong>Red Hat Insights</strong> for CVE details and identifies all affected systems.</p><div class="gs-detail-grid"><div class="gs-detail-item"><div class="gs-dl" style="color:var(--red);">Backend</div><div class="gs-dv"><code>INSIGHTS_MCP_ENDPOINT</code> &mdash; MCP server for Insights API</div></div><div class="gs-detail-item"><div class="gs-dl" style="color:var(--red);">Fallback</div><div class="gs-dv">Demo hosts with pre-configured profiles when Insights is unavailable</div></div></div></div></div>
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(255,169,77,0.08);"><span class="gs-num" style="background:var(--orange);">2</span><span class="gs-title" style="color:var(--orange);">PREDICT</span><span class="gs-badge" style="background:rgba(255,169,77,0.12);color:var(--orange);">Risk Agent</span></div><div class="guide-stage-body"><p>ML model calculates <strong>composite risk score</strong> per host. Classifies as <code>ok</code> (auto-patch) or <code>review</code> (needs approval).</p><div class="gs-detail-grid"><div class="gs-detail-item"><div class="gs-dl" style="color:var(--orange);">Backend</div><div class="gs-dv"><code>RISK_URL</code> &mdash; RHOAI model serving endpoint</div></div><div class="gs-detail-item"><div class="gs-dl" style="color:var(--orange);">Metrics</div><div class="gs-dv">Failure probability, impact probability, risk classification</div></div></div></div></div>
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(110,168,254,0.08);"><span class="gs-num" style="background:var(--accent);">3</span><span class="gs-title" style="color:var(--accent);">REASON</span><span class="gs-badge" style="background:rgba(110,168,254,0.12);color:var(--accent);">Risk + Automation Agents</span></div><div class="guide-stage-body"><p>RAG searches historical patch records. Produces a phased deployment strategy (Test &rarr; Canary &rarr; Production).</p><div class="gs-detail-grid"><div class="gs-detail-item"><div class="gs-dl" style="color:var(--accent);">Backend</div><div class="gs-dv"><code>LLAMA_STACK_URL</code> + <code>VECTOR_DB_ID</code> for RAG</div></div><div class="gs-detail-item"><div class="gs-dl" style="color:var(--accent);">Output</div><div class="gs-dv">History analysis, host decisions, phased strategy</div></div></div></div></div>
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(192,132,252,0.08);"><span class="gs-num" style="background:var(--purple);">4</span><span class="gs-title" style="color:var(--purple);">EXECUTE</span><span class="gs-badge" style="background:rgba(192,132,252,0.12);color:var(--purple);">Automation + Diagnosis</span></div><div class="guide-stage-body"><p>Generates playbook via Lightspeed, publishes to GitHub, creates AAP workflow with approval gate. Phased execution with auto-failure detection, rollback, and AI-driven remediation.</p><div class="gs-detail-grid"><div class="gs-detail-item"><div class="gs-dl" style="color:var(--purple);">Backend</div><div class="gs-dv"><code>AAP_BASE_URL</code> + <code>GITHUB_TOKEN</code></div></div><div class="gs-detail-item"><div class="gs-dl" style="color:var(--purple);">Phases</div><div class="gs-dv">Test &rarr; Canary &rarr; Production</div></div></div></div></div>
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(81,207,102,0.08);"><span class="gs-num" style="background:var(--green);">5</span><span class="gs-title" style="color:var(--green);">LEARN</span><span class="gs-badge" style="background:rgba(81,207,102,0.12);color:var(--green);">Learning Agent</span></div><div class="guide-stage-body"><p>Records outcomes as training events. Updates RAG vector store. Feeds data pipeline for continuous model improvement.</p><div class="gs-detail-grid"><div class="gs-detail-item"><div class="gs-dl" style="color:var(--green);">Pipeline</div><div class="gs-dv">Outcomes &rarr; Feature Store &rarr; OpenShift AI &rarr; Model Registry &rarr; KServe</div></div><div class="gs-detail-item"><div class="gs-dl" style="color:var(--green);">Loop</div><div class="gs-dv">Each patch cycle improves future risk predictions</div></div></div></div></div>
+        <div class="guide-stage-card"><div class="guide-stage-head" style="background:rgba(81,207,102,0.08);"><span class="gs-num" style="background:#0a5c36;">$</span><span class="gs-title" style="color:var(--green);">ROI</span><span class="gs-badge" style="background:rgba(81,207,102,0.12);color:var(--green);">ROI Agent</span></div><div class="guide-stage-body"><p>Calculates financial value: engineering effort avoided, reduced exposure, automation reuse, faster recovery. References published industry benchmarks.</p></div></div>
+      </div>
+      <!-- Quick Start tab -->
+      <div class="guide-tab-panel" id="gtab_quickstart">
+        <div class="guide-section-title">Quick Start</div>
+        <ol style="padding-left:20px;font-size:13px;color:var(--muted);line-height:2;">
+          <li>Pick a CVE from the dashboard or enter one manually</li>
+          <li>Click <strong style="color:var(--text);">Patch</strong> &mdash; watch pipeline stages light up</li>
+          <li>Monitor agent-to-agent messages in the sidebar</li>
+          <li>Click any pipeline stage to jump to its detail card</li>
+          <li>At the <strong style="color:var(--text);">approval gate</strong>, click Approve to continue</li>
+          <li>Watch phased execution, failure detection, AI remediation, and learning</li>
+        </ol>
+      </div>
+      <!-- Demo Script tab -->
+      <div class="guide-tab-panel" id="gtab_demoscript">
+        <div class="guide-section-title">Demo Talk Track</div>
+        <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;padding:10px 14px;background:rgba(255,107,107,0.06);border-radius:10px;border-left:3px solid var(--red);">Scene-by-scene guide for presenting AIP. Read the <strong>Say</strong> sections aloud; <strong>Watch for</strong> notes tell you what to point at.</p>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--muted);">&#9733;</span><span class="ds-scene-title">Opening</span><span class="ds-scene-time">~30s</span></div><div class="ds-scene-body"><div class="ds-say">&ldquo;Imagine a critical CVE drops. What if six AI agents could take it from discovery to fully patched &mdash; with a human in the loop only when it matters?&rdquo;</div><div class="ds-do"><strong>Do:</strong> Point to pipeline bar. Explain 5 stages + A2A sidebar.</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--red);">1</span><span class="ds-scene-title">DISCOVER &mdash; CVE Intake</span><span class="ds-scene-time">~20s</span></div><div class="ds-scene-body"><div class="ds-do"><strong>Do:</strong> Enter a CVE and click Patch.</div><div class="ds-watch"><strong>Watch:</strong> Stage 1 lights up. A2A sidebar shows message chain.</div><div class="ds-say">&ldquo;The Vulnerability Agent queries Insights via MCP. It pulls CVE details and identifies every exposed system.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--orange);">2</span><span class="ds-scene-title">PREDICT &mdash; Risk Scoring</span><span class="ds-scene-time">~25s</span></div><div class="ds-scene-body"><div class="ds-watch"><strong>Watch:</strong> Stage 2 lights up. Host cards with risk scores appear.</div><div class="ds-say">&ldquo;The Risk Agent calls a ML model on OpenShift AI. It scores every host &mdash; data-driven triage, not gut feel.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--accent);">3</span><span class="ds-scene-title">REASON &mdash; LLM Analysis</span><span class="ds-scene-time">~30s</span></div><div class="ds-scene-body"><div class="ds-watch"><strong>Watch:</strong> Stage 3 lights up. History analysis + phased strategy.</div><div class="ds-say">&ldquo;RAG searches your patch history vector DB. The AI reasons from your own operational history to build a phased strategy.&rdquo;</div><div class="ds-tip"><strong>Tip:</strong> &ldquo;Think of RAG as the AI searching its memory of every patch you've ever done.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--purple);">4</span><span class="ds-scene-title">EXECUTE &mdash; Approval Gate</span><span class="ds-scene-time">~30s</span></div><div class="ds-scene-body"><div class="ds-watch"><strong>Watch:</strong> Playbook gen, GitHub publish, AAP templates. Approve button appears.</div><div class="ds-say">&ldquo;Lightspeed generates a playbook, it goes to GitHub & AAP, then pauses for human approval.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--purple);">5</span><span class="ds-scene-title">EXECUTE &mdash; Phased Rollout</span><span class="ds-scene-time">~30s</span></div><div class="ds-scene-body"><div class="ds-do"><strong>Do:</strong> Click Approve.</div><div class="ds-watch"><strong>Watch:</strong> Three-phase progress (Test &rarr; Canary &rarr; Production).</div><div class="ds-say">&ldquo;Execution is phased. Health checks run at every boundary.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--red);">6</span><span class="ds-scene-title">SELF-HEAL &mdash; Failure & Remediation</span><span class="ds-scene-time">~45s</span></div><div class="ds-scene-body"><div class="ds-watch"><strong>Watch:</strong> Host fails. Rollback. Diagnosis Agent finds root cause. Auto-fix.</div><div class="ds-say">&ldquo;A host fails. The system rolls back, diagnoses via RAG, proposes a fix, applies it, and succeeds. No pages. No war room.&rdquo;</div><div class="ds-tip"><strong>Tip:</strong> This is your strongest demo moment. Slow down here.</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:var(--green);">7</span><span class="ds-scene-title">LEARN &mdash; Continuous Improvement</span><span class="ds-scene-time">~25s</span></div><div class="ds-scene-body"><div class="ds-say">&ldquo;Every outcome becomes training data. The system literally gets better at patching every time it patches.&rdquo;</div></div></div>
+        <div class="ds-scene"><div class="ds-scene-head"><span class="ds-scene-num" style="background:#0a5c36;">8</span><span class="ds-scene-title">ROI &mdash; Value Dashboard</span><span class="ds-scene-time">~30s</span></div><div class="ds-scene-body"><div class="ds-say">&ldquo;The ROI Agent calculated what this run was worth. Cost per system dropped from $36 to $6. All numbers are configurable.&rdquo;</div></div></div>
+        <div class="guide-section-title" style="margin-top:20px;">Common Questions</div>
+        <div class="ds-faq">
+          <div class="ds-faq-item"><div class="ds-faq-q">What if backends aren't configured?</div><div class="ds-faq-a">Every stage tries real APIs first and falls back to demo data.</div></div>
+          <div class="ds-faq-item"><div class="ds-faq-q">Where does the LLM run?</div><div class="ds-faq-a">Llama Stack on OpenShift, using locally-hosted Llama model. No data leaves your infrastructure.</div></div>
+          <div class="ds-faq-item"><div class="ds-faq-q">Is the human always in the loop?</div><div class="ds-faq-a">Yes, at the approval gate before execution. Post-approval, rollback and remediation are automatic.</div></div>
+          <div class="ds-faq-item"><div class="ds-faq-q">What Red Hat products are involved?</div><div class="ds-faq-a">Insights, Ansible Automation Platform, Ansible Lightspeed, OpenShift AI, and Llama Stack.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis Modal -->
+  <div class="analysis-overlay" id="analysisOverlay" onclick="if(event.target===this)closeAnalysis()">
+    <div class="analysis-modal">
+      <div class="analysis-header">
+        <div><h3 id="analysisTitle">Analysis</h3><span class="analysis-badge" id="analysisBadge"></span></div>
+        <button class="analysis-close" onclick="closeAnalysis()">&times;</button>
+      </div>
+      <div class="analysis-body" id="analysisBody">
+        <div class="analysis-loading"><div class="spinner"></div><div>Analyzing with AI...</div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ================================================================
+   Agentic Patching Console — Full Dashboard JS
+   ================================================================ */
+
+const API_BASE = '';
+let cveData = [], patchRuns = [], streamEvents = [];
+let activeCveFilter = 'all', activePatchFilter = 'all', activeEventCveFilter = 'all';
+let pollTimer = null, pollMs = 3000;
+let cveOffset = 0, cvePageSize = 20, cveHasMore = false, cveTotalItems = 0;
+let lastState = null;
+let sidebarOpen = false, logPanelOpen = false, logPollTimer = null;
+
+/* ── Helpers ────────────────────────────────────────── */
+
+function esc(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  const s = String(v);
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+function severityFromCvss(cvss) {
+  if (cvss === null || cvss === undefined) return 'low';
+  const n = parseFloat(cvss);
+  if (n >= 9.0) return 'critical';
+  if (n >= 7.0) return 'high';
+  if (n >= 4.0) return 'medium';
+  return 'low';
+}
+
+function patchCategory(run) {
+  const s = run.summary || {};
+  const approval = s.approval_state || '';
+  if (approval === 'pending_review') return 'approval';
+  if (['flow_in_progress','approved_in_progress','in_progress'].includes(approval)) return 'progress';
+  if (['approved_and_completed','flow_failed','execution_problem','denied'].includes(approval)) return 'completed';
+  const wf = (s.last_workflow_status || '').toLowerCase();
+  if (wf === 'successful' || wf === 'failed' || wf === 'error' || wf === 'canceled') return 'completed';
+  if (wf === 'running') return 'progress';
+  if (wf === 'pending' || wf === 'waiting') return 'approval';
+  return 'progress';
+}
+
+function patchStatusLabel(run) {
+  const cat = patchCategory(run);
+  const s = run.summary || {};
+  if (cat === 'approval') return { text:'Awaiting Approval', cls:'waiting' };
+  if (cat === 'progress') return { text: s.approval_state === 'flow_in_progress' ? 'Running' : 'In Progress', cls:'running' };
+  const wf = (s.last_workflow_status || '').toLowerCase();
+  if (wf === 'successful' || s.approval_state === 'approved_and_completed') return { text:'Successful', cls:'success' };
+  if (s.approval_state === 'denied') return { text:'Denied', cls:'failed' };
+  if (['failed','error','flow_failed','execution_problem'].some(x => wf === x || s.approval_state === x)) return { text:'Failed', cls:'failed' };
+  return { text:'Done', cls:'success' };
+}
+
+function formatTime(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); } catch { return iso; }
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString([],{month:'short',day:'numeric',year:'numeric'}); } catch { return iso; }
+}
+
+function scrollToStage(stage) {
+  const el = document.getElementById('stage_' + stage);
+  if (el) { el.scrollIntoView({behavior:'smooth',block:'start'}); el.style.boxShadow='0 0 0 2px var(--accent)'; setTimeout(()=>{el.style.boxShadow='';},1500); }
+}
+
+/* ── Pipeline Stage Mapping ─────────────────────────── */
+
+const STAGE_MAP = {
+  'workflow_start':'discover','loading_cve':'discover','loading_cve_done':'discover',
+  'enriching_context':'predict','scoring_hosts':'predict','scoring_hosts_done':'predict',
+  'analyzing_history':'reason','generating_strategy':'reason',
+  'lightspeed_assist':'execute','publishing_playbook':'execute','syncing_aap_project':'execute',
+  'creating_aap_templates':'execute','launching_workflow':'execute','awaiting_aap':'execute',
+  'approved':'execute','executing_test':'execute','executing_test_mid':'execute',
+  'test_complete':'execute','executing_canary':'execute','canary_complete':'execute',
+  'executing_production':'execute','executing_production_mid':'execute',
+  'patch_failure':'execute','rollback':'execute',
+  'analyzing_failure':'execute','remediation_proposed':'execute','remediation_approved':'execute',
+  'remediation_executing':'execute','remediation_success':'execute','rollout_complete':'execute',
+  'workflow_complete':'learn',
+  'notifying':'notify','notify_complete':'notify',
+  'roi_calculating':'roi','roi_complete':'roi',
+};
+const PIPE_ORDER = ['discover','predict','reason','execute','learn','notify','roi'];
+
+function updatePipeline(flowStage, approvalState) {
+  const current = STAGE_MAP[flowStage] || null;
+  const currentIdx = current ? PIPE_ORDER.indexOf(current) : -1;
+  const isComplete = approvalState === 'approved_and_completed';
+  const isFailed = approvalState === 'flow_failed';
+  const isWaiting = approvalState === 'pending_review';
+
+  document.querySelectorAll('.pipe-stage').forEach(el => {
+    const stage = el.dataset.stage;
+    const idx = PIPE_ORDER.indexOf(stage);
+    el.classList.remove('active','done','failed','waiting');
+    if (isComplete) el.classList.add('done');
+    else if (isFailed && idx <= currentIdx) el.classList.add(idx === currentIdx ? 'failed' : 'done');
+    else if (isWaiting && idx === currentIdx) el.classList.add('waiting');
+    else if (idx < currentIdx) el.classList.add('done');
+    else if (idx === currentIdx) el.classList.add('active');
+  });
+}
+
+function renderPipeCve(run, runCount) {
+  const el = document.getElementById('pipe_cve');
+  if (!el) return;
+  const cve = run && run.workflow && run.workflow.cve;
+  if (!cve) {
+    el.className = 'pipe-cve idle';
+    el.textContent = 'No CVE selected';
+    el.title = 'These stages describe a single CVE patch run. Click Patch on a CVE to start one.';
+    return;
+  }
+  const others = Math.max(0, runCount - 1);
+  el.className = 'pipe-cve' + (others ? ' more' : '');
+  el.textContent = others ? `${cve}  (+${others} more)` : cve;
+  el.title = others
+    ? `Showing ${cve}. ${others} other run(s) are not reflected in this bar — see the Patches panel.`
+    : `Pipeline stages for ${cve}`;
+}
+
+function renderFlowStatusBar(summary) {
+  const bar = document.getElementById('flow_status_bar');
+  const approval = summary.approval_state;
+  const msg = summary.flow_message || summary.flow_stage || '';
+  let cls='idle', text='Ready';
+  if (approval === 'flow_in_progress' || approval === 'approved_in_progress') { cls='in-progress'; text=msg; }
+  else if (approval === 'pending_review') { cls='waiting'; text='Awaiting approval'; }
+  else if (approval === 'approved_and_completed') { cls='complete'; text=msg||'Completed'; }
+  else if (approval === 'flow_failed') { cls='failed'; text='Failed'; }
+  else if (summary.flow_stage) { cls='in-progress'; text=msg; }
+  bar.innerHTML = `<div class="flow-status-pill ${cls}"><span class="sdot"></span>${esc(text)}</div>`;
+}
+
+/* ── Host Table ─────────────────────────────────────── */
+
+function renderHostTable(hosts, showActions) {
+  if (!hosts || !hosts.length) return '';
+  const review = hosts.filter(h => h.decision === 'review');
+  const ok = hosts.filter(h => h.decision !== 'review');
+  let html = '<table class="host-table"><thead><tr><th>Host</th><th>Risk</th><th>Decision</th><th>Reason</th>';
+  if (showActions) html += '<th></th>';
+  html += '</tr></thead><tbody>';
+  for (const h of [...review, ...ok]) {
+    const isReview = h.decision === 'review';
+    html += `<tr><td class="mono">${esc(h.host)}</td>`;
+    html += `<td style="font-weight:700;color:${isReview?'var(--red)':'var(--text)'};">${esc(h.risk_score?.toFixed?.(1) ?? h.risk_score)}</td>`;
+    html += `<td><span class="host-badge ${isReview?'review':'ok'}">${isReview?'review':'ok'}</span></td>`;
+    html += `<td style="font-size:10px;color:var(--muted);">${esc(h.reason)}</td>`;
+    if (showActions && isReview) html += `<td><button class="btn-sm" onclick="showWhy('${esc(h.host)}')">Why?</button></td>`;
+    else if (showActions) html += '<td></td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+/* ── Stage Detail Renderers ─────────────────────────── */
+
+function renderStageDiscover(summary) {
+  let html = '<div class="stage-card" id="stage_discover"><div class="stage-card-head"><span class="stage-badge-sm discover">DISCOVER</span><h4>CVE Identification</h4></div><div class="stage-card-body">';
+  if (summary.cvss) {
+    html += '<div class="stats-grid-sm">';
+    html += `<div class="stat-box-sm"><div class="sv" style="color:var(--red);">${esc(summary.cvss)}</div><div class="sl">CVSS Score</div></div>`;
+    html += `<div class="stat-box-sm"><div class="sv">${esc(summary.affected_count)}</div><div class="sl">Affected Systems</div></div>`;
+    html += '</div>';
+    if (summary.cve_summary) html += `<p style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:6px;">${esc(summary.cve_summary)}</p>`;
+  } else {
+    html += `<div class="text-muted" style="font-size:12px;">${esc(summary.flow_message || 'Loading CVE...')}</div>`;
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderStagePredict(summary, hosts) {
+  let html = '<div class="stage-card" id="stage_predict"><div class="stage-card-head"><span class="stage-badge-sm predict">PREDICT</span><h4>Risk Assessment</h4></div><div class="stage-card-body">';
+  const ctx = summary.operational_context;
+  if (ctx) {
+    html += '<div class="stats-grid-sm">';
+    html += `<div class="stat-box-sm"><div class="sv">${esc(ctx.environment)}</div><div class="sl">Environment</div></div>`;
+    html += `<div class="stat-box-sm"><div class="sv">${esc(ctx.business_criticality)}</div><div class="sl">Business Tier</div></div>`;
+    html += `<div class="stat-box-sm"><div class="sv">${esc(ctx.historical_patch_success)}</div><div class="sl">Hist. Success</div></div>`;
+    html += '</div>';
+  }
+  if (summary.failure_probability) {
+    html += '<div class="stats-grid-sm">';
+    html += `<div class="stat-box-sm"><div class="sv" style="color:var(--red);">${esc(summary.failure_probability)}%</div><div class="sl">Failure Prob.</div></div>`;
+    html += `<div class="stat-box-sm"><div class="sv" style="color:var(--orange);">${esc(summary.impact_probability)}%</div><div class="sl">Impact Prob.</div></div>`;
+    html += `<div class="stat-box-sm"><div class="sv" style="color:var(--red);">${esc(summary.risk_classification)}</div><div class="sl">Risk Class</div></div>`;
+    html += '</div>';
+  }
+  if (hosts && hosts.length) html += renderHostTable(hosts, false);
+  html += '</div></div>';
+  return html;
+}
+
+function renderStageReason(summary, hosts) {
+  let html = '<div class="stage-card" id="stage_reason"><div class="stage-card-head"><span class="stage-badge-sm reason">REASON</span><h4>LLM Analysis</h4>';
+  html += '<div style="margin-left:auto;display:flex;gap:4px;"><button class="btn-sm" onclick="showWhatIf()">What If?</button></div>';
+  html += '</div><div class="stage-card-body">';
+  const analysis = summary.history_analysis;
+  if (analysis) {
+    html += `<div style="font-size:11px;margin-bottom:8px;"><strong>Similar failures:</strong> ${esc(analysis.similar_failures)} &nbsp; <strong>Risk:</strong> <span style="color:var(--red);font-weight:600;">${esc(analysis.contextual_risk)}</span></div>`;
+    if (analysis.patterns && analysis.patterns.length) {
+      html += '<div style="font-size:11px;color:var(--muted);"><strong>Patterns:</strong> ' + analysis.patterns.map(p => esc(p)).join('; ') + '</div>';
+    }
+  }
+  const history = summary.patch_history;
+  if (history && history.length) {
+    html += '<table class="host-table" style="margin-top:6px;"><thead><tr><th>Host</th><th>Patch</th><th>Result</th><th>Notes</th></tr></thead><tbody>';
+    for (const h of history) {
+      const c = h.result === 'FAILED' ? 'var(--red)' : 'var(--green)';
+      html += `<tr><td>${esc(h.host)}</td><td class="mono">${esc(h.patch)}</td><td style="color:${c};font-weight:600;">${esc(h.result)}</td><td style="font-size:10px;color:var(--muted);">${(h.notes||[]).map(n=>esc(n)).join(', ')}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  if (hosts && hosts.length) {
+    const reviewHosts = hosts.filter(h => h.decision === 'review');
+    if (reviewHosts.length) html += '<div style="margin-top:8px;font-size:11px;font-weight:700;">Hosts requiring review:</div>' + renderHostTable(hosts, true);
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderStageExecute(summary, aap) {
+  let html = '<div class="stage-card" id="stage_execute"><div class="stage-card-head"><span class="stage-badge-sm execute">EXECUTE</span><h4>Remediation</h4></div><div class="stage-card-body">';
+  const strategy = summary.patch_strategy;
+  if (strategy && strategy.phases) {
+    html += '<div class="exec-phases">';
+    for (const p of strategy.phases) html += `<div class="exec-phase"><h5>${esc(p.name)}</h5><div class="count">${esc(p.count)}</div><div class="text-muted" style="font-size:9px;">${esc(p.status)}</div></div>`;
+    html += '</div>';
+  }
+  const ls = summary.lightspeed;
+  if (ls) html += `<div style="font-size:11px;margin:6px 0;"><strong>Lightspeed:</strong> ${esc(ls.reason)}</div>`;
+  if (summary.playbook_path) html += `<div class="text-muted mono" style="font-size:10px;">${esc(summary.playbook_path)}</div>`;
+
+  if (summary.approval_state === 'pending_review') {
+    const wfJob = aap && aap.latest_workflow_job;
+    const wfJobId = wfJob ? wfJob.id : 1001;
+    html += `<div class="alert alert-warning"><strong>Awaiting Approval</strong> &mdash; Workflow paused at approval gate.<div style="margin-top:8px;"><button class="btn-action green" onclick="submitApproval(${wfJobId},'approve')">Approve</button> <button class="btn-action red" onclick="submitApproval(${wfJobId},'deny')">Deny</button></div></div>`;
+  }
+
+  const exec = summary.exec_progress;
+  if (exec) {
+    html += '<div class="exec-phases">';
+    for (const [key, phase] of Object.entries(exec)) {
+      const pct = phase.total ? Math.round(phase.completed / phase.total * 100) : 0;
+      const sc = phase.status === 'complete' ? 'complete' : phase.status === 'running' ? 'running' : phase.status === 'paused' ? 'paused' : '';
+      html += `<div class="exec-phase ${sc}"><h5>${key}</h5><div class="count">${phase.completed}/${phase.total}</div>`;
+      html += `<div class="progress-bar"><div class="progress-fill ${phase.status==='complete'?'green':'blue'}" style="width:${pct}%"></div></div></div>`;
+    }
+    html += '</div>';
+  }
+
+  if (summary.failure) {
+    const f = summary.failure;
+    html += `<div class="alert alert-danger"><strong>ALERT:</strong> ${esc(f.host)} &mdash; ${esc(f.check)} ${esc(f.status)}${f.rollback_status?' | Rollback: '+esc(f.rollback_status):''}</div>`;
+  }
+  if (summary.failure_analysis) {
+    const fa = summary.failure_analysis;
+    html += `<div class="alert alert-info"><strong>Root Cause:</strong> ${esc(fa.likely_cause)}<br><strong>Recommendation:</strong> ${esc(fa.recommendation)}</div>`;
+  }
+  if (summary.remediation) {
+    const rem = summary.remediation;
+    html += `<div style="font-size:11px;margin-top:6px;"><strong>Remediation:</strong> <span style="color:var(--accent);font-weight:600;">${esc(rem.proposed_change)}</span> (${esc(rem.from_value)} &rarr; ${esc(rem.to_value)})</div>`;
+  }
+  if (summary.remediation_progress) {
+    const rp = summary.remediation_progress;
+    html += '<table class="host-table"><thead><tr><th>Step</th><th>Status</th></tr></thead><tbody>';
+    for (const step of (rp.steps||[])) {
+      const icon = step.status === 'complete' ? '✓' : '⌛';
+      html += `<tr><td>${esc(step.name)}</td><td style="color:${step.status==='complete'?'var(--green)':'var(--muted)'};">${icon} ${esc(step.status)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    if (rp.result) html += `<div style="margin-top:4px;font-size:11px;"><strong>Result:</strong> <span style="color:var(--green);font-weight:600;">${esc(rp.result)}</span></div>`;
+  }
+  if (summary.approval_state === 'approved_and_completed') html += '<div class="alert alert-success"><strong>Execution Complete</strong></div>';
+  html += '</div></div>';
+  return html;
+}
+
+function renderStageLearn(summary) {
+  const fs = summary.final_summary;
+  if (!fs) return '';
+  let html = '<div class="stage-card" id="stage_learn"><div class="stage-card-head"><span class="stage-badge-sm learn">LEARN</span><h4>Continuous Improvement</h4></div><div class="stage-card-body">';
+  html += '<div class="stats-grid-sm">';
+  html += `<div class="stat-box-sm"><div class="sv" style="color:var(--green);">${esc(fs.systems_patched)}</div><div class="sl">Patched</div></div>`;
+  html += `<div class="stat-box-sm"><div class="sv">${esc(fs.initial_failure_prediction)}</div><div class="sl">Predicted</div></div>`;
+  html += `<div class="stat-box-sm"><div class="sv" style="color:var(--orange);">${esc(fs.actual_failures)}</div><div class="sl">Actual Failures</div></div>`;
+  html += `<div class="stat-box-sm"><div class="sv">${esc(fs.training_events_generated)}</div><div class="sl">Training Events</div></div>`;
+  html += '</div></div></div>';
+  return html;
+}
+
+function renderStageROI(summary) {
+  const roi = summary.roi;
+  if (!roi) return '';
+  const dims = roi.dimensions;
+  const totalVal = roi.total_value;
+  const maxDim = Math.max(dims.engineering_effort, dims.reduced_exposure, dims.automation_reuse, dims.faster_recovery);
+  function dimBar(label, val, color) {
+    const pct = Math.round((val / maxDim) * 100);
+    return `<div class="roi-dim"><div class="roi-dim-label">${label}</div><div class="roi-dim-bar-bg"><div class="roi-dim-bar" style="width:${pct}%;background:${color};">$${val.toLocaleString()}</div></div></div>`;
+  }
+  let html = '<div class="roi-card" id="stage_roi">';
+  html += `<div class="roi-hero"><div class="roi-hero-eyebrow">AI Operations ROI</div><div class="roi-hero-value">$${totalVal.toLocaleString()}</div><div class="roi-hero-label">value created this run</div>`;
+  html += `<div class="roi-hero-chips"><div class="roi-chip"><div class="roi-chip-val">${roi.cost_reduction_pct}%</div><div class="roi-chip-label">Cost Reduction</div></div>`;
+  html += `<div class="roi-chip"><div class="roi-chip-val">${roi.hours_saved}</div><div class="roi-chip-label">Hours Saved</div></div>`;
+  html += `<div class="roi-chip"><div class="roi-chip-val">${roi.systems}</div><div class="roi-chip-label">Systems</div></div>`;
+  html += `<div class="roi-chip"><div class="roi-chip-val">$${roi.manual_cost_per_host}</div><div class="roi-chip-label">&rarr; $${roi.ai_cost_per_host}/host</div></div></div></div>`;
+  html += '<div class="roi-body">';
+  html += '<div class="roi-section"><div class="roi-section-title">Value Breakdown</div>';
+  html += dimBar('Engineering Effort', dims.engineering_effort, 'var(--green)');
+  html += dimBar('Reduced Exposure', dims.reduced_exposure, 'var(--accent)');
+  html += dimBar('Automation Reuse', dims.automation_reuse, 'var(--orange)');
+  html += dimBar('Faster Recovery', dims.faster_recovery, 'var(--purple)');
+  html += '</div>';
+  html += '<div class="roi-section"><div class="roi-section-title">Time Machine</div><div class="roi-timeline">';
+  html += '<div class="roi-tl-col"><h5 style="color:var(--red);">Manual</h5>';
+  for (const step of roi.timeline_manual) { const w=Math.max(6,Math.min(step.duration_min/2,60)); html += `<div class="roi-tl-row"><span class="roi-tl-time">${esc(step.time)}</span><span class="roi-tl-bar" style="width:${w}px;background:var(--red);"></span><span class="roi-tl-event">${esc(step.event)}</span></div>`; }
+  html += `<div class="roi-tl-total" style="color:var(--red);">${roi.manual_hours}h</div></div>`;
+  html += '<div class="roi-tl-col"><h5 style="color:var(--green);">AI-Assisted</h5>';
+  for (const step of roi.timeline_ai) { const w=Math.max(3,Math.min(step.duration_min*3,30)); html += `<div class="roi-tl-row"><span class="roi-tl-time">${esc(step.time)}</span><span class="roi-tl-bar" style="width:${w}px;background:var(--green);"></span><span class="roi-tl-event">${esc(step.event)}</span></div>`; }
+  html += `<div class="roi-tl-total" style="color:var(--green);">${roi.ai_hours}h</div></div></div></div>`;
+  html += '<div class="roi-section"><div class="roi-section-title">Cost Per System</div><div class="roi-cost-compare">';
+  html += `<div class="roi-cost-box" style="background:rgba(255,107,107,0.08);"><div class="roi-cost-val" style="color:var(--red);">$${roi.manual_cost_per_host}</div><div class="roi-cost-label" style="color:var(--red);">Manual</div></div>`;
+  html += '<div class="roi-cost-arrow">&rarr;</div>';
+  html += `<div class="roi-cost-box" style="background:rgba(81,207,102,0.08);"><div class="roi-cost-val" style="color:var(--green);">$${roi.ai_cost_per_host}</div><div class="roi-cost-label" style="color:var(--green);">AI-Assisted</div></div></div></div>`;
+  html += '<div class="roi-section"><div class="roi-section-title">AI Contributions</div><div class="roi-contrib-grid">';
+  const c = roi.ai_contributions;
+  const contribs = [[c.systems_analyzed,'Systems'],[c.remediation_decisions,'Decisions'],[c.risk_assessments,'Risk Assessments'],[c.historical_correlations,'Correlations'],[c.a2a_handoffs,'A2A Handoffs'],[c.health_checks,'Health Checks'],[c.failures_diagnosed,'Diagnosed'],[c.rollbacks_executed,'Rollbacks'],[c.human_approvals,'Human Approval']];
+  for (const [v,l] of contribs) html += `<div class="roi-contrib-item"><div class="roi-contrib-val">${v}</div><div class="roi-contrib-label">${l}</div></div>`;
+  html += '</div></div>';
+  html += '<div class="roi-section"><div class="roi-section-title">Value Chain Shift</div><div class="roi-shift">';
+  html += '<div class="roi-shift-col" style="background:rgba(255,107,107,0.06);"><div class="roi-shift-title" style="color:var(--red);">BEFORE</div><div class="roi-shift-bar" style="background:var(--red);width:100%;"></div><div class="roi-shift-items">Discovery &bull; Analysis &bull; Scripts &bull; Execution &bull; Validation &bull; Recovery</div></div>';
+  html += '<div class="roi-shift-col" style="background:rgba(81,207,102,0.06);"><div class="roi-shift-title" style="color:var(--green);">AFTER</div><div class="roi-shift-bar" style="background:var(--green);width:25%;"></div><div class="roi-shift-items">Policy &bull; Approval &bull; Exceptions &bull; Architecture</div></div></div></div>';
+  html += '<div class="roi-section"><div class="roi-section-title">Industry Benchmarks</div><div class="roi-bench">';
+  for (const b of roi.benchmarks) html += `<div class="roi-bench-item"><div class="roi-bench-metric">${esc(b.metric)}</div><div class="roi-bench-val">${esc(b.value)}</div><div class="roi-bench-source">${esc(b.source)}</div></div>`;
+  html += '</div></div>';
+  html += `<div class="roi-qual">Illustrative calculations: $${roi.assumptions.labor_rate}/hr, ${roi.assumptions.manual_min_per_host} min/host manual, ${roi.assumptions.ai_min_per_host} min/host automated. Published benchmarks cited.</div>`;
+  html += '</div></div>';
+  return html;
+}
+
+/* ── Render Flow Detail (inside Patches panel) ──────── */
+
+function renderFlowDetail(data) {
+  const summary = data.summary || {};
+  const hosts = data.hosts || [];
+  const aap = data.aap || {};
+  const flowStage = summary.flow_stage;
+  if (!flowStage || summary.approval_state === 'idle') return null;
+
+  const pipeIdx = PIPE_ORDER.indexOf(STAGE_MAP[flowStage] || '');
+  let html = '';
+  if (summary.cvss || pipeIdx >= 0) html += renderStageDiscover(summary);
+  if (summary.operational_context || summary.failure_probability || (hosts.length && pipeIdx >= 1)) html += renderStagePredict(summary, hosts);
+  if (summary.history_analysis || summary.patch_history || pipeIdx >= 2) html += renderStageReason(summary, hosts);
+  if (summary.patch_strategy || summary.lightspeed || summary.approval_state === 'pending_review' || summary.approval_state === 'approved_in_progress' || summary.approval_state === 'approved_and_completed' || summary.exec_progress || pipeIdx >= 3) html += renderStageExecute(summary, aap);
+  if (summary.final_summary) html += renderStageLearn(summary);
+  if (summary.roi) html += renderStageROI(summary);
+  return html;
+}
+
+/* ── CVE Panel ──────────────────────────────────────── */
+
+function renderCveTable() {
+  const body = document.getElementById('cve_body');
+  let rows = cveData;
+  if (activeCveFilter !== 'all') rows = rows.filter(c => severityFromCvss(c.cvss) === activeCveFilter);
+  updateCveFilterBadges();
+  if (!rows.length) { body.innerHTML = `<div class="empty-state"><div class="empty-icon">&#x1f50d;</div><span>No CVEs match.</span></div>`; return; }
+  let html = `<table class="cve-table"><thead><tr><th>CVE ID</th><th>Severity</th><th>CVSS</th><th>Impact</th><th>Affected</th><th>Published</th><th>Desc</th><th></th></tr></thead><tbody>`;
+  for (const cve of rows) {
+    const sev = severityFromCvss(cve.cvss);
+    const exploit = cve.known_exploit ? '<span title="Known exploit" style="color:var(--red);font-size:10px;font-weight:700;margin-left:3px;">EXPLOIT</span>' : '';
+    html += `<tr><td class="mono" style="font-weight:700;font-size:12px;">${esc(cve.id)}${exploit}</td><td><span class="severity-badge severity-${sev}">${sev}</span></td><td style="font-weight:600;">${esc(cve.cvss)}</td><td style="font-size:11px;">${esc(cve.impact||'')}</td><td>${esc(cve.systems_affected)}</td><td class="text-muted" style="font-size:11px;white-space:nowrap;">${esc(formatDate(cve.public_date))}</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;">${esc((cve.description||'').slice(0,100))}</td><td><button class="btn-patch" onclick="launchPatch('${esc(cve.id)}')">Patch</button></td></tr>`;
+  }
+  html += '</tbody></table>';
+  const from = cveOffset + 1, to = cveOffset + cveData.length;
+  const totalLabel = cveTotalItems ? ` of ${cveTotalItems.toLocaleString()}` : '';
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0 0;font-size:11px;"><span class="text-muted">Showing ${from}–${to}${totalLabel}</span><div style="display:flex;gap:4px;"><button class="topbar-btn" id="cve_prev" ${cveOffset<=0?'disabled':''} style="font-size:11px;padding:3px 8px;">Prev</button><button class="topbar-btn" id="cve_next" ${!cveHasMore?'disabled':''} style="font-size:11px;padding:3px 8px;">Next</button></div></div>`;
+  body.innerHTML = html;
+  document.getElementById('cve_prev')?.addEventListener('click',()=>loadCves(Math.max(0,cveOffset-cvePageSize)));
+  document.getElementById('cve_next')?.addEventListener('click',()=>loadCves(cveOffset+cvePageSize));
+}
+
+function updateCveFilterBadges() {
+  const counts = {all:cveData.length,critical:0,high:0,medium:0,low:0};
+  for (const c of cveData) { const s=severityFromCvss(c.cvss); counts[s]=(counts[s]||0)+1; }
+  document.querySelectorAll('#cve_filters .pill').forEach(pill => {
+    const key = pill.dataset.severity;
+    let badge = pill.querySelector('.badge');
+    if (counts[key] > 0) { if(!badge){badge=document.createElement('span');badge.className='badge';pill.appendChild(badge);} badge.textContent=counts[key]; }
+    else if (badge) badge.remove();
+  });
+}
+
+/* ── Patches Panel ──────────────────────────────────── */
+
+function renderPatches() {
+  const body = document.getElementById('patches_body');
+  let flowHtml = null;
+
+  if (patchRuns.length === 1) {
+    const run = patchRuns[0];
+    const data = { summary: run.summary || {}, hosts: run.hosts || [], aap: run.aap || {} };
+    flowHtml = renderFlowDetail(data);
+  }
+
+  let runs = patchRuns;
+  if (activePatchFilter !== 'all') runs = runs.filter(r => patchCategory(r) === activePatchFilter);
+  updatePatchFilterBadges();
+
+  let html = '';
+  if (flowHtml) {
+    html = flowHtml;
+  } else if (!runs.length) {
+    html = `<div class="empty-state"><div class="empty-icon">&#x1f4e6;</div><span>No patch runs yet. Start one from CVE panel.</span></div>`;
+  } else {
+    for (const run of runs) {
+      const wf = run.workflow || {};
+      const s = run.summary || {};
+      const aap = run.aap || {};
+      const cat = patchCategory(run);
+      const status = patchStatusLabel(run);
+      const needsApproval = cat === 'approval' && aap.latest_workflow_job && aap.latest_workflow_job.id;
+      const wfJobId = aap.latest_workflow_job ? aap.latest_workflow_job.id : null;
+      const hostCount = (run.hosts || []).length;
+      const iconCls = cat === 'approval' ? 'approval' : cat === 'progress' ? 'progress' : 'completed';
+      const icon = cat === 'approval' ? '&#x23f3;' : cat === 'progress' ? '&#x2699;&#xfe0f;' : '&#x2705;';
+      html += `<div class="patch-item"><div class="patch-icon ${iconCls}">${icon}</div><div class="patch-info"><div class="patch-cve"><span class="mono">${esc(wf.cve||'Unknown')}</span></div><div class="patch-detail">${hostCount?hostCount+' host(s)':'Hosts pending'}${s.flow_message?' &middot; '+esc(s.flow_message):''}${wf.triggered_at?' &middot; '+esc(formatTime(wf.triggered_at)):''}</div></div><span class="patch-status ${status.cls}">${status.text}</span>${needsApproval?`<div class="patch-actions"><button class="btn-approve" onclick="submitApproval(${wfJobId},'approve')">Approve</button><button class="btn-deny" onclick="submitApproval(${wfJobId},'deny')">Deny</button></div>`:''}</div>`;
+    }
+  }
+  body.innerHTML = html;
+}
+
+function updatePatchFilterBadges() {
+  const counts = {all:patchRuns.length,approval:0,progress:0,completed:0};
+  for (const r of patchRuns) { const c=patchCategory(r); counts[c]=(counts[c]||0)+1; }
+  document.querySelectorAll('#patch_filters .pill').forEach(pill => {
+    const key = pill.dataset.status;
+    let badge = pill.querySelector('.badge');
+    if (counts[key] > 0) { if(!badge){badge=document.createElement('span');badge.className='badge';pill.appendChild(badge);} badge.textContent=counts[key]; }
+    else if (badge) badge.remove();
+  });
+}
+
+/* ── Summary Panel ──────────────────────────────────── */
+
+function renderSummary() {
+  const body = document.getElementById('summary_body');
+  document.getElementById('summary_date').textContent = new Date().toLocaleDateString([],{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const totalCves = cveData.length;
+  const criticalCves = cveData.filter(c => severityFromCvss(c.cvss) === 'critical').length;
+  const totalPatches = patchRuns.length;
+  const approvalCount = patchRuns.filter(r => patchCategory(r) === 'approval').length;
+  const inProgress = patchRuns.filter(r => patchCategory(r) === 'progress').length;
+  const completed = patchRuns.filter(r => patchCategory(r) === 'completed').length;
+  const successCount = patchRuns.filter(r => { const s=(r.summary||{}).last_workflow_status||''; return s==='successful'||(r.summary||{}).approval_state==='approved_and_completed'; }).length;
+  const totalHosts = patchRuns.reduce((sum,r) => sum+(r.hosts||[]).length, 0);
+  body.innerHTML = `<div class="summary-grid"><div class="stat-card"><div class="stat-label">Total CVEs</div><div class="stat-value">${totalCves}</div><div class="stat-change neutral">${criticalCves} critical</div></div><div class="stat-card"><div class="stat-label">Patch Runs</div><div class="stat-value">${totalPatches}</div><div class="stat-change ${approvalCount>0?'up':'neutral'}">${approvalCount} awaiting</div></div><div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value" style="color:var(--green);">${completed}</div><div class="stat-change down">${successCount} successful</div></div><div class="stat-card"><div class="stat-label">Hosts</div><div class="stat-value">${totalHosts}</div><div class="stat-change neutral">${inProgress} in progress</div></div></div>`;
+}
+
+/* ── Events Panel ───────────────────────────────────── */
+
+function eventDotClass(evt) {
+  const e = (evt.event || '').toLowerCase();
+  if (e === 'a2a_message') return 'a2a';
+  if (e.includes('fail') || e.includes('error') || e.includes('denied')) return 'error';
+  if (e.includes('approv') || e.includes('success') || e.includes('completed')) return 'success';
+  if (e.includes('review') || e.includes('warning')) return 'warning';
+  return 'info';
+}
+
+function buildEventCveMap() {
+  const sorted = patchRuns.filter(r => r.workflow && r.workflow.cve && r.workflow.triggered_at)
+    .map(r => ({cve:r.workflow.cve,start:new Date(r.workflow.triggered_at).getTime()})).sort((a,b)=>a.start-b.start);
+  return function(evt) {
+    const msg=(evt.message||'').toUpperCase();
+    const m=msg.match(/CVE-\d{4}-\d{4,}/);
+    if (m) return m[0];
+    if (!evt.time) return null;
+    const t=new Date(evt.time).getTime();
+    for (let i=sorted.length-1;i>=0;i--) { if(t>=sorted[i].start) return sorted[i].cve; }
+    return null;
+  };
+}
+
+function updateEventCveDropdown() {
+  const select = document.getElementById('event_cve_filter');
+  const cves = new Set();
+  const mapper = buildEventCveMap();
+  for (const evt of streamEvents) { const c=mapper(evt); if(c) cves.add(c); }
+  const prev = select.value;
+  const options = ['<option value="all">All CVEs</option>'];
+  for (const c of [...cves].sort().reverse()) options.push(`<option value="${esc(c)}">${esc(c)}</option>`);
+  select.innerHTML = options.join('');
+  if (prev && [...cves].includes(prev)) { select.value=prev; activeEventCveFilter=prev; }
+  else select.value = activeEventCveFilter;
+}
+
+function renderEvents() {
+  const body = document.getElementById('events_body');
+  const countEl = document.getElementById('event_count');
+  updateEventCveDropdown();
+  const mapper = buildEventCveMap();
+  let events = streamEvents.slice().reverse().slice(0,100);
+  if (activeEventCveFilter !== 'all') events = events.filter(evt => mapper(evt) === activeEventCveFilter);
+  events = events.slice(0,50);
+  countEl.textContent = events.length ? `${events.length} event${events.length>1?'s':''}` : '';
+  if (!events.length) { body.innerHTML = `<div class="empty-state"><div class="empty-icon">&#x1f4cb;</div><span>${activeEventCveFilter!=='all'?'No events for '+activeEventCveFilter+'.':'No events yet.'}</span></div>`; return; }
+  let html = '';
+  for (let i=0;i<events.length;i++) {
+    const evt=events[i]; const dotCls=eventDotClass(evt); const isA2a=evt.event==='a2a_message';
+    const evtCve=mapper(evt);
+    const cveTag=(activeEventCveFilter==='all'&&evtCve)?`<span style="font-size:9px;font-weight:700;color:var(--accent);margin-right:3px;">${esc(evtCve)}</span>`:'';
+    html += `<div class="event-item"><div class="event-dot-col"><div class="event-dot ${dotCls}"></div>${i<events.length-1?'<div class="event-line"></div>':''}</div><div class="event-body"><div class="event-time">${esc(formatTime(evt.time))}</div><div class="event-msg">${cveTag}${isA2a?`<span class="event-tag a2a">${esc(evt.from||'')} &rarr; ${esc(evt.to||'')}</span>`:''}${esc(evt.message)}</div></div></div>`;
+  }
+  body.innerHTML = html;
+}
+
+/* ── Agent Sidebar ──────────────────────────────────── */
+
+function renderA2AStream(stream) {
+  const container = document.getElementById('a2a_stream');
+  const countEl = document.getElementById('agentCount');
+  const dotEl = document.getElementById('agentDot');
+  const a2a = (stream || []).filter(e => e.event === 'a2a_message');
+  countEl.textContent = a2a.length;
+  if (!a2a.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:16px;">No agent messages yet.</div>';
+    dotEl.classList.remove('live');
+    return;
+  }
+  dotEl.classList.add('live');
+  let html = '';
+  for (const msg of a2a) {
+    const tc = msg.type || 'event';
+    const time = (msg.time||'').replace(/.*T/,'').replace('Z','');
+    const route = msg.message ? msg.message.split(':')[0] : '';
+    const body = msg.message ? msg.message.split(':').slice(1).join(':').trim() : '';
+    html += `<div class="agent-msg ${tc}"><span class="msg-time">${esc(time)} • ${esc(tc)}</span>${route?`<span class="msg-route">${esc(route)}</span>`:''}${body?`<div style="margin-top:1px;">${esc(body)}</div>`:''}</div>`;
+  }
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('agentSidebar').classList.toggle('open', sidebarOpen);
+}
+
+/* ── API calls ──────────────────────────────────────── */
+
+async function fetchState() {
+  try {
+    const res = await fetch(`${API_BASE}/api/state`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    lastState = data;
+    document.getElementById('api_dot').classList.remove('offline');
+    document.getElementById('api_status_text').textContent = 'Connected';
+
+    if (data.runs && data.runs.length) patchRuns = data.runs;
+    else if (data.workflow && data.workflow.cve) patchRuns = [{workflow:data.workflow,hosts:data.hosts,summary:data.summary,aap:data.aap}];
+    else patchRuns = [];
+
+    streamEvents = data.stream || [];
+    // The bar tracks exactly one run. With several in flight it follows the
+    // most recent, so the label has to say which — and warn about the rest.
+    const tracked = patchRuns.length ? patchRuns[0] : null;
+    const summary = (patchRuns.length === 1 ? patchRuns[0].summary : data.summary) || {};
+    renderPipeCve(tracked, patchRuns.length);
+    updatePipeline(summary.flow_stage, summary.approval_state);
+    renderFlowStatusBar(summary);
+    renderPatches();
+    renderSummary();
+    renderEvents();
+    renderA2AStream(data.stream);
+
+    const approvalState = summary.approval_state;
+    const isActive = approvalState === 'flow_in_progress' || approvalState === 'approved_in_progress';
+    if (isActive && pollMs !== 2000) { pollMs=2000; if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchState,pollMs); }
+    else if (approvalState === 'pending_review' && pollMs !== 5000) { pollMs=5000; if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchState,pollMs); }
+    else if (approvalState === 'approved_and_completed') { if(pollTimer){clearInterval(pollTimer);pollTimer=null;} }
+  } catch {
+    document.getElementById('api_dot').classList.add('offline');
+    document.getElementById('api_status_text').textContent = 'CVE-only mode';
+    patchRuns=[]; streamEvents=[];
+    renderPatches(); renderSummary(); renderEvents();
+  }
+}
+
+async function loadCves(offset) {
+  if (typeof offset === 'number') cveOffset = Math.max(0, offset);
+  document.getElementById('cve_body').innerHTML = `<div class="empty-state"><div class="spinner"></div><span>Loading CVEs...</span></div>`;
+  try {
+    const res = await fetch(`${API_BASE}/api/cves?limit=${cvePageSize}&offset=${cveOffset}`);
+    const data = await res.json();
+    if (data.ok !== false) { cveData=data.cves||[]; cveHasMore=!!data.has_more; cveTotalItems=data.total_items||0; cveOffset=data.offset??cveOffset; }
+  } catch { cveData=[]; }
+  renderCveTable(); renderSummary();
+}
+
+async function launchPatch(cveId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/start`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cve:cveId})});
+    const data = await res.json();
+    if (data.ok) {
+      activePatchFilter='all';
+      document.querySelectorAll('#patch_filters .pill').forEach(p => p.classList.toggle('active',p.dataset.status==='all'));
+      if (!sidebarOpen) toggleSidebar();
+      pollMs=2000; if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchState,pollMs);
+      await fetchState();
+    }
+  } catch(err) { console.error('Start patch failed:', err); }
+}
+
+async function submitApproval(workflowJobId, action) {
+  const endpoint = action === 'approve' ? '/api/approve' : '/api/deny';
+  document.querySelectorAll('.btn-approve,.btn-deny,.btn-action').forEach(b=>{b.disabled=true;});
+  try {
+    await fetch(`${API_BASE}${endpoint}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({workflow_job_id:workflowJobId})});
+  } catch(err) { console.error(`${action} failed:`,err); }
+  finally { document.querySelectorAll('.btn-approve,.btn-deny,.btn-action').forEach(b=>{b.disabled=false;}); }
+  pollMs=2000; if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchState,pollMs);
+  await fetchState();
+}
+
+/* ── What If / Why Analysis ─────────────────────────── */
+
+function openAnalysis(title) {
+  document.getElementById('analysisTitle').textContent = title;
+  document.getElementById('analysisBadge').textContent = '';
+  document.getElementById('analysisBadge').className = 'analysis-badge';
+  document.getElementById('analysisBody').innerHTML = '<div class="analysis-loading"><div class="spinner"></div><div>Analyzing with AI...</div></div>';
+  document.getElementById('analysisOverlay').classList.add('open');
+}
+function closeAnalysis() { document.getElementById('analysisOverlay').classList.remove('open'); }
+
+function showWhy(hostname) {
+  openAnalysis('Why? — ' + hostname);
+  fetch('/api/why?host=' + encodeURIComponent(hostname)).then(r=>r.json()).then(data => {
+    const badge = document.getElementById('analysisBadge');
+    badge.textContent = data.source === 'live' ? 'LIVE' : 'DEMO';
+    badge.className = 'analysis-badge ' + (data.source === 'live' ? 'badge-live' : 'badge-fallback');
+    let html = '';
+    if (data.host) {
+      html += '<div style="display:flex;gap:10px;margin-bottom:14px;">';
+      html += '<div class="stat-box-sm" style="flex:1;"><div class="sv">' + esc(data.host.risk_score) + '</div><div class="sl">Risk Score</div></div>';
+      html += '<div class="stat-box-sm" style="flex:1;"><div class="sv" style="text-transform:uppercase;">' + esc(data.host.decision) + '</div><div class="sl">Decision</div></div>';
+      html += '</div>';
+    }
+    for (const f of (data.factors || [])) {
+      html += '<div class="factor-card"><div class="factor-icon">'+(f.icon||'')+'</div><div class="factor-content"><div class="factor-head"><span class="factor-name">'+esc(f.name)+'</span><span class="factor-weight">'+esc(f.weight)+'</span></div><div class="factor-value">'+esc(f.value)+'</div><div class="factor-detail">'+esc(f.detail)+'</div></div></div>';
+    }
+    if (data.recommendation) html += '<div class="analysis-recommendation"><strong>Recommendation</strong><p>'+esc(data.recommendation)+'</p></div>';
+    document.getElementById('analysisBody').innerHTML = html;
+  }).catch(e => { document.getElementById('analysisBody').innerHTML = '<div style="color:var(--red);padding:20px;">Failed: '+esc(String(e))+'</div>'; });
+}
+
+function showWhatIf() {
+  openAnalysis('What If? — Scenario Analysis');
+  fetch('/api/what-if').then(r=>r.json()).then(data => {
+    const badge = document.getElementById('analysisBadge');
+    badge.textContent = data.source === 'live' ? 'LIVE' : 'DEMO';
+    badge.className = 'analysis-badge ' + (data.source === 'live' ? 'badge-live' : 'badge-fallback');
+    const s = (lastState && lastState.summary) || (patchRuns.length === 1 ? patchRuns[0].summary : {}) || {};
+    let html = '<div style="display:flex;gap:10px;margin-bottom:14px;">';
+    html += '<div class="stat-box-sm" style="flex:1;"><div class="sv" style="color:var(--red);">'+esc(s.risk_classification||'N/A')+'</div><div class="sl">Current Risk</div></div>';
+    html += '<div class="stat-box-sm" style="flex:1;"><div class="sv" style="color:var(--orange);">'+esc(s.failure_probability||'N/A')+'%</div><div class="sl">Failure Prob.</div></div>';
+    html += '</div>';
+    for (const sc of (data.scenarios || [])) {
+      const dir = sc.impact_direction === 'up' ? 'impact-up' : 'impact-down';
+      const arrow = sc.impact_direction === 'up' ? '↑' : '↓';
+      html += '<div class="scenario-card"><div class="scenario-head"><span class="scenario-icon">'+(sc.icon||'')+'</span><span class="scenario-title">'+esc(sc.title)+'</span><span class="scenario-impact '+dir+'">'+arrow+' '+esc(sc.impact)+'</span></div>';
+      html += '<div class="scenario-change">'+esc(sc.change)+'</div>';
+      html += '<div class="scenario-detail">'+esc(sc.detail)+'</div>';
+      html += '<div class="scenario-meta">';
+      if (sc.confidence) html += '<span><strong>Confidence:</strong> '+esc(sc.confidence)+'</span>';
+      if (sc.evidence) html += '<span><strong>Evidence:</strong> '+esc(sc.evidence)+'</span>';
+      html += '</div></div>';
+    }
+    document.getElementById('analysisBody').innerHTML = html;
+  }).catch(e => { document.getElementById('analysisBody').innerHTML = '<div style="color:var(--red);padding:20px;">Failed: '+esc(String(e))+'</div>'; });
+}
+
+/* ── Server Log Panel ───────────────────────────────── */
+
+async function loadFlowLog() {
+  try {
+    const res = await fetch('/api/flow-log?lines=100');
+    const data = await res.json();
+    if (data.ok) { const el=document.getElementById('flow_log_content'); el.textContent=(data.lines||[]).join('\n')||'Log is empty.'; el.scrollTop=el.scrollHeight; }
+  } catch(e) { document.getElementById('flow_log_content').textContent='Failed: '+e; }
+}
+
+function toggleLogPanel() {
+  logPanelOpen = !logPanelOpen;
+  document.getElementById('logPanel').classList.toggle('open', logPanelOpen);
+  if (logPanelOpen) { loadFlowLog(); logPollTimer=setInterval(loadFlowLog,3000); }
+  else { if(logPollTimer){clearInterval(logPollTimer);logPollTimer=null;} }
+}
+
+/* ── Settings ───────────────────────────────────────── */
+
+const SETTINGS_SCHEMA = [
+  {section:'AI Gateway (Llama Stack)',vars:[
+    {key:'LLAMA_STACK_URL',label:'Llama Stack URL',hint:'URL for LLM inference',defaultVal:'http://127.0.0.1:8321'},
+    {key:'DEFAULT_LLM_MODEL',label:'LLM Model',hint:'Model ID',defaultVal:'vllm-inference/llama-scout-17b'},
+    {key:'VECTOR_DB_ID',label:'Vector DB ID',hint:'RAG vector store ID',defaultVal:'patch_history'},
+  ]},
+  {section:'Risk Model (RHOAI)',vars:[{key:'RISK_URL',label:'RHOAI Risk URL',hint:'KServe endpoint',defaultVal:'http://risk-model.apps.ocp.example.com/v2/models/patch-risk/infer'}]},
+  {section:'Red Hat Insights',vars:[
+    {key:'INSIGHTS_MCP_ENDPOINT',label:'Insights MCP',hint:'MCP server for Insights',defaultVal:'http://127.0.0.1:8400'},
+    {key:'INSIGHTS_TOOLGROUP',label:'Tool Group',hint:'Llama Stack tool group',defaultVal:'insights_mcp'},
+  ]},
+  {section:'Ansible Automation Platform',vars:[
+    {key:'AAP_BASE_URL',label:'AAP URL',hint:'AAP Controller API URL'},
+    {key:'AAP_TOKEN',label:'AAP Token',hint:'OAuth token for AAP',secret:true},
+    {key:'AAP_VERIFY_TLS',label:'Verify TLS',hint:'Verify TLS for AAP',defaultVal:'false'},
+  ]},
+  {section:'GitHub',vars:[
+    {key:'GITHUB_MCP_ENDPOINT',label:'GitHub MCP',hint:'MCP server for GitHub',defaultVal:'http://127.0.0.1:8401'},
+    {key:'GITHUB_TOKEN',label:'GitHub Token',hint:'PAT for GitHub',secret:true},
+    {key:'GITHUB_REPO_OWNER',label:'Repo Owner',defaultVal:'svalluru'},
+    {key:'GITHUB_REPO_NAME',label:'Repo Name',defaultVal:'agentic-ai-patching'},
+  ]},
+  {section:'ROI Agent',vars:[
+    {key:'ROI_LABOR_RATE',label:'Labor Rate ($/hr)',hint:'Engineer hourly rate',defaultVal:'72'},
+    {key:'ROI_MANUAL_MIN_PER_HOST',label:'Manual Min/Host',defaultVal:'30'},
+    {key:'ROI_AI_MIN_PER_HOST',label:'AI Min/Host',defaultVal:'5'},
+    {key:'ROI_DIM_ENGINEERING_PCT',label:'Engineering %',defaultVal:'35'},
+    {key:'ROI_DIM_EXPOSURE_PCT',label:'Exposure %',defaultVal:'44'},
+    {key:'ROI_DIM_REUSE_PCT',label:'Reuse %',defaultVal:'13'},
+    {key:'ROI_DIM_RECOVERY_PCT',label:'Recovery %',defaultVal:'8'},
+  ]},
+];
+let settingsOriginal = {};
+
+function openSettings() { document.getElementById('settingsOverlay').classList.add('open'); loadSettings(); }
+function closeSettings() { document.getElementById('settingsOverlay').classList.remove('open'); }
+
+async function loadSettings() {
+  try { const r=await fetch('/api/settings'); const d=await r.json(); settingsOriginal=d.ok?(d.settings||{}):{};} catch{settingsOriginal={};}
+  renderSettingsForm();
+}
+
+function renderSettingsForm() {
+  let html = '';
+  for (const g of SETTINGS_SCHEMA) {
+    html += `<div class="setting-section">${esc(g.section)}</div>`;
+    for (const v of g.vars) {
+      const val = settingsOriginal[v.key] || v.defaultVal || '';
+      html += `<div class="setting-row"><div class="setting-label">${esc(v.label)}</div><div style="flex:1;"><input class="setting-input" data-key="${v.key}" type="${v.secret?'password':'text'}" value="${val.replace(/"/g,'&quot;')}" />${v.hint?'<div class="setting-hint">'+esc(v.hint)+'</div>':''}</div></div>`;
+    }
+  }
+  document.getElementById('settings_form').innerHTML = html;
+  document.querySelectorAll('.setting-input').forEach(el => {
+    el.addEventListener('input', () => { el.classList.toggle('changed', el.value !== (settingsOriginal[el.dataset.key] || '')); });
+  });
+}
+
+async function saveSettings() {
+  const msg = document.getElementById('settings_msg');
+  const updates = {};
+  document.querySelectorAll('.setting-input').forEach(el => {
+    const key=el.dataset.key, val=el.value.trim();
+    if (val !== (settingsOriginal[key]||'') && !val.includes('•')) updates[key]=val;
+  });
+  if (!Object.keys(updates).length) { msg.textContent='No changes.'; return; }
+  try {
+    const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:updates})});
+    const d=await r.json();
+    if (d.ok) { msg.textContent='Saved '+Object.keys(updates).length+' setting(s)'; settingsOriginal={...settingsOriginal,...updates}; document.querySelectorAll('.setting-input.changed').forEach(el=>el.classList.remove('changed')); setTimeout(()=>closeSettings(),600); }
+    else msg.textContent='Error: '+(d.error||'unknown');
+  } catch(e) { msg.textContent='Failed: '+e.message; }
+}
+
+function openGuide() { document.getElementById('guideOverlay').classList.add('open'); }
+function closeGuide() { document.getElementById('guideOverlay').classList.remove('open'); }
+
+/* ── Filter click handlers ──────────────────────────── */
+
+document.getElementById('cve_filters').addEventListener('click', e => {
+  const pill=e.target.closest('.pill'); if(!pill) return;
+  activeCveFilter=pill.dataset.severity;
+  document.querySelectorAll('#cve_filters .pill').forEach(p=>p.classList.toggle('active',p===pill));
+  renderCveTable();
+});
+
+document.getElementById('patch_filters').addEventListener('click', e => {
+  const pill=e.target.closest('.pill'); if(!pill) return;
+  activePatchFilter=pill.dataset.status;
+  document.querySelectorAll('#patch_filters .pill').forEach(p=>p.classList.toggle('active',p===pill));
+  renderPatches();
+});
+
+document.getElementById('event_cve_filter').addEventListener('change', e => { activeEventCveFilter=e.target.value; renderEvents(); });
+
+document.querySelectorAll('.guide-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.guide-tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.guide-tab-panel').forEach(p=>p.classList.remove('active'));
+    tab.classList.add('active');
+    const panel = document.getElementById('gtab_' + tab.dataset.gtab);
+    if (panel) panel.classList.add('active');
+  });
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSettings(); closeGuide(); closeAnalysis(); }
+});
+
+/* ── Boot ───────────────────────────────────────────── */
+
+(async function init() {
+  await Promise.all([loadCves(0), fetchState()]);
+  if (!pollTimer) pollTimer = setInterval(fetchState, pollMs);
+})();
+
+</script>
+</body>
+</html>

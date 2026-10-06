@@ -1,0 +1,31 @@
+{
+  "feature_order": [
+    "cvss",
+    "age_days",
+    "affected_hosts",
+    "type_encoded"
+  ],
+  "type_mapping": {
+    "security": 0,
+    "bugfix": 1,
+    "enhancement": 2
+  },
+  "example_v2_request": {
+    "inputs": [
+      {
+        "name": "input-0",
+        "shape": [
+          1,
+          4
+        ],
+        "datatype": "FP32",
+        "data": [
+          2.6,
+          100.0,
+          10.0,
+          0.0
+        ]
+      }
+    ]
+  }
+}

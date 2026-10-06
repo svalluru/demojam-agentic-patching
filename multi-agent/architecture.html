@@ -1,0 +1,349 @@
+<!doctype html>
+<!--
+  Source for multi-agent/architecture.jpg. Self-contained: no external CSS, fonts or images.
+
+  Re-render after editing (from repo root):
+
+    H=1307   # grow if content is clipped; shrink to trim whitespace
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
+      --window-size=1920,$H --screenshot=/tmp/arch.png multi-agent/architecture.html
+    sips -s format jpeg -s formatOptions 95 /tmp/arch.png --out multi-agent/architecture.jpg
+
+  Body width is fixed at 1920px; --force-device-scale-factor=2 gives a 3840px-wide retina JPEG.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --sup:    #be123c;  --sup-bg:    #fff1f2;
+    --common: #475569;  --common-bg: #f1f5f9;
+    --info:   #2563eb;  --info-bg:   #eff6ff;
+    --patch:  #7c3aed;  --patch-bg:  #f5f3ff;
+    --comm:   #ea580c;  --comm-bg:   #fff7ed;
+    --res:    #059669;  --res-bg:    #ecfdf5;
+    --ink:    #0f172a;  --muted:     #64748b;
+    --line:   #cbd5e1;  --fb:        #b45309;  --fb-bg: #fffbeb;
+    --red:    #dc2626;  --amber:     #f59e0b;  --green: #16a34a;
+  }
+  body { font-family: -apple-system,"Segoe UI",Inter,sans-serif; background:#fff;
+         color:var(--ink); width:1920px; padding:32px 38px; }
+  h1 { font-size:30px; font-weight:800; letter-spacing:-0.6px; }
+  .sub { font-size:14px; color:var(--muted); margin-top:4px; }
+  .hdr { border-bottom:3px solid var(--ink); padding-bottom:11px; margin-bottom:16px;
+         display:flex; justify-content:space-between; align-items:flex-end; }
+  .guards { font-size:11.5px; color:var(--muted); text-align:right; line-height:1.7;
+            font-family:ui-monospace,Menlo,monospace; }
+  .guards b { color:var(--ink); }
+
+  /* ---- common-code band ---- */
+  .band { border:2px dashed var(--common); background:var(--common-bg);
+          border-radius:11px; padding:9px 15px; display:flex; align-items:center; gap:16px; }
+  .band .ttl { font-size:13.5px; font-weight:800; color:var(--common); white-space:nowrap;
+               display:flex; align-items:center; gap:8px; }
+  .band .ttl .pill { background:var(--common); color:#fff; font-size:9.5px; padding:2px 7px;
+                     border-radius:4px; letter-spacing:.6px; }
+  .band .it { font-size:12.5px; font-weight:600; display:flex; align-items:baseline; gap:6px; }
+  .band .it i { font-style:normal; font-family:ui-monospace,Menlo,monospace;
+                font-size:10.5px; font-weight:800; color:var(--common); }
+  .band .it em { font-style:normal; color:var(--muted); font-weight:500; font-size:11px; }
+  .band .fbm { margin-left:auto; font-size:11px; color:var(--fb); background:#fff;
+               border-left:2.5px solid var(--fb); padding:3px 9px; border-radius:0 4px 4px 0; }
+
+  .down { text-align:center; font-size:17px; color:var(--muted); margin:5px 0; }
+  .down b { font-size:11.5px; font-weight:800; color:var(--ink); display:block;
+            letter-spacing:.5px; margin-bottom:-2px; }
+
+  /* ---- supervisor band ---- */
+  .sup { border:3px solid var(--sup); background:var(--sup-bg); border-radius:12px;
+         overflow:hidden; }
+  .sup-hd { background:var(--sup); color:#fff; padding:9px 15px; display:flex;
+            align-items:center; gap:11px; font-size:16px; font-weight:800; }
+  .sup-hd .tag { margin-left:auto; font-size:10.5px; font-weight:700; opacity:.92;
+                 font-family:ui-monospace,Menlo,monospace; }
+  .sup-bd { padding:9px 15px; display:flex; align-items:center; gap:22px; }
+  .sup-bd .state { font-size:11.5px; font-family:ui-monospace,Menlo,monospace;
+                   color:var(--sup); line-height:1.6; }
+  .sup-bd .state b { color:var(--ink); }
+  .calls { display:flex; gap:7px; margin-left:auto; align-items:center; }
+  .call { border-radius:7px; padding:4px 11px; font-size:11.5px; font-weight:800; color:#fff; }
+  .c1 { background:var(--info); } .c2 { background:var(--patch); }
+  .c3 { background:var(--comm); } .c4 { background:var(--res); }
+  .call small { font-weight:700; opacity:.85; }
+  .calls .sep { color:var(--muted); font-size:13px; }
+
+  .cols { display:grid; grid-template-columns:1fr 740px; gap:24px; align-items:start;
+          margin-top:12px; }
+
+  /* ---- agent cards ---- */
+  .agent { border:2px solid; border-radius:11px; margin-bottom:11px; overflow:hidden; }
+  .agent-hd { padding:8px 14px; display:flex; align-items:center; gap:10px;
+              font-size:14.5px; font-weight:800; color:#fff; }
+  .agent-hd .n { width:22px; height:22px; border-radius:50%; background:rgba(255,255,255,.25);
+                 display:grid; place-items:center; font-size:12px; }
+  .agent-hd .tag { margin-left:auto; font-size:10.5px; font-weight:700; opacity:.9;
+                   letter-spacing:.6px; text-transform:uppercase; }
+  .agent-bd { padding:8px 13px; }
+  .a1 { border-color:var(--info); }  .a1 .agent-hd { background:var(--info); }  .a1 .agent-bd { background:var(--info-bg); }
+  .a2 { border-color:var(--patch); } .a2 .agent-hd { background:var(--patch); } .a2 .agent-bd { background:var(--patch-bg); }
+  .a3 { border-color:var(--comm); }  .a3 .agent-hd { background:var(--comm); }  .a3 .agent-bd { background:var(--comm-bg); }
+  .a4 { border-color:var(--res); }   .a4 .agent-hd { background:var(--res); }   .a4 .agent-bd { background:var(--res-bg); }
+
+  .step { display:grid; grid-template-columns:24px 1fr 1fr; gap:9px; padding:4px 0;
+          border-bottom:1px dotted var(--line); align-items:baseline; }
+  .step:last-child { border-bottom:none; }
+  .step .i { font-size:11px; font-weight:800; color:var(--muted);
+             font-family:ui-monospace,Menlo,monospace; }
+  .step .t { font-size:12.5px; font-weight:600; line-height:1.35; }
+  .step .t em { font-style:normal; color:var(--muted); font-weight:500; font-size:11px; }
+  .step .f { font-size:11px; color:var(--fb); line-height:1.35; background:var(--fb-bg);
+             border-left:2.5px solid var(--fb); padding:2.5px 7px; border-radius:0 4px 4px 0; }
+  .step .f b { font-weight:800; }
+  .hard { color:var(--red)!important; border-left-color:var(--red)!important;
+          background:#fef2f2!important; }
+  .colhdr { display:grid; grid-template-columns:24px 1fr 1fr; gap:9px; font-size:9.5px;
+            font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--muted);
+            padding-bottom:3px; border-bottom:1.5px solid var(--line); margin-bottom:2px; }
+  .retby { font-size:10.5px; font-weight:700; color:var(--muted); padding:4px 0 0;
+           font-style:italic; }
+
+  /* ---- loop panel ---- */
+  .panel { border:3px solid var(--sup); border-radius:12px; overflow:hidden; }
+  .panel-hd { background:var(--sup); color:#fff; padding:8px 14px; font-size:15px;
+              font-weight:800; display:flex; align-items:center; gap:10px; }
+  .panel-hd .tag { margin-left:auto; font-size:10.5px; font-weight:700; opacity:.92;
+                   font-family:ui-monospace,Menlo,monospace; }
+  .panel-bd { padding:12px 15px; background:#fffafb; }
+  .fl { display:flex; flex-direction:column; align-items:center; }
+  .box { border:2px solid var(--sup); background:#fff; border-radius:8px; padding:5px 14px;
+         font-size:12.5px; font-weight:700; text-align:center; min-width:340px; line-height:1.3; }
+  .box small { display:block; font-weight:500; color:var(--muted); font-size:10.5px; }
+  .box.bi { border-color:var(--info); }  .box.bp { border-color:var(--patch); }
+  .box.bc { border-color:var(--comm); }  .box.br { border-color:var(--res); }
+  .who { display:inline-block; font-size:9px; font-weight:800; color:#fff; border-radius:3px;
+         padding:1px 5px; vertical-align:1.5px; margin-right:5px; letter-spacing:.3px; }
+  .wi { background:var(--info); } .wp { background:var(--patch); }
+  .wc { background:var(--comm); } .wr { background:var(--res); } .ws { background:var(--sup); }
+  .dia { border:2px solid var(--amber); background:#fffbeb; border-radius:8px; padding:4px 16px;
+         font-size:12.5px; font-weight:700; text-align:center; min-width:340px; }
+  .v { width:2px; height:12px; background:var(--muted); position:relative; }
+  .v::after { content:'▼'; position:absolute; left:-4.5px; bottom:-7px; font-size:9px;
+              color:var(--muted); }
+  .vfail { width:2px; height:30px; background:var(--muted); position:relative; }
+  .vfail span { position:absolute; left:8px; top:5px; font-size:10.5px; font-weight:800;
+                color:var(--red); }
+  .vfail::after { content:'▼'; position:absolute; left:-4.5px; bottom:-7px; font-size:9px;
+                  color:var(--muted); }
+  .row { display:flex; align-items:center; gap:9px; }
+  .exit { border-radius:7px; padding:4px 10px; font-size:11px; font-weight:800; color:#fff;
+          white-space:nowrap; }
+  .eB { background:var(--amber); } .eC { background:var(--red); } .eA { background:var(--green); }
+  .lbl { font-size:10.5px; font-weight:800; color:var(--muted); }
+  .loopback { border:2px dashed var(--sup); border-radius:8px; padding:4px 13px; font-size:11px;
+              font-weight:700; color:var(--sup); background:var(--sup-bg); }
+
+  /* ---- footer ---- */
+  .foot { display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:14px;
+          padding-top:13px; border-top:3px solid var(--ink); }
+  .foot h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:1px;
+             margin-bottom:8px; color:var(--muted); }
+  .ex { display:flex; gap:10px; align-items:flex-start; margin-bottom:6px; }
+  .ex .chip { border-radius:6px; padding:3px 9px; font-size:10.5px; font-weight:800; color:#fff;
+              white-space:nowrap; min-width:112px; text-align:center; }
+  .ex .d { font-size:12px; line-height:1.45; }
+  .pr { display:flex; gap:9px; margin-bottom:7px; align-items:flex-start; }
+  .pr .num { width:19px; height:19px; border-radius:50%; background:var(--ink); color:#fff;
+             font-size:10.5px; font-weight:800; display:grid; place-items:center; flex-shrink:0; }
+  .pr .d { font-size:12px; line-height:1.45; }
+  .legend { margin-top:10px; font-size:10.5px; color:var(--muted); display:flex; gap:16px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:3px; vertical-align:-1px;
+        margin-right:5px; }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <h1>Agentic CVE Patching &mdash; Supervisor + Four Agents</h1>
+    <div class="sub">CVE intake in common code &middot; Supervisor orchestrates four agents per CVE &middot; self-healing loop owned by the Supervisor</div>
+  </div>
+  <div class="guards">
+    <b>MAX_ATTEMPTS_PER_HOST</b> = 2<br>
+    <b>MAX_FAILED_PER_PHASE</b> &nbsp;= 2<br>
+    <b>tried_fixes[host]</b> &nbsp;&nbsp;&nbsp;&nbsp;= set()
+  </div>
+</div>
+
+<!-- COMMON CODE -->
+<div class="band">
+  <div class="ttl"><span class="pill">NOT AN AGENT</span> Common code &rarr; UI</div>
+  <div class="it"><i>C1</i> Get CVE list <em>&mdash; Insights API</em></div>
+  <div class="it"><i>C2</i> Resolve affected hosts <em>&mdash; Insights MCP</em></div>
+  <div class="it" style="color:var(--common);">&rarr; UI renders the CVE table</div>
+  <div class="fbm">Fallback: cached page on disk &rarr; curated static list &nbsp;&middot;&nbsp; cached host inventory</div>
+</div>
+
+<div class="down"><b>FOR EACH CVE</b>&#9660;</div>
+
+<!-- SUPERVISOR -->
+<div class="sup">
+  <div class="sup-hd">
+    <span>&#9733;</span> Supervisor Agent
+    <span class="tag">owns control flow + per-CVE state</span>
+  </div>
+  <div class="sup-bd">
+    <div class="state">
+      <b>state:</b> attempts[host] &middot; phase_failures &middot; tried_fixes[host]<br>
+      <b>decides:</b> which agent runs next, when to retry, when to stop
+    </div>
+    <div class="calls">
+      <span class="lbl">calls&nbsp;&rarr;</span>
+      <span class="call c1"><small>1</small>&nbsp; Info</span><span class="sep">&rsaquo;</span>
+      <span class="call c2"><small>2</small>&nbsp; Patching</span><span class="sep">&rsaquo;</span>
+      <span class="call c3"><small>3</small>&nbsp; Communication</span><span class="sep">&rsaquo;</span>
+      <span class="call c4"><small>4</small>&nbsp; Results</span>
+      <span class="sep" style="margin-left:6px;">&#8634;</span>
+      <span class="lbl" style="color:var(--sup);">re-calls Info + Patching on failure</span>
+    </div>
+  </div>
+</div>
+
+<div class="cols">
+  <!-- LEFT: agents -->
+  <div>
+    <div class="agent a1">
+      <div class="agent-hd"><span class="n">1</span> cve-gather-info-agent <span class="tag">Enrich &middot; Assess</span></div>
+      <div class="agent-bd">
+        <div class="colhdr"><div>#</div><div>Step</div><div>Fallback</div></div>
+        <div class="step"><div class="i">1</div><div class="t">RAG lookup &mdash; patch history per host <em>&mdash; Milvus</em></div><div class="f">Skip history; flag <b>history: unavailable</b></div></div>
+        <div class="step"><div class="i">2</div><div class="t">Scheduler &mdash; maintenance window</div><div class="f">Config default window &mdash; never &ldquo;now&rdquo; for prod</div></div>
+        <div class="step"><div class="i">3</div><div class="t">Assess risk score <em>&mdash; XGBoost / OCP</em></div><div class="f">Heuristic tagged <b>degraded:true</b> + recalibrated threshold</div></div>
+        <div class="step"><div class="i">4</div><div class="t">Produce <b>dry-run report</b></div><div class="f">Partial report naming every degraded input</div></div>
+        <div class="retby">&#8617; returns <b>cve-info</b> to Supervisor &nbsp;&middot;&nbsp; also serves <b>diagnose()</b> during self-heal</div>
+      </div>
+    </div>
+
+    <div class="agent a2">
+      <div class="agent-hd"><span class="n">2</span> Patching Agent <span class="tag">Approve &middot; Build &middot; Execute</span></div>
+      <div class="agent-bd">
+        <div class="colhdr"><div>#</div><div>Step</div><div>Fallback</div></div>
+        <div class="step"><div class="i">5</div><div class="t">Env gate &mdash; <b>if(prod)</b> approve / <b>if(dev)</b> continue</div><div class="f hard"><b>FAIL CLOSED</b> &mdash; never auto-continue in prod</div></div>
+        <div class="step"><div class="i">6</div><div class="t">Generate playbook from Lightspeed</div><div class="f">Repo template by CVE class (kernel / pkg / config)</div></div>
+        <div class="step"><div class="i">7</div><div class="t">Commit to git</div><div class="f">Swap push method; else spool to PVC and queue</div></div>
+        <div class="step"><div class="i">8</div><div class="t">Sync AAP project</div><div class="f hard">Retry &times;3, then <b>EXIT C</b> &mdash; never run unsynced</div></div>
+        <div class="step"><div class="i">9</div><div class="t">Schedule AAP job</div><div class="f hard">Honour window; queue + retry if AAP down</div></div>
+        <div class="step"><div class="i">10</div><div class="t"><b>Run CVE remediation</b> &mdash; phased</div><div class="f">Reports per-host pass/fail up to Supervisor</div></div>
+        <div class="retby">&#8617; reports outcome per host &mdash; <b>does not</b> own the retry loop</div>
+      </div>
+    </div>
+
+    <div class="agent a3">
+      <div class="agent-hd"><span class="n">3</span> Communication Agent <span class="tag">Notify</span></div>
+      <div class="agent-bd">
+        <div class="colhdr"><div>#</div><div>Step</div><div>Fallback</div></div>
+        <div class="step"><div class="i">11</div><div class="t">Send Slack notification</div><div class="f">SNOW only + log &mdash; <b>never block the patch</b></div></div>
+        <div class="step"><div class="i">12</div><div class="t">Create ServiceNow ticket</div><div class="f">Slack with <b>[TICKET-PENDING]</b> + local replay queue</div></div>
+        <div class="retby">&#8617; called by Supervisor at pause, abandon and completion</div>
+      </div>
+    </div>
+
+    <div class="agent a4">
+      <div class="agent-hd"><span class="n">4</span> Results Publishing Agent <span class="tag">Learn</span></div>
+      <div class="agent-bd">
+        <div class="colhdr"><div>#</div><div>Step</div><div>Fallback</div></div>
+        <div class="step"><div class="i">13</div><div class="t">Update training data</div><div class="f">Append JSONL to PVC, replay next run</div></div>
+        <div class="step"><div class="i">14</div><div class="t">Update observability store</div><div class="f">Local spool; alert if backlog persists</div></div>
+        <div class="retby">&#8617; records degraded inputs + attempt counts, not just the outcome</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: loop -->
+  <div>
+    <div class="panel">
+      <div class="panel-hd">&#9733; Self-Healing Loop <span class="tag">orchestrated by Supervisor &mdash; per host</span></div>
+      <div class="panel-bd">
+        <div class="fl">
+          <div class="box bp"><span class="who wp">PATCH</span>Run phase: test &rarr; canary &rarr; prod<small>Supervisor sets attempts[host] = 1</small></div>
+          <div class="v"></div>
+          <div class="row">
+            <div class="dia">Health check?</div>
+            <span class="lbl">pass &rarr;</span><span class="exit eA">EXIT A&nbsp; healed</span>
+          </div>
+          <div class="vfail"><span>fail</span></div>
+          <div class="box bp"><span class="who wp">PATCH</span>Pause phase &middot; Rollback<small>&rarr; HEALTHY / NOT APPLIED</small></div>
+          <div class="v"></div>
+          <div class="row">
+            <div class="dia"><span class="who ws">SUP</span>phase_failures &gt; 2 ?</div>
+            <span class="lbl">yes &rarr;</span><span class="exit eC">EXIT C</span>
+          </div>
+          <div class="v"></div>
+          <div class="row">
+            <div class="dia"><span class="who ws">SUP</span>attempts[host] &ge; 2 ?</div>
+            <span class="lbl">yes &rarr;</span><span class="exit eB">EXIT B</span>
+          </div>
+          <div class="v"></div>
+          <div class="box bc"><span class="who wc">COMM</span>Alert &ldquo;paused, diagnosing&rdquo;<small>never blocks the loop</small></div>
+          <div class="v"></div>
+          <div class="box bi"><span class="who wi">INFO</span>diagnose(host, error, cve, tried_fixes)<small>RAG + LLM &rarr; root cause, fix, evidence</small></div>
+          <div class="v"></div>
+          <div class="row">
+            <div class="dia"><span class="who ws">SUP</span>fix already tried ?</div>
+            <span class="lbl">yes &rarr;</span><span class="exit eB">EXIT B</span>
+          </div>
+          <div class="v"></div>
+          <div class="row">
+            <div class="dia"><span class="who wp">PATCH</span>env == prod ? &rarr; approve</div>
+            <span class="lbl">denied &rarr;</span><span class="exit eB">EXIT B</span>
+          </div>
+          <div class="v"></div>
+          <div class="box bp"><span class="who ws">SUP</span>attempts[host] += 1 &rarr; re-call Patching with fix</div>
+          <div class="v"></div>
+          <div class="loopback">&#8634; &nbsp;loop back to health check &mdash; bounded: both counters increment inside</div>
+          <div class="v"></div>
+          <div class="box br"><span class="who wr">RESULTS</span>Resume phase &rarr; next host</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:11px;padding:9px 13px;background:#fff1f2;border-left:4px solid var(--sup);border-radius:0 7px 7px 0;font-size:11.5px;line-height:1.5;">
+      <b>Why the Supervisor owns the loop.</b> The cycle spans three agents &mdash; Patching reports the
+      failure, Info diagnoses it, Patching retries. Only the Supervisor sees all of it, so the
+      counters and the stop decision live there. Agents stay stateless and single-purpose.
+    </div>
+    <div style="margin-top:8px;padding:9px 13px;background:#fef2f2;border-left:4px solid var(--red);border-radius:0 7px 7px 0;font-size:11.5px;line-height:1.5;">
+      <b>Rollback failure is EXIT C immediately.</b> A half-patched host is the worst possible state &mdash;
+      stop the phase and page a human rather than attempting a fix on top.
+    </div>
+    <div style="margin-top:8px;padding:9px 13px;background:var(--info-bg);border-left:4px solid var(--info);border-radius:0 7px 7px 0;font-size:11.5px;line-height:1.5;">
+      <b>LLM down during diagnose?</b> Fall back to a rule table of known failure signatures
+      (drain timeout, disk full, lock held, service restart). No match &rarr; EXIT B. Never guess.
+    </div>
+  </div>
+</div>
+
+<div class="foot">
+  <div>
+    <h3>Exit paths &mdash; decided by the Supervisor</h3>
+    <div class="ex"><span class="chip eA">EXIT A&nbsp; healed</span><span class="d">Retry passes the health check. Host patched, <b>rollout resumes</b>, outcome written to training data.</span></div>
+    <div class="ex"><span class="chip eB">EXIT B&nbsp; abandoned</span><span class="d">Attempts exhausted, repeat fix, or approval denied. Host left <b>rolled back, healthy, unpatched</b>. SNOW ticket raised &mdash; <b>rollout continues with other hosts</b>.</span></div>
+    <div class="ex"><span class="chip eC">EXIT C&nbsp; aborted</span><span class="d">Too many hosts failed, project unsynced, or rollback failed. Remaining hosts <b>untouched</b>, operator escalation, nothing half-applied.</span></div>
+  </div>
+  <div>
+    <h3>Fallback principles</h3>
+    <div class="pr"><span class="num">1</span><span class="d"><b>Labelled, never silent.</b> Every degraded result carries <code>source</code> and <code>degraded:true</code>. A fallback that works but tells nobody is a bug.</span></div>
+    <div class="pr"><span class="num">2</span><span class="d"><b>Degrade on reads, fail closed on writes.</b> Missing history or a heuristic score &mdash; proceed. Approval, project sync and rollback &mdash; stop.</span></div>
+    <div class="pr"><span class="num">3</span><span class="d"><b>Visible before approval.</b> The dry-run report must state which inputs were degraded <i>before</i> anyone approves; the Results agent records it for later correlation.</span></div>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--fb)"></span>soft &mdash; degrade &amp; continue</span>
+      <span><span class="sw" style="background:var(--red)"></span>hard &mdash; fail closed</span>
+      <span><span class="sw" style="background:var(--amber)"></span>decision point</span>
+      <span><span class="sw" style="background:var(--sup)"></span>Supervisor-owned</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

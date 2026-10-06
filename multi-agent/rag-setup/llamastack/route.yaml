@@ -1,0 +1,19 @@
+# External entry point for RAG ingest and query.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: llamastack
+  labels:
+    app: llamastack
+  annotations:
+    # Embedding + ingest calls can exceed the 30s default.
+    haproxy.router.openshift.io/timeout: 300s
+spec:
+  to:
+    kind: Service
+    name: llamastack
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

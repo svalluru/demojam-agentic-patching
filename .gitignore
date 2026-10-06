@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Console runtime state (contains a generated .env with live tokens)
+src/local/cve_console/
+src/local/*.log
+src/local/*.pid
+
+# Generated playbooks
+playbooks/generated/
+
+# Notification / training spools written at runtime
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store

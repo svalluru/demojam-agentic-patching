@@ -1,0 +1,88 @@
+# Risk-score model as a plain OpenShift application — no KServe, no RHOAI.
+# See risk_score/XGBOOST_OPENSHIFT_AI_SERVING.md (Part B) for the full procedure.
+#
+#   oc apply -f risk_score/openshift/risk-score.yaml
+#   oc rollout status deployment/risk-score -n agentic-patching --timeout=180s
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-score
+  namespace: agentic-patching
+  labels:
+    app: risk-score
+    app.kubernetes.io/part-of: agentic-patching-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: risk-score
+  template:
+    metadata:
+      labels:
+        app: risk-score
+    spec:
+      containers:
+        - name: risk-score
+          image: image-registry.openshift-image-registry.svc:5000/agentic-patching/risk-score:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-score
+  namespace: agentic-patching
+  labels:
+    app: risk-score
+spec:
+  selector:
+    app: risk-score
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# Optional. Only needed to reach the model from outside the cluster (manual
+# testing). The console calls the Service directly and does not need this.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: risk-score
+  namespace: agentic-patching
+spec:
+  to:
+    kind: Service
+    name: risk-score
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

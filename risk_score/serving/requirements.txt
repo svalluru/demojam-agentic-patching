@@ -1,0 +1,7 @@
+# For Docker/KServe (Python 3.11 in Dockerfile). For local run on Python 3.13 use requirements-local.txt + run_local.py
+kserve>=0.11.0
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
+joblib>=1.3.0
+uvicorn>=0.24.0
