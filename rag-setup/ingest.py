@@ -140,6 +140,51 @@ def search(route: str, store_id: str, q: str, k: int = 3) -> None:
         print(f'   - score={h.get("score"):.3f} {h.get("filename", "?")}: {text[:170]}')
 
 
+def find_store(route: str, name: str) -> dict | None:
+    code, resp = call(route, '/v1/vector_stores', timeout=60)
+    if code != 200 or not isinstance(resp, dict):
+        return None
+    for s in resp.get('data', []):
+        if s.get('name') == name:
+            return s
+    return None
+
+
+def searchable(route: str, store_id: str) -> bool:
+    """True only if the store actually returns results.
+
+    After a Llama Stack restart a store keeps appearing in /v1/vector_stores
+    (that reads the kvstore) while search reports it missing, because the
+    provider does not rehydrate its in-memory registry. The symptom is an
+    empty result set, not an error — so presence is not proof of health.
+    """
+    code, resp = call(route, f'/v1/vector_stores/{store_id}/search', 'POST',
+                      {'query': 'patch history', 'max_num_results': 1})
+    return code == 200 and bool((resp or {}).get('data'))
+
+
+def ensure(route: str, name: str, paths: list[Path]) -> str:
+    """Make the named store exist AND be searchable. Safe to run repeatedly."""
+    existing = find_store(route, name)
+    if existing:
+        files = (existing.get('file_counts') or {}).get('total', 0)
+        if searchable(route, existing['id']):
+            print(f'  "{name}" healthy -> {existing["id"]} ({files} files)')
+            return existing['id']
+        print(f'  "{name}" present but NOT searchable ({files} files) — '
+              f'rebuilding {existing["id"]}')
+        code, _ = call(route, f'/v1/vector_stores/{existing["id"]}', 'DELETE', timeout=120)
+        print(f'    delete -> HTTP {code}')
+
+    store_id = find_or_create_store(route, name)
+    ingest(route, store_id, paths)
+    ok = searchable(route, store_id)
+    print(f'  searchable after rebuild: {ok}')
+    if not ok:
+        sys.exit('  rebuild did not produce a searchable store')
+    return store_id
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -149,6 +194,9 @@ def main() -> None:
     ap.add_argument('--file', action='append', default=[], help='file to ingest (repeatable)')
     ap.add_argument('--query', help='search instead of ingesting')
     ap.add_argument('--list', action='store_true', help='list vector stores and exit')
+    ap.add_argument('--ensure', action='store_true',
+                    help='verify the store is searchable; rebuild it from --dir if not. '
+                         'Idempotent — run after any Llama Stack restart.')
     args = ap.parse_args()
 
     code, health = call(args.route, '/v1/health', timeout=30)
@@ -162,16 +210,25 @@ def main() -> None:
             print(f'  {s["id"]}  {s.get("name")}  files={s.get("file_counts", {}).get("total")}')
         return
 
+    paths = [Path(f) for f in args.file]
+    if args.dir:
+        paths += sorted(p for p in Path(args.dir).rglob('*')
+                        if p.is_file() and p.suffix in TEXT_SUFFIXES)
+
+    if args.ensure:
+        if not paths:
+            sys.exit('--ensure needs --dir (or --file) to rebuild from')
+        store_id = ensure(args.route, args.name, paths)
+        print()
+        print(f'  VECTOR_DB_ID={store_id}')
+        return
+
     store_id = find_or_create_store(args.route, args.name)
 
     if args.query:
         search(args.route, store_id, args.query)
         return
 
-    paths = [Path(f) for f in args.file]
-    if args.dir:
-        paths += sorted(p for p in Path(args.dir).rglob('*')
-                        if p.is_file() and p.suffix in TEXT_SUFFIXES)
     if not paths:
         sys.exit('Nothing to ingest — pass --dir or --file (or use --query / --list)')
 

@@ -1,0 +1,24 @@
+Create Credentials objects as below : 
+-   name : aap-credential
+    type : Ansible Automation Platform
+    Auth Method : OAuth2 token
+    use AAP_TOKEN from .env 
+
+-  name : llm-token
+    type : LLM Provider
+    Auth Method : API token
+    use VLLM_API_TOKEN for API Keyfrom .env
+
+Create Integration objects as below :
+-   name : aap
+    type : Ansible Automation Platform
+    API URL : Base URL from AAP_BASE_URL from .env
+    Connection Credential : aap-credential
+
+- name : maas
+    type : LLM Provider
+    API URL : VLLM_URL from .env
+    Connection Credential : llm-token
+
+
+    

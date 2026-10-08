@@ -81,13 +81,18 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 15
             failureThreshold: 40
+          # Deliberately slack. /v1/health shares the event loop with embedding
+          # work and can stall for minutes under load, and a restart costs more
+          # than a slow health check — see the restart note in the README.
+          # 60s x 10 = 10 minutes unresponsive before a kill.
           livenessProbe:
             httpGet:
               path: /v1/health
               port: 8321
-            initialDelaySeconds: 600
-            periodSeconds: 30
-            failureThreshold: 5
+            initialDelaySeconds: 900
+            periodSeconds: 60
+            timeoutSeconds: 15
+            failureThreshold: 10
           resources:
             requests:
               cpu: 500m

@@ -1,0 +1,64 @@
+---
+- name: Notify Mattermost - CVE Investigation Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    mattermost_instance: "{{ mattermost_instance }}"
+    mattermost_token: "{{ mattermost_token }}"
+    mattermost_channel_id: "{{ mattermost_channel_id }}"
+    cve_id: "{{ cve_id }}"
+    target_host: "{{ target_host }}"
+    host_actually_affected: "{{ host_actually_affected | default('true') }}"
+    risk_summary: "{{ risk_summary | default('No summary available') }}"
+    attack_vector: "{{ attack_vector | default('Unknown') }}"
+    workaround_available: "{{ workaround_available | default('false') }}"
+    workaround_steps: "{{ workaround_steps | default('') }}"
+    next_actions: "{{ next_actions | default('No specific actions identified') }}"
+    estimated_fix_timeline: "{{ estimated_fix_timeline | default('Unknown') }}"
+    advisor_recommendations: "{{ advisor_recommendations | default('None found') }}"
+    installed_version: "{{ installed_version | default('Unknown') }}"
+
+  tasks:
+    - name: Post CVE investigation report to Mattermost
+      ansible.builtin.uri:
+        url: "{{ mattermost_instance }}/api/v4/posts"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ mattermost_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          channel_id: "{{ mattermost_channel_id }}"
+          message: ":shield: **CVE Investigation Report - No Errata Available**"
+          props:
+            attachments:
+              - color: "{{ '#ee0000' if host_actually_affected == 'true' else '#2eb886' }}"
+                title: "{{ ':red_circle:' if host_actually_affected == 'true' else ':white_check_mark:' }} {{ cve_id }} on {{ target_host }}"
+                fields:
+                  - title: "Host Affected"
+                    value: "{{ 'Yes - ' + installed_version if host_actually_affected == 'true' else 'No - package not installed' }}"
+                    short: true
+                  - title: "Attack Vector"
+                    value: "{{ attack_vector }}"
+                    short: true
+                  - title: "Workaround Available"
+                    value: "{{ 'Yes' if workaround_available == 'true' else 'No' }}"
+                    short: true
+                  - title: "Est. Fix Timeline"
+                    value: "{{ estimated_fix_timeline }}"
+                    short: true
+                  - title: "Risk Summary"
+                    value: "{{ risk_summary }}"
+                    short: false
+                  - title: "Recommended Next Actions"
+                    value: "{{ next_actions }}"
+                    short: false
+                  - title: "Related Advisor Rules"
+                    value: "{{ advisor_recommendations }}"
+                    short: false
+                  - title: "Workaround Steps"
+                    value: "{{ workaround_steps }}"
+                    short: false
+                footer: "Red Hat Lightspeed - No errata available | Manual review required"
+        status_code: [200, 201]

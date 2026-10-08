@@ -1,0 +1,131 @@
+---
+- name: Fetch CVE Remediation Playbook from Lightspeed and Commit to Gitea
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    cve_id: "{{ cve_id }}"
+    target_host: "{{ target_host }}"
+    lab_tag: "{{ lab_tag }}"
+    mcp_server_host: "{{ mcp_server_host }}"
+    mcp_server_port: "{{ mcp_server_port | default('8001') }}"
+    gitea_repo: "{{ gitea_repo | default('lab-user/lightspeed_playbooks') }}"
+    # GITEA_URL and GITEA_TOKEN injected from Gitea Credential
+
+  tasks:
+    - name: Download Lightspeed playbook and commit to Gitea
+      ansible.builtin.shell: |
+        python3 << 'PYEOF'
+        import os, json, http.client, ssl, base64, urllib.request, re
+
+        host       = os.environ['TARGET_HOST']
+        cve_id     = os.environ['CVE_ID']
+        mcp_host   = os.environ['MCP_SERVER_HOST']
+        mcp_port   = int(os.environ.get('MCP_SERVER_PORT', '8001'))
+        gitea_url  = os.environ['GITEA_URL']
+        gitea_token = os.environ['GITEA_TOKEN']
+        gitea_repo = os.environ.get('GITEA_REPO', 'lab-user/lightspeed_playbooks')
+
+        class MCPClient:
+            def __init__(self):
+                self.session_id = None
+            def call(self, method, params={}):
+                conn = http.client.HTTPConnection(mcp_host, mcp_port, timeout=60)
+                body = json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode()
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json, text/event-stream',
+                    'Content-Length': str(len(body))
+                }
+                if self.session_id:
+                    headers['Mcp-Session-Id'] = self.session_id
+                conn.request('POST', '/mcp', body, headers)
+                resp = conn.getresponse()
+                self.session_id = resp.getheader('Mcp-Session-Id') or self.session_id
+                result = {}
+                for line in resp:
+                    line = line.decode('utf-8', errors='replace').strip()
+                    if line.startswith('data:'):
+                        result = json.loads(line[5:])
+                conn.close()
+                return result
+            def tool(self, name, args={}):
+                return self.call('tools/call', {'name': name, 'arguments': args})
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        def gitea_api(path, method='GET', data=None):
+            req = urllib.request.Request(f'{gitea_url}/api/v1{path}', data=data, method=method)
+            req.add_header('Authorization', f'token {gitea_token}')
+            req.add_header('Content-Type', 'application/json')
+            try:
+                resp = urllib.request.urlopen(req, context=ctx, timeout=15)
+                return json.loads(resp.read()), resp.status
+            except urllib.error.HTTPError as e:
+                return json.loads(e.read() or b'{}'), e.code
+
+        c = MCPClient()
+        c.call('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {}, 'clientInfo': {'name': 'aap-playbook', 'version': '1.0'}})
+
+        # Find system UUID via CVE affected systems lookup
+        cve_systems_resp = c.tool('vulnerability__get_cve_systems', {'cve': cve_id, 'limit': 50})
+        cve_systems_text = cve_systems_resp.get('result', {}).get('content', [{}])[0].get('text', '{}')
+        cve_systems = json.loads(cve_systems_text).get('data', [])
+        uuid = ''
+        for sys in cve_systems:
+            dname = sys.get('attributes', {}).get('display_name', '')
+            if dname == host or dname.startswith(host + '.'):
+                uuid = sys.get('attributes', {}).get('inventory_id', '') or sys.get('id', '')
+                break
+
+        if not uuid:
+            print(json.dumps({'error': f'Host {host} not found in affected systems for {cve_id}', 'playbook_filename': '', 'gitea_committed': False}))
+            raise SystemExit(1)
+
+        # Download Lightspeed remediation playbook
+        playbook_name = f'remediation-{cve_id}'
+        play_resp = c.tool('remediations__create_vuln_playbook', {'playbook_name': playbook_name, 'cves': [cve_id], 'uuids': [uuid]})
+        playbook_content = play_resp.get('result', {}).get('content', [{}])[0].get('text', '')
+
+        # Replace hardcoded hostname with 'all' so AAP limit controls targeting
+        playbook_content = re.sub(r'hosts:\s*["\']?[\w.\-]+["\']?', 'hosts: all', playbook_content)
+
+        # Commit to Gitea
+        playbook_filename = f'{playbook_name}.yml'
+        content_b64 = base64.b64encode(playbook_content.encode()).decode()
+        existing, status = gitea_api(f'/repos/{gitea_repo}/contents/{playbook_filename}')
+        sha = existing.get('sha', '') if status == 200 else ''
+        payload = {'message': f'Add CVE remediation: {cve_id}', 'content': content_b64}
+        if sha:
+            payload['sha'] = sha
+        method_str = 'PUT' if sha else 'POST'
+        _, commit_status = gitea_api(f'/repos/{gitea_repo}/contents/{playbook_filename}', method=method_str, data=json.dumps(payload).encode())
+        committed = commit_status in (200, 201)
+        print(json.dumps({'playbook_filename': playbook_filename, 'gitea_committed': committed, 'system_uuid': uuid, 'commit_status': commit_status}))
+        PYEOF
+      environment:
+        TARGET_HOST: "{{ target_host }}"
+        CVE_ID: "{{ cve_id }}"
+        MCP_SERVER_HOST: "{{ mcp_server_host }}"
+        MCP_SERVER_PORT: "{{ mcp_server_port | default('8001') }}"
+        GITEA_REPO: "{{ gitea_repo | default('lab-user/lightspeed_playbooks') }}"
+        # GITEA_URL and GITEA_TOKEN injected automatically from the Gitea Credential
+      register: script_result
+
+    - name: Parse output
+      ansible.builtin.set_fact:
+        fetch_result: "{{ script_result.stdout | from_json }}"
+
+    - name: Fail if not committed
+      ansible.builtin.fail:
+        msg: "Failed to commit playbook to Gitea: {{ fetch_result }}"
+      when: not (fetch_result.gitea_committed | bool)
+
+    - name: Report results
+      ansible.builtin.set_stats:
+        data:
+          playbook_filename: "{{ fetch_result.playbook_filename }}"
+          gitea_committed: "{{ fetch_result.gitea_committed }}"
+          system_uuid: "{{ fetch_result.system_uuid }}"

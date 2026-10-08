@@ -1,0 +1,37 @@
+---
+- name: Sync Lightspeed project and create CVE remediation template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    controller_validate_certs: false
+
+  tasks:
+    - name: Sync Lightspeed-Playbooks project
+      ansible.controller.project_update:
+        name: Lightspeed-Playbooks
+        wait: true
+        timeout: 180
+        validate_certs: false
+
+    - name: Create CVE remediation job template
+      ansible.controller.job_template:
+        name: "CVE Remediation - {{ cve_id }} - {{ target_host }}"
+        job_type: run
+        project: Lightspeed-Playbooks
+        playbook: "{{ playbook_filename }}"
+        inventory: lab-inventory
+        limit: "{{ target_host }}"
+        become_enabled: true
+        credentials:
+          - lab-credential
+        state: present
+        validate_certs: false
+      register: jt_result
+
+    - name: Report template details for AO to launch
+      ansible.builtin.set_stats:
+        data:
+          template_name: "CVE Remediation - {{ cve_id }} - {{ target_host }}"
+          template_id: "{{ jt_result.id }}"
+          status: ready
