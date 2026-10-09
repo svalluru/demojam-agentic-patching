@@ -37,8 +37,11 @@ workflow `DemoJam Agentic Patching`. Agent 2 is a client of that workflow.
 ## Layout
 
 ```
+QUICKSTART.md              clone-to-running guide for a new joiner
+demo.sh                    start the console — offline by default, --live for real
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, HTTP backend
+fallbacks.py               every stored default, in one editable file
 frontend/
   index.html               two-frame console: assess a CVE · CVE list · patch runs
   server.py                dev server — serves the UI, proxies /api/* to :8787
@@ -54,6 +57,24 @@ risk_score/
   openshift/               Deployment + Service + Route, deploy script
 multi-agent/
   architecture.jpg/.html   architecture diagram (editable source)
+```
+
+## Try it — one command, no setup
+
+```bash
+./demo.sh
+```
+
+New to this? Start with **[QUICKSTART.md](QUICKSTART.md)** — clone-to-running
+in a minute, with a walkthrough of both demo CVEs.
+
+Opens <http://127.0.0.1:8788>. No cluster, no `.env`, no network: every step
+serves stored defaults and the console labels all of them. **Nothing is
+patched** — approving a host resolves a simulated run that exists in no AO
+instance. Ctrl-C to stop.
+
+```bash
+./demo.sh --live     # real backends from .env, per-step fallback if one is down
 ```
 
 ## Setup
@@ -75,8 +96,8 @@ Deploy the backing services (each is independent):
 
 ## Run
 
-Two processes. The backend holds the agents; the frontend serves the UI and
-proxies to it.
+`./demo.sh` wraps this. The two processes, if you want them separately — the
+backend holds the agents, the frontend serves the UI and proxies to it:
 
 ```bash
 # terminal 1 — agents + API on :8787
@@ -111,13 +132,73 @@ Approve / Reject buttons. **Patch runs** lists past executions read live from AO
 | `LAB_TAG` | passed to the workflow as `lab_tag` |
 | `INSIGHTS_VERIFY_TLS=false` | if this machine cannot verify the sso.redhat.com chain |
 | `RISK_VERIFY_TLS=false` | for sandbox cluster certificates |
+| `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | per-service read budgets (15 / 8 / 20 / 10s) |
+
+See **Offline / fallback mode** below for `STRICT` and `FALLBACK_PATCH`.
+
+## Offline / fallback mode
+
+Every step has a stored default, so the whole console can be demonstrated with
+no cluster at all. All defaults live in one file, [`fallbacks.py`](fallbacks.py).
+
+| Step | Backend | Fallback |
+|---|---|---|
+| C1 CVE list | Insights | 2 real CVEs with real CVSS |
+| C2 affected hosts | Insights | 5 hosts for CVE-2024-3094, 2 for CVE-2024-1086 |
+| 1 patch history | Llama Stack / Milvus | canned per-host summaries |
+| 3 risk score | XGBoost on OpenShift | heuristic, threshold 55 not 30 |
+| 5–10 remediation | Ansible Orchestrator | simulated run, local to this console |
+
+The two CVEs route differently on purpose: CVE-2024-3094 at CVSS 10.0 sends all
+five hosts to the approval gate, CVE-2024-1086 at 7.8 auto-patches both of its
+two. One demo covers each branch.
+
+**Nothing is ever actually patched by the fallback.** A simulated run pauses at
+the approval gate and resolves to `patched` or `rejected` locally, so the
+approval path stays demonstrable, but no host is touched and the execution
+exists in no AO instance.
+
+**Where the labelling goes depends on the mode**, because the reader's question
+differs:
+
+- *Offline* — the whole session is fabricated, so one banner across the top of
+  the page says so and the frames are left to read as a normal flow. Per-step
+  labels would be noise repeated on every row.
+- *Live, with one backend down* — there is no banner, and a single step that
+  quietly fell back is exactly what a reviewer needs told before approving a
+  production patch. So the dry-run shows a `degraded` panel naming the step,
+  the service and the fix, and any simulated row is chipped `SIMULATED`.
+
+The API always carries the truth either way: `degraded` on the dry-run and
+`simulated: true` on affected runs, whatever the console chooses to draw.
+
+| Variable | Effect |
+|---|---|
+| `OFFLINE=1` | what `./demo.sh` sets — stored defaults only, no network at all |
+| `STRICT=true` | disable all fallbacks; raise the real error instead |
+| `FALLBACK_PATCH=unavailable` | report "not dispatched" rather than simulating |
+| `CONNECT_TIMEOUT=3` | reachability budget per service |
+| `CIRCUIT_TTL=30` | how long a service stays tripped after failing |
+| `DEMO_LATENCY=0.35` | offline-only pause per agent step; `0` disables |
+
+Simulated runs persist to `runs/simulated.json` so the Patch runs page survives
+a restart. Real runs need no such thing — AO is their store. Delete the file to
+reset the demo.
 
 ## Design notes
 
-**No fabricated data.** Every external call either succeeds or raises
-`BackendUnavailable` naming the service and how to fix it. The dry-run report is
-what a human approves against, so a fallback that quietly substitutes made-up
-numbers is worse than a failure.
+**Fail fast on reachability, be patient on answers.** Every call TCP-connects
+first with a short budget, because a stopped pod leaves its Route resolving
+with nothing behind it and the socket hangs for the full read timeout. A
+service that fails is then tripped for `CIRCUIT_TTL`, so a dead backend costs
+one probe per run rather than one per host. Together these took a dry run
+against stopped backends from 76s to under 7s; `OFFLINE=1` skips the probe
+entirely and opens no socket at all.
+
+**Degrade on reads, fail closed on writes.** A missing risk score can be
+estimated; a patch cannot be assumed. That asymmetry is why `FALLBACK_PATCH`
+exists and why the simulator never reports a host as patched without an
+operator clicking Approve.
 
 **The Supervisor owns state**; agents are stateless. Counters and stop decisions
 live in one place.
@@ -134,7 +215,8 @@ and a failed activity marks the run failed even before AO finishes marking it.
 - Agents 3 and 4 (Communication, Results) are not implemented.
 - The AAP job templates the AO workflow calls — `CVE - Fetch and Commit` and
   `CVE - Sync and Deploy Remediation` — do not exist in AAP yet, so an approved
-  run fails at `fetch_and_commit_prod`. See `ao-setup/playbooks/`.
+  run fails at `fetch_and_commit_prod` against a live AO. See
+  `ao-setup/playbooks/`. The simulated path is unaffected.
 - The risk model scores every host of a given CVE almost identically, because
   three of its four inputs describe the CVE rather than the host. Threshold
   tuning or retraining is needed before the score is useful as triage.

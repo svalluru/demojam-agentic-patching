@@ -5,14 +5,6 @@
 *.pem
 *.key
 
-# Console runtime state (contains a generated .env with live tokens)
-src/local/cve_console/
-src/local/*.log
-src/local/*.pid
-
-# Generated playbooks
-playbooks/generated/
-
 # Notification / training spools written at runtime
 *.jsonl
 
@@ -24,3 +16,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# simulated patch runs — demo state, not source
+runs/

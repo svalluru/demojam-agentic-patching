@@ -40,9 +40,16 @@ RHSSO_TOKEN_URL = 'https://sso.redhat.com/auth/realms/redhat-external/protocol/o
 INSIGHTS_BASE = 'https://console.redhat.com/api'
 CVE_LIST_PATH = '/vulnerability/v1/vulnerabilities/cves'
 
-PROXY_PATHS = {'/api/state', '/api/start', '/api/patch', '/api/decide', '/api/runs', '/api/approve', '/api/deny',
+PROXY_PATHS = {'/api/state', '/api/start', '/api/patch', '/api/decide', '/api/runs', '/api/mode',
+               '/api/approve', '/api/deny',
                '/api/settings', '/api/flow-log', '/api/what-if', '/api/why',
                '/api/approval-targets'}
+
+# C1 (the CVE list) belongs to the backend's common code, which has the
+# offline fallback. This server kept its own Insights client, so with the
+# backend degraded the list was the one step that failed outright instead of
+# falling back. Proxy by default; set CVE_LIST_LOCAL=1 for the old behaviour.
+PROXY_CVE_LIST = os.environ.get('CVE_LIST_LOCAL', '').strip().lower() not in {'1', 'true', 'yes'}
 
 _token_cache: dict = {}
 
@@ -211,6 +218,15 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(200, 'text/html; charset=utf-8', html)
             return
 
+        if path == '/api/cves' and PROXY_CVE_LIST:
+            status, body = proxy_to_backend('GET', path, parsed.query or '', None)
+            if status == 200:
+                self.respond(status, 'application/json', body)
+                return
+            # Backend down entirely — fall through to the local Insights
+            # client rather than leaving the console with no CVE list at all.
+            LOG.warning('backend /api/cves returned %s; using local Insights client', status)
+
         if path == '/api/cves':
             try:
                 query = parse_qs(parsed.query or '')
@@ -279,10 +295,17 @@ def main():
         load_dotenv(str(default_env))
 
     cid = os.environ.get('LIGHTSPEED_CLIENT_ID', '')
-    if not cid:
-        LOG.error('LIGHTSPEED_CLIENT_ID not set. Pass --env or export it.')
+    if cid:
+        LOG.info('Lightspeed client_id=%s...%s', cid[:8], cid[-4:])
+    elif PROXY_CVE_LIST:
+        # The backend owns the CVE list and has the offline fallback, so no
+        # credentials are needed here. Refusing to start would block anyone
+        # running the demo without a .env.
+        LOG.info('No Lightspeed credentials — CVE list comes from the backend')
+    else:
+        LOG.error('CVE_LIST_LOCAL is set but LIGHTSPEED_CLIENT_ID is not. '
+                  'Pass --env or export it.')
         sys.exit(1)
-    LOG.info('Lightspeed client_id=%s...%s', cid[:8], cid[-4:])
     LOG.info('Backend proxy target: %s', BACKEND_URL)
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)

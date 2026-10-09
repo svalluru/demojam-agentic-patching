@@ -17,6 +17,25 @@
     height: 100vh; display: flex; flex-direction: column;
   }
 
+  /* Top-of-page mode banner. Deliberately loud and full-bleed: someone
+     walking past a screen should be able to tell at a glance that the
+     numbers on it are not real. */
+  #mode-banner {
+    display: none; flex-shrink: 0; align-items: center; gap: 12px;
+    padding: 9px 22px; font-size: 12.5px; font-weight: 600;
+    color: #1a1205; background: var(--orange);
+    border-bottom: 1px solid rgba(0,0,0,.25);
+  }
+  #mode-banner.on { display: flex; }
+  #mode-banner .tag {
+    font-size: 10px; font-weight: 800; letter-spacing: .6px;
+    padding: 2px 8px; border-radius: 5px;
+    background: rgba(0,0,0,.28); color: #ffd9a0;
+  }
+  #mode-banner .sub { font-weight: 500; opacity: .85; }
+  #mode-banner .how { margin-left: auto; font-weight: 500; opacity: .8;
+                      font-family: var(--mono); font-size: 11px; }
+
   header {
     display: flex; align-items: center; gap: 14px;
     padding: 12px 22px; background: var(--panel);
@@ -162,6 +181,15 @@
   .stat .v { font-size: 20px; font-weight: 800; line-height: 1.2; }
   .stat .k { font-size: 9px; font-weight: 700; letter-spacing: .5px;
              text-transform: uppercase; color: var(--muted); margin-top: 3px; }
+  .degraded { padding: 12px 15px; border-radius: 9px; margin-bottom: 10px;
+              background: rgba(255,169,77,.09); border-left: 3px solid var(--orange); }
+  .deg-title { font-size: 13px; font-weight: 800; color: var(--orange); }
+  .deg-sub { font-size: 11.5px; color: var(--text); opacity: .8; margin: 3px 0 9px; }
+  .deg-row { display: grid; grid-template-columns: 160px 210px 1fr; gap: 10px;
+             font-size: 11.5px; padding: 3px 0; border-top: 1px solid var(--border); }
+  .deg-step { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--orange); }
+  .deg-why  { color: var(--text); opacity: .85; }
+  .deg-fix  { color: var(--muted); }
   .verdict { padding: 12px 15px; border-radius: 9px; border-left: 3px solid; }
   .verdict.warn { background: rgba(255,169,77,.07); border-color: var(--orange); }
   .verdict.ok   { background: rgba(81,207,102,.07); border-color: var(--green); }
@@ -179,6 +207,9 @@
   .badge.review { background: rgba(255,169,77,.14); color: var(--orange); }
   .badge.ok     { background: rgba(81,207,102,.14); color: var(--green); }
   .badge.fail   { background: rgba(255,107,107,.14); color: var(--red); }
+  /* Simulated runs must never be mistaken for real ones at a glance. */
+  .badge.sim    { background: rgba(255,169,77,.10); color: var(--orange);
+                  border: 1px dashed var(--orange); margin-left: 6px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   .btn-approve, .btn-reject {
     padding: 3px 11px; border: none; border-radius: 6px; font-size: 11px;
@@ -204,6 +235,8 @@
 </style>
 </head>
 <body>
+
+<div id="mode-banner"></div>
 
 <header>
   <div class="logo">AP</div>
@@ -368,6 +401,35 @@ function renderTrace(events) {
     + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</div>`).join('')}</div>`;
 }
 
+// Degraded steps ride above the verdict: the operator must see which inputs
+// were fabricated before approving anything based on them.
+function renderDegraded(list) {
+  if (!list || !list.length || MODE.offline) return '';
+  const rows = list.map(d => `<div class="deg-row">
+      <span class="deg-step">${esc(d.step)}</span>
+      <span class="deg-why">${esc(d.service)} unreachable</span>
+      <span class="deg-fix">${esc(d.fix)}</span>
+    </div>`).join('');
+  return `<div class="degraded">
+    <div class="deg-title">Running on fallback data &mdash; ${list.length} step${list.length>1?'s':''} degraded</div>
+    <div class="deg-sub">These values are stored defaults, not live measurements. Do not approve a production patch on them.</div>
+    ${rows}</div>`;
+}
+
+// Shown wherever simulated runs can appear. A green "Patched" that nothing
+// actually patched is the one thing in this console that could mislead an
+// operator into believing an estate is remediated, so it is stated outright
+// rather than left to the per-row chip.
+function simNotice(n) {
+  if (!n || MODE.offline) return '';
+  return `<div class="degraded">
+    <div class="deg-title">${n} simulated run${n > 1 ? 's' : ''} &mdash; nothing was patched</div>
+    <div class="deg-sub">Ansible Orchestrator was unreachable, so steps 5&ndash;10 ran in the
+      local simulator. These executions do not exist in AO and no host was changed.
+      Set <code>FALLBACK_PATCH=unavailable</code> to stop instead of simulating.</div>
+  </div>`;
+}
+
 // The backend's verdict is an enum (review_required / auto_approve_eligible).
 // Translate it rather than printing the raw value at the reviewer.
 function renderVerdict(dr) {
@@ -420,6 +482,7 @@ function renderDryRun(s) {
       <div class="stat"><div class="v" style="font-size:14px">${esc(dr.risk_source)}</div><div class="k">Risk source</div></div>
       <div class="stat"><div class="v" style="font-size:14px">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
     </div>
+    ${renderDegraded(dr.degraded)}
     ${renderVerdict(dr)}
     ${notes}
     <div class="sev-block" style="margin-top:16px">
@@ -440,7 +503,19 @@ const OUTCOME = {
   running:           { cls: 'review', label: 'Running' },
   failed:            { cls: 'fail',   label: 'Failed' },
   timeout:           { cls: 'fail',   label: 'Timed out' },
+  unavailable:       { cls: 'fail',   label: 'Not dispatched' },
+  completed:         { cls: 'ok',     label: 'Completed' },
+  cancelled:         { cls: 'fail',   label: 'Cancelled' },
 };
+
+// Set by renderMode() before the first render.
+let MODE = { offline: false, strict: false };
+
+// In offline mode the top banner already states that the whole session is
+// fabricated, so the frames are left to read as a normal flow. In live mode a
+// simulated row is an anomaly among real ones and still has to be marked.
+const simChip = r => (r.simulated && !MODE.offline)
+  ? '<span class="badge sim">SIMULATED</span>' : '';
 
 let patchState = null;   // last /api/state payload, so rows can re-render in place
 
@@ -533,7 +608,7 @@ function renderPatch(s) {
       : '<span class="muted-sm">&mdash;</span>';
     return `<tr data-exec="${esc(r.execution_id)}">
       <td class="cve-id">${esc(r.host)}</td>
-      <td><span class="badge ${o.cls}">${esc(o.label)}</span></td>
+      <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
       <td class="decide-cell">${actions}</td>
       <td class="desc">${steps || esc(r.error || '—')}</td>
       <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
@@ -553,6 +628,7 @@ function renderPatch(s) {
     <table style="margin-top:10px">
       <thead><tr><th>Host</th><th>Outcome</th><th>Decision</th><th>Workflow steps</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>
+    ${simNotice((p.results || []).filter(r => r.simulated).length)}
     <div class="note">Each host triggers its own Ansible Orchestrator execution.
       Hosts routed to <code>approved_patch</code> pause at the approval gate in the AO console.</div>
     <div class="note">Next: ${esc(s.next || 'n/a')}</div>`;
@@ -684,6 +760,8 @@ const RUN_OUTCOME = {
   cancelled:         { cls: 'fail',   label: 'Cancelled' },
   awaiting_approval: { cls: 'review', label: 'Awaiting approval' },
   running:           { cls: 'review', label: 'Running' },
+  unavailable:       { cls: 'fail',   label: 'Not dispatched' },
+  timeout:           { cls: 'fail',   label: 'Timed out' },
 };
 
 const ago = iso => {
@@ -729,7 +807,7 @@ async function showRuns() {
       <td class="cve-id">${esc(r.cve_id)}</td>
       <td class="cve-id">${esc(r.host)}</td>
       <td>${esc(r.group)}</td>
-      <td><span class="badge ${o.cls}">${esc(o.label)}</span></td>
+      <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
       <td class="decide-cell">${act}</td>
       <td class="desc">${r.error ? `<span class="err-sm">${esc(String(r.error).slice(0,200))}</span>` : '—'}</td>
       <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
@@ -741,6 +819,12 @@ async function showRuns() {
       <h3>${esc(d.workflow)} &mdash; last ${runs.length} run(s)</h3>
       <button id="refresh-runs" class="pill">Refresh</button>
     </div>
+    ${(d.degraded && !MODE.offline) ? `<div class="degraded">
+      <div class="deg-title">Ansible Orchestrator unreachable &mdash; simulated runs only</div>
+      <div class="deg-sub">This list is the local simulator's history. Real AO executions are
+        missing from it, so do not read it as the full record.
+        <span class="deg-fix">${esc(d.degraded)}</span></div></div>` : ''}
+    ${simNotice(runs.filter(r => r.simulated).length)}
     <div class="stats" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat"><div class="v low">${n('completed') + n('patched')}</div><div class="k">Completed</div></div>
       <div class="stat"><div class="v high">${n('awaiting_approval')}</div><div class="k">Awaiting approval</div></div>
@@ -793,7 +877,30 @@ document.getElementById('pills').addEventListener('click', e => {
 document.getElementById('go').addEventListener('click', startPatch);
 document.getElementById('cve').addEventListener('keydown', e => { if (e.key === 'Enter') startPatch(); });
 
-loadCves(0);
+// The banner is the only thing on screen that says the whole session is
+// fabricated, so it is resolved before the first CVE renders rather than
+// appearing a moment later over data the user has already started reading.
+async function renderMode() {
+  let m;
+  try { m = await (await fetch('/api/mode')).json(); } catch (e) { return; }
+  if (!m || !m.ok) return;
+  MODE = m;
+  const el = document.getElementById('mode-banner');
+  if (m.offline) {
+    el.innerHTML = `<span class="tag">OFFLINE</span>
+      <span>Fallback mode &mdash; every value on this page is a stored default.</span>
+      <span class="sub">No cluster is being contacted and nothing will be patched.</span>
+      <span class="how">./demo.sh --live</span>`;
+    el.classList.add('on');
+  } else if (m.strict) {
+    el.innerHTML = `<span class="tag">STRICT</span>
+      <span>Fallbacks disabled &mdash; any unreachable service will fail the run.</span>
+      <span class="how">unset STRICT</span>`;
+    el.classList.add('on');
+  }
+}
+
+renderMode().finally(() => loadCves(0));
 </script>
 </body>
 </html>
