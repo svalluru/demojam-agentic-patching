@@ -54,6 +54,11 @@ you are pointed at the real Red Hat Insights, not the fallback data.
 The two CVEs are chosen to show the two different paths the system can take.
 Try both.
 
+If you are going to show this to somebody rather than just read it, open the
+**book icon** at the top right first. That is the run of show — what to click,
+what to say, what you will be asked, and what not to claim. `Esc` closes it and
+it does not disturb a run, so you can reopen it mid-demo.
+
 **1 — A CVE that needs human approval**
 
 1. Hit **Assess** on the **CVE-2024-3094** row (CVSS 10.0, 5 affected hosts).

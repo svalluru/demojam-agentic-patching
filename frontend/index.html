@@ -1007,11 +1007,15 @@
     transition: color .15s var(--ease), border-color .15s var(--ease),
                 transform .25s var(--spring), box-shadow .15s var(--ease);
   }
-  .status + .icon-btn { margin-left: 10px; }
+  /* The two header controls read as a pair, closer to each other than to
+     the status chip they sit beside. */
+  .head-tools { display: flex; align-items: center; gap: 7px; margin-left: 10px; }
   .icon-btn:hover { color: var(--text); border-color: #d2d2d8; box-shadow: var(--sh-2); }
   /* The gear turns. Small, but it is the one control that opens something. */
   #open-settings:hover svg { transform: rotate(60deg); }
   #open-settings svg { transition: transform .4s var(--ease); }
+  #open-guide svg { transition: transform .3s var(--spring); }
+  #open-guide:hover svg { transform: translateY(-1.5px); }
   .drawer-scrim {
     position: fixed; inset: 0; z-index: 40;
     background: rgba(11,11,12,.34); display: flex; justify-content: flex-end;
@@ -1020,6 +1024,9 @@
   }
   @keyframes fade { from { opacity: 0; } }
   .drawer-scrim[hidden] { display: none; }
+  /* The guide is read, not filled in, so it gets a reading measure rather
+     than the settings drawer's two-column width. */
+  .drawer.wide { width: min(760px, 100%); }
   .drawer {
     width: min(620px, 100%); height: 100%;
     background: var(--panel); border-left: 1px solid var(--border);
@@ -1049,6 +1056,83 @@
     padding: 12px 18px; border-top: 1px solid var(--border);
   }
   .drawer-foot .muted-sm { margin-right: auto; }
+
+  /* ---- demo guide ----
+     Read off a laptop while talking to a room, so: one column, generous
+     leading, and the line to actually say set apart from the thing to click.
+     A presenter glancing down needs to find their place in under a second. */
+  .guide { font-size: 13px; line-height: 1.65; color: var(--text); }
+  .guide > section { margin-top: 26px; }
+  .guide > section:first-child { margin-top: 14px; }
+  .guide h3 {
+    font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); display: flex; align-items: center; gap: 9px; margin-bottom: 11px;
+  }
+  .guide h3::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .guide p { margin: 9px 0; }
+  .guide p.lede { font-size: 14px; }
+  .guide ul { margin: 9px 0; padding-left: 18px; }
+  .guide li { margin: 5px 0; }
+  .guide code {
+    font-family: var(--mono); font-size: 11.5px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--r-xs); padding: 1px 5px;
+  }
+  .guide strong { font-weight: 700; }
+
+  /* The pitch, and the close. Two sentences that have to survive being
+     remembered rather than read. */
+  .g-pitch {
+    padding: 15px 17px; border-radius: var(--r-sm); background: var(--surface);
+    border: 1px solid var(--border); border-left: 3px solid var(--text);
+    font-size: 14px; line-height: 1.6;
+  }
+
+  .g-beat { display: grid; grid-template-columns: 26px 1fr; gap: 0 13px;
+            padding: 15px 0; border-top: 1px solid var(--border); }
+  .g-beat:first-of-type { border-top: none; padding-top: 4px; }
+  .g-n {
+    width: 26px; height: 26px; border-radius: 50%; margin-top: 1px;
+    border: 1px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--muted);
+  }
+  .g-beat h4 { font-size: 13.5px; font-weight: 700; display: flex;
+               align-items: baseline; gap: 9px; }
+  .g-beat h4 .t { margin-left: auto; font-family: var(--mono); font-size: 10.5px;
+                  font-weight: 600; color: var(--muted); letter-spacing: .3px; }
+  .g-beat > div:last-child { min-width: 0; }
+
+  /* Do and Say are different jobs and get read at different moments — the
+     one before you speak, the other while you are speaking. */
+  .g-do, .g-say { display: grid; grid-template-columns: 34px 1fr; gap: 9px;
+                  margin-top: 9px; font-size: 12.5px; line-height: 1.6; }
+  .g-do  > b, .g-say > b {
+    font-size: 9px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase;
+    color: var(--muted); padding-top: 3px;
+  }
+  .g-say > span {
+    border-left: 2px solid var(--border); padding-left: 11px; color: var(--text);
+  }
+  .g-say em { font-style: italic; }
+
+  .g-why { margin-top: 8px; margin-left: 43px; font-size: 11.5px;
+           line-height: 1.6; color: var(--muted); }
+
+  .g-qa { border-top: 1px solid var(--border); padding: 11px 0; }
+  .g-qa:last-child { border-bottom: 1px solid var(--border); }
+  .g-qa b { display: block; font-size: 12.5px; font-weight: 700; }
+  .g-qa span { display: block; margin-top: 4px; font-size: 12.5px;
+               line-height: 1.6; color: var(--muted); }
+
+  /* Red here is doing what red does everywhere else on this page: marking
+     the consequential thing. Claiming more than the repo can back is the
+     one way to lose the room for good. */
+  .g-never { border: 1px solid var(--red); border-radius: var(--r-sm);
+             background: var(--tint-r); padding: 13px 16px; }
+  .g-never h3 { color: var(--red); }
+  .g-never h3::after { background: rgba(214,0,28,.28); }
+  .g-never li { color: var(--text); }
+  .g-never code { background: var(--panel); border-color: rgba(214,0,28,.3); }
   .ghost-btn {
     padding: 8px 14px; background: transparent; color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
@@ -1135,6 +1219,15 @@
   <!-- Where the run is, across the top, filled by renderStages(). -->
   <nav class="stages" id="stages" aria-label="Run progress"></nav>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
+  <div class="head-tools">
+  <button class="icon-btn" id="open-guide" title="Demo guide" aria-label="Demo guide">
+    <!-- open book, drawn here like every other icon: no network offline -->
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 4h6a3.5 3.5 0 0 1 3.5 3.5V21a3 3 0 0 0-3-2.5H2z"></path>
+      <path d="M22 4h-6a3.5 3.5 0 0 0-3.5 3.5V21a3 3 0 0 1 3-2.5H22z"></path>
+    </svg>
+  </button>
   <button class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">
     <!-- gear, drawn rather than pulled from an icon font: no network in offline mode -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -1143,6 +1236,7 @@
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
     </svg>
   </button>
+  </div>
 </header>
 
 <!-- Shown only while a run is in flight; see body.busy. -->
@@ -1151,6 +1245,235 @@
 <!-- Approve / reject land here, because the row they were clicked in
      re-renders out from under any message written into it. -->
 <div id="toasts"></div>
+
+<!-- Demo guide. Static content on purpose: it is the one thing in here that
+     has to still be readable when every backend is down, and a presenter
+     opening it thirty seconds before walking into a room cannot be waiting
+     on a fetch. The one live part is the mode note, filled by openGuide(). -->
+<div class="drawer-scrim" id="guide-scrim" hidden>
+  <aside class="drawer wide" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+    <div class="drawer-head">
+      <h2 id="guide-title">Demo guide</h2>
+      <button class="icon-btn" id="close-guide" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-note" id="guide-mode">Checking which mode this console is in…</div>
+    <div class="drawer-body">
+      <div class="guide">
+
+        <section>
+          <h3>Before you open the door</h3>
+          <ul>
+            <li>Run <code>./demo.sh</code> and open <code>http://127.0.0.1:8788</code>. Confirm the
+                red banner across the top before anyone is watching.</li>
+            <li>Reset to a clean slate between runs: <code>rm -f runs/simulated.json</code>, then reload.</li>
+            <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-demo — it
+                does not disturb the run.</li>
+            <li>Budget <strong>10 minutes</strong> for the seven beats below, plus questions.
+                The short version is beats 1, 2, 4 and 6.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>The sentence it all hangs off</h3>
+          <p class="g-pitch">Patching is not slow because applying a patch is slow. It is slow
+            because deciding <em>which</em> hosts to patch, and getting a person to agree, takes
+            longer than the patch does. This puts an agent on the deciding and keeps the person
+            on the agreeing.</p>
+          <p>If you say one thing, say that. Everything below is evidence for it.</p>
+        </section>
+
+        <section>
+          <h3>Run of show</h3>
+
+          <div class="g-beat">
+            <div class="g-n">1</div>
+            <div>
+              <h4>The system, before anything runs <span class="t">30s</span></h4>
+              <div class="g-do"><b>Do</b><span>Point at the left panel. Nothing has run yet,
+                so every box is grey.</span></div>
+              <div class="g-say"><b>Say</b><span>“That is the whole system — a supervisor, the
+                agents it drives, and the services behind them. Two of the agents are not built,
+                which is why they are dashed, and they will still be dashed at the end. Everything
+                else lights up as it gets called.”</span></div>
+              <div class="g-why">Lead with this because it is the one claim nobody else can make
+                from a slide: the diagram is drawn from the agents' own event log, not from a
+                drawing of what the flow is supposed to be. Say that out loud — it is the
+                difference between a demo and an animation.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">2</div>
+            <div>
+              <h4>Assess the critical CVE <span class="t">90s</span></h4>
+              <div class="g-do"><b>Do</b><span>Press <strong>Assess</strong> on the
+                <strong>CVE-2024-3094</strong> row. Then stop talking and let the left panel
+                move.</span></div>
+              <div class="g-say"><b>Say</b><span>“Insights hands over the CVE and the affected
+                hosts. The supervisor wakes the first agent, which goes to the risk model and to
+                the patch history store, both of those in parallel. Every line you just watched
+                light up is a logged call. If one of those boxes had stayed grey, nothing would
+                have asked it.”</span></div>
+              <div class="g-why">The pause is the point. People expect a spinner; what they get
+                is a system describing itself while it works. Do not narrate over it.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">3</div>
+            <div>
+              <h4>Read the plan like a reviewer would <span class="t">90s</span></h4>
+              <div class="g-do"><b>Do</b><span>Walk the plan: the score per host, that host's own
+                patch history, the maintenance window, the verdict.</span></div>
+              <div class="g-say"><b>Say</b><span>“This is what a human approves against, so it has
+                to carry everything that decision needs. All five hosts came back above the review
+                threshold, so the verdict is manual review.”</span></div>
+              <div class="g-do"><b>Do</b><span>Point at the dispatch button before you press it.
+                It reads <strong>Send 5 for approval</strong>, in black.</span></div>
+              <div class="g-say"><b>Say</b><span>“The button is labelled from the verdict. It never
+                says patch when it is not about to patch anything.”</span></div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">4</div>
+            <div>
+              <h4>The gate — the beat that sells it <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span>Send the five. Approve one host. Watch its bar
+                fill. Leave the others sitting at the gate.</span></div>
+              <div class="g-say"><b>Say</b><span>“Every host got its own workflow run and every one
+                of them stopped. Nothing moves until somebody approves it. That bar is the
+                fraction of workflow steps that have reported finished — it is not a timer. If the
+                run stalls, the bar stalls.”</span></div>
+              <div class="g-why">Say the bar line to an ops audience specifically. They have all
+                been lied to by a progress bar, and volunteering that yours is measured buys more
+                credibility than the rest of the demo put together.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">5</div>
+            <div>
+              <h4>The other path: no gate at all <span class="t">60s</span></h4>
+              <div class="g-do"><b>Do</b><span>Go back to the list and assess
+                <strong>CVE-2024-1086</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“Lower severity, both hosts under the threshold,
+                so there is no approval gate anywhere downstream. Notice the button went red and
+                now says <em>Patch 2 hosts</em> — because that press is the only human check these
+                hosts get. Nothing stops to ask again.”</span></div>
+              <div class="g-why">Shows the routing is a real decision rather than a fixed script,
+                and that the console changes its own language depending on the consequence.
+                Also worth pointing at: the RAG store stays grey on this one, because no host
+                needed review so nothing ever asked it.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">6</div>
+            <div>
+              <h4>What it saved <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>. Read the
+                banner at the top out loud before you touch a number.</span></div>
+              <div class="g-say"><b>Say</b><span>“The measured half is this run's own clock. The
+                manual half is assumed — it has to be, because the manual run never happened.
+                So the first card is a slider for every assumption behind the comparison. If you
+                think fifteen minutes of change prep per host is generous, drag it down now and
+                the whole page follows.”</span></div>
+              <div class="g-do"><b>Do</b><span>Hand the laptop over and let them move a slider.
+                If you do one interactive thing all demo, do this one.</span></div>
+              <div class="g-say"><b>Say</b><span>“Further down it tells you how far those
+                assumptions have to move before the conclusion flips, and the payback card says
+                outright that the platform cost is the weakest number on the page.”</span></div>
+              <div class="g-why">A savings page nobody can argue with is a page nobody believes.
+                Handing over the sliders converts the most sceptical person in the room into the
+                one operating it.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">7</div>
+            <div>
+              <h4>Close on the banner <span class="t">20s</span></h4>
+              <div class="g-do"><b>Do</b><span>Point back at the red bar at the top of the
+                page.</span></div>
+              <div class="g-say"><b>Say</b><span>“Everything you just saw ran with no cluster
+                attached. No host was touched and those workflow runs exist nowhere. The agent
+                logic, the routing, the gate and the plan are the real ones — the data under
+                them is stored, and the console says so on every screen rather than letting you
+                find out later.”</span></div>
+              <div class="g-why">Ending on the limitation is not a weak close. It is the reason
+                they will believe the rest of it, and it pre-empts the question that was coming
+                anyway.</div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h3>If they ask</h3>
+
+          <div class="g-qa"><b>“Is any of this real?”</b>
+            <span>The agents, the control flow, the approval gate, the thresholds and the routing
+            rules are. The CVEs, hosts, scores and history are stored defaults, and the same
+            console runs against real backends with <code>./demo.sh --live</code>.</span></div>
+
+          <div class="g-qa"><b>“What happens when one of your backends is down?”</b>
+            <span>Reads degrade, writes fail closed. A step that could not reach its service falls
+            back to a stored default, and then the plan names the step, the service and the fix,
+            and that box turns red in the diagram. A patch is never assumed — that asymmetry is
+            deliberate, because a missing risk score can be estimated and a patch cannot.</span></div>
+
+          <div class="g-qa"><b>“Can it patch without a human?”</b>
+            <span>Yes, below the threshold, and the threshold is a setting — the gear at the top
+            right. Show them. Being able to move the line between supervised and unattended in
+            front of them is more convincing than any claim about where it sits.</span></div>
+
+          <div class="g-qa"><b>“Where does the patch history come from?”</b>
+            <span>A vector store — Milvus with Llama Stack in front of it — queried per host, and
+            only for hosts that need review. The model is XGBoost, served on OpenShift.</span></div>
+
+          <div class="g-qa"><b>“How do we know the agent did what you say it did?”</b>
+            <span>The trace under the diagram is every hop, in order, with the seconds between
+            them, and the API carries the same list. Scroll it. It is the same source the diagram
+            draws from, so the two cannot disagree.</span></div>
+
+          <div class="g-qa"><b>“Can we change the thresholds and the costs?”</b>
+            <span>Gear icon, every tunable the process reads, grouped, with its default shown
+            until something overrides it. In-memory and lost on restart; <code>.env</code> is the
+            durable place.</span></div>
+        </section>
+
+        <section class="g-never">
+          <h3>Do not say</h3>
+          <ul>
+            <li><strong>Do not call the ROI figures a measured saving.</strong> Half of that
+                comparison is assumed and the page says so. Claiming otherwise is the one thing
+                on here that would be caught later rather than in the room.</li>
+            <li><strong>Do not claim the risk score discriminates between hosts yet.</strong>
+                Three of its four inputs describe the CVE rather than the host, so hosts of one
+                CVE score almost alike. It needs tuning, and saying so costs you nothing.</li>
+            <li><strong>Do not skip the banner to make it look live.</strong> If someone spots it
+                after you have implied otherwise, you lose the whole demo and not just that
+                slide.</li>
+            <li><strong>Do not run <code>--live</code> in front of a customer without checking
+                first.</strong> The AAP job templates the workflow calls do not exist yet, so an
+                approved run against a real Ansible Orchestrator fails part way through. The
+                offline path is unaffected — demo on that.</li>
+            <li><strong>Do not present agents 3 and 4 as coming soon with a date.</strong> They
+                are not started. The diagram already shows them dashed; let it.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Between demos</h3>
+          <p>Delete the run store and reload — <code>rm -f runs/simulated.json</code> — otherwise
+          the ROI page's lifetime card carries your last rehearsal into the next room. Everything
+          else is in memory and resets when you restart <code>./demo.sh</code>.</p>
+        </section>
+
+      </div>
+    </div>
+  </aside>
+</div>
 
 <!-- Settings drawer. Every tunable this process reads, grouped. -->
 <div class="drawer-scrim" id="settings-scrim" hidden>
@@ -3021,11 +3344,12 @@ document.getElementById('pills').addEventListener('click', e => {
   const p = e.target.closest('.pill');
   if (p) { filter = p.dataset.sev; render(); }
 });
-// Escape backs out of whatever the right frame is showing. The settings
-// drawer gets it first — see the handler next to closeSettings().
+// Escape backs out of whatever the right frame is showing. Either drawer gets
+// it first — see the handler next to closeSettings().
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!document.getElementById('settings-scrim').hidden) return;
+  if (!document.getElementById('guide-scrim').hidden) return;
   if (document.getElementById('head-back').hidden
       && document.getElementById('view-runs').textContent.startsWith('Patch')) return;
   document.getElementById('view-runs').textContent = 'Patch runs';
@@ -3216,8 +3540,50 @@ document.getElementById('close-settings').addEventListener('click', closeSetting
 document.getElementById('settings-scrim').addEventListener('click', e => {
   if (e.target.id === 'settings-scrim') closeSettings();   // click-outside only
 });
+
+// ---- demo guide -----------------------------------------------------------
+// The guide is written for the offline demo, which is the one that is safe to
+// give. Opened in live mode it would be telling the presenter to point at a
+// banner that is not there, so the note at the top says which script they are
+// actually holding rather than letting them find out in front of the room.
+function openGuide() {
+  const note = document.getElementById('guide-mode');
+  // MODE starts as a default object rather than null, and that default reads
+  // as live. Only `ok` distinguishes a resolved mode from one the backend
+  // never answered — getting this wrong would tell a presenter they are
+  // pointed at a cluster when the backend is simply down.
+  if (MODE && MODE.ok && MODE.offline) {
+    note.innerHTML = 'This console is in <strong>fallback mode</strong> — the one '
+      + 'this script is written for. Every value is a stored default and nothing '
+      + 'will be patched.';
+  } else if (MODE && MODE.ok) {
+    note.innerHTML = '<strong>Live mode.</strong> The script below assumes the offline '
+      + 'demo: there is no red banner to point at in beat 7, the two CVEs it names may '
+      + 'not be in your list, and approving a host dispatches a real workflow run. '
+      + 'Read <em>Do not say</em> before you present this.';
+  } else {
+    note.textContent = 'Could not reach the backend, so this guide cannot tell you '
+      + 'which mode you are in. Check that before you present.';
+  }
+  document.getElementById('guide-scrim').hidden = false;
+}
+
+function closeGuide() {
+  document.getElementById('guide-scrim').hidden = true;
+}
+
+document.getElementById('open-guide').addEventListener('click', openGuide);
+document.getElementById('close-guide').addEventListener('click', closeGuide);
+document.getElementById('guide-scrim').addEventListener('click', e => {
+  if (e.target.id === 'guide-scrim') closeGuide();         // click-outside only
+});
+
+// One handler for both, so Escape closes whichever is on top rather than
+// racing two listeners that each think they own the key.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !document.getElementById('settings-scrim').hidden) closeSettings();
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('guide-scrim').hidden) { closeGuide(); return; }
+  if (!document.getElementById('settings-scrim').hidden) closeSettings();
 });
 
 document.getElementById('save-settings').addEventListener('click', async () => {

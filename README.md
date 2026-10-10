@@ -192,6 +192,22 @@ write-only: the panel never reads them back, and leaving one blank keeps the
 current value. `BACKEND_HOST` / `BACKEND_PORT` are shown but not editable; the
 socket is already open by the time the panel can reach the process.
 
+### Demo guide
+
+The book icon beside the gear opens the run of show: a seven-beat script with
+the thing to click and the line to say kept apart, the questions that actually
+get asked with answers to them, and a **Do not say** list of the claims this
+repo cannot back — the ROI figures as a measured saving, the risk score as
+host-level triage, agents 3 and 4 as imminent.
+
+It is static markup rather than a fetch, because it has to still be readable
+when every backend is down and nobody opening it thirty seconds before walking
+into a room should be waiting on the network. The one live part is the note at
+the top, which names the mode the console is actually in: the script is written
+for the offline demo, so opened in live mode it says so rather than sending a
+presenter to point at a banner that is not there. A backend it cannot reach
+reads as *unknown*, never as live.
+
 ## Offline / fallback mode
 
 Every step has a stored default, so the whole console can be demonstrated with
