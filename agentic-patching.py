@@ -38,6 +38,7 @@ import os
 import socket
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -734,6 +735,10 @@ class SimStore:
     def __init__(self, path: Path):
         self.path = path
         self.runs: dict[str, dict] = {}
+        # Approving several hosts at once puts one writer per host on its own
+        # server thread, and each one now writes repeatedly as its run steps
+        # forward. Two interleaved write_text calls truncate the file.
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -762,12 +767,16 @@ class SimStore:
         run.setdefault('created_at', now_iso())
         if run.get('outcome') in ('patched', 'rejected', 'failed'):
             run['completed_at'] = now_iso()
-        self.runs[run['execution_id']] = run
-        self._save()
+        with self._lock:
+            self.runs[run['execution_id']] = dict(run)
+            self._save()
         return run
 
     def get(self, execution_id: str) -> dict | None:
-        return self.runs.get(execution_id)
+        # A copy, because the console polls a run on one thread while the
+        # thread stepping it forward is mutating it.
+        run = self.runs.get(execution_id)
+        return dict(run) if run else None
 
     def recent(self, limit: int = 40) -> list[dict]:
         return sorted(self.runs.values(),
@@ -1029,6 +1038,11 @@ class PatchingAgent:
             })
         return runs
 
+    # Everything the workflow still has to do once the gate clears. route_switch
+    # and the gate itself are already behind an approved run.
+    _AFTER_GATE = tuple(n for n, _ in fallbacks.SIM_STEPS
+                        if n not in ('route_switch', 'approval_gate'))
+
     def _decide_sim(self, execution_id: str, decision: str) -> dict:
         """Resolve a simulated approval gate. No signal is sent anywhere."""
         run = SIM.get(execution_id)
@@ -1037,21 +1051,40 @@ class PatchingAgent:
                 'simulated run', f'{execution_id} is not in the local store',
                 'it was created before runs/simulated.json was last cleared')
         demo_pause(2)        # the real gate takes seconds to settle
-        approved = decision == 'approved'
-        run.update({
-            'status': 'completed',
-            'outcome': 'patched' if approved else 'rejected',
-            'approval_pending': False,
-            'approval_activity_id': '',
-            'decision': decision,
+
+        if decision != 'approved':
             # Rejecting stops the run at the gate, matching the real workflow:
             # the downstream nodes never leave pending.
-            'steps': (fallbacks.sim_steps('run_cve_remediation') if approved
-                      else fallbacks.sim_steps('approval_gate', status='rejected')),
-        })
+            run.update({
+                'status': 'completed', 'outcome': 'rejected',
+                'approval_pending': False, 'approval_activity_id': '',
+                'decision': decision,
+                'steps': fallbacks.sim_steps('approval_gate', status='rejected'),
+            })
+            SIM.put(run)
+            self._trace('patching', 'console',
+                        f'{execution_id[:12]} -> SIMULATED rejected')
+            return {**run, 'decision': decision}
+
+        # Approved runs walk their remaining nodes one at a time, committing
+        # each transition to the store before pausing. A real execution is
+        # observable while it works, and the console draws its progress bar
+        # from whatever the steps say — so jumping straight from 'waiting' to
+        # 'completed' would leave that bar with nothing to read, and would have
+        # the simulator misrepresent the one part of the run that takes time.
+        run.update({'approval_pending': False, 'approval_activity_id': '',
+                    'decision': decision})
+        for node in self._AFTER_GATE:
+            run.update({'status': 'running', 'outcome': 'running',
+                        'steps': fallbacks.sim_steps(node, status='running')})
+            SIM.put(run)
+            demo_pause(3)
+
+        run.update({'status': 'completed', 'outcome': 'patched',
+                    'steps': fallbacks.sim_steps('run_cve_remediation')})
         SIM.put(run)
         self._trace('patching', 'console',
-                    f'{execution_id[:12]} -> SIMULATED {run["outcome"]}')
+                    f'{execution_id[:12]} -> SIMULATED patched')
         return {**run, 'decision': decision}
 
     def run_detail(self, execution_id: str) -> dict:
@@ -1254,6 +1287,9 @@ class Supervisor:
             'patched': sum(1 for r in results if r['outcome'] == 'patched'),
             'unavailable': sum(1 for r in results if r['outcome'] == 'unavailable'),
             'awaiting_approval': sum(1 for r in results if r['outcome'] == 'awaiting_approval'),
+            # A host dispatched into the unattended branch can still be working
+            # when this returns, so the counts only add up with this included.
+            'running': sum(1 for r in results if r['outcome'] == 'running'),
             'failed': failures,
         }
         self.state = {

@@ -63,7 +63,10 @@ Try both.
 2. Click **Send 5 for approval**. The button says that, and not "patch",
    because on this path it patches nothing — each host gets its own workflow
    run and every one of them stops at the approval gate.
-3. Click **Approve** (or **Reject**) on each row and watch the outcome change.
+3. Click **Approve** (or **Reject**) on each row. The row's progress bar fills
+   as the workflow works through its nodes behind the gate — the count beside
+   it is nodes finished, not elapsed time, so a bar that stops moving means the
+   run stopped moving. It reaches 7/7 and the outcome flips to *Patched*.
 
 **2 — A CVE that patches unattended**
 

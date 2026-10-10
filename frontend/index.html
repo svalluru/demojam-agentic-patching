@@ -519,6 +519,11 @@
   .badge.review::before { animation: breathe 1.7s var(--ease) infinite; }
   @keyframes breathe { 50% { opacity: .25; transform: scale(.7); } }
   .badge.ok     { background: var(--tint-n); color: var(--text); border-color: var(--border); }
+  /* In motion, but not wanting anything from you. Black like the settled
+     states, breathing like the one that is waiting — because it is going to
+     change on its own, and 'review' red would read as an alarm it is not. */
+  .badge.work   { background: var(--tint-n); color: var(--text); border-color: var(--text); }
+  .badge.work::before { animation: breathe 1.7s var(--ease) infinite; }
   .badge.fail   { background: var(--tint-r); color: var(--red);  border-color: var(--red); }
   /* Simulated runs must never be mistaken for real ones at a glance — the
      dashed edge is the tell, and survives the palette losing its third hue. */
@@ -575,6 +580,39 @@
   }
   .meter-val { font-weight: 700; font-size: 12px; min-width: 34px; text-align: right; }
   .meter-val.over { color: var(--red); }
+
+  /* Run progress. The width is the fraction of the execution's workflow nodes
+     that have reported finished — never a timer. So a bar that stops moving
+     means the run stopped moving, which is the whole point of showing it. */
+  .prog-cell { min-width: 180px; }
+  .prog {
+    position: relative; display: block; height: 6px; overflow: hidden;
+    background: var(--surface); border-radius: 4px;
+  }
+  .prog-fill {
+    position: absolute; inset: 0 auto 0 0; width: var(--p, 0%); border-radius: 4px;
+    background: var(--text);
+    transition: width .6s var(--ease), background .3s var(--ease);
+  }
+  /* Parked at the gate, or stopped for the wrong reason. Both are red for the
+     same reason the badge is: neither one is the run getting on with it. */
+  .prog.review .prog-fill, .prog.fail .prog-fill { background: var(--red); }
+  /* The only thing on the row moving on its own clock, and it says "still
+     going", not "this far along" — the width is what says that. */
+  .prog.live .prog-fill::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+    animation: sheen 1.2s linear infinite;
+  }
+  @keyframes sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .prog-meta {
+    display: flex; align-items: baseline; gap: 10px; margin-top: 6px;
+    font-size: 10px; color: var(--muted);
+  }
+  .prog-step { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis;
+               white-space: nowrap; }
+  .prog-n { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .prog-err { margin-top: 5px; font-size: 10.5px; color: var(--red); }
 
   /* ---- split donut ----
      review vs auto as one shape. Two numbers in two boxes do not show a
@@ -1411,7 +1449,7 @@ const OUTCOME = {
   patched:           { cls: 'ok',     label: 'Patched' },
   awaiting_approval: { cls: 'review', label: 'Awaiting approval' },
   rejected:          { cls: 'fail',   label: 'Rejected' },
-  running:           { cls: 'review', label: 'Running' },
+  running:           { cls: 'work',   label: 'Running' },
   failed:            { cls: 'fail',   label: 'Failed' },
   timeout:           { cls: 'fail',   label: 'Timed out' },
   unavailable:       { cls: 'fail',   label: 'Not dispatched' },
@@ -1429,40 +1467,107 @@ const simChip = r => (r.simulated && !MODE.offline)
   ? '<span class="badge sim">SIMULATED</span>' : '';
 
 let patchState = null;   // last /api/state payload, so rows can re-render in place
+let patchRowSig = '';    // which runs the patch table is currently showing
+
+const STEP_DONE = ['completed', 'succeeded'];
+const STEP_BAD  = ['failed', 'error', 'rejected', 'cancelled'];
+const STEP_AT   = ['running', 'waiting'];
+
+// How far through its workflow a run is, measured in nodes that have actually
+// reported finished. Deriving it from the reported steps rather than from the
+// elapsed time is the difference between a progress bar and a loading
+// animation: this one stalls when the run stalls, which is the thing an
+// operator needs to see.
+function stepProgress(r) {
+  const steps = (r.steps || []).filter(s => s.status && s.status !== 'skipped');
+  if (!steps.length) return null;
+  const done = steps.filter(s => STEP_DONE.includes(s.status)).length;
+  const bad  = steps.find(s => STEP_BAD.includes(s.status));
+  const at   = steps.find(s => STEP_AT.includes(s.status));
+  return {
+    done, total: steps.length,
+    pct: Math.round(done / steps.length * 100),
+    label: (bad || at || steps[steps.length - 1]).name || '',
+    // The full node list moves into the tooltip. Spelled out in the cell it
+    // was five lines of text per row that nobody read; the bar is the summary
+    // and this is still there when the detail is what you want.
+    title: steps.map(s => `${s.name}: ${s.status}`).join('\n'),
+  };
+}
+
+// Same classes the outcome badge uses, so the bar and the badge cannot
+// disagree about what state the row is in. A run that is working is black:
+// red is for the row that wants a person — parked at the gate, or stopped.
+const progCls = r => r.outcome === 'running'
+  ? 'live' : (OUTCOME[r.outcome] || { cls: 'review' }).cls;
+
+function progressCell(r) {
+  const p = stepProgress(r);
+  if (!p) return `<span class="desc">${esc(r.error || '—')}</span>`;
+  return `<span class="prog ${progCls(r)}" style="--p:${p.pct}%">`
+       + `<span class="prog-fill"></span></span>`
+       + `<span class="prog-meta"><span class="prog-step">${esc(p.label)}</span>`
+       + `<span class="prog-n">${p.done}/${p.total}</span></span>`
+       + (r.error ? `<div class="prog-err">${esc(r.error)}</div>` : '');
+}
+
+// Moves an existing bar instead of rebuilding the cell, so the width animates
+// from where it was. Rebuilding would snap it to the new value and throw away
+// the one cue that says the run is advancing rather than just sitting at a
+// different number.
+function paintProgress(r) {
+  const cell = document.querySelector(`tr[data-exec="${r.execution_id}"] .prog-cell`);
+  if (!cell) return;
+  const p = stepProgress(r), bar = cell.querySelector('.prog');
+  if (!p || !bar) { if (cell) cell.innerHTML = progressCell(r); return; }
+  bar.style.setProperty('--p', `${p.pct}%`);
+  bar.className = `prog ${progCls(r)}`;
+  cell.title = p.title;
+  const step = cell.querySelector('.prog-step'), n = cell.querySelector('.prog-n');
+  if (step) step.textContent = p.label;
+  if (n) n.textContent = `${p.done}/${p.total}`;
+}
+
+const stepKey = r => (r.steps || []).map(s => s.status).join(',');
 
 // Signals the AO approval gate. Buttons are disabled while in flight so a
 // double click cannot send two decisions to the same activity.
 async function decide(execId, activityId, decision) {
-  const row = document.querySelector(`tr[data-exec="${execId}"]`);
-  if (row) {
-    row.querySelectorAll('button').forEach(b => { b.disabled = true; });
-    const cell = row.querySelector('.decide-cell');
-    if (cell) cell.innerHTML = '<span class="muted-sm">signalling…</span>';
-  }
+  const res = (((patchState || {}).patch || {}).results || [])
+    .find(r => r.execution_id === execId);
+  // Parked on the result rather than written into the cell, because the
+  // tracker re-renders this table underneath the await and would wipe a
+  // DOM-only edit. Nothing about the row's state is assumed here — the signal
+  // has been sent, not answered, and the bar advances only once a poll sees
+  // the run actually move.
+  if (res) { res._signal = decision; renderPatch(patchState); }
   try {
     const r = await fetch('/api/decide', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ execution_id: execId, activity_id: activityId, decision }),
     });
     const d = await r.json().catch(() => ({}));
+    if (res) delete res._signal;
     if (!(r.ok && d.ok)) {
-      if (row) row.querySelector('.decide-cell').innerHTML =
-        `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
+      if (res) res._signalError = d.error || 'failed';
       toast(`Could not signal <b>${esc(execId.slice(0, 8))}</b> — ${esc(d.error || 'failed')}`, true);
+      if (patchState) renderPatch(patchState);
       return;
     }
     toast(`${decision === 'approved' ? 'Approved' : 'Rejected'} `
         + `<b>${esc(execId.slice(0, 8))}</b>`, decision !== 'approved');
-    if (patchState && patchState.patch) {
-      for (const res of patchState.patch.results || []) {
-        if (res.execution_id === execId) Object.assign(res, d);
-      }
+    if (res) {
+      delete res._signalError;
+      Object.assign(res, d);
       recountPatch(patchState);
       renderPatch(patchState);
     }
   } catch (e) {
-    if (row) row.querySelector('.decide-cell').innerHTML =
-      `<span class="err-sm">${esc(e.message)}</span>`;
+    if (res) {
+      delete res._signal;
+      res._signalError = e.message;
+      renderPatch(patchState);
+    }
   }
 }
 
@@ -1471,28 +1576,53 @@ let trackTimer = null;
 
 // A result row is a snapshot. A run that is still going can fail a moment
 // later, so anything non-terminal is re-read from AO until it settles.
+//
+// The cadence follows what is actually moving. A run mid-workflow is redrawing
+// a progress bar and is polled fast; a run parked at the gate changes only
+// when a person acts on it, and polling that every second is pure noise.
+const POLL_MOVING = 700, POLL_IDLE = 5000, POLL_MAX_TICKS = 900;
+
 function trackPatchRuns() {
-  clearInterval(trackTimer);
+  clearTimeout(trackTimer);
   let ticks = 0;
-  trackTimer = setInterval(async () => {
-    if (!patchState || !patchState.patch) { clearInterval(trackTimer); return; }
+  const tick = async () => {
+    if (!patchState || !patchState.patch) return;
     const live = (patchState.patch.results || [])
       .filter(r => r.execution_id && !TERMINAL.includes(r.outcome));
-    if (!live.length || ++ticks > 100) { clearInterval(trackTimer); return; }
+    if (!live.length || ++ticks > POLL_MAX_TICKS) return;
+    const moving = live.some(r => r.outcome === 'running' || r._signal);
 
     let changed = false;
     for (const r of live) {
       try {
         const d = await (await fetch(
           `/api/runs?execution_id=${encodeURIComponent(r.execution_id)}`)).json();
-        if (d.ok && d.run && d.run.outcome !== r.outcome) {
-          Object.assign(r, d.run);
-          changed = true;
-        }
+        if (!(d.ok && d.run)) continue;
+        const wasOutcome = r.outcome, wasSteps = stepKey(r);
+        Object.assign(r, d.run);
+        // An outcome change moves badges and the summary counters, so the
+        // table has to be rebuilt. Steps moving under an unchanged outcome is
+        // just the bar, and that is repainted in place.
+        if (r.outcome !== wasOutcome) changed = true;
+        else if (stepKey(r) !== wasSteps) paintProgress(r);
       } catch { /* transient — try again next tick */ }
     }
-    if (changed) { recountPatch(patchState); renderPatch(patchState); }
-  }, 5000);
+    // renderPatch restarts this tracker, so it must not also schedule a tick.
+    if (changed) {
+      recountPatch(patchState);
+      // Let the bars land before the badges change under them. Rebuilding the
+      // table swaps every bar for a fresh element, and a fresh element cannot
+      // animate from where the old one was — it would snap to 100% instead of
+      // running up to it. Moving them first, then rebuilding once the
+      // transition has played, is what makes a finished run read as
+      // "filled, then marked patched" rather than both at once.
+      live.forEach(paintProgress);
+      trackTimer = setTimeout(() => renderPatch(patchState), 620);
+      return;
+    }
+    trackTimer = setTimeout(tick, moving ? POLL_MOVING : POLL_IDLE);
+  };
+  trackTimer = setTimeout(tick, 0);
 }
 
 function recountPatch(s) {
@@ -1500,6 +1630,10 @@ function recountPatch(s) {
   s.patch.summary = {
     patched: rs.filter(r => r.outcome === 'patched').length,
     awaiting_approval: rs.filter(r => r.outcome === 'awaiting_approval').length,
+    // Approved hosts spend real time working through the nodes behind the
+    // gate. Without this the counters do not add up to the host count while
+    // that is happening, and a host in flight looks like one that was lost.
+    running: rs.filter(r => r.outcome === 'running').length,
     failed: rs.filter(r => ['failed', 'timeout'].includes(r.outcome)).length,
     rejected: rs.filter(r => ['rejected', 'cancelled'].includes(r.outcome)).length,
   };
@@ -1528,20 +1662,30 @@ function renderPatch(s) {
   setTimeout(trackPatchRuns, 0);
   const p = s.patch || {};
   const sum = p.summary || {};
+  // The rows now redraw every time any one of them changes state, and
+  // re-running the entry animation on all five because one of them finished
+  // reads as the table reloading. It plays once per set of runs.
+  const sig = (p.results || []).map(r => r.execution_id).join(',');
+  const fresh = sig !== patchRowSig;
+  patchRowSig = sig;
   const rows = (p.results || []).map((r, i) => {
     const o = OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
-    const steps = (r.steps || []).filter(x => x.status && x.status !== 'skipped')
-      .map(x => `${esc(x.name)}:${esc(x.status)}`).join(' · ');
-    const canDecide = r.outcome === 'awaiting_approval' && r.approval_activity_id;
+    const canDecide = r.outcome === 'awaiting_approval'
+                   && r.approval_activity_id && !r._signal;
     const actions = canDecide
       ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
+      : r._signal ? '<span class="muted-sm">signalling…</span>'
+      : r._signalError ? `<span class="err-sm">${esc(r._signalError)}</span>`
+      : r.outcome === 'running'
+        ? `<span class="muted-sm">${r.decision === 'approved' ? 'approved — ' : ''}patching…</span>`
       : '<span class="muted-sm">&mdash;</span>';
-    return `<tr class="in" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
+    const prog = stepProgress(r);
+    return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
       <td class="cve-id">${esc(r.host)}</td>
       <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
       <td class="decide-cell">${actions}</td>
-      <td class="desc">${steps || esc(r.error || '—')}</td>
+      <td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
       <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
     </tr>`;
   }).join('');
@@ -1550,14 +1694,15 @@ function renderPatch(s) {
     <div class="sev-title high" style="margin-top:18px">
       Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
     </div>
-    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+    <div class="stats" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat"><div class="v">${esc(sum.patched)}</div><div class="k">Patched</div></div>
+      <div class="stat"><div class="v">${esc(sum.running || 0)}</div><div class="k">Patching</div></div>
       <div class="stat${sum.awaiting_approval ? ' alert' : ''}"><div class="v">${esc(sum.awaiting_approval)}</div><div class="k">Awaiting approval</div></div>
       <div class="stat${sum.failed ? ' alert' : ''}"><div class="v">${esc(sum.failed)}</div><div class="k">Failed</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
     </div>
     <table style="margin-top:10px">
-      <thead><tr><th>Host</th><th>Outcome</th><th>Decision</th><th>Workflow steps</th><th>Exec</th></tr></thead>
+      <thead><tr><th>Host</th><th>Outcome</th><th>Decision</th><th>Workflow progress</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
     <div class="note">Each host triggers its own Ansible Orchestrator execution.
@@ -1706,7 +1851,7 @@ const RUN_OUTCOME = {
   failed:            { cls: 'fail',   label: 'Failed' },
   cancelled:         { cls: 'fail',   label: 'Cancelled' },
   awaiting_approval: { cls: 'review', label: 'Awaiting approval' },
-  running:           { cls: 'review', label: 'Running' },
+  running:           { cls: 'work',   label: 'Running' },
   unavailable:       { cls: 'fail',   label: 'Not dispatched' },
   timeout:           { cls: 'fail',   label: 'Timed out' },
 };
@@ -1746,6 +1891,9 @@ async function showRuns() {
       ? `<button class="btn-approve" onclick="decideRun('${esc(r.execution_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decideRun('${esc(r.execution_id)}','rejected')">Reject</button>`
       : '<span class="muted-sm">—</span>';
+    // The list endpoint carries steps for simulated runs but not for real ones,
+    // which AO reports per-execution. A row without them keeps the error text.
+    const prog = stepProgress(r);
     return `<tr class="in" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
       <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
       <td class="cve-id">${cveLabel(r.cve_id)}</td>
@@ -1753,7 +1901,9 @@ async function showRuns() {
       <td>${esc(r.group)}</td>
       <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
       <td class="decide-cell">${act}</td>
-      <td class="desc">${r.error ? `<span class="err-sm">${esc(String(r.error).slice(0,200))}</span>` : '—'}</td>
+      <td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${prog
+        ? progressCell(r)
+        : r.error ? `<span class="err-sm">${esc(String(r.error).slice(0, 200))}</span>` : '—'}</td>
       <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
     </tr>`;
   }).join('');
@@ -1779,13 +1929,46 @@ async function showRuns() {
     </div>
     ${runs.length ? `<table style="margin-top:12px">
       <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Branch</th><th>Outcome</th>
-      <th>Decision</th><th>Error</th><th>Exec</th></tr></thead>
+      <th>Decision</th><th>Progress</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>`
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
     <div class="note">${MODE.offline
       ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
       : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}</div>`;
+}
+
+// Follows one row of the runs table while its execution works through the
+// nodes behind the gate. The Remediation view has a tracker over the whole
+// result set; here only the row just decided can be moving, so it is the only
+// one polled, and the list is refetched once it settles.
+async function trackRunRow(execId) {
+  // A signal that landed clears the gate within seconds. Still parked after
+  // this long means it never landed, and there is nothing to watch.
+  let stillAtGate = 0;
+  for (let i = 0; i < 400; i++) {
+    await new Promise(r => setTimeout(r, 700));
+    const row = document.querySelector(`tr[data-exec="${execId}"]`);
+    if (!row) return;                 // list re-rendered or the view was left
+    let d;
+    try {
+      d = await (await fetch(
+        `/api/runs?execution_id=${encodeURIComponent(execId)}`)).json();
+    } catch { continue; }             // transient — try again next tick
+    if (!(d.ok && d.run)) continue;
+    const run = d.run;
+    if (run.outcome === 'awaiting_approval' && ++stillAtGate > 30) return;
+    paintProgress(run);
+    const badge = row.querySelector('.badge');
+    const o = RUN_OUTCOME[run.outcome] || { cls: 'review', label: run.outcome };
+    if (badge) { badge.className = `badge ${o.cls}`; badge.textContent = o.label; }
+    const cell = row.querySelector('.decide-cell');
+    if (cell && run.outcome === 'running') {
+      cell.innerHTML = '<span class="muted-sm">approved — patching…</span>';
+    }
+    // Let the bar finish its run up to 100% before the counters above it jump.
+    if (TERMINAL.includes(run.outcome)) { setTimeout(showRuns, 650); return; }
+  }
 }
 
 // Approve/reject from the runs table. The activity id is fetched first, since
@@ -1800,10 +1983,14 @@ async function decideRun(execId, decision) {
       if (row) row.innerHTML = '<span class="err-sm">no pending approval</span>';
       return;
     }
-    const r = await fetch('/api/decide', {
+    // Not awaited: the decide call blocks for as long as the run takes to
+    // settle, and the row has to be free to show that happening meanwhile.
+    const posted = fetch('/api/decide', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ execution_id: execId, activity_id: act, decision }),
     });
+    trackRunRow(execId);
+    const r = await posted;
     const d = await r.json().catch(() => ({}));
     if (!(r.ok && d.ok)) {
       if (row) row.innerHTML = `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
@@ -1812,7 +1999,6 @@ async function decideRun(execId, decision) {
     }
     toast(`${decision === 'approved' ? 'Approved' : 'Rejected'} `
         + `<b>${esc(execId.slice(0, 8))}</b>`, decision !== 'approved');
-    showRuns();
   } catch (e) {
     if (row) row.innerHTML = `<span class="err-sm">${esc(e.message)}</span>`;
   }

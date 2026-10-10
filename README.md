@@ -112,7 +112,9 @@ plan, then dispatch it. The dispatch button is labelled from the plan's
 verdict — *Patch N hosts* in red when the press really does patch them
 unattended, *Send N for approval* in black when every host will halt at the
 gate instead. Hosts routed to the approval branch show Approve / Reject
-buttons. **Patch runs** lists past executions read live from AO.
+buttons, and once approved the row tracks its execution through the remaining
+workflow nodes to *Patched*. **Patch runs** lists past executions read live
+from AO.
 
 ### CLI
 
@@ -225,6 +227,13 @@ turned a 59-host CVE into 59 sequential round trips.
 **Status is re-read, never trusted.** An approved AO run can fail seconds after
 the console stops polling, so non-terminal rows keep polling until they settle
 and a failed activity marks the run failed even before AO finishes marking it.
+
+**Progress is measured, never animated.** A row's bar is the fraction of that
+execution's workflow nodes that have reported finished, so it stalls exactly
+when the run stalls — which is the one thing the operator watching it needs to
+be able to see. The only clock involved is the CSS transition between two real
+step counts. In the simulated path the pacing comes from the simulator walking
+its nodes under `DEMO_LATENCY`, not from the console.
 
 ## Known gaps
 
