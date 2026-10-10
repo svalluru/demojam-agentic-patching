@@ -195,10 +195,10 @@
   }
   .frame-body::-webkit-scrollbar-thumb:hover { background: #cfcfd4; }
 
-  /* ---- frame 1: input ---- */
+  /* ---- frame 1 ---- Only the settings drawer has text inputs now; frame 1
+     is the architecture and the trace. */
   label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
           text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
-  .field { position: relative; }
   input[type=text] {
     width: 100%; padding: 12px 13px; background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--r-sm);
@@ -211,19 +211,8 @@
     outline: none; border-color: var(--accent); background: var(--panel);
     box-shadow: var(--ring);
   }
-  /* "/" focuses the field. The hint retires once the field has been used,
-     so it teaches the shortcut without becoming furniture. */
-  .kbd {
-    position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
-    padding: 2px 7px; border-radius: var(--r-xs); pointer-events: none;
-    border: 1px solid var(--border); background: var(--panel);
-    font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--muted);
-    transition: opacity .15s var(--ease);
-  }
-  input:focus ~ .kbd, .field.used .kbd { opacity: 0; }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
-  /* Only the settings drawer has a primary button now — the field submits on
-     Enter and every list row carries its own Assess. */
+  /* Only the settings drawer has a primary button — every list row carries
+     its own Assess. */
   button.primary {
     position: relative; overflow: hidden;
     width: 100%; margin-top: 14px; padding: 12px;
@@ -265,8 +254,10 @@
   .assess:active:not(:disabled) { transform: translateY(0) scale(.97); }
   .assess:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; }
   td.act { text-align: right; white-space: nowrap; width: 1%; }
+  /* First thing in frame 1 now, so the gap it opens goes below it rather
+     than above — hidden, it must take no room at all. */
   .result {
-    margin-top: 16px; padding: 12px 14px; border-radius: 9px;
+    margin-bottom: 18px; padding: 12px 14px; border-radius: 9px;
     font-size: 12px; line-height: 1.55; display: none; border-left: 3px solid;
   }
   .result.show { display: block; }
@@ -862,12 +853,11 @@
   }
   @media (max-width: 880px) { .stages { display: none; } }
 
-  /* ---- frame 1: the architecture, under the input ----
-     The field is not the usual way in — most runs start from Assess on a row —
-     so everything under it was a hint and then white space. What goes there is
-     the one thing no other view shows: the shape of the system itself, and
-     which part of it is talking to which right now. */
-  .side { margin-top: 20px; display: flex; flex-direction: column; gap: 20px; }
+  /* ---- frame 1: the architecture ----
+     This column is the whole of frame 1 now. It shows the one thing no other
+     view does: the shape of the system itself, and which part of it is
+     talking to which right now. */
+  .side { display: flex; flex-direction: column; gap: 20px; }
   .side:empty { display: none; }
 
   .run-state {
@@ -1199,16 +1189,13 @@
       <span class="run-state" id="run-state" hidden></span>
     </div>
     <div class="frame-body">
-      <label for="cve">CVE ID</label>
-      <div class="field" id="cve-field">
-        <input type="text" id="cve" placeholder="CVE-2026-12405" autocomplete="off" spellcheck="false">
-        <span class="kbd">/</span>
-      </div>
-      <div class="hint">For a CVE the list does not show — type it and press
-        <strong>Enter</strong>. Otherwise use <strong>Assess</strong> on its row.</div>
+      <!-- No CVE field here. Assess lives on the row it applies to, which is
+           every way into a run there is, so an entry box underneath it was a
+           second door to the same place and the hint under that was explaining
+           why the two existed. -->
       <div class="result" id="result"></div>
-      <!-- What is running, what it is made of, and which backend actually
-           answered for each step of it. Filled by renderSide(). -->
+      <!-- The system as a diagram, lighting up as the agents call each other.
+           Filled by renderSide(). -->
       <div class="side" id="side"></div>
       <!-- Which stage the run is at is in the header bar; this is what the
            agents said getting there. Filled by renderTrace(). -->
@@ -1435,8 +1422,6 @@ function render() {
   const select = tr => {
     el.querySelectorAll('tbody tr').forEach(r => r.classList.remove('sel'));
     tr.classList.add('sel');
-    document.getElementById('cve').value = tr.dataset.id;
-    document.getElementById('cve-field').classList.add('used');
   };
   el.querySelectorAll('tbody tr').forEach(tr => {
     tr.addEventListener('click', () => {
@@ -1557,9 +1542,9 @@ function renderStages(s) {
 }
 
 // ---- left panel: the architecture, live -----------------------------------
-// The column used to be a CVE field, a hint, and then white space — and the
-// field is not even the usual way in, since most runs start from Assess on a
-// row. What goes under it is the one thing no other view shows: the shape of
+// The column used to be a CVE field, a hint, and then white space. Assess
+// lives on the row it applies to, so the field was a second door to the same
+// place; what replaced it is the one thing no other view shows: the shape of
 // the system, and which part of it is talking to which right now.
 //
 // Coordinates are in the SVG's own viewBox and the whole thing scales to the
@@ -2308,12 +2293,14 @@ async function poll(cve) {
   show('Timed out waiting for the run to finish.', 'err');
 }
 
-// `from` is the row's id when a list row started this; the field is the
-// fallback, for a CVE that was typed rather than picked.
+// `from` is the id of the row whose Assess was pressed — the only way in.
+// The shape is still checked: the id comes from whatever the CVE list
+// returned, and the backend is a thinner thing to defend than a URL built
+// out of it.
 async function startPatch(from) {
-  const cve = (from || document.getElementById('cve').value).trim();
+  const cve = (from || '').trim();
   if (!/^CVE-\d{4}-\d{4,}$/i.test(cve)) {
-    show('Enter a CVE ID in the form <strong>CVE-2026-12405</strong>.', 'err');
+    show('That row has no usable CVE id — nothing was started.', 'err');
     return;
   }
   // Every entry point to the same run, so none of them can be pressed twice.
@@ -3034,20 +3021,6 @@ document.getElementById('pills').addEventListener('click', e => {
   const p = e.target.closest('.pill');
   if (p) { filter = p.dataset.sev; render(); }
 });
-// The field has no button of its own; Enter is the whole typed-CVE path.
-document.getElementById('cve').addEventListener('keydown', e => { if (e.key === 'Enter') startPatch(); });
-
-// "/" jumps to the CVE field from anywhere, the way every search box does.
-// Guarded so it does not steal the key from the settings drawer's inputs.
-document.addEventListener('keydown', e => {
-  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-  if (!document.getElementById('settings-scrim').hidden) return;
-  e.preventDefault();
-  document.getElementById('cve-field').classList.add('used');
-  document.getElementById('cve').focus();
-});
-
 // Escape backs out of whatever the right frame is showing. The settings
 // drawer gets it first — see the handler next to closeSettings().
 document.addEventListener('keydown', e => {
