@@ -60,15 +60,17 @@ Try both.
    You get a patch plan: a risk score per host, that host's past patch
    history, the maintenance window, and a verdict. All five hosts score above
    the review threshold, so the verdict is *manual review required*.
-2. Click **Start Patch**.
-   Each host gets its own workflow run and stops at the approval gate.
+2. Click **Send 5 for approval**. The button says that, and not "patch",
+   because on this path it patches nothing — each host gets its own workflow
+   run and every one of them stops at the approval gate.
 3. Click **Approve** (or **Reject**) on each row and watch the outcome change.
 
 **2 — A CVE that patches unattended**
 
 Repeat with **CVE-2024-1086** (CVSS 7.8, 2 affected hosts). Both hosts score
-below the threshold, so they skip the approval gate and go straight to
-patched. No clicking required.
+below the threshold, so there is no approval gate anywhere downstream of them.
+The button reads **Patch 2 hosts** and stays red, because that press is the
+only human check these hosts get — nothing stops to ask again.
 
 **3 — The run history**
 

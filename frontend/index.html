@@ -425,6 +425,16 @@
   }
   .go-patch:active:not(:disabled) { transform: translateY(0) scale(.985); }
   .go-patch:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+  /* Red is reserved for the consequential action. Queuing hosts at the
+     approval gate patches nothing, so that variant drops to neutral black —
+     the colour difference is the honest part of the label. */
+  .go-patch.calm {
+    background: linear-gradient(180deg, #27272c, var(--text));
+    box-shadow: var(--sh-2);
+  }
+  .go-patch.calm:hover:not(:disabled) {
+    box-shadow: 0 9px 22px -8px rgba(11,11,12,.5);
+  }
 
   .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; margin-bottom: 13px; }
   .stat {
@@ -914,7 +924,9 @@
         <button class="pill" id="head-back" hidden>&larr; CVE list</button>
         <button class="pill view-toggle" id="view-runs">Patch runs</button>
         <button class="pill" id="head-refresh" hidden>Refresh</button>
-        <button class="go-patch" id="head-patch" hidden>Start Patch</button>
+        <!-- Label is set from the plan by dispatchAction(); this is placeholder
+             text that is never shown, since the button is hidden until then. -->
+        <button class="go-patch" id="head-patch" hidden>Dispatch</button>
       </div>
     </div>
     <div class="frame-body" id="list">
@@ -1313,6 +1325,41 @@ function riskMeter(h, plan) {
   </div>`;
 }
 
+// What the primary button actually does, which is not one thing. A host routed
+// to auto_patch has no approval gate anywhere downstream, so pressing this is
+// the only human check it will ever get — that press patches it. A host routed
+// to approved_patch stops at the gate in the workflow, so the same press only
+// queues it for someone to approve. Calling both "Start Patch" overstates one
+// and understates the other, and with live model scores a single CVE can split
+// across both branches at once.
+function dispatchAction(plan) {
+  const review = Number(plan.hosts_review) || 0;
+  const auto   = Number(plan.hosts_auto) || 0;
+  const n = (c, w) => `${c} ${w}${c === 1 ? '' : 's'}`;
+  if (!review && !auto) {
+    return { label: 'Nothing to patch', title: 'No affected hosts in this plan.',
+             calm: true, disabled: true };
+  }
+  if (!review) {
+    return { label: `Patch ${n(auto, 'host')}`,
+             title: `Every host scored below the gate, so none of them stops for `
+                  + `approval. This dispatches the remediation workflow and patches `
+                  + `${n(auto, 'host')} unattended.`,
+             calm: false, disabled: false };
+  }
+  if (!auto) {
+    return { label: `Send ${review} for approval`,
+             title: `${n(review, 'host')} scored above the gate. This dispatches a `
+                  + `workflow run each, and every one of them halts at the approval `
+                  + `gate. Nothing is patched until you approve it there.`,
+             calm: true, disabled: false };
+  }
+  return { label: `Dispatch ${n(review + auto, 'host')}`,
+           title: `Split plan: ${n(auto, 'host')} patch unattended on this press, `
+                + `${review} halt at the approval gate for you to decide.`,
+           calm: false, disabled: false };
+}
+
 function renderPlan(s) {
   const plan = s.plan || {};
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
@@ -1352,8 +1399,11 @@ function renderPlan(s) {
   });
   renderStages(s);
   const pb = document.getElementById('head-patch');
-  pb.textContent = 'Start Patch';
-  pb.disabled = false;
+  const act = dispatchAction(plan);
+  pb.textContent = act.label;
+  pb.title = act.title;
+  pb.classList.toggle('calm', act.calm);
+  pb.disabled = act.disabled;
   pb.onclick = () => startRemediation(plan.cve_id);
 }
 
@@ -1471,6 +1521,8 @@ function renderPatch(s) {
   // second one per host, so the primary action retires once it has fired.
   const pb = document.getElementById('head-patch');
   pb.textContent = 'Dispatched';
+  pb.title = 'Already dispatched. Decide the hosts at the gate on their own rows.';
+  pb.classList.remove('calm');
   pb.disabled = true;
   // Non-terminal rows keep polling until they settle.
   setTimeout(trackPatchRuns, 0);

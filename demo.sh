@@ -63,7 +63,7 @@ for _ in $(seq 1 20); do
   url  : http://127.0.0.1:$FRONTEND_PORT
   logs : /tmp/demo-backend.log  /tmp/demo-frontend.log
 
-  Pick a CVE, Assess CVE Impact, Start Patch, then Approve.
+  Pick a CVE, Assess CVE Impact, dispatch the plan, then Approve.
   Ctrl-C to stop.
 
 EOF

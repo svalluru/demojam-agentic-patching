@@ -1211,8 +1211,9 @@ class Supervisor:
             'elapsed_s': round(time.monotonic() - started, 1),
             'degraded': [dict(d) for d in DEGRADED],
             # The plan is a stopping point, not a completion: dispatch is
-            # a separate, operator-initiated step.
-            'next': 'Patching Agent — press Start Patch to dispatch',
+            # a separate, operator-initiated step. Named by what dispatch does
+            # rather than by a button label, which differs per verdict.
+            'next': 'Patching Agent — awaiting operator dispatch',
             'status': 'awaiting_patch_dispatch',
         }
         self.trace('supervisor', 'console', 'patch plan ready — awaiting operator review')

@@ -107,9 +107,12 @@ backend holds the agents, the frontend serves the UI and proxies to it:
 cd frontend && python3 server.py --env ../.env
 ```
 
-Open <http://127.0.0.1:8788>, hit **Assess** on a CVE row, review the
-patch plan, then **Start Patch**. Hosts routed to the approval branch show
-Approve / Reject buttons. **Patch runs** lists past executions read live from AO.
+Open <http://127.0.0.1:8788>, hit **Assess** on a CVE row, review the patch
+plan, then dispatch it. The dispatch button is labelled from the plan's
+verdict — *Patch N hosts* in red when the press really does patch them
+unattended, *Send N for approval* in black when every host will halt at the
+gate instead. Hosts routed to the approval branch show Approve / Reject
+buttons. **Patch runs** lists past executions read live from AO.
 
 ### CLI
 
