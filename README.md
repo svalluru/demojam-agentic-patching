@@ -116,6 +116,30 @@ buttons, and once approved the row tracks its execution through the remaining
 workflow nodes to *Patched*. **Calculate ROI** costs that run out against doing
 the same work by hand. **Patch runs** lists past executions read live from AO.
 
+### The left panel
+
+The right frame moves between the plan, the run history and the ROI report. The
+left one stays, so it carries what you need regardless of which of those is up:
+
+| | |
+|---|---|
+| **State chip** | One word beside the heading — *Assessing*, *Needs review*, *5 at the gate*, *Patching*, *Complete*, *Failed*. The stage bar in the header says the same thing in more detail; this has to make sense on its own once the right frame has moved on. |
+| **This run** | Hosts / Gated / Patched / Failed, plus assessment and dispatch time. Outcome-focused on purpose — the right frame's strip counts the *plan* (CVSS, hosts, review, auto) and disappears with it. |
+| **Where this came from** | One row per backend step, with what actually answered it. |
+| **Agent trace** | Every supervisor↔agent hop, numbered, with elapsed seconds off the events' own clock. |
+
+**Where this came from** has three states, not two, and the third is the
+point. `LIVE` means the service answered. `FALLBACK`, in red, means
+`fallbacks.py` answered instead — live only, since offline the banner has
+already said it of every row and four alarmed rows repeating it is exactly the
+per-step noise described below; there the rows read `STORED`. The third,
+`NOT CALLED` / `NOT NEEDED`, is for a step that was never reached — no host
+needed review, so the RAG store was never queried. Without it, an un-called
+service is indistinguishable from a successful one: it leaves no `degraded`
+entry either. That is why the plan carries `history_source` (`rag` / `fallback`
+/ `skipped`) as a field rather than letting the console infer it from an
+absence.
+
 ### CLI
 
 ```bash

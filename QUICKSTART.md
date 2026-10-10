@@ -68,12 +68,22 @@ Try both.
    it is nodes finished, not elapsed time, so a bar that stops moving means the
    run stopped moving. It reaches 7/7 and the outcome flips to *Patched*.
 
+Watch the left column as you go. It fills in with where the run is in one word,
+a count of hosts gated and patched, and **Where this came from** — one row per
+backend step saying what actually answered it. Offline every row reads `STORED`,
+because every row is a stored default. Live, a step that fell back to
+`fallbacks.py` turns red there and says `FALLBACK`.
+
 **2 — A CVE that patches unattended**
 
 Repeat with **CVE-2024-1086** (CVSS 7.8, 2 affected hosts). Both hosts score
 below the threshold, so there is no approval gate anywhere downstream of them.
 The button reads **Patch 2 hosts** and stays red, because that press is the
 only human check these hosts get — nothing stops to ask again.
+
+On the left, **Patch history** reads `NOT NEEDED` rather than `STORED` on this
+one. No host needed review, so nothing ever asked the RAG store — and a step
+that was never called is not a step that succeeded.
 
 **3 — What the run saved**
 

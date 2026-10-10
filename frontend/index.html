@@ -862,25 +862,144 @@
   }
   @media (max-width: 880px) { .stages { display: none; } }
 
+  /* ---- frame 1: the run, under the input ----
+     The field is not the usual way in — most runs start from Assess on a row —
+     so everything under it was a hint and then white space. This column now
+     carries the three things the right frame stops showing the moment it
+     switches to the run history or the ROI report: what is running, what it is
+     made of, and which backend actually answered for each step of it. */
+  .side { margin-top: 20px; display: flex; flex-direction: column; gap: 20px; }
+  .side:empty { display: none; }
+
+  .run-state {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    margin-left: auto; padding: 4px 10px 4px 8px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--surface);
+    font-size: 10px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--muted); white-space: nowrap;
+  }
+  .run-state::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; flex: none;
+  }
+  /* Black for a state the system owns, red for one that is waiting on a
+     person — the same split the rest of the console uses. */
+  .run-state.work { color: var(--text); border-color: var(--text); }
+  .run-state.wait { color: var(--red); border-color: var(--red);
+                    background: var(--tint-r); }
+  .run-state.work::before, .run-state.wait::before {
+    animation: breathe 1.7s var(--ease) infinite;
+  }
+
+  .run-card {
+    border: 1px solid var(--border); border-radius: var(--r);
+    background: var(--panel); box-shadow: var(--sh-1); overflow: hidden;
+  }
+  .run-top {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 13px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(var(--panel), var(--surface));
+  }
+  .run-cve { font-family: var(--mono); font-size: 13.5px; font-weight: 700;
+             letter-spacing: -.2px; }
+  .run-sev { font-size: 10px; font-weight: 800; letter-spacing: .5px;
+             text-transform: uppercase; color: var(--muted); }
+  .run-sev.hot { color: var(--red); }
+  /* Four counts across, hairlined apart rather than carded individually —
+     at this width six separate cards is what the right frame does and it
+     would not fit. */
+  .run-grid { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .run-grid > div { padding: 11px 4px 10px; text-align: center;
+                    border-right: 1px solid var(--border); }
+  .run-grid > div:last-child { border-right: none; }
+  .run-grid .v { font-size: 20px; font-weight: 800; letter-spacing: -.7px;
+                 line-height: 1.1; }
+  .run-grid .k { font-size: 8.5px; font-weight: 700; letter-spacing: .5px;
+                 text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+  .run-grid .alert .v { color: var(--red); }
+  .run-grid .zero .v { color: var(--muted); opacity: .55; }
+  .run-foot { padding: 10px 13px; border-top: 1px solid var(--border);
+              font-size: 11px; line-height: 1.6; color: var(--muted); }
+  .run-foot b { color: var(--text); font-weight: 700; }
+  .run-foot .wait { color: var(--red); font-weight: 700; }
+  .run-foot .t { font-family: var(--mono); font-size: 10.5px; }
+
+  /* ---- where each number came from ----
+     The report labels a degraded step at the point it is used. This says the
+     same thing about the run as a whole and keeps saying it, because the
+     console is at its most misleading when it looks completely normal and
+     three of the four services behind it are stored defaults.
+
+     Three states, not two: a service that has not been called yet is not the
+     same as one that answered, and calling it 'live' before it has said
+     anything would be the exact failure this panel exists to prevent. */
+  .src { display: flex; flex-direction: column;
+         border: 1px solid var(--border); border-radius: var(--r);
+         overflow: hidden; }
+  .src > div { display: flex; align-items: center; gap: 9px;
+               padding: 9px 12px; font-size: 11.5px;
+               border-top: 1px solid var(--border); }
+  .src > div:first-child { border-top: none; }
+  .src .n { font-weight: 600; }
+  .src .s { margin-left: auto; font-size: 9.5px; font-weight: 800;
+            letter-spacing: .5px; text-transform: uppercase; }
+  .src .d { width: 7px; height: 7px; border-radius: 50%; flex: none;
+            background: var(--border); }
+  .src .live .d { background: var(--text); }
+  .src .live .s { color: var(--text); }
+  .src .back { background: var(--tint-r); }
+  .src .back .d { background: var(--red); box-shadow: 0 0 0 3px rgba(204,0,0,.15); }
+  .src .back .s, .src .back .n { color: var(--red); }
+  /* Offline. Definite — it did answer — but hollow, because what answered
+     was a file in the repo. */
+  .src .stored .d { background: var(--panel); border: 1.5px solid var(--muted); }
+  .src .stored .s { color: var(--muted); }
+  .src .idle { color: var(--muted); }
+  .src .idle .s { color: var(--muted); opacity: .7; }
+  .src-note { margin-top: 8px; font-size: 10.5px; line-height: 1.55;
+              color: var(--muted); }
+
+  /* ---- idle ----
+     Nothing is running, so the space goes to what pressing Assess is about to
+     set off. Five lines, in order, naming what each one actually does. */
+  .flow { display: flex; flex-direction: column; gap: 1px; }
+  .flow > div { display: flex; gap: 10px; padding: 7px 0; }
+  .flow .i { width: 20px; height: 20px; border-radius: 50%; flex: none;
+             display: grid; place-items: center; color: var(--muted);
+             border: 1px solid var(--border); background: var(--surface); }
+  .flow .n { font-size: 11.5px; font-weight: 700; }
+  .flow .w { font-size: 10.5px; color: var(--muted); line-height: 1.5;
+             margin-top: 1px; }
+
   /* ---- agent trace ----
      Who called whom, in order. It sits under the stage bar's own column: the
      header says which stage, this says what the agents actually said while
      getting there. Live — it fills in as poll() ticks, not only at the end. */
   .trace { margin-top: 20px; }
-  .trace-k {
+  .trace-k, .side-k {
     display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
     font-size: 10px; font-weight: 800; letter-spacing: 1px;
     text-transform: uppercase; color: var(--muted);
   }
-  .trace-k::after { content: ''; flex: 1; height: 1px;
+  .trace-k::after, .side-k::after { content: ''; flex: 1; height: 1px;
                     background: linear-gradient(90deg, var(--border), transparent); }
+  .side-k .c, .trace-k .c { font-family: var(--mono); font-weight: 700;
+                            letter-spacing: 0; color: var(--text); }
   .trace-log {
     padding: 11px 13px; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r);
     font-family: var(--mono); font-size: 10.5px; line-height: 1.75;
     color: var(--muted); max-height: 260px; overflow-y: auto;
   }
-  .trace-log > div { animation: rowin .3s var(--ease) both; }
+  /* Two columns, so the calls line up and the log reads as a sequence rather
+     than as ragged prose. The elapsed figure is off the events' own clock,
+     which is second-resolution — a column of +0s is not a broken readout,
+     it is four agent hops inside one second. */
+  .trace-log > div { display: grid; grid-template-columns: 30px 1fr; gap: 9px;
+                     padding: 1px 0; animation: rowin .3s var(--ease) both; }
+  .trace-log > div.now { color: var(--text); }
+  .t-time { color: var(--muted); opacity: .55; text-align: right; }
+  .trace-log > div.now .t-time { opacity: 1; }
   .t-from { color: var(--muted); font-weight: 700; }
   .t-to   { color: var(--red);   font-weight: 700; }
   .t-arrow { color: var(--muted); margin: 0 5px; }
@@ -1089,7 +1208,14 @@
 
   <!-- Frame 1 — enter a CVE -->
   <section class="frame">
-    <div class="frame-head"><h2>Patch a CVE</h2></div>
+    <div class="frame-head">
+      <h2>Patch a CVE</h2>
+      <!-- One word for where the run is, filled by renderSide(). The stage bar
+           in the header says the same thing in more detail, but this column
+           has to make sense on its own when the right frame has moved on to
+           the run history or the ROI report. -->
+      <span class="run-state" id="run-state" hidden></span>
+    </div>
     <div class="frame-body">
       <label for="cve">CVE ID</label>
       <div class="field" id="cve-field">
@@ -1099,6 +1225,9 @@
       <div class="hint">For a CVE the list does not show — type it and press
         <strong>Enter</strong>. Otherwise use <strong>Assess</strong> on its row.</div>
       <div class="result" id="result"></div>
+      <!-- What is running, what it is made of, and which backend actually
+           answered for each step of it. Filled by renderSide(). -->
+      <div class="side" id="side"></div>
       <!-- Which stage the run is at is in the header bar; this is what the
            agents said getting there. Filled by renderTrace(). -->
       <div class="trace" id="trace"></div>
@@ -1441,17 +1570,184 @@ function renderStages(s) {
       <span class="stage-label">${esc(x.label)}</span>
     </div>`;
   }).join('');
+  renderSide(s);
   renderTrace(s);
+}
+
+// ---- left panel ----------------------------------------------------------
+// The column used to be a CVE field, a hint, and then white space — and the
+// field is not even the usual way in, since most runs start from Assess on a
+// row. What goes under it has to be the context the right frame stops showing
+// the moment it switches to the run history or the ROI report.
+
+// The four services a run depends on, in call order. `step` matches the
+// backend's own degraded entries rather than re-deriving the condition, so
+// this panel cannot end up disagreeing with the report next to it.
+const SOURCES = [
+  { n: 'CVE & affected hosts', step: 'C2 cve_detail' },
+  { n: 'Risk score',           step: '3 risk_score' },
+  { n: 'Patch history',        step: '1 rag_history' },
+  { n: 'Remediation',          step: '5-10 patching' },
+];
+
+// Three states, not two. A service that has not been called yet is not a
+// service that answered, and the whole point of this panel is that it refuses
+// to read an absence of bad news as good news.
+function sourceState(s, step) {
+  // Both lists. The top-level one is the assessment's; the dispatch records
+  // its own on the patch, and that is the only place '5-10 patching' ever
+  // appears — reading one list had the console report a simulated run that
+  // touched no host as a live Orchestrator, which is the single worst thing
+  // this panel could say.
+  const deg = [...(s.degraded || []), ...((s.patch || {}).degraded || [])]
+    .find(d => d.step === step);
+  // Red only where a fallback is news. Offline every row is a stored default
+  // and the banner across the top has already said so — four alarmed rows
+  // repeating it is the per-step noise the console deliberately avoids in
+  // that mode. Live, a single red row is the whole point.
+  if (deg) return MODE.offline ? ['stored', 'stored'] : ['back', 'fallback'];
+  if (step === '5-10 patching')
+    return s.patch ? ['live', 'live'] : ['idle', 'not called'];
+  if (!s.plan) return ['idle', 'not called'];
+  // The history lookup only runs for hosts a human will read about, so on a
+  // fully unattended CVE it is skipped rather than answered. The backend
+  // reports that as its own source value; inferring it from the absence of a
+  // degraded entry would print 'live' for a store nobody queried.
+  if (step === '1 rag_history' && s.plan.history_source === 'skipped')
+    return ['idle', 'not needed'];
+  return ['live', 'live'];
+}
+
+function runState(s) {
+  const rs = ((s.patch || {}).results) || [];
+  const atGate = rs.filter(r => r.outcome === 'awaiting_approval').length;
+  const failed = rs.filter(r => ['failed', 'rejected', 'unavailable', 'timeout']
+                                .includes(r.outcome)).length;
+  if (s.error) return ['wait', 'Failed'];
+  if (atGate) return ['wait', `${atGate} at the gate`];
+  if (s.status === 'running') return ['work', s.patch ? 'Patching' : 'Assessing'];
+  if (rs.some(r => r.outcome === 'running')) return ['work', 'Patching'];
+  if (failed) return ['wait', `${failed} failed`];
+  if (s.patch) return ['', 'Complete'];
+  if (s.plan) return [s.plan.hosts_review ? 'wait' : '',
+                      s.plan.hosts_review ? 'Needs review' : 'Ready'];
+  if (s.cve_id) return ['work', 'Assessing'];
+  return ['', 'Idle'];
+}
+
+const msAt = v => { const t = Date.parse(v); return isNaN(t) ? null : t; };
+
+function runCard(s) {
+  const plan = s.plan, p = s.patch, rs = (p || {}).results || [];
+  const n = v => (v === null || v === undefined ? '—' : v);
+  const atGate  = rs.filter(r => r.outcome === 'awaiting_approval').length;
+  const patched = rs.filter(r => r.outcome === 'patched').length;
+  const failed  = rs.filter(r => ['failed', 'rejected', 'unavailable', 'timeout']
+                                 .includes(r.outcome)).length;
+  const hosts = plan ? plan.hosts_total : (s.hosts || []).length || null;
+  const gated = plan ? plan.hosts_review : null;
+  const sev = severity(s.cvss);
+  const known = (cves.find(c => c.id === s.cve_id) || {}).known_exploit;
+
+  const cell = (v, k, cls) =>
+    `<div class="${v ? (cls || '') : 'zero'}"><div class="v">${esc(n(v))}</div>
+      <div class="k">${esc(k)}</div></div>`;
+
+  // Only once every dispatched host has reported an end — a span across a
+  // half-finished set would read as the run's duration and be short by
+  // however many hosts are still going.
+  const starts = rs.map(r => msAt(r.created_at)).filter(Boolean);
+  const ends   = rs.map(r => msAt(r.completed_at)).filter(Boolean);
+  const span = (rs.length && ends.length === rs.length && starts.length)
+    ? (Math.max(...ends) - Math.min(...starts)) / 1000 : null;
+
+  const timing = [
+    s.elapsed_s != null ? `assessed in <b>${esc(fmtSec(s.elapsed_s))}</b>` : '',
+    (p || {}).elapsed_s != null ? `dispatched in <b>${esc(fmtSec(p.elapsed_s))}</b>` : '',
+    span != null ? `all settled <b>${esc(fmtSec(span))}</b> later` : '',
+  ].filter(Boolean).join(' · ');
+
+  const say = atGate
+    ? `<span class="wait">${esc(atGate)} host(s) waiting on your decision.</span>`
+    : failed ? `<span class="wait">${esc(failed)} host(s) did not patch.</span>`
+    : p ? `Dispatched ${esc(rs.length)} workflow run(s).`
+    : plan && plan.hosts_review
+      ? `${esc(plan.hosts_review)} of ${esc(plan.hosts_total)} score above the
+         gate, so nothing patches until a person says so.`
+    : plan ? `Nothing crossed the gate — dispatching patches these unattended.`
+    : 'Working…';
+
+  return `<div>
+    <div class="side-k">This run</div>
+    <div class="run-card">
+      <div class="run-top">
+        <span class="run-cve">${cveLabel(s.cve_id)}</span>
+        ${s.cvss != null ? `<span class="run-sev ${['critical','high'].includes(sev)
+          ? 'hot' : ''}">CVSS ${esc(s.cvss)} · ${esc(sev)}</span>` : ''}
+        ${known ? '<span class="exploit">EXPLOIT</span>' : ''}
+      </div>
+      <div class="run-grid">
+        ${cell(hosts, 'Hosts')}
+        ${cell(gated, 'Gated', 'alert')}
+        ${cell(p ? patched : null, 'Patched')}
+        ${cell(p ? failed : null, 'Failed', 'alert')}
+      </div>
+      <div class="run-foot">${say}${timing ? `<div class="t">${timing}</div>` : ''}</div>
+    </div>
+  </div>`;
+}
+
+function renderSide(s) {
+  s = s || {};
+  const [cls, label] = runState(s);
+  const chip = document.getElementById('run-state');
+  chip.className = 'run-state ' + cls;
+  chip.textContent = label;
+  chip.hidden = false;
+
+  const live = !!(s.cve_id || s.plan || s.patch);
+  document.getElementById('side').innerHTML = live
+    ? runCard(s) + `<div>
+        <div class="side-k">Where this came from</div>
+        <div class="src">${SOURCES.map(x => {
+          const [k, word] = sourceState(s, x.step);
+          return `<div class="${k}"><span class="d"></span>
+            <span class="n">${esc(x.n)}</span>
+            <span class="s">${esc(word)}</span></div>`;
+        }).join('')}</div>
+        <div class="src-note">${MODE.offline
+          ? 'Offline: nothing is contacted, so every answered step is a stored default.'
+          : 'A step marked fallback answered from <code>fallbacks.py</code>, not from '
+            + 'its service. The plan names the fix.'}</div>
+      </div>`
+    : `<div>
+        <div class="side-k">What Assess sets off</div>
+        <div class="flow">${STAGES.map(x => `<div>
+          <span class="i"><svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
+          <span><span class="n">${esc(x.label)}</span>
+            <div class="w">${esc(x.tip)}</div></span>
+        </div>`).join('')}</div>
+      </div>`;
 }
 
 function renderTrace(s) {
   const events = (s || {}).events || [];
-  document.getElementById('trace').innerHTML = '<div class="trace-k">Agent trace</div>'
+  const t0 = events.length ? Date.parse(events[0].time) : 0;
+  document.getElementById('trace').innerHTML =
+    `<div class="trace-k">Agent trace${events.length
+      ? `<span class="c">${esc(events.length)}</span>` : ''}</div>`
     + (events.length
-      ? `<div class="trace-log" id="trace-log">${events.map(e =>
-          `<div><span class="t-from">${esc(e.from)}</span>`
+      ? `<div class="trace-log" id="trace-log">${events.map((e, i) => {
+          const dt = Date.parse(e.time) - t0;
+          const at = isNaN(dt) ? '' : `+${Math.round(dt / 1000)}s`;
+          return `<div class="${i === events.length - 1 ? 'now' : ''}">`
+          + `<span class="t-time">${esc(at)}</span>`
+          + `<span><span class="t-from">${esc(e.from)}</span>`
           + `<span class="t-arrow">&rarr;</span>`
-          + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</div>`).join('')}</div>`
+          + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</span></div>`;
+        }).join('')}</div>`
       : `<div class="trace-log trace-idle">Nothing running. Assess a CVE and the
           Supervisor's calls to each agent appear here as they happen.</div>`);
   // The newest line is the one worth reading, and it is the one that falls off
@@ -1998,7 +2294,9 @@ async function startPatch(from) {
   // A new assessment, so the bar must stop showing the last one's result —
   // the first poll tick is a second away and it would read as already done.
   patchState = null;
-  renderStages({ status: 'running' });
+  // Carrying the id means the run card names what is being assessed from the
+  // first frame, rather than appearing a poll tick later.
+  renderStages({ status: 'running', cve_id: cve });
   show(`Starting <strong>${esc(cve)}</strong>…`, 'info');
   try {
     const r = await fetch('/api/start', {

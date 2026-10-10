@@ -462,6 +462,12 @@ class PatchPlan:
     hosts_auto: int
     maintenance_window: str
     risk_source: str
+    # 'rag', 'fallback', or 'skipped' when no host needed review and so no
+    # lookup was made. The third case is why this is reported rather than
+    # inferred from the degraded list: a step that was never called leaves no
+    # degraded entry, and reading that absence as success would have the
+    # console claim a service answered when it was never asked.
+    history_source: str
     # The gate each score was actually compared against. Which of the two
     # thresholds applied depends on risk_source, so reporting it is the only
     # way the console can show why a host landed where it did.
@@ -654,7 +660,10 @@ class InfoAgent:
         # step 1 — history, only for hosts a human will look at
         review = [a for a in assessed if a.decision == 'review']
         self._trace('info', 'rag', f'history for {len(review)} review host(s)')
-        history_source = 'rag'
+        # Not 'rag' until a lookup actually succeeds. With nothing to review
+        # the loop below never runs, and starting at 'rag' would report a
+        # store that was never queried as the source of an answer.
+        history_source = 'rag' if review else 'skipped'
         for a in review:
             a.history, src = self.history(a.host)
             if src != 'rag':
@@ -687,6 +696,7 @@ class InfoAgent:
             hosts_total=len(assessed), hosts_review=len(review),
             hosts_auto=len(assessed) - len(review),
             maintenance_window=window, risk_source=risk_source,
+            history_source=history_source,
             threshold=round(float(threshold), 2),
             verdict='review_required' if review else 'auto_approve_eligible',
             notes=notes,
