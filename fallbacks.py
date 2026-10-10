@@ -272,6 +272,46 @@ ROI_CURRENCY = os.environ.get('ROI_CURRENCY', '$') or '$'
 # number that matters most, since it is how long the host stays exploitable.
 ROI_LEAD_HOURS = float(os.environ.get('ROI_LEAD_HOURS', '72') or 72)
 
+# Share of hosts that have to be done twice by hand — the patch does not take,
+# the service does not come back, the window is lost and the whole booking
+# repeats. Not invented for the chart: HISTORY above describes exactly this on
+# pay-app-07, where a drain timeout that was too short caused repeated
+# post-patch failures until someone worked out why.
+#
+# Applied to the manual side only, and that asymmetry is deliberate rather
+# than generous. Automated failures are not waved away — a run that fails
+# never reaches 'patched', so roi_history() drops it from the saving entirely
+# and counts it under `excluded`. The manual equivalent has no such record,
+# which is why it has to be estimated here.
+ROI_REWORK_PCT = float(os.environ.get('ROI_REWORK_PCT', '12') or 12)
+
+# How wrong the manual baseline might be, as a percentage either way. An
+# estimate built out of seven guesses and quoted to the cent is making a
+# promise it cannot keep, so the console publishes a range beside the point
+# figure. The band is itself a judgement — it is listed with the other
+# assumptions for the same reason they are.
+ROI_BAND_PCT = float(os.environ.get('ROI_BAND_PCT', '30') or 30)
+
+# The remediation deadline this organisation holds itself to, in hours. Policy,
+# not physics, which is why it has no defensible default — 48 is a common
+# internal standard for a Critical and is a placeholder for whatever yours is.
+#
+# This exists so the exposure figure can be stated against something the
+# business already agreed to, instead of being converted into money. Pricing
+# an exposure window needs a breach probability and a breach cost, both
+# unknowable, multiplied together — which would put the largest number on the
+# page on the weakest footing of anything in this file.
+ROI_SLA_HOURS = float(os.environ.get('ROI_SLA_HOURS', '48') or 48)
+
+# What standing this platform up cost, one off: the build, the integration
+# work, the cluster it sits on. The weakest assumption here by some distance —
+# nobody can source it from this repo and it varies by an order of magnitude
+# between organisations. It earns its place because it is the first question
+# anyone holding a budget asks, and refusing to answer is not neutral: it
+# leaves them to assume a number, and the one they assume is usually worse.
+# Set it to 0 to drop the payback card entirely.
+ROI_PLATFORM_COST = float(os.environ.get('ROI_PLATFORM_COST', '25000') or 25000)
+
 
 # -------------------------------------------------------------------- mode
 

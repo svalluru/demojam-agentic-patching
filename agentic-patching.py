@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import ssl
@@ -951,6 +952,13 @@ class PatchingAgent:
             'matched_port': matched_port,
             'error': state.get('error_details'),
             'steps': steps,
+            # AO's own clock, carried through rather than left for a later
+            # read. The simulated path gets these from SimStore.put(), so
+            # without them here anything timing-based — the ROI report in
+            # particular — would work offline and quietly measure nothing
+            # live, which is the worst of the two failure modes.
+            'created_at': state.get('created_at'),
+            'completed_at': state.get('completed_at'),
             'url': f'{AO_URL}/executions/{exec_id}',
         }
 
@@ -1022,13 +1030,23 @@ class PatchingAgent:
                 'host': inp.get('host'),
                 'group': inp.get('group'),
                 'status': status,
-                # 'completed' not 'patched': the list alone cannot tell an
-                # approved run from a rejected one — both complete. The detail
-                # view has the activity data to distinguish them.
+                # A completed run on the approval branch stays 'completed'
+                # rather than 'patched': the list alone cannot tell an approved
+                # run from a rejected one, since both complete. Only the detail
+                # view has the activity data to separate them.
+                #
+                # The unattended branch has no such ambiguity — there is no
+                # gate anywhere downstream of it, so a run that completed ran
+                # the remediation. Reporting that one as 'completed' too was
+                # losing a fact the input data already settles, and it left
+                # every live run looking unresolved to anything counting
+                # outcomes.
                 'outcome': ('awaiting_approval' if pending
-                            else 'completed' if status in ('completed', 'succeeded')
                             else 'cancelled' if status in ('cancelled', 'canceled')
                             else 'failed' if status in ('failed', 'error')
+                            else ('patched' if inp.get('group') == 'auto_patch'
+                                  else 'completed')
+                            if status in ('completed', 'succeeded')
                             else 'running'),
                 'approval_pending': pending,
                 'error': e.get('error_details'),
@@ -1183,6 +1201,11 @@ class PatchingAgent:
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
             'error': state.get('error_details'),
+            # The gate is where most of the exposure window is spent, so this
+            # is the read that matters for timing: completed_at only exists
+            # once the approved run finishes.
+            'created_at': state.get('created_at'),
+            'completed_at': state.get('completed_at'),
         }
 
 
@@ -1361,7 +1384,148 @@ def _run_seconds(run: dict) -> float | None:
     return max(0.0, (end - start).total_seconds())
 
 
-def roi_report(state: dict) -> dict:
+# Every assumption the report rests on, in one list. The settings panel and
+# the sliders on the ROI page both address them by key, and `assumptions` in
+# the response is generated from this rather than written out twice — a
+# baseline that can drift from the list of what it assumed is worse than no
+# list at all.
+ROI_INPUTS: tuple[tuple[str, str, str, str], ...] = (
+    # key                 field          label                                   unit
+    ('ROI_TRIAGE_MIN',    'triage',      'Triage per CVE',                       'min'),
+    ('ROI_PREP_MIN',      'prep',        'Change prep per host',                 'min'),
+    ('ROI_EXEC_MIN',      'execute',     'Execute & verify per host',            'min'),
+    ('ROI_APPROVAL_MIN',  'approval',    'Approval paperwork per gated host',    'min'),
+    ('ROI_REWORK_PCT',    'rework_pct',  'Manual attempts needing a redo',       '%'),
+    ('ROI_REVIEW_MIN',    'review',      'Operator review per gated host',       'min'),
+    ('ROI_HOURLY_RATE',   'rate',        'Fully-loaded hourly rate',             '/h'),
+    ('ROI_LEAD_HOURS',    'lead_h',      'Manual time-to-remediation',           'h'),
+    ('ROI_SLA_HOURS',     'sla_h',       'Remediation deadline (policy)',        'h'),
+    ('ROI_BAND_PCT',      'band_pct',    'Uncertainty on the manual baseline',   '%'),
+    ('ROI_PLATFORM_COST', 'platform',    'Platform build cost',                  ''),
+)
+
+# What a slider is allowed to send. Not cosmetic: these arrive over HTTP, and
+# a negative prep time or a rate of 1e9 would produce a confident, absurd
+# number rather than an error.
+ROI_LIMITS: dict[str, tuple[float, float]] = {
+    'ROI_TRIAGE_MIN': (0, 600), 'ROI_PREP_MIN': (0, 600),
+    'ROI_EXEC_MIN': (0, 600), 'ROI_APPROVAL_MIN': (0, 600),
+    'ROI_REVIEW_MIN': (0, 600), 'ROI_REWORK_PCT': (0, 100),
+    'ROI_HOURLY_RATE': (0, 10000), 'ROI_LEAD_HOURS': (0, 8760),
+    'ROI_SLA_HOURS': (0.01, 8760), 'ROI_BAND_PCT': (0, 100),
+    'ROI_PLATFORM_COST': (0, 100_000_000),
+}
+
+
+def roi_baseline(overrides: dict | None = None) -> dict:
+    """Resolve the assumptions: module defaults, then this request's sliders.
+
+    Read through the module every time so a settings-panel change takes
+    effect, and overlaid per call rather than assigned back — the sliders are
+    one operator asking "what if", not a change to what anybody else sees, and
+    this server is threaded.
+    """
+    b = {field: getattr(fallbacks, key) for key, field, _, _ in ROI_INPUTS}
+    b['currency'] = fallbacks.ROI_CURRENCY
+    for key, field, _, _ in ROI_INPUTS:
+        if not overrides or key not in overrides:
+            continue
+        try:
+            value = float(overrides[key])
+        except (TypeError, ValueError):
+            continue
+        if value != value or value in (float('inf'), float('-inf')):
+            continue        # NaN and the infinities both survive float()
+        low, high = ROI_LIMITS[key]
+        b[field] = min(max(value, low), high)
+    return b
+
+
+def roi_effort(cves: int, hosts: int, gated: int, b: dict) -> tuple[dict, dict]:
+    """Manual and automated human minutes for a given shape of work.
+
+    One function so the single run, the projection and the lifetime total
+    cannot drift apart. Every caller is doing the same arithmetic on different
+    counts, and three copies of it would eventually disagree.
+    """
+    per_host = b['prep'] + b['execute']
+    manual = {
+        'Triage & risk assessment': b['triage'] * cves,
+        'Change prep & playbook': b['prep'] * hosts,
+        'Approval paperwork': b['approval'] * gated,
+        'Execute & verify': b['execute'] * hosts,
+        # A share of the per-host work done twice. Its own line rather than a
+        # multiplier folded into the others, so a reader who thinks their team
+        # never has to redo one can see exactly what to subtract.
+        'Rework after a failed attempt': per_host * hosts * b['rework_pct'] / 100.0,
+    }
+    # The only human minutes the automated path still spends. Hosts on the
+    # unattended branch cost none of it, which is the whole point of the split.
+    auto = {'Review & approve': b['review'] * gated}
+    return manual, auto
+
+
+def roi_history(runs: list[dict], b: dict) -> dict:
+    """Lifetime total across every execution the run store knows about.
+
+    A single run is a demo number. This is the one that answers "what has it
+    actually done for us", and it needs no new assumptions — the same baseline
+    applied to a larger count.
+
+    Deliberately conservative about what counts. Only a run that reached
+    `patched` is claimed as a saving: a rejected or failed run consumed the
+    operator's review time and saved nothing, and a run still in flight has
+    not saved anything yet either. AO's execution list cannot tell an approved
+    run from a rejected one on the gated branch — both simply complete — so
+    those are reported as `unresolved` and left out of the total rather than
+    assumed to have gone well. Under-reporting a saving is recoverable;
+    over-reporting one is the thing nobody forgives.
+
+    Triage is counted once per distinct CVE, not once per time that CVE was
+    dispatched. A CVE picked up again a month later really did cost someone a
+    second read of the advisory, so this is an undercount — deliberately, and
+    in the same direction as everything else here.
+    """
+    done = [r for r in runs if r.get('outcome') == 'patched']
+    unresolved = [r for r in runs if r.get('outcome') == 'completed']
+    pending = [r for r in runs
+               if r.get('outcome') in ('awaiting_approval', 'running')]
+    lost = [r for r in runs
+            if r.get('outcome') in ('failed', 'rejected', 'cancelled', 'timeout',
+                                    'unavailable')]
+
+    cves = {r.get('cve_id') for r in done if r.get('cve_id')}
+    hosts = len(done)
+    gated = sum(1 for r in done if r.get('group') == 'approved_patch')
+    manual, auto = roi_effort(len(cves), hosts, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    saved_min = manual_min - auto_min
+
+    spans = [s for s in (_run_seconds(r) for r in done) if s is not None]
+    # First dispatch to last completion. Says "across six weeks" rather than
+    # leaving a lifetime total floating with no period attached to it.
+    starts = [d for d in (_parse_iso(r.get('created_at')) for r in runs) if d]
+    ends = [d for d in (_parse_iso(r.get('completed_at')) for r in runs) if d]
+    days = ((max(ends) - min(starts)).total_seconds() / 86400.0
+            if starts and ends and max(ends) > min(starts) else None)
+
+    return {
+        'runs': len(runs), 'counted': hosts, 'cves': len(cves), 'gated': gated,
+        # Each is a reason a run is not in the total. Published so the page can
+        # account for the difference instead of leaving a reader to wonder why
+        # 40 runs produced a total for 23.
+        'unresolved': len(unresolved), 'pending': len(pending), 'lost': len(lost),
+        'minutes': round(saved_min, 1),
+        'cost': round(saved_min / 60.0 * b['rate'], 2),
+        'manual_minutes': round(manual_min, 1),
+        'auto_minutes': round(auto_min, 1),
+        'machine_hours': round(sum(spans) / 3600.0, 2) if spans else None,
+        'span_days': round(days, 1) if days is not None else None,
+    }
+
+
+def roi_report(state: dict, overrides: dict | None = None,
+               runs: list[dict] | None = None) -> dict:
     """Compare the dispatched run in `state` against the manual baseline."""
     patch = state.get('patch') or {}
     results = patch.get('results') or []
@@ -1371,6 +1535,7 @@ def roi_report(state: dict) -> dict:
             'assess a CVE and dispatch the plan first — this compares against '
             'what the run actually did, so it needs a run')
 
+    b = roi_baseline(overrides)
     n = len(results)
     gated = sum(1 for r in results if r.get('group') == 'approved_patch')
     finished = [s for s in (_run_seconds(r) for r in results) if s is not None]
@@ -1391,22 +1556,15 @@ def roi_report(state: dict) -> dict:
     # exposure window measured with the waiting taken out is not a small
     # overstatement — it is the entire claim, fabricated.
     exposure_s = assess_s + max(finished) if finished else None
+    # The same hosts added up instead of overlapped. Both are measured, and
+    # the difference between them is the part of the saving that comes from
+    # concurrency rather than from speed: by hand these queue behind one
+    # engineer, here they ran at once.
+    serial_s = assess_s + sum(finished) if finished else None
 
-    # Assumed. Read through the module so a settings override takes effect.
-    f = fallbacks
-    manual = {
-        'Triage & risk assessment': f.ROI_TRIAGE_MIN,
-        'Change prep & playbook': f.ROI_PREP_MIN * n,
-        'Approval paperwork': f.ROI_APPROVAL_MIN * gated,
-        'Execute & verify': f.ROI_EXEC_MIN * n,
-    }
-    manual_min = sum(manual.values())
-    # The only human minutes the automated path still spends. Hosts on the
-    # unattended branch cost none of it, which is the whole point of the split.
-    auto = {'Review & approve': f.ROI_REVIEW_MIN * gated}
-    auto_min = sum(auto.values())
-
-    rate = f.ROI_HOURLY_RATE
+    manual, auto = roi_effort(1, n, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    rate = b['rate']
     cost = lambda mins: round(mins / 60.0 * rate, 2)
     saved_min = manual_min - auto_min
 
@@ -1422,10 +1580,74 @@ def roi_report(state: dict) -> dict:
     # the run actually on screen rather than interpolating near it.
     curve = []
     for k in sorted(set(list(range(1, span + 1, step)) + [n, span])):
-        g = round(k * ratio)
-        m = f.ROI_TRIAGE_MIN + (f.ROI_PREP_MIN + f.ROI_EXEC_MIN) * k + f.ROI_APPROVAL_MIN * g
-        a = f.ROI_REVIEW_MIN * g
-        curve.append({'hosts': k, 'manual': cost(m), 'auto': cost(a)})
+        m, a = roi_effort(1, k, round(k * ratio), b)
+        curve.append({'hosts': k, 'manual': cost(sum(m.values())),
+                      'auto': cost(sum(a.values()))})
+
+    # How wrong the assumptions can be before the conclusion changes. This is
+    # the honest answer to "I don't believe your baseline": not a defence of
+    # the baseline, but the margin by which it could be wrong and still land
+    # in the same place.
+    #
+    # Note what is absent — there is no break-even on the hourly rate, because
+    # there cannot be one. The rate multiplies both sides equally, so it moves
+    # the money and never the verdict. Offering a rate slider as though it
+    # might change the answer would be theatre.
+    per_host = (b['prep'] + b['execute']) * (1 + b['rework_pct'] / 100.0)
+    headroom = auto_min - b['triage'] - b['approval'] * gated
+    breakeven = {
+        # Shrink the whole manual baseline by this much and the two paths cost
+        # the same. Usually a number in the high nineties, which is the point.
+        'shrink_pct': (round((1 - auto_min / manual_min) * 100, 1)
+                       if manual_min else None),
+        # Per-host handling time at which doing it by hand breaks even,
+        # everything else held. Often negative — meaning no value of it works,
+        # because the per-CVE triage alone already costs more than the whole
+        # automated path. The page says so in words rather than printing a
+        # negative number of minutes.
+        'handling_min': (round(headroom / n, 2) if n and headroom > 0 else None),
+        'handling_now': round(per_host, 2),
+        'rate_independent': True,
+    }
+
+    # A point estimate quoted to the cent is making a promise seven guesses
+    # cannot keep. The band is applied to the manual side only: the automated
+    # side is mostly measured, and its one assumption is small enough that
+    # widening it would imply a precision contest that is not the issue.
+    band = b['band_pct'] / 100.0
+    low_cost, high_cost = cost(manual_min * (1 - band)), cost(manual_min * (1 + band))
+
+    exposure_h = exposure_s / 3600.0 if exposure_s is not None else None
+    # Stated against a deadline the organisation already set, rather than
+    # converted into money. See ROI_SLA_HOURS in fallbacks.py for why there is
+    # no dollar figure on an exposure window anywhere in this file.
+    sla = {
+        'hours': b['sla_h'],
+        'manual_within': b['lead_h'] <= b['sla_h'],
+        'manual_over_h': round(max(0.0, b['lead_h'] - b['sla_h']), 2),
+        'auto_within': (exposure_h <= b['sla_h']) if exposure_h is not None else None,
+        'headroom_pct': (round(100 * (1 - exposure_h / b['sla_h']), 2)
+                         if exposure_h is not None and b['sla_h'] else None),
+        'hosts': n,
+    }
+
+    # The budget question. Marginal saving per host excludes the per-CVE
+    # triage, because the next host does not come with another advisory to
+    # read — amortising triage across hosts would flatter the figure on
+    # exactly the estates where it matters least.
+    marginal = (manual_min - b['triage'] - auto_min) / n if n else 0
+    marginal_cost = marginal / 60.0 * rate
+    lifetime = roi_history(runs, b) if runs else None
+    recovered = (lifetime or {}).get('cost') or 0
+    payback = {
+        'platform_cost': b['platform'],
+        'per_host': round(marginal_cost, 2),
+        'hosts': (math.ceil(b['platform'] / marginal_cost)
+                  if marginal_cost > 0 and b['platform'] > 0 else None),
+        'recovered': round(recovered, 2),
+        'recovered_pct': (round(min(100.0, recovered / b['platform'] * 100), 1)
+                          if b['platform'] > 0 else None),
+    }
 
     return {
         'cve_id': state.get('cve_id'),
@@ -1438,17 +1660,27 @@ def roi_report(state: dict) -> dict:
             'assess_s': round(assess_s, 1),
             'dispatch_s': round(dispatch_s, 1),
             'exposure_s': round(exposure_s, 1) if exposure_s is not None else None,
+            'serial_s': round(serial_s, 1) if serial_s is not None else None,
             'host_s': [round(s, 1) for s in finished],
+            # How many hosts the timings actually cover. Live, a run that has
+            # not finished has no completed_at to read, so the durations
+            # describe a subset — and a page that quietly averaged over
+            # whatever it happened to have would be the kind of silent
+            # degradation this codebase labels everywhere else.
+            'timed': len(finished),
         },
         'manual': {'breakdown': manual, 'minutes': round(manual_min, 1),
                    'cost': cost(manual_min),
-                   'lead_hours': f.ROI_LEAD_HOURS},
+                   'cost_low': low_cost, 'cost_high': high_cost,
+                   'lead_hours': b['lead_h']},
         'auto': {'breakdown': auto, 'minutes': round(auto_min, 1),
                  'cost': cost(auto_min),
-                 'lead_hours': round(exposure_s / 3600.0, 4) if exposure_s is not None else None},
+                 'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
         'saved': {
             'minutes': round(saved_min, 1),
             'cost': cost(saved_min),
+            'cost_low': round(low_cost - cost(auto_min), 2),
+            'cost_high': round(high_cost - cost(auto_min), 2),
             # Guarded: every host on the unattended branch makes auto_min 0,
             # and that is the good case, not a divide-by-zero.
             'effort_x': round(manual_min / auto_min, 1) if auto_min else None,
@@ -1457,30 +1689,27 @@ def roi_report(state: dict) -> dict:
             # number nobody can sanity-check and which rests entirely on the
             # assumed side. The two durations and the hours avoided say the
             # same thing and can be argued with.
-            'exposure_hours': (round(f.ROI_LEAD_HOURS - exposure_s / 3600.0, 2)
-                               if exposure_s is not None else None),
+            'exposure_hours': (round(b['lead_h'] - exposure_h, 2)
+                               if exposure_h is not None else None),
         },
         'curve': curve,
-        'currency': f.ROI_CURRENCY,
+        'breakeven': breakeven,
+        'sla': sla,
+        'payback': payback,
+        'lifetime': lifetime,
+        'band_pct': b['band_pct'],
+        'currency': b['currency'],
         'rate': rate,
-        # Itemised so the page can show what it assumed rather than asserting
-        # a total. Each is a settings key, so 'change it and look again' is a
-        # real offer and not a figure of speech.
+        # Itemised from ROI_INPUTS so the page can show what it assumed rather
+        # than asserting a total. Each carries its settings key and its limits,
+        # which is what lets the sliders exist at all: 'change it and look
+        # again' is a real offer and not a figure of speech.
         'assumptions': [
-            {'key': 'ROI_TRIAGE_MIN', 'label': 'Triage per CVE',
-             'value': f.ROI_TRIAGE_MIN, 'unit': 'min'},
-            {'key': 'ROI_PREP_MIN', 'label': 'Change prep per host',
-             'value': f.ROI_PREP_MIN, 'unit': 'min'},
-            {'key': 'ROI_EXEC_MIN', 'label': 'Execute & verify per host',
-             'value': f.ROI_EXEC_MIN, 'unit': 'min'},
-            {'key': 'ROI_APPROVAL_MIN', 'label': 'Approval paperwork per gated host',
-             'value': f.ROI_APPROVAL_MIN, 'unit': 'min'},
-            {'key': 'ROI_REVIEW_MIN', 'label': 'Operator review per gated host',
-             'value': f.ROI_REVIEW_MIN, 'unit': 'min'},
-            {'key': 'ROI_HOURLY_RATE', 'label': 'Fully-loaded hourly rate',
-             'value': rate, 'unit': f.ROI_CURRENCY + '/h'},
-            {'key': 'ROI_LEAD_HOURS', 'label': 'Manual time-to-remediation',
-             'value': f.ROI_LEAD_HOURS, 'unit': 'h'},
+            {'key': key, 'label': label, 'value': b[field],
+             'unit': b['currency'] if unit == '' else
+                     b['currency'] + unit if unit == '/h' else unit,
+             'min': ROI_LIMITS[key][0], 'max': ROI_LIMITS[key][1]}
+            for key, field, label, unit in ROI_INPUTS
         ],
     }
 
@@ -1663,6 +1892,31 @@ SETTINGS: tuple[Setting, ...] = (
             'by hand. Wall clock, not effort — mostly queueing and waiting '
             'for a window, which is why it dwarfs the labour figures.',
             binds='fallbacks.ROI_LEAD_HOURS'),
+    Setting('ROI_REWORK_PCT', 'ROI baseline', 'Manual attempts needing a redo',
+            'float', '12',
+            'Share of hosts that have to be patched twice by hand — the patch '
+            'does not take, the window is lost, the booking repeats. Manual '
+            'side only: an automated run that fails never reaches patched, so '
+            'it is dropped from the lifetime total rather than estimated.',
+            binds='fallbacks.ROI_REWORK_PCT'),
+    Setting('ROI_BAND_PCT', 'ROI baseline', 'Uncertainty on the baseline',
+            'float', '30',
+            'How wrong the manual baseline might be, either way. The page '
+            'quotes a range beside the point figure, because an estimate '
+            'built from seven guesses should not be given to the cent.',
+            binds='fallbacks.ROI_BAND_PCT'),
+    Setting('ROI_SLA_HOURS', 'ROI baseline', 'Remediation deadline (policy)',
+            'float', '48',
+            'The deadline this organisation holds itself to. Policy, not '
+            'physics — set it to yours. Exposure is stated against this '
+            'rather than converted into money.',
+            binds='fallbacks.ROI_SLA_HOURS'),
+    Setting('ROI_PLATFORM_COST', 'ROI baseline', 'Platform build cost', 'float',
+            '25000',
+            'One off: the build, the integration work, the cluster. The '
+            'weakest assumption here, and the first question anyone with a '
+            'budget asks. Set it to 0 to hide the payback card.',
+            binds='fallbacks.ROI_PLATFORM_COST'),
 
     # --- server -----------------------------------------------------------
     Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
@@ -1914,16 +2168,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',
                                  'detail': exc.fix})
         elif path == '/api/roi':
-            # Computed on demand rather than stored on the run: the baseline
-            # is settings-driven, so the answer has to track the assumptions
-            # as they are now, not as they were when the run was dispatched.
-            with _RUN_LOCK:
-                snapshot = dict(_RUN)
-            try:
-                self._send(200, {'ok': True, 'roi': roi_report(snapshot)})
-            except BackendUnavailable as exc:
-                self._send(409, {'ok': False, 'error': str(exc.cause),
-                                 'detail': exc.fix})
+            self._roi()
         elif path == '/api/runs':
             # Live from AO, so a run that failed after the console stopped
             # polling still shows its real status here.
@@ -1945,8 +2190,58 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {'ok': False, 'error': 'not found'})
 
+    def _roi(self, overrides: dict | None = None) -> None:
+        """The ROI report, for GET and for the sliders alike.
+
+        Computed on demand rather than stored on the run: the baseline is
+        settings-driven, so the answer has to track the assumptions as they
+        are now, not as they were when the run was dispatched.
+        """
+        with _RUN_LOCK:
+            snapshot = dict(_RUN)
+        # The lifetime total wants the whole run store, which means AO. That
+        # is a different backend from the one the rest of this report needs,
+        # so it fails on its own terms: a lifetime figure we cannot read is a
+        # missing card, not a failed button. The per-run comparison beside it
+        # is unaffected and still answers the question that was asked.
+        agent = PatchingAgent()
+        try:
+            runs = agent.recent_runs(200)
+        except BackendUnavailable as exc:
+            runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
+        try:
+            report = roi_report(snapshot, overrides, runs)
+        except BackendUnavailable as exc:
+            self._send(409, {'ok': False, 'error': str(exc.cause),
+                             'detail': exc.fix})
+            return
+        if report.get('lifetime') and agent.runs_degraded and not offline():
+            # Partial history still counts, but it has to say it is partial —
+            # a lifetime total quietly missing every run AO could not return
+            # is the understatement that gets discovered later.
+            #
+            # Not offline, though. There the simulator is the whole history,
+            # not a degraded view of a real one, and the page already carries
+            # a banner saying every value on it is stored. Repeating it here
+            # would claim runs are missing when none are.
+            report['lifetime']['degraded'] = agent.runs_degraded
+        self._send(200, {'ok': True, 'roi': report})
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip('/') or '/'
+
+        if path == '/api/roi':
+            # Same report, with this operator's sliders applied for this
+            # request only. Nothing is written: a what-if is one person
+            # asking a question, not a change to what anyone else sees, and
+            # this server answers several requests at once.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                payload = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                payload = {}
+            self._roi(payload.get('overrides') or {})
+            return
 
         if path == '/api/patch':
             # Agent 2. Needs a completed assessment to know each host's
@@ -2008,10 +2303,15 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 result = PatchingAgent().decide(exec_id, act_id, decision)
                 with _RUN_LOCK:
-                    # Keep the stored run in step with the new outcome.
+                    # Keep the stored run in step with the new outcome. A null
+                    # in the newer read does not overwrite a value we already
+                    # have: AO can answer without created_at while the run is
+                    # still settling, and losing the dispatch timestamp would
+                    # take this host out of the ROI timings for good.
                     for r in ((_RUN.get('patch') or {}).get('results') or []):
                         if r.get('execution_id') == exec_id:
-                            r.update(result)
+                            r.update({k: v for k, v in result.items()
+                                      if v is not None or r.get(k) is None})
                 self._send(200, {'ok': True, **result})
             except BackendUnavailable as exc:
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',

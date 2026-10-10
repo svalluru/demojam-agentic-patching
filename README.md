@@ -211,6 +211,7 @@ is on screen against doing the same work by hand. Two kinds of number meet
 there and the page keeps them apart, because they carry very different
 warranties:
 
+
 - **Measured** — host count, how many stopped at the gate, how long the
   assessment took, how long each execution ran. This run's own clock. Offline
   that clock is `DEMO_LATENCY` rather than work, so the report sets
@@ -233,23 +234,89 @@ dispatch time instead would drop the wait at the approval gate, which is most
 of the figure. That wait counts: it is not automation working, but the host is
 exploitable throughout it.
 
+### What the page shows
+
+| Card | What it answers |
+|---|---|
+| **Disagree with it** | A slider per assumption. Move one and everything below recomputes. |
+| Headline | Labour saved, engineer time saved, the effort ratio, how many hosts needed a person. |
+| Where the effort goes | Both paths broken down by activity, on one scale. |
+| How it scales | The same CVE across more hosts, at this run's approval rate. |
+| How wrong could this be | Break-even: how far the assumptions have to move before the conclusion flips. |
+| Time to remediation | Exposure window, measured, stated against the policy deadline. |
+| Across every run so far | The same arithmetic over the whole run store, not just this CVE. |
+| Paying for itself | Hosts to cover `ROI_PLATFORM_COST`, and how much is recovered. |
+| What this assumed | Every input, with its setting key. |
+
+**The sliders are the argument, not a disclaimer.** `POST /api/roi` with
+`{"overrides": {"ROI_PREP_MIN": 3}}` returns the whole report recomputed
+against those values; the GET form uses the stored ones. Overrides are clamped
+to a sane range, applied per request, and **never written anywhere** — the
+server is threaded and one person asking "what if" must not change the page
+anyone else is looking at. The arithmetic lives only on the server, so there is
+one implementation of it rather than a second copy in the browser drifting from
+the first.
+
+**Break-even is stated instead of a confidence claim.** The page says how much
+smaller the manual baseline would have to be, and what per-host handling time
+would make doing it by hand cheaper, so the reader can check those against
+their own experience rather than take the total on faith. The hourly rate is
+excluded from that deliberately: it multiplies both sides equally, so it moves
+the money and never the verdict.
+
+**A range, not a point.** `ROI_BAND_PCT` puts a band either side of the manual
+baseline and the saving is quoted as a span. Seven stacked guesses quoted to
+the cent is making a promise it cannot keep.
+
+**Serial time and wall clock are separated.** Hosts patch concurrently, so the
+page reports machine time summed across hosts *and* the wall clock the run
+actually took. By hand they queue; that difference is part of the saving and
+pretending otherwise understates it.
+
+**Exposure is measured against policy, not converted into money.** The run is
+checked against `ROI_SLA_HOURS` and reported as inside or outside the deadline.
+Pricing an exposure window needs a breach probability and a breach cost
+multiplied together, both unknowable — that would put the biggest number on the
+page on the weakest footing of anything in the repo.
+
+**The lifetime card is deliberately conservative.** Only runs that reached
+`patched` count toward the saving. Runs still waiting, still running, failed,
+rejected or never dispatched are counted separately and shown as the
+difference, so the gap between "runs in the store" and "runs counted" is always
+visible. Triage counts once per distinct CVE rather than once per dispatch,
+which undercounts a CVE patched in two waves — in the same direction as
+everything else here. Under-reporting a saving is recoverable; over-reporting
+one is not.
+
 | Variable | Default | Manual baseline |
 |---|---|---|
 | `ROI_TRIAGE_MIN` | 45 | read the advisory and scope it — once per CVE |
 | `ROI_PREP_MIN` | 15 | per host: adapt the playbook, raise the change, book the window |
 | `ROI_EXEC_MIN` | 10 | per host: run it, watch it, confirm the service came back |
 | `ROI_APPROVAL_MIN` | 20 | per gated host: assemble the request, chase the approver |
+| `ROI_REWORK_PCT` | 12 | share of hosts done twice by hand — the patch does not take and the window is lost |
 | `ROI_REVIEW_MIN` | 2 | per gated host, charged to the **automated** side: read the plan, press Approve |
 | `ROI_HOURLY_RATE` | 85 | fully loaded, not salary |
 | `ROI_CURRENCY` | `$` | display only, no conversion |
 | `ROI_LEAD_HOURS` | 72 | elapsed hours to remediation by hand — wall clock, mostly queueing |
+| `ROI_SLA_HOURS` | 48 | the remediation deadline to report exposure against — policy, not physics |
+| `ROI_BAND_PCT` | 30 | how wrong the manual baseline might be, either way |
+| `ROI_PLATFORM_COST` | 25000 | one-off build cost for the payback card; set `0` to drop the card |
+
+Rework is applied to the manual side only, and that asymmetry is deliberate
+rather than generous: an automated run that fails never reaches `patched`, so
+the lifetime total drops it entirely. The manual equivalent leaves no such
+record, which is why it has to be estimated. `ROI_PLATFORM_COST` is the weakest
+number on the page and is labelled as such — nothing in this repo can source
+it, but refusing to answer is not neutral, since whoever holds the budget will
+assume a figure and the one they assume is usually worse.
 
 The defaults are deliberately unflattering to the automation; a baseline that
 assumes four unattended hours per host produces a wonderful number and
-convinces nobody. All eight are in the settings panel, so the answer to "I
-don't believe that number" is to change the one you disagree with and press the
-button again. The report is computed on demand rather than stored on the run,
-so it always reflects the assumptions as they are now.
+convinces nobody. Every one of them is both a slider on the page and a row in
+the settings panel — the slider to argue with it now, the panel to make it
+stick. The report is computed on demand rather than stored on the run, so it
+always reflects the assumptions as they are now.
 
 ## Design notes
 

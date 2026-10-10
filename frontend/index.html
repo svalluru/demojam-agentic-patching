@@ -718,6 +718,64 @@
                            font-variant-numeric: tabular-nums; white-space: nowrap; }
   .roi-asm .k { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
 
+  /* The sliders. Deliberately at the top of the page rather than buried
+     under the charts: the first thing this page should say is that its
+     assumptions are adjustable, not that it has reached a number. Moving one
+     redraws everything below and nothing above, so the control the reader is
+     holding never jumps out from under them. */
+  .roi-what { border-color: var(--text); }
+  .roi-sl { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+            gap: 9px 20px; margin-top: 11px; }
+  .roi-sl > div { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px;
+                  align-items: center; }
+  .roi-sl .n { font-size: 10.5px; color: var(--muted); }
+  .roi-sl .val { font-size: 11.5px; font-weight: 800; text-align: right;
+                 font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .roi-sl .val.edited { color: var(--red); }
+  .roi-sl input { grid-column: 1 / -1; width: 100%; height: 16px; margin: 0;
+                  accent-color: var(--text); cursor: pointer; }
+  .roi-head { display: flex; align-items: baseline; gap: 10px; }
+  .roi-head .pill { margin-left: auto; }
+
+  /* The range under the headline figure. Same weight as the number it
+     qualifies would drown it; much lighter would make it decorative. */
+  .roi-range { font-size: 10px; color: var(--muted); margin-top: 2px;
+               font-variant-numeric: tabular-nums; }
+
+  /* Break-even. One sentence doing more work than any chart on the page, so
+     it gets the emphasis of a quote rather than the furniture of a stat. */
+  .roi-be { margin-top: 10px; padding: 11px 13px; background: var(--surface);
+            border-radius: var(--r-xs); font-size: 12px; line-height: 1.55; }
+  .roi-be b { font-size: 14px; }
+  .roi-be + .roi-be { margin-top: 7px; }
+
+  /* Lifetime and payback share a compact figure row. */
+  .roi-grid { display: grid; gap: 10px; margin-top: 10px;
+              grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+  .roi-grid > div { border: 1px solid var(--border); border-radius: var(--r-xs);
+                    padding: 9px 11px; }
+  .roi-grid .v { font-size: 17px; font-weight: 800; letter-spacing: -.5px;
+                 font-variant-numeric: tabular-nums; }
+  .roi-grid .v.man { color: var(--red); }
+  .roi-grid .v.sm { font-size: 12.5px; letter-spacing: 0; }
+  .roi-grid .t { font-size: 9px; font-weight: 700; letter-spacing: .5px;
+                 text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+
+  /* Payback progress. Black fill on a plain track: this is progress toward a
+     threshold, not a warning, whatever the remaining distance. */
+  .roi-pb { height: 8px; border-radius: 99px; background: var(--surface);
+            overflow: hidden; margin-top: 11px; }
+  .roi-pb span { display: block; height: 100%; background: var(--text);
+                 border-radius: 99px; transition: width .5s var(--ease); }
+
+  /* Verdict chips against a policy deadline. Red is a missed deadline, which
+     is exactly the consequential meaning this palette reserves it for. */
+  .roi-chip { display: inline-block; font-size: 9.5px; font-weight: 800;
+              letter-spacing: .4px; text-transform: uppercase; padding: 2px 7px;
+              border-radius: 99px; margin-top: 6px; }
+  .roi-chip.ok { background: var(--text); color: #fff; }
+  .roi-chip.bad { background: var(--red); color: #fff; }
+
   /* ---- split donut ----
      review vs auto as one shape. Two numbers in two boxes do not show a
      proportion; this does, and it is the shape of the decision being made. */
@@ -2132,59 +2190,214 @@ function roiExposure(roi) {
       Quoting it before then would leave out the wait that usually dominates
       it.</div>`;
   }
+  const sla = roi.sla || {};
+  // Stated against the deadline the organisation already set, rather than
+  // converted into money. Pricing an exposure window needs a breach
+  // probability and a breach cost multiplied together, neither of which
+  // anyone can source — it would put the biggest number on the page on the
+  // weakest footing of anything on it.
+  const chip = (within, text) =>
+    `<div class="roi-chip ${within ? 'ok' : 'bad'}">${esc(text)}</div>`;
+  const m = roi.measured;
+  // Both measured, and the difference between them is the part of the saving
+  // that comes from concurrency rather than speed. Only worth saying when
+  // there was more than one host to overlap and the two figures actually came
+  // out different: on a fast unattended run they round to the same string, and
+  // "took 0.2s but 0.2s, because they ran at once" claims a benefit while
+  // showing none — which reads as a broken template, not as a small number.
+  const parallel = (m.timed > 1 && m.serial_s
+                    && fmtSec(m.serial_s) !== fmtSec(s))
+    ? `<div class="note">Those ${esc(m.timed)} hosts took
+        <b>${esc(fmtSec(m.serial_s))}</b> of machine time between them but
+        <b>${esc(fmtSec(s))}</b> of wall clock, because they ran at once. By
+        hand they queue behind whoever is doing them.</div>` : '';
+
   return `<div class="roi-exp">
       <div><div class="t">By hand</div><div class="v man">${esc(fmtMin(roi.manual.lead_hours * 60))}</div>
         <div class="src">Assumed — <code>ROI_LEAD_HOURS</code>. Mostly queueing
-          and waiting for a window, not effort.</div></div>
+          and waiting for a window, not effort.</div>
+        ${chip(sla.manual_within, sla.manual_within ? `within the ${esc(sla.hours)}h deadline`
+          : `misses by ${esc(fmtMin(sla.manual_over_h * 60))}`)}</div>
       <div><div class="t">This run</div><div class="v">${esc(fmtSec(s))}</div>
         <div class="src">Measured — assessment through to the slowest host
-          reporting patched, gate wait included.</div></div>
+          reporting patched, gate wait included.</div>
+        ${chip(sla.auto_within, sla.auto_within
+          ? `${esc(sla.headroom_pct)}% inside the deadline` : 'misses the deadline')}</div>
     </div>
     <div class="note">Around <b>${esc(fmtMin(roi.saved.exposure_hours * 60))}</b>
-      less time with the host exploitable, per host on this CVE.</div>`;
+      less time with the host exploitable, per host on this CVE. The deadline
+      is your policy, not ours — <code>ROI_SLA_HOURS</code>, currently
+      ${esc(sla.hours)}h.</div>
+    ${parallel}`;
 }
 
-function renderRoi(roi) {
-  frameHead({
-    title: 'Return on investment',
-    sub: `<span class="cve-id">${cveLabel(roi.cve_id || '')}</span>`
-       + `<span>${esc(roi.measured.hosts)} host(s)</span>`,
-    back: BACK_PATCH,
-  });
-  renderStages(patchState || {});
+// How wrong the assumptions can be before the conclusion changes. This is the
+// honest answer to "I don't believe your baseline" — not a defence of the
+// baseline, but the margin by which it could be wrong and still land in the
+// same place. It is also the only part of the page that cannot be argued
+// with, because it assumes nothing: it is arithmetic on whatever the reader
+// has already set the sliders to.
+function roiBreakeven(roi) {
+  const be = roi.breakeven || {}, sv = roi.saved;
+  const handling = be.handling_min
+    ? `Break-even lands at <b>${esc(be.handling_min)} min</b> of hands-on time
+       per host, against the ${esc(be.handling_now)} min assumed here.`
+    : `There is no per-host handling time that makes the manual path cheaper.
+       Even at zero minutes a host, reading the advisory once already costs
+       more than this entire run cost in operator time.`;
+  return `<div class="roi-be">The manual baseline would have to be
+      <b>${esc(be.shrink_pct)}% smaller</b> — not ${esc(be.shrink_pct)}% off the
+      total, ${esc(be.shrink_pct)}% of it gone — before doing this by hand cost
+      the same as doing it here.</div>
+    <div class="roi-be">${handling}</div>
+    <div class="roi-be">Moving the hourly rate changes the money and never the
+      verdict: it multiplies both sides equally, so only the minutes decide
+      this. That is also why the range below is on the manual side alone.</div>
+    <div class="note">At &plusmn;${esc(roi.band_pct)}% on the manual baseline the
+      saving is <b>${esc(money(roi.currency, sv.cost_low))} to
+      ${esc(money(roi.currency, sv.cost_high))}</b>, against the
+      ${esc(money(roi.currency, sv.cost))} quoted above. An estimate built from
+      this many guesses should not be given to the cent.</div>`;
+}
 
-  const sv = roi.saved;
+// The lifetime total. One run is a demo number; this is the one that answers
+// "what has it actually done for us", and it needs no new assumptions — the
+// same baseline over a larger count.
+function roiLifetime(roi) {
+  const lt = roi.lifetime;
+  if (!lt || !lt.counted) {
+    return `<div class="sub">Nothing to total yet — this counts only runs that
+      reached <b>patched</b>, and none have. A rejected or failed run spent the
+      operator's time and saved nothing, so counting it would be inventing a
+      saving.</div>`;
+  }
+  // Every run that is not in the total, and why. A lifetime figure that
+  // silently drops 17 of 40 runs invites exactly the suspicion it deserves.
+  const left = [[lt.unresolved, 'completed on the gated branch, which the run '
+      + 'list cannot tell apart from rejected'],
+    [lt.pending, 'still in flight'], [lt.lost, 'failed, rejected or cancelled']]
+    .filter(([n]) => n).map(([n, why]) => `${n} ${why}`).join('; ');
+
+  return `<div class="roi-grid">
+      <div><div class="t">Saved to date</div>
+        <div class="v">${esc(money(roi.currency, lt.cost))}</div></div>
+      <div><div class="t">Engineer time</div>
+        <div class="v">${esc(fmtMin(lt.minutes))}</div></div>
+      <div><div class="t">CVEs</div><div class="v">${esc(lt.cves)}</div></div>
+      <div><div class="t">Hosts patched</div><div class="v">${esc(lt.counted)}</div></div>
+    </div>
+    <div class="note">${esc(lt.counted)} of ${esc(lt.runs)} runs in the store
+      counted${lt.span_days >= 1 ? `, over ${esc(lt.span_days)} days` : ''}.
+      ${left ? `Left out: ${esc(left)}. Under-counting a saving is recoverable;
+        over-counting one is not.` : ''}
+      ${lt.degraded ? `<b>Partial — ${esc(lt.degraded)}.</b> Runs that could not
+        be read are missing from this total.` : ''}</div>`;
+}
+
+// The budget question. The weakest card on the page and it says so, because
+// the platform cost cannot be sourced from anywhere in this system — but
+// refusing to answer is not neutral either. The reader will assume a number,
+// and the one they assume is usually worse than one they can see and change.
+function roiPayback(roi) {
+  const pb = roi.payback || {};
+  if (!pb.platform_cost) return '';
+  const pct = pb.recovered_pct || 0;
+  return `<div class="roi-grid">
+      <div><div class="t">Platform cost</div>
+        <div class="v man">${esc(money(roi.currency, pb.platform_cost))}</div></div>
+      <div><div class="t">Saved per host</div>
+        <div class="v">${esc(money(roi.currency, pb.per_host))}</div></div>
+      <div><div class="t">Hosts to break even</div>
+        <div class="v">${pb.hosts ? esc(pb.hosts.toLocaleString()) : '—'}</div></div>
+      <div><div class="t">Recovered so far</div>
+        <div class="v ${pct >= 100 ? '' : 'sm'}">${esc(pct)}%</div></div>
+    </div>
+    <div class="roi-pb"><span style="width:${Math.min(100, pct)}%"></span></div>
+    <div class="note">Per-host saving excludes the per-CVE triage, because the
+      next host does not arrive with another advisory to read — amortising it
+      across hosts would flatter this figure on exactly the estates where it
+      matters least. <b>The platform cost is the weakest number on this
+      page</b>: nothing here can measure it. Set
+      <code>ROI_PLATFORM_COST</code> to what this actually cost you, or to 0
+      to drop this card.</div>`;
+}
+
+// Comfortable travel for each slider, which is not the same thing as what the
+// backend will accept — it clamps to far wider bounds of its own. A rate
+// slider that ran to its real ceiling of 10,000/h would spend its whole
+// length in territory nobody works in and be useless at the values everybody
+// does. The gear panel still takes any number.
+const ROI_SLIDE = {
+  ROI_TRIAGE_MIN: [0, 120, 1], ROI_PREP_MIN: [0, 120, 1],
+  ROI_EXEC_MIN: [0, 120, 1], ROI_APPROVAL_MIN: [0, 120, 1],
+  ROI_REWORK_PCT: [0, 50, 1], ROI_REVIEW_MIN: [0, 60, 1],
+  ROI_HOURLY_RATE: [0, 300, 5], ROI_LEAD_HOURS: [0, 240, 1],
+  ROI_SLA_HOURS: [1, 240, 1], ROI_BAND_PCT: [0, 60, 1],
+  ROI_PLATFORM_COST: [0, 200000, 1000],
+};
+
+// Survives leaving the page and coming back, which is the point: someone who
+// has argued the baseline down to their own numbers should not have to do it
+// again after glancing at the remediation. Never written anywhere — it is one
+// reader's what-if, not a change to what the next person sees.
+let roiOverrides = {};
+let roiTimer = null;
+
+function roiVal(a, v) {
+  if (a.unit === '%') return `${v}%`;
+  if (a.unit === 'min' || a.unit === 'h') return `${v} ${a.unit}`;
+  if (a.unit.endsWith('/h')) return `${a.unit.slice(0, -2)}${v}/h`;
+  return `${a.unit}${Number(v).toLocaleString()}`;
+}
+
+function roiSliders(roi) {
+  return (roi.assumptions || []).filter(a => ROI_SLIDE[a.key]).map(a => {
+    const [lo, hi, step] = ROI_SLIDE[a.key];
+    const edited = a.key in roiOverrides;
+    return `<div>
+      <span class="n">${esc(a.label)}</span>
+      <span class="val ${edited ? 'edited' : ''}" data-for="${esc(a.key)}">${esc(roiVal(a, a.value))}</span>
+      <input type="range" data-key="${esc(a.key)}" data-unit="${esc(a.unit)}"
+             min="${lo}" max="${Math.max(hi, a.value)}" step="${step}"
+             value="${esc(a.value)}" aria-label="${esc(a.label)}">
+    </div>`;
+  }).join('');
+}
+
+// Everything below the sliders. Split out so moving one redraws the result
+// and not the control being held — re-rendering the input mid-drag takes the
+// pointer grab with it and the slider stops following the mouse.
+function roiBody(roi) {
+  const sv = roi.saved, m = roi.measured;
   // When nothing was gated the automated path cost no human time at all, so
   // there is no ratio to print. That is the better outcome, not a gap in the
   // data, and it should not render as a broken statistic.
   const mult = sv.effort_x
     ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
     : `<div class="v sm">Fully unattended</div><div class="k">Operator time</div>`;
+  // Live, a host still in flight has no completed_at to read, so the timings
+  // cover a subset. Said out loud rather than averaged over quietly.
+  const partial = m.timed < m.hosts
+    ? `<div class="note">Timings cover ${esc(m.timed)} of ${esc(m.hosts)} hosts —
+        the rest have not finished, so they have no duration to read yet. The
+        labour figures above count all ${esc(m.hosts)}.</div>` : '';
 
-  document.getElementById('list').innerHTML = `<div class="roi">
-    ${roi.illustrative ? `<div class="roi-caveat">
-      <b>Offline — the measured half of this page is paced, not worked.</b>
-      Timings here come from <code>DEMO_LATENCY</code>, not from patching
-      anything, so treat the speed figures as an illustration of the shape of
-      the saving rather than as a benchmark. The labour and cost comparison
-      does not depend on them: it is driven by host counts, which are real,
-      and by the assumptions listed at the bottom, which are not.</div>` : ''}
-
-    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+  return `<div class="stats" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
-        <div class="k">Labour saved</div></div>
+        <div class="k">Labour saved</div>
+        <div class="roi-range">${esc(money(roi.currency, sv.cost_low))}&ndash;${esc(money(roi.currency, sv.cost_high))}
+          at &plusmn;${esc(roi.band_pct)}%</div></div>
       <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div>
         <div class="k">Engineer time saved</div></div>
       <div class="stat">${mult}</div>
-      <div class="stat"><div class="v sm">${esc(roi.measured.gated)} of ${esc(roi.measured.hosts)}</div>
+      <div class="stat"><div class="v sm">${esc(m.gated)} of ${esc(m.hosts)}</div>
         <div class="k">Needed a person</div></div>
     </div>
 
     <div class="roi-card">
       <h3>Where the effort goes</h3>
-      <div class="sub">One CVE, ${esc(roi.measured.hosts)} host(s),
-        ${esc(roi.measured.gated)} of them through the approval gate. Both bars
-        are on the same scale. ${roi.measured.gated
+      <div class="sub">One CVE, ${esc(m.hosts)} host(s), ${esc(m.gated)} of them
+        through the approval gate. Both bars are on the same scale. ${m.gated
           ? `The console's bar is not empty — it is the operator reading the
              plan and pressing Approve, which is real time and is counted
              against the automation here.`
@@ -2192,6 +2405,7 @@ function renderRoi(roi) {
              a person and the console's bar really is empty. On a CVE that
              does gate, the operator's review time lands here.`}</div>
       ${roiBars(roi)}
+      ${partial}
     </div>
 
     <div class="roi-card">
@@ -2205,6 +2419,14 @@ function renderRoi(roi) {
     </div>
 
     <div class="roi-card">
+      <h3>How wrong could this be</h3>
+      <div class="sub">The margin the assumptions have before the conclusion
+        changes. Nothing here is assumed — it is arithmetic on whatever the
+        sliders are set to now.</div>
+      ${roiBreakeven(roi)}
+    </div>
+
+    <div class="roi-card">
       <h3>Time to remediation</h3>
       <div class="sub">How long the host stays exploitable — the figure that
         usually matters more than the labour.</div>
@@ -2212,28 +2434,119 @@ function renderRoi(roi) {
     </div>
 
     <div class="roi-card">
+      <h3>Across every run so far</h3>
+      <div class="sub">The same baseline over the whole run store rather than
+        this one CVE. No extra assumptions, just a larger count.</div>
+      ${roiLifetime(roi)}
+    </div>
+
+    ${roi.payback && roi.payback.platform_cost ? `<div class="roi-card">
+      <h3>Paying for itself</h3>
+      <div class="sub">What it would take to cover what this cost to build.</div>
+      ${roiPayback(roi)}
+    </div>` : ''}
+
+    <div class="roi-card">
       <h3>What this assumed</h3>
       <div class="sub">None of the manual side is measured, and none of it can
         be from here: that run never happened. These are the inputs it rests
-        on. Each is a setting — change it in the gear panel and press
-        <b>Calculate ROI</b> again.</div>
+        on, and the sliders at the top of this page are these same values.
+        Each is also a setting, if you want it to stick.</div>
       <table class="roi-asm"><tbody>${(roi.assumptions || []).map(a => `
         <tr><td>${esc(a.label)}<div class="k">${esc(a.key)}</div></td>
-            <td>${esc(a.value)} ${esc(a.unit)}</td></tr>`).join('')}
+            <td>${esc(roiVal(a, a.value))}</td></tr>`).join('')}
       </tbody></table>
-      <div class="note">Measured from the run instead:
-        ${esc(roi.measured.hosts)} host(s), ${esc(roi.measured.gated)} gated,
-        assessment ${esc(fmtSec(roi.measured.assess_s))},
-        dispatch ${esc(fmtSec(roi.measured.dispatch_s))}.</div>
+      <div class="note">Measured from the run instead: ${esc(m.hosts)} host(s),
+        ${esc(m.gated)} gated, assessment ${esc(fmtSec(m.assess_s))},
+        dispatch ${esc(fmtSec(m.dispatch_s))}.</div>
+    </div>`;
+}
+
+function renderRoi(roi) {
+  frameHead({
+    title: 'Return on investment',
+    sub: `<span class="cve-id">${cveLabel(roi.cve_id || '')}</span>`
+       + `<span>${esc(roi.measured.hosts)} host(s)</span>`,
+    back: BACK_PATCH,
+  });
+  renderStages(patchState || {});
+
+  const edited = Object.keys(roiOverrides).length;
+  document.getElementById('list').innerHTML = `<div class="roi">
+    ${roi.illustrative ? `<div class="roi-caveat">
+      <b>Offline — the measured half of this page is paced, not worked.</b>
+      Timings here come from <code>DEMO_LATENCY</code>, not from patching
+      anything, so treat the speed figures as an illustration of the shape of
+      the saving rather than as a benchmark. The labour and cost comparison
+      does not depend on them: it is driven by host counts, which are real,
+      and by the assumptions listed at the bottom, which are not.</div>` : ''}
+
+    <div class="roi-card roi-what">
+      <div class="roi-head"><h3>Disagree with it</h3>
+        <button class="pill" id="roi-reset" ${edited ? '' : 'hidden'}>Reset</button>
+      </div>
+      <div class="sub">Every figure below rests on these. Move one and the
+        whole page follows — this is the argument, not a disclaimer attached
+        to it. Nothing is saved: it changes this page for you and nobody
+        else. Use the gear panel to make a value stick.</div>
+      <div class="roi-sl" id="roi-sl">${roiSliders(roi)}</div>
     </div>
+
+    <div id="roi-dyn">${roiBody(roi)}</div>
   </div>`;
+
+  // One listener on the container rather than eleven on the inputs, and the
+  // readout updates on the spot while the recompute is debounced — the number
+  // under your thumb should never lag the thumb.
+  document.getElementById('roi-sl').addEventListener('input', ev => {
+    const el = ev.target;
+    if (!el.dataset.key) return;
+    const value = Number(el.value);
+    roiOverrides[el.dataset.key] = value;
+    const out = document.querySelector(`.val[data-for="${el.dataset.key}"]`);
+    if (out) {
+      out.textContent = roiVal({ unit: el.dataset.unit }, value);
+      out.classList.add('edited');
+    }
+    document.getElementById('roi-reset').hidden = false;
+    clearTimeout(roiTimer);
+    roiTimer = setTimeout(refreshRoi, 160);
+  });
+  document.getElementById('roi-reset').addEventListener('click', () => {
+    roiOverrides = {};
+    showRoi();
+  });
+}
+
+// Recompute with the sliders applied, replacing the result and leaving the
+// controls alone. Server-side rather than in the browser on purpose: one
+// implementation of the arithmetic, so the page and the API cannot drift into
+// disagreeing about what the saving is.
+async function refreshRoi() {
+  try {
+    const r = await fetch('/api/roi', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: roiOverrides }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!(r.ok && d.ok)) return;
+    const dyn = document.getElementById('roi-dyn');
+    if (dyn) dyn.innerHTML = roiBody(d.roi);
+  } catch (e) {
+    // A dropped what-if is not worth a toast: the sliders still read what the
+    // operator set, and the next nudge tries again.
+  }
 }
 
 async function showRoi() {
   const btn = document.getElementById('head-roi');
   btn.disabled = true;
   try {
-    const r = await fetch('/api/roi');
+    const hasEdits = Object.keys(roiOverrides).length > 0;
+    const r = await fetch('/api/roi', hasEdits ? {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: roiOverrides }),
+    } : undefined);
     const d = await r.json().catch(() => ({}));
     if (!(r.ok && d.ok)) {
       toast(`Could not work out ROI — ${esc(d.error || 'failed')}`, true);

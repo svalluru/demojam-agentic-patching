@@ -84,10 +84,20 @@ each one took — and costs the same work out by hand.
 Read the red banner at the top of that page before the big numbers. Offline the
 timings come from `DEMO_LATENCY` rather than from patching anything, so the
 speed figures are illustrative; the labour and cost comparison does not depend
-on them. The manual side is not measured either and never can be from here, so
-every assumption behind it is listed at the bottom of the page. Change one in
-the gear panel and press the button again — if you think 15 minutes of change
-prep per host is generous, put your own number in and see what is left.
+on them.
+
+The manual side is not measured either and never can be from here — the manual
+run never happened, so there is no clock to read it off. So the first card on
+the page is **Disagree with it**: a slider for every assumption behind the
+comparison. If you think 15 minutes of change prep per host is generous, drag
+it down and watch the whole page follow. Nothing is saved and nobody else's
+view changes; use the gear panel if you want a value to stick.
+
+Below that, *How wrong could this be* tells you how far those assumptions have
+to move before the conclusion flips, *Time to remediation* checks the run
+against a 48 hour deadline, and *Across every run so far* runs the same
+arithmetic over everything in the run store rather than this one CVE — so it
+grows as you work through both walkthroughs.
 
 **4 — The run history**
 
