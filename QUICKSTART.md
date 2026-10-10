@@ -68,11 +68,13 @@ Try both.
    it is nodes finished, not elapsed time, so a bar that stops moving means the
    run stopped moving. It reaches 7/7 and the outcome flips to *Patched*.
 
-Watch the left column as you go. It fills in with where the run is in one word,
-a count of hosts gated and patched, and **Where this came from** — one row per
-backend step saying what actually answered it. Offline every row reads `STORED`,
-because every row is a stored default. Live, a step that fell back to
-`fallbacks.py` turns red there and says `FALLBACK`.
+Watch the left column as you go. **Agent architecture** is the whole system as
+a diagram — the Supervisor, the two agents it drives, the services behind them,
+and the two agents that are not built yet. It starts all grey. Each box goes
+black the first time something calls it, and the hop happening right now is
+drawn solid with the dashes flowing in the direction of the call, so you can
+watch the conversation rather than read it. **Agent trace** below it is the
+same events as a list, numbered, with the seconds between them.
 
 **2 — A CVE that patches unattended**
 
@@ -81,9 +83,9 @@ below the threshold, so there is no approval gate anywhere downstream of them.
 The button reads **Patch 2 hosts** and stays red, because that press is the
 only human check these hosts get — nothing stops to ask again.
 
-On the left, **Patch history** reads `NOT NEEDED` rather than `STORED` on this
-one. No host needed review, so nothing ever asked the RAG store — and a step
-that was never called is not a step that succeeded.
+Watch the diagram on this one: **RAG STORE** stays grey the whole way through.
+No host needed review, so nothing ever asked it — and a box that was never
+called is not a box that answered.
 
 **3 — What the run saved**
 
@@ -167,9 +169,10 @@ cp .env.example .env     # then fill it in
 ./demo.sh --live
 ```
 
-In live mode the red banner disappears. In its place, any individual step
-that could not reach its backend is called out in the patch plan itself,
-naming the service and how to fix it — so you always know which numbers on the
-page are measured and which are substituted.
+In live mode the red banner disappears. In its place, any individual step that
+could not reach its backend is called out in the patch plan itself, naming the
+service and how to fix it, and that service's box in the architecture diagram
+turns red — so you always know which numbers on the page are measured and
+which are substituted.
 
 See [README.md](README.md) for the architecture and the full set of switches.

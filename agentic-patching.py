@@ -1167,10 +1167,14 @@ class PatchingAgent:
                 'Ansible Orchestrator', f'invalid decision {decision!r}',
                 "decision must be 'approved' or 'rejected'")
 
+        # Above the branch: the operator issued the decision whichever side
+        # handles it, and logging it only on the live path left the simulated
+        # one showing an answer with nothing having asked for it.
+        self._trace('console', 'patching', f'{decision} {execution_id[:8]}/{activity_id}')
+
         if is_sim(execution_id):
             return self._decide_sim(execution_id, decision)
 
-        self._trace('console', 'patching', f'{decision} {execution_id[:8]}/{activity_id}')
         ao_call(f'/api/v1/executions/{execution_id}/activities/{activity_id}/signal',
                 'POST', {'signal_data': {'decision': decision}})
 
@@ -2310,8 +2314,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {'ok': False,
                                  'error': 'execution_id, activity_id and decision are required'})
                 return
+            # Append to the run's own log rather than to a fresh Supervisor's.
+            # Without this the trace stopped at dispatch: approving a host is
+            # the single most consequential hop in the whole flow and it was
+            # the one the console had no record of.
+            def trace(src: str, dst: str, message: str) -> None:
+                with _RUN_LOCK:
+                    _RUN.setdefault('events', []).append(
+                        {'time': now_iso(), 'from': src, 'to': dst,
+                         'message': message})
+
             try:
-                result = PatchingAgent().decide(exec_id, act_id, decision)
+                result = PatchingAgent(trace=trace).decide(exec_id, act_id, decision)
                 with _RUN_LOCK:
                     # Keep the stored run in step with the new outcome. A null
                     # in the newer read does not overwrite a value we already

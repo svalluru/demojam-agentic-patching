@@ -124,21 +124,34 @@ left one stays, so it carries what you need regardless of which of those is up:
 | | |
 |---|---|
 | **State chip** | One word beside the heading — *Assessing*, *Needs review*, *5 at the gate*, *Patching*, *Complete*, *Failed*. The stage bar in the header says the same thing in more detail; this has to make sense on its own once the right frame has moved on. |
-| **This run** | Hosts / Gated / Patched / Failed, plus assessment and dispatch time. Outcome-focused on purpose — the right frame's strip counts the *plan* (CVSS, hosts, review, auto) and disappears with it. |
-| **Where this came from** | One row per backend step, with what actually answered it. |
+| **Agent architecture** | The diagram above — who is in the system, and which of them have talked to which so far in this run. |
 | **Agent trace** | Every supervisor↔agent hop, numbered, with elapsed seconds off the events' own clock. |
 
-**Where this came from** has three states, not two, and the third is the
-point. `LIVE` means the service answered. `FALLBACK`, in red, means
-`fallbacks.py` answered instead — live only, since offline the banner has
-already said it of every row and four alarmed rows repeating it is exactly the
-per-step noise described below; there the rows read `STORED`. The third,
-`NOT CALLED` / `NOT NEEDED`, is for a step that was never reached — no host
-needed review, so the RAG store was never queried. Without it, an un-called
-service is indistinguishable from a successful one: it leaves no `degraded`
-entry either. That is why the plan carries `history_source` (`rag` / `fallback`
-/ `skipped`) as a field rather than letting the console infer it from an
-absence.
+The diagram is the same shape as the one at the top of this file, drawn live. A
+box that has been called in this run goes black; the rest stay grey, so the
+picture starts as the whole system and fills in with the part of it this CVE
+actually used. Agents 3 and 4 are dashed and stay dashed — they are not
+implemented, and leaving them off would make the diagram claim a system that is
+smaller than the design. While a run is moving, the most recent hop is drawn
+solid with the dashes flowing from caller to callee and a pulse on both boxes,
+which is the only place the console shows direction *as it happens* rather than
+after the fact.
+
+**Every lit edge is a logged hop.** The diagram reads `state.events` — the same
+list the trace below it prints — so the console cannot draw a conversation that
+did not take place. There is exactly one derived edge, Patching → Ansible
+Orchestrator, lit from the patch result existing, because AO is the only
+backing service the Supervisor does not trace a hop to.
+
+**Red is live-only.** A service that fell back to `fallbacks.py` turns red in
+the diagram, matching the `degraded` panel on the plan. Offline every service
+would be red, which is the per-step noise described under *Offline / fallback
+mode* below — the banner has already said it once, of all of them.
+
+The plan carries `history_source` (`rag` / `fallback` / `skipped`) as a field
+for the same reason. A step that was never reached — no host needed review, so
+the RAG store was never queried — leaves no `degraded` entry, which makes it
+indistinguishable from one that succeeded unless the plan says so outright.
 
 ### CLI
 
