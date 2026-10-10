@@ -107,7 +107,7 @@ backend holds the agents, the frontend serves the UI and proxies to it:
 cd frontend && python3 server.py --env ../.env
 ```
 
-Open <http://127.0.0.1:8788>, pick a CVE, **Assess CVE Impact**, review the
+Open <http://127.0.0.1:8788>, hit **Assess** on a CVE row, review the
 dry-run, then **Start Patch**. Hosts routed to the approval branch show
 Approve / Reject buttons. **Patch runs** lists past executions read live from AO.
 
@@ -126,7 +126,8 @@ Approve / Reject buttons. **Patch runs** lists past executions read live from AO
 |---|---|
 | `HOSTS_FILTER=pay-app-07` | restrict to matching hosts |
 | `HOSTS_LIMIT=3` | cap host count |
-| `REVIEW_THRESHOLD=30` | risk score above which a host needs approval |
+| `REVIEW_THRESHOLD=30` | risk score above which a host needs approval — model scores only |
+| `HEURISTIC_THRESHOLD=55` | the same gate for heuristic scores, which are not on the same scale. This is the one in play whenever the risk model is unreachable, so it governs the whole offline demo |
 | `AO_WORKFLOW_NAME` | workflow to trigger (default `DemoJam Agentic Patching`) |
 | `AO_DECIDE_WAIT=90` | seconds to wait for a run to settle after approve/reject |
 | `LAB_TAG` | passed to the workflow as `lab_tag` |
@@ -135,6 +136,18 @@ Approve / Reject buttons. **Patch runs** lists past executions read live from AO
 | `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | per-service read budgets (15 / 8 / 20 / 10s) |
 
 See **Offline / fallback mode** below for `STRICT` and `FALLBACK_PATCH`.
+
+### Settings panel
+
+The gear in the top right opens every one of these, grouped, with its built-in
+default shown until something overrides it. A row is chipped `.env` when it was
+set before startup and `changed` when this panel set it.
+
+Changes take effect on the next assessment and are **in-memory only** — they
+are lost on restart, and `.env` stays the durable place. The two passwords are
+write-only: the panel never reads them back, and leaving one blank keeps the
+current value. `BACKEND_HOST` / `BACKEND_PORT` are shown but not editable; the
+socket is already open by the time the panel can reach the process.
 
 ## Offline / fallback mode
 

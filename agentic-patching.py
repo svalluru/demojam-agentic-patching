@@ -221,7 +221,7 @@ def _ctx(verify: bool) -> ssl.SSLContext:
     return c
 
 
-def preflight(url: str, timeout: float = CONNECT_TIMEOUT) -> None:
+def preflight(url: str, timeout: float | None = None) -> None:
     """Fail fast if nothing is listening, before spending the read budget.
 
     A stopped pod leaves its Route resolving with nothing behind it, so the
@@ -230,6 +230,10 @@ def preflight(url: str, timeout: float = CONNECT_TIMEOUT) -> None:
     the two cases are separated: reachability gets seconds, answering gets
     the full allowance.
     """
+    # Resolved per call, not captured as a default argument: the settings
+    # panel rebinds CONNECT_TIMEOUT, and a default binds once at import.
+    if timeout is None:
+        timeout = CONNECT_TIMEOUT
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
     if not host:
@@ -456,6 +460,10 @@ class DryRun:
     hosts_auto: int
     maintenance_window: str
     risk_source: str
+    # The gate each score was actually compared against. Which of the two
+    # thresholds applied depends on risk_source, so reporting it is the only
+    # way the console can show why a host landed where it did.
+    threshold: float
     verdict: str
     notes: list[str] = field(default_factory=list)
     # Every step that fell back, with the service and the fix. Carried into
@@ -677,6 +685,7 @@ class InfoAgent:
             hosts_total=len(assessed), hosts_review=len(review),
             hosts_auto=len(assessed) - len(review),
             maintenance_window=window, risk_source=risk_source,
+            threshold=round(float(threshold), 2),
             verdict='review_required' if review else 'auto_approve_eligible',
             notes=notes,
             degraded=[dict(d) for d in DEGRADED],
@@ -1268,6 +1277,287 @@ class Supervisor:
 
 
 # ==========================================================================
+# SETTINGS — one registry describing every tunable this process reads
+#
+# Scope is deliberately "what this process reads", not "everything in
+# .env.example". NAMESPACE, GIT_HUB_TOKEN, the AAP_* and VLLM_* keys belong to
+# ao-setup/ and rag-setup/, which are separate shell scripts; offering them
+# here would imply changing them does something, and it would not.
+#
+# Two things make this more than a dict of env vars:
+#
+#   - Most of these were read once at import into a module global, so writing
+#     os.environ alone changes nothing. Each Setting names the global it feeds
+#     (`binds`) and apply() rebinds it. Functions look up globals at call time,
+#     so a rebind takes effect on the next call.
+#   - Overrides live in this process only. Writing them back to .env would
+#     mean rewriting a hand-maintained file full of comments and credentials,
+#     so the panel says plainly that .env is the durable place.
+# ==========================================================================
+
+@dataclass(frozen=True)
+class Setting:
+    key: str
+    group: str
+    label: str
+    kind: str                     # str | int | float | bool | choice
+    default: str                  # the built-in default, as the env would give it
+    help: str = ''
+    choices: tuple[str, ...] = ()
+    secret: bool = False          # never leaves the process; write-only
+    readonly: bool = False        # shown for completeness, cannot take effect
+    binds: str = ''               # module global to rebind, '' if read per call
+
+
+SETTINGS: tuple[Setting, ...] = (
+    # --- mode -------------------------------------------------------------
+    Setting('OFFLINE', 'Mode', 'Offline', 'bool', '',
+            'Stored defaults only, no network at all. What ./demo.sh sets.'),
+    Setting('STRICT', 'Mode', 'Strict', 'bool', '',
+            'Disable every fallback and raise the real error instead.'),
+    Setting('FALLBACK_PATCH', 'Mode', 'Patch fallback', 'choice', 'simulate',
+            'With AO unreachable: simulate a run locally, or report the host '
+            'as not dispatched. Nothing is patched either way.',
+            choices=('simulate', 'unavailable')),
+
+    # --- triage -----------------------------------------------------------
+    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold (model)', 'float', '30',
+            'Risk score above which a host needs operator approval. Applies '
+            'only when the score came from the model — see below.',
+            binds='REVIEW_THRESHOLD'),
+    Setting('HEURISTIC_THRESHOLD', 'Triage', 'Review threshold (heuristic)',
+            'float', '55',
+            'The two are not on the same scale, so the heuristic fallback has '
+            'its own gate. This is the one in play whenever the risk model is '
+            'unreachable, which includes the whole offline demo.',
+            binds='fallbacks.HEURISTIC_THRESHOLD'),
+    Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
+            'Restrict an assessment to hosts whose name contains this.'),
+    Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
+            'Cap the number of hosts assessed. 0 means no cap.'),
+    Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
+            f'Reported in the dry-run. Empty uses {DEFAULT_WINDOW!r}.',
+            binds='MAINTENANCE_WINDOW'),
+    Setting('MAX_ATTEMPTS_PER_HOST', 'Triage', 'Max attempts per host', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_ATTEMPTS_PER_HOST'),
+    Setting('MAX_FAILED_PER_PHASE', 'Triage', 'Max failures per phase', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_FAILED_PER_PHASE'),
+
+    # --- timeouts ---------------------------------------------------------
+    Setting('CONNECT_TIMEOUT', 'Timeouts', 'Connect (reachability)', 'float', '3',
+            'TCP budget per service, separate from the read budgets. A stopped '
+            'pod leaves its Route resolving with nothing behind it.',
+            binds='CONNECT_TIMEOUT'),
+    Setting('CIRCUIT_TTL', 'Timeouts', 'Circuit breaker TTL', 'int', '30',
+            'How long a service stays tripped after failing, so a dead backend '
+            'costs one probe per run rather than one per host.',
+            binds='CIRCUIT_TTL'),
+    Setting('INSIGHTS_TIMEOUT', 'Timeouts', 'Insights read', 'int', '15',
+            '', binds='INSIGHTS_TIMEOUT'),
+    Setting('RISK_TIMEOUT', 'Timeouts', 'Risk model read', 'int', '8',
+            '', binds='RISK_TIMEOUT'),
+    Setting('RAG_TIMEOUT', 'Timeouts', 'RAG read', 'int', '20',
+            'Live RAG does LLM summarisation, so this one is generous.',
+            binds='RAG_TIMEOUT'),
+    Setting('AO_TIMEOUT', 'Timeouts', 'Ansible Orchestrator read', 'int', '10',
+            '', binds='AO_TIMEOUT'),
+    Setting('HTTP_TIMEOUT', 'Timeouts', 'Global HTTP ceiling', 'int', '120',
+            'Upper bound; the per-service budgets above sit well below it.',
+            binds='HTTP_TIMEOUT'),
+    Setting('AO_POLL_TIMEOUT', 'Timeouts', 'AO poll', 'int', '900',
+            'How long to follow a dispatched execution.', binds='AO_POLL_TIMEOUT'),
+    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '90',
+            'Seconds to wait for a run to reach a terminal status after '
+            'approve or reject.'),
+    Setting('DEMO_LATENCY', 'Timeouts', 'Demo pause per step', 'float', '0.35',
+            'Offline only. Answering instantly renders as "complete in 0s" and '
+            'reads as broken. 0 disables.', binds='DEMO_LATENCY'),
+
+    # --- insights ---------------------------------------------------------
+    Setting('INSIGHTS_REST_BASE_URL', 'Insights', 'REST base URL', 'str',
+            'https://console.redhat.com/api', '', binds='INSIGHTS_API'),
+    Setting('INSIGHTS_VERIFY_TLS', 'Insights', 'Verify TLS', 'bool', 'true',
+            'Turn off if this machine cannot verify the sso.redhat.com chain.',
+            binds='INSIGHTS_VERIFY_TLS'),
+    Setting('LIGHTSPEED_CLIENT_ID', 'Insights', 'Client ID', 'str', '',
+            'Lightspeed service account.'),
+    Setting('LIGHTSPEED_CLIENT_SECRET', 'Insights', 'Client secret', 'str', '',
+            'Write-only. Leave blank to keep the current value.', secret=True),
+
+    # --- risk model -------------------------------------------------------
+    Setting('RISK_URL', 'Risk model', 'Predict URL', 'str', '',
+            'KServe endpoint, .../v1/models/risk-score:predict. Unset falls '
+            'back to the heuristic.', binds='RISK_URL'),
+    Setting('RISK_VERIFY_TLS', 'Risk model', 'Verify TLS', 'bool', 'true',
+            'Turn off for sandbox cluster certificates.', binds='RISK_VERIFY_TLS'),
+
+    # --- RAG --------------------------------------------------------------
+    Setting('LLAMA_STACK_URL', 'RAG', 'Llama Stack URL', 'str', '',
+            '', binds='LLAMA_URL'),
+    Setting('VECTOR_DB_ID', 'RAG', 'Vector store ID', 'str', '',
+            'The vs_... that rag-setup/ingest.py --ensure prints. A Llama Stack '
+            'restart empties the registry, so re-run ingest and re-set this.',
+            binds='VECTOR_DB_ID'),
+    Setting('DEFAULT_LLM_MODEL', 'RAG', 'Summarisation model', 'str',
+            'vllm-inference/llama-scout-17b', '', binds='LLM_MODEL'),
+
+    # --- Ansible Orchestrator --------------------------------------------
+    Setting('AO_URL', 'Ansible Orchestrator', 'Base URL', 'str', '',
+            '', binds='AO_URL'),
+    Setting('AO_USERNAME', 'Ansible Orchestrator', 'Username', 'str', '',
+            '', binds='AO_USERNAME'),
+    Setting('AO_PASSWORD', 'Ansible Orchestrator', 'Password', 'str', '',
+            'Write-only. Leave blank to keep the current value.',
+            secret=True, binds='AO_PASSWORD'),
+    Setting('AO_WORKFLOW_NAME', 'Ansible Orchestrator', 'Workflow name', 'str',
+            'DemoJam Agentic Patching',
+            'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
+    Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
+            'trigger_manual', '', binds='AO_TRIGGER_NODE'),
+    Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
+            'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
+
+    # --- server -----------------------------------------------------------
+    Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
+            'Set on the command line; the socket is already open.', readonly=True),
+    Setting('BACKEND_PORT', 'Server', 'Bind port', 'int', '8787',
+            'Set on the command line; the socket is already open.', readonly=True),
+)
+
+SETTINGS_BY_KEY = {s.key: s for s in SETTINGS}
+
+# What each key resolved to at startup, before anything was changed here.
+# Reverting restores this rather than the built-in default: if .env supplied a
+# RISK_URL, "revert" should give it back, not blank it.
+_BASELINE: dict[str, str] = {s.key: env(s.key, s.default) for s in SETTINGS}
+
+# Keys changed through this panel since the process started.
+_OVERRIDDEN: set[str] = set()
+
+
+def _coerce(s: Setting, raw: str) -> Any:
+    """Parse a form value the way the module-level constant was parsed."""
+    raw = (raw or '').strip()
+    if s.kind == 'bool':
+        # Matches env_bool: anything not in the falsey set is true, and empty
+        # means "use the default".
+        return bool(s.default and s.default.lower() not in {'0', 'false', 'no'}) \
+            if not raw else raw.lower() not in {'0', 'false', 'no'}
+    if s.kind == 'int':
+        return int(float(raw or s.default or '0'))
+    if s.kind == 'float':
+        return float(raw or s.default or '0')
+    if s.kind == 'choice' and raw and raw not in s.choices:
+        raise ValueError(f'{s.key} must be one of {", ".join(s.choices)}')
+    return raw
+
+
+def _rebind(s: Setting, raw: str) -> None:
+    """Push a value into the live binding named by `binds`.
+
+    Plain names are module globals here; dotted ones are an attribute on
+    something in this module's namespace — a class (Supervisor.MAX_*) or the
+    fallbacks module (fallbacks.HEURISTIC_THRESHOLD).
+    """
+    if not s.binds:
+        return                      # read fresh from os.environ on every use
+    value = _coerce(s, raw)
+    if s.kind == 'str' and not raw:
+        value = s.default
+    if '.' in s.binds:
+        owner, attr = s.binds.split('.', 1)
+        setattr(globals()[owner], attr, value)
+        return
+    globals()[s.binds] = value
+    # VULN_API is derived, so it has to follow its source.
+    if s.binds == 'INSIGHTS_API':
+        globals()['VULN_API'] = f'{str(value).rstrip("/")}/vulnerability/v1'
+
+
+def settings_state() -> list[dict[str, Any]]:
+    """Current value of every setting, with where it came from.
+
+    `source` is the honest version of "modified": default means the built-in,
+    env means .env or the environment set it before this process started, and
+    override means it was changed here.
+    """
+    out = []
+    for s in SETTINGS:
+        value, default = env(s.key, s.default), s.default
+        if s.kind == 'bool':
+            # Normalise both sides to true/false here rather than leaving the
+            # UI to reimplement env_bool's "empty means the default" rule.
+            value = 'true' if _coerce(s, value) else 'false'
+            default = 'true' if _coerce(s, s.default) else 'false'
+        if s.key in _OVERRIDDEN:
+            source = 'override'
+        elif value != default:
+            source = 'env'
+        else:
+            source = 'default'
+        out.append({
+            'key': s.key, 'group': s.group, 'label': s.label, 'kind': s.kind,
+            'default': default, 'help': s.help, 'choices': list(s.choices),
+            'secret': s.secret, 'readonly': s.readonly, 'source': source,
+            # A secret's value never leaves the process — only whether one is set.
+            'value': '' if s.secret else value,
+            'is_set': bool(value) if s.secret else None,
+        })
+    return out
+
+
+def settings_update(changes: dict[str, Any]) -> list[str]:
+    """Validate everything, then apply. Returns the keys that changed.
+
+    Validate-then-apply so a bad number in the last field cannot leave the
+    first half of the form applied and the rest not.
+    """
+    staged: list[tuple[Setting, str]] = []
+    for key, raw in changes.items():
+        s = SETTINGS_BY_KEY.get(key)
+        if s is None:
+            raise ValueError(f'unknown setting {key!r}')
+        if s.readonly:
+            continue
+        raw = '' if raw is None else str(raw).strip()
+        # A blank secret means "leave it alone", so the form can be saved
+        # without retyping credentials it was never shown.
+        if s.secret and not raw:
+            continue
+        if raw == env(s.key, s.default):
+            continue
+        _coerce(s, raw)             # raises on a bad value, before anything moves
+        staged.append((s, raw))
+
+    for s, raw in staged:
+        if raw:
+            os.environ[s.key] = raw
+        else:
+            os.environ.pop(s.key, None)
+        _rebind(s, raw)
+        _OVERRIDDEN.add(s.key)
+    return [s.key for s, _ in staged]
+
+
+def settings_revert() -> list[str]:
+    """Restore every setting to what it was when the process started."""
+    reverted = []
+    for key in sorted(_OVERRIDDEN):
+        s = SETTINGS_BY_KEY[key]
+        raw = _BASELINE[key]
+        if raw:
+            os.environ[key] = raw
+        else:
+            os.environ.pop(key, None)
+        _rebind(s, raw)
+        reverted.append(key)
+    _OVERRIDDEN.clear()
+    return reverted
+
+
+# ==========================================================================
 # HTTP server — what the console UI talks to
 #
 # frontend/server.py proxies /api/start and /api/state here, so the UI can
@@ -1360,6 +1650,9 @@ class Handler(BaseHTTPRequestHandler):
                 'simulate_patch': fallbacks.simulate_patch(),
                 'workflow': AO_WORKFLOW_NAME,
             })
+        elif path == '/api/settings':
+            self._send(200, {'ok': True, 'settings': settings_state(),
+                             'persisted': False})
         elif path == '/api/cves':
             # C1 lives here, not in the frontend. The frontend used to call
             # Insights itself, which meant the CVE list was the one step with
@@ -1419,6 +1712,26 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True, name='patching').start()
             self._send(200, {'ok': True, 'cve': snapshot.get('cve_id'),
                              'status': 'running'})
+            return
+
+        if path == '/api/settings':
+            # Overrides are process-local and take effect on the next call
+            # that reads them — no restart, but nothing is written to .env.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                p = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                p = {}
+            try:
+                if p.get('revert'):
+                    changed = settings_revert()
+                else:
+                    changed = settings_update(p.get('settings') or {})
+            except (ValueError, TypeError) as exc:
+                self._send(400, {'ok': False, 'error': str(exc)})
+                return
+            self._send(200, {'ok': True, 'changed': changed,
+                             'settings': settings_state()})
             return
 
         if path == '/api/decide':
@@ -1503,7 +1816,7 @@ def _print_run(state: dict) -> None:
     print(f'  CVE          : {dr["cve_id"]}  (CVSS {dr["cvss"]})')
     print(f'  Hosts        : {dr["hosts_total"]}  '
           f'({dr["hosts_review"]} review, {dr["hosts_auto"]} auto)')
-    print(f'  Risk source  : {dr["risk_source"]}')
+    print(f'  Risk source  : {dr["risk_source"]}  (gate {dr["threshold"]:g})')
     print(f'  Window       : {dr["maintenance_window"]}')
     print(f'  Verdict      : {dr["verdict"]}')
     print(f'  Elapsed      : {state["elapsed_s"]}s')

@@ -6,145 +6,372 @@
 <title>Agentic Patching Console</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ====================================================================
+     Tokens
+     ====================================================================
+     Three colours only: white, black, red. White is ground, black is
+     normal / primary / affirmative, red is alert / danger / consequential.
+     Because colour cannot carry a four-step severity ramp or an
+     ok-vs-review-vs-fail distinction on its own, those are carried by fill
+     vs outline, border style and weight instead — see .badge and the
+     severity classes below.
+
+     --accent tracks --text rather than being its own hue, so the handful of
+     rules that fill with --accent and write in --bg stay legible.
+
+     Elevation does the job a second hue would otherwise do. With one accent
+     there is nothing left to tint a raised surface with, so the shadow ramp
+     is what separates ground from panel from overlay. --red-lo is not a
+     fourth colour; it is the far stop of a red gradient. */
   :root {
-    --bg:#0b1020; --panel:#151c33; --surface:#1a2340; --text:#e7ecff;
-    --muted:#8492b8; --accent:#6ea8fe; --border:#2a355f;
-    --red:#ff6b6b; --orange:#ffa94d; --yellow:#ffd43b; --green:#51cf66;
+    --bg:#ffffff; --panel:#ffffff; --surface:#f6f6f7; --text:#0b0b0c;
+    --muted:#70707a; --accent:#0b0b0c; --border:#e7e7ea;
+    --red:#cc0000;                    /* deep enough to pass AA on white */
+    --red-lo:#980000;                 /* gradient stop only, never text */
+    --tint-n:rgba(0,0,0,.05);         /* faint neutral wash — neutral states */
+    --tint-r:rgba(204,0,0,.07);       /* faint red wash     — states to act on */
+
+    --sh-1:0 1px 2px rgba(11,11,12,.05);
+    --sh-2:0 1px 2px rgba(11,11,12,.05), 0 10px 26px -14px rgba(11,11,12,.22);
+    --sh-3:0 2px 8px rgba(11,11,12,.06), 0 28px 64px -24px rgba(11,11,12,.34);
+    --sh-red:0 5px 16px -7px rgba(204,0,0,.55);
+    --ring:0 0 0 3px rgba(11,11,12,.11);
+
+    --r-xs:6px; --r-sm:9px; --r:12px; --r-lg:16px;
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --spring:cubic-bezier(.34,1.26,.64,1);
+    --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
   body {
-    font-family: Inter, system-ui, -apple-system, sans-serif;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 system-ui, sans-serif;
     background: var(--bg); color: var(--text);
     height: 100vh; display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   }
+  /* Nearly every number here is read down a column — risk scores, CVSS,
+     host counts. Proportional digits make those columns ragged. */
+  td, th, .cvss, .stat .v, .mono, .pill .n, .meter-val, .cve-id {
+    font-variant-numeric: tabular-nums;
+  }
+  ::selection { background: var(--red); color: #ffffff; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* Top-of-page mode banner. Deliberately loud and full-bleed: someone
      walking past a screen should be able to tell at a glance that the
      numbers on it are not real. */
   #mode-banner {
+    position: relative; overflow: hidden;
     display: none; flex-shrink: 0; align-items: center; gap: 12px;
-    padding: 9px 22px; font-size: 12.5px; font-weight: 600;
-    color: #1a1205; background: var(--orange);
-    border-bottom: 1px solid rgba(0,0,0,.25);
+    padding: 10px 22px; font-size: 12.5px; font-weight: 600;
+    color: #ffffff; box-shadow: var(--sh-red);
+    background: linear-gradient(100deg, var(--red-lo), var(--red) 48%, var(--red-lo));
   }
   #mode-banner.on { display: flex; }
+  /* Hazard stripes, not a fourth colour: black over red at low alpha. The
+     drift is slow enough to read as "live" without pulling the eye off the
+     page, and it is the one thing on screen that must not be tuned out. */
+  #mode-banner::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(45deg,
+      rgba(0,0,0,.13) 25%, transparent 25% 50%,
+      rgba(0,0,0,.13) 50% 75%, transparent 75%);
+    background-size: 36px 36px; animation: hazard 1.9s linear infinite;
+  }
+  @keyframes hazard { to { background-position: 36px 0; } }
+  #mode-banner > * { position: relative; }
   #mode-banner .tag {
     font-size: 10px; font-weight: 800; letter-spacing: .6px;
-    padding: 2px 8px; border-radius: 5px;
-    background: rgba(0,0,0,.28); color: #ffd9a0;
+    padding: 3px 9px; border-radius: var(--r-xs);
+    background: #000000; color: #ffffff;
   }
   #mode-banner .sub { font-weight: 500; opacity: .85; }
-  #mode-banner .how { margin-left: auto; font-weight: 500; opacity: .8;
-                      font-family: var(--mono); font-size: 11px; }
+  #mode-banner .how { margin-left: auto; font-weight: 500; opacity: .85;
+                      font-family: var(--mono); font-size: 11px;
+                      padding: 3px 9px; border-radius: var(--r-xs);
+                      background: rgba(0,0,0,.22); }
 
   header {
-    display: flex; align-items: center; gap: 14px;
+    position: relative; z-index: 5;
+    display: flex; align-items: center; gap: 13px;
     padding: 12px 22px; background: var(--panel);
     border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
   .logo {
-    width: 32px; height: 32px; background: var(--accent); border-radius: 9px;
-    display: grid; place-items: center; font-weight: 800; color: var(--bg);
+    width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
+    background: linear-gradient(145deg, var(--red), var(--red-lo));
+    box-shadow: var(--sh-red);
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 12.5px; letter-spacing: .4px; color: #ffffff;
   }
-  header h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
-  .status { margin-left: auto; display: flex; align-items: center; gap: 7px;
-            font-size: 12px; color: var(--muted); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.34px; }
+  header .tagline { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .status {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 10px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--panel);
+    box-shadow: var(--sh-1);
+    font-size: 11.5px; font-weight: 600; color: var(--muted);
+  }
+  .dot { position: relative; width: 7px; height: 7px; border-radius: 50%;
+         background: var(--text); flex-shrink: 0; }
   .dot.off { background: var(--red); }
+  /* Halo only while a run is in flight. A dot that always pulses stops
+     meaning anything. */
+  .dot::after {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: inherit; opacity: 0;
+  }
+  body.busy .dot::after { animation: halo 1.6s var(--ease) infinite; }
+  @keyframes halo {
+    from { opacity: .5; transform: scale(1); }
+    to   { opacity: 0;  transform: scale(3.4); }
+  }
 
-  /* two frames */
+  /* Sweep under the header while the Supervisor is working. The console
+     spends most of a run waiting on a backend with nothing to show; this is
+     the proof it has not simply hung. */
+  .scan { position: relative; height: 2px; flex-shrink: 0; overflow: hidden;
+          opacity: 0; transition: opacity .18s var(--ease); }
+  body.busy .scan { opacity: 1; }
+  .scan::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 28%;
+    background: linear-gradient(90deg, transparent, var(--red), transparent);
+    animation: sweep 1.25s var(--ease) infinite;
+  }
+  @keyframes sweep { from { transform: translateX(-100%); }
+                     to   { transform: translateX(357%); } }
+
+  /* two frames.
+     The ground keeps a faint dot grid so the panels read as sheets laid on
+     a surface rather than regions of the same white. */
   .frames {
-    flex: 1; display: grid; grid-template-columns: 380px 1fr;
-    gap: 16px; padding: 16px 20px; min-height: 0;
+    flex: 1; display: grid; grid-template-columns: 392px 1fr;
+    gap: 18px; padding: 18px 20px 20px; min-height: 0;
+    background: radial-gradient(circle at 1px 1px,
+                rgba(11,11,12,.055) 1px, transparent 0) 0 0 / 22px 22px;
   }
   .frame {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 14px; display: flex; flex-direction: column;
-    overflow: hidden; min-height: 0;
+    border-radius: var(--r-lg); display: flex; flex-direction: column;
+    overflow: hidden; min-height: 0; box-shadow: var(--sh-2);
   }
   .frame-head {
     display: flex; align-items: center; gap: 10px;
     padding: 13px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    background: linear-gradient(var(--panel), var(--surface));
   }
-  .frame-head h2 { font-size: 14px; font-weight: 700; }
-  .frame-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
-  .frame-body::-webkit-scrollbar { width: 6px; }
-  .frame-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .frame-head h2 { font-size: 14px; font-weight: 700; letter-spacing: -.2px;
+                   white-space: nowrap; }
+  /* What the title is about — the CVE and its host count — rather than a
+     second heading row inside the body saying the same thing. */
+  .frame-sub {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+    font-size: 12px; color: var(--muted); overflow: hidden;
+  }
+  .frame-sub::before {
+    content: ''; width: 1px; height: 15px; background: var(--border); flex: none;
+  }
+  .frame-sub .cve-id { font-size: 12.5px; color: var(--text); }
+  /* Every view-level control, one row, one right edge. Uniform height and
+     radius so they read as a set; only the fill says which one is primary. */
+  .head-actions {
+    margin-left: auto; display: flex; align-items: center; gap: 7px; flex: none;
+  }
+  .head-actions .pill, .head-actions .go-patch {
+    display: inline-flex; align-items: center; height: 30px;
+    padding: 0 14px; border-radius: 20px;
+  }
+  .head-actions .go-patch { padding: 0 17px; }
+  .head-sep { width: 1px; height: 18px; background: var(--border); flex: none; }
+  [hidden] { display: none !important; }
+  .frame-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0;
+                scrollbar-width: thin; }
+  .frame-body::-webkit-scrollbar { width: 9px; }
+  .frame-body::-webkit-scrollbar-thumb {
+    background: var(--border); border-radius: 9px;
+    border: 3px solid var(--panel);
+  }
+  .frame-body::-webkit-scrollbar-thumb:hover { background: #cfcfd4; }
 
   /* ---- frame 1: input ---- */
   label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
           text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+  .field { position: relative; }
   input[type=text] {
-    width: 100%; padding: 11px 13px; background: var(--surface); color: var(--text);
-    border: 1px solid var(--border); border-radius: 9px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px;
+    width: 100%; padding: 12px 13px; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    font-family: var(--mono); font-size: 14px; letter-spacing: .2px;
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease),
+                background .15s var(--ease);
   }
+  input[type=text]:hover { border-color: #d5d5da; }
   input[type=text]:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(110,168,254,.18);
+    outline: none; border-color: var(--accent); background: var(--panel);
+    box-shadow: var(--ring);
   }
+  /* "/" focuses the field. The hint retires once the field has been used,
+     so it teaches the shortcut without becoming furniture. */
+  .kbd {
+    position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    padding: 2px 7px; border-radius: var(--r-xs); pointer-events: none;
+    border: 1px solid var(--border); background: var(--panel);
+    font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--muted);
+    transition: opacity .15s var(--ease);
+  }
+  input:focus ~ .kbd, .field.used .kbd { opacity: 0; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
+  /* Only the settings drawer has a primary button now — the field submits on
+     Enter and every list row carries its own Assess. */
   button.primary {
-    width: 100%; margin-top: 14px; padding: 11px;
-    background: var(--accent); color: var(--bg); border: none; border-radius: 9px;
-    font-size: 14px; font-weight: 700; cursor: pointer;
+    position: relative; overflow: hidden;
+    width: 100%; margin-top: 14px; padding: 12px;
+    background: linear-gradient(180deg, #1d1d20, var(--accent));
+    color: var(--bg); border: none; border-radius: var(--r-sm);
+    font-size: 14px; font-weight: 700; letter-spacing: -.1px; cursor: pointer;
+    box-shadow: var(--sh-2);
+    transition: transform .14s var(--spring), box-shadow .14s var(--ease),
+                opacity .14s var(--ease);
   }
-  button.primary:hover { opacity: .9; }
-  button.primary:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-3); }
+  button.primary:active:not(:disabled) { transform: translateY(0) scale(.994); }
+  /* A sheen that crosses once on hover. Pure black fills have no hover
+     affordance otherwise — opacity alone just looks like a disabled state. */
+  button.primary::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,.17), transparent);
+    transform: skewX(-18deg); transition: left .55s var(--ease);
+  }
+  button.primary:hover:not(:disabled)::after { left: 125%; }
+  button.primary:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+
+  /* Per-row action. Outlined at rest so twenty of them do not read as twenty
+     calls to action; fills in on the row the pointer is over or that is
+     selected, which is the only one that can be acted on by mistake. */
+  .assess {
+    padding: 6px 13px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    font-size: 11.5px; font-weight: 700; letter-spacing: -.1px; white-space: nowrap;
+    transition: background .14s var(--ease), color .14s var(--ease),
+                border-color .14s var(--ease), transform .14s var(--spring),
+                box-shadow .14s var(--ease);
+  }
+  tbody tr:hover .assess, tbody tr.sel .assess {
+    background: var(--accent); border-color: var(--accent); color: var(--bg);
+    box-shadow: var(--sh-2);
+  }
+  .assess:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-3); }
+  .assess:active:not(:disabled) { transform: translateY(0) scale(.97); }
+  .assess:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; }
+  td.act { text-align: right; white-space: nowrap; width: 1%; }
   .result {
     margin-top: 16px; padding: 12px 14px; border-radius: 9px;
     font-size: 12px; line-height: 1.55; display: none; border-left: 3px solid;
   }
   .result.show { display: block; }
-  .result.ok   { background: rgba(81,207,102,.08);  border-color: var(--green);  color: var(--green); }
-  .result.err  { background: rgba(255,107,107,.08); border-color: var(--red);    color: var(--red); }
-  .result.info { background: rgba(110,168,254,.08); border-color: var(--accent); color: var(--accent); }
-  .result code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; }
+  .result.ok   { background: var(--tint-n); border-color: var(--text);   color: var(--text); }
+  .result.err  { background: var(--tint-r); border-color: var(--red);    color: var(--red); }
+  .result.info { background: var(--tint-n); border-color: var(--muted);  color: var(--muted); }
+  .result code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
 
   /* ---- frame 2: list ---- */
-  .pills { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-  .view-toggle { margin-left: auto; }
-  .pills + .view-toggle, .view-toggle + .pills { margin-left: 8px; }
+  .pills { display: flex; gap: 6px; }
   .pill {
-    padding: 4px 12px; border: 1px solid var(--border); border-radius: 20px;
-    background: transparent; color: var(--muted);
+    padding: 5px 13px; border: 1px solid var(--border); border-radius: 20px;
+    background: var(--panel); color: var(--muted);
     font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    transition: color .14s var(--ease), border-color .14s var(--ease),
+                background .14s var(--ease), transform .14s var(--spring),
+                box-shadow .14s var(--ease);
   }
-  .pill:hover { border-color: var(--accent); color: var(--text); }
-  .pill.active { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .pill:hover { border-color: #d2d2d8; color: var(--text);
+                transform: translateY(-1px); box-shadow: var(--sh-1); }
+  .pill.active {
+    background: var(--accent); border-color: var(--accent); color: var(--bg);
+    box-shadow: var(--sh-2);
+  }
   .pill .n {
-    display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 5px;
+    display: inline-block; min-width: 17px; padding: 0 5px; margin-left: 6px;
     border-radius: 10px; font-size: 10px; line-height: 16px; text-align: center;
-    background: rgba(255,255,255,.15);
+    font-weight: 700; background: rgba(0,0,0,.07);
   }
-  .pill.active .n { background: rgba(0,0,0,.22); }
+  /* the active pill is filled black, so its bubble inverts too */
+  .pill.active .n { background: rgba(255,255,255,.26); }
 
-  .sev-block { margin-bottom: 20px; }
+  .sev-block { margin-bottom: 22px; }
   .sev-block:last-child { margin-bottom: 0; }
   .sev-title {
     display: flex; align-items: center; gap: 9px; margin-bottom: 9px;
     font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
   }
-  .sev-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-  .sev-title .c { font-weight: 700; color: var(--muted); letter-spacing: 0; }
-  .critical { color: var(--red); }  .high { color: var(--orange); }
-  .medium   { color: var(--yellow); } .low  { color: var(--green); }
-
-  table { width: 100%; border-collapse: collapse; }
-  th {
-    text-align: left; padding: 6px 8px; font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
-    border-bottom: 1px solid var(--border);
+  .sev-title::after { content: ''; flex: 1; height: 1px;
+                      background: linear-gradient(90deg, var(--border), transparent); }
+  .sev-title .c {
+    font-weight: 700; color: var(--muted); letter-spacing: 0;
+    min-width: 18px; padding: 1px 6px; border-radius: 9px;
+    background: var(--surface); border: 1px solid var(--border);
+    font-size: 10px; text-align: center;
   }
-  td { padding: 8px; font-size: 12px; border-bottom: 1px solid rgba(42,53,95,.5); }
+  /* A rail carrying the same fill-vs-outline logic as the badges: solid for
+     the two that warrant action, dashed then faint for the two that do not. */
+  .sev-title::before {
+    content: ''; width: 3px; height: 13px; border-radius: 2px;
+    background: currentColor; flex-shrink: 0;
+  }
+  .sev-title.high::before   { opacity: .55; }
+  .sev-title.medium::before { opacity: .4; }
+  .sev-title.low::before    { opacity: .3; }
+  /* Severity ramp without a hue ramp: red for the two that warrant action,
+     then black and grey for the two that do not. Weight separates the pair
+     at each end so all four stay distinct. */
+  .critical { color: var(--red);   font-weight: 800; }
+  .high     { color: var(--red);   font-weight: 600; opacity: .8; }
+  .medium   { color: var(--text);  font-weight: 700; }
+  .low      { color: var(--muted); font-weight: 600; }
+
+  table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  th {
+    /* Sticky per table, so scrolling a long severity block keeps its own
+       column headings rather than the first block's. */
+    position: sticky; top: 0; z-index: 2;
+    text-align: left; padding: 7px 9px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px; font-size: 12px; border-bottom: 1px solid rgba(0,0,0,.065); }
   tbody tr { cursor: pointer; }
+  tbody tr td:first-child { position: relative; }
+  /* The selected-row rail grows out of the hover rail rather than appearing
+     from nowhere, so clicking reads as a commitment to what you were on. */
+  tbody tr td:first-child::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--red); transform: scaleY(0); transform-origin: center;
+    transition: transform .18s var(--spring);
+  }
+  tbody tr:hover td:first-child::before { transform: scaleY(.5); opacity: .4; }
   tbody tr:hover { background: var(--surface); }
-  tbody tr.sel { background: rgba(110,168,254,.12); }
-  .cve-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            font-weight: 700; white-space: nowrap; }
+  tbody tr.sel { background: var(--tint-n); }
+  tbody tr.sel td:first-child::before { transform: scaleY(1); opacity: 1; }
+  tbody tr.sel td { border-bottom-color: rgba(204,0,0,.18); }
+  /* Rows arrive in sequence rather than all at once. Capped in JS at a dozen
+     so a 40-row page does not take a second to finish painting. */
+  @keyframes rowin { from { opacity: 0; transform: translateY(4px); } }
+  tbody tr.in { animation: rowin .32s var(--ease) both;
+                animation-delay: calc(var(--i, 0) * 22ms); }
+  .cve-id { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+  /* The "CVE-2024-" prefix is the same on every row and carries no
+     information; dimming it lets the eye land on the digits that differ. */
+  .cve-pre { color: var(--muted); font-weight: 600; }
   .cvss { font-weight: 700; }
   .desc { color: var(--muted); max-width: 380px;
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .exploit { font-size: 9px; font-weight: 800; color: var(--red); margin-left: 5px; }
+  .exploit {
+    display: inline-block; margin-left: 6px; padding: 1px 5px;
+    border: 1px solid var(--red); border-radius: 4px;
+    font-size: 8.5px; font-weight: 800; letter-spacing: .4px; color: var(--red);
+    vertical-align: 1px;
+  }
 
   .pager { display: flex; align-items: center; justify-content: space-between;
            padding-top: 14px; font-size: 12px; color: var(--muted); }
@@ -156,46 +383,107 @@
   .pager button:disabled { opacity: .4; cursor: not-allowed; }
 
   .empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
-           height: 100%; gap: 9px; color: var(--muted); font-size: 13px; text-align: center; }
+           height: 100%; gap: 9px; color: var(--muted); font-size: 13px; text-align: center;
+           padding: 30px 20px; }
+  .empty svg { opacity: .22; }
+  .empty strong { color: var(--text); font-size: 13.5px; font-weight: 700; }
   .spinner {
     width: 20px; height: 20px; border: 2px solid var(--border);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin .8s linear infinite;
+    border-top-color: var(--red); border-radius: 50%;
+    animation: spin .7s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ---- dry-run report ---- */
-  .run-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-  .run-head h3 { font-size: 14px; font-weight: 700; }
-  .run-head #patch { margin-left: auto; }
-  .go-patch {
-    padding: 6px 16px; background: var(--green); color: var(--bg);
-    border: none; border-radius: 7px; font-size: 12px; font-weight: 700;
-    cursor: pointer; white-space: nowrap;
+  /* Skeletons rather than a spinner for the list: the shape of what is
+     coming is already known, and showing it means the layout does not jump
+     when the data lands. */
+  .sk {
+    background: linear-gradient(90deg, var(--surface) 25%,
+                #eeeef0 37%, var(--surface) 50%) 0 0 / 300% 100%;
+    border-radius: var(--r-xs); height: 11px;
+    animation: shimmer 1.3s ease-in-out infinite;
   }
-  .go-patch:hover { opacity: .9; }
-  .go-patch:disabled { opacity: .45; cursor: not-allowed; }
-  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 12px; }
-  .stat { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 9px; padding: 10px; text-align: center; }
-  .stat .v { font-size: 20px; font-weight: 800; line-height: 1.2; }
+  @keyframes shimmer { to { background-position: -150% 0; } }
+  .sk-row { display: grid; grid-template-columns: 136px 44px 68px 60px 92px 1fr;
+            gap: 14px; align-items: center; padding: 11px 9px;
+            border-bottom: 1px solid rgba(0,0,0,.05); }
+  .sk-row:nth-child(even) .sk { opacity: .72; }
+  .sk-head { margin-bottom: 4px; }
+  .sk-head .sk { height: 8px; }
+
+  /* ---- dry-run report ---- */
+  .go-patch {
+    padding: 8px 18px; color: #ffffff; border: none; border-radius: var(--r-sm);
+    background: linear-gradient(180deg, var(--red), var(--red-lo));
+    box-shadow: var(--sh-red);
+    font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+    transition: transform .14s var(--spring), box-shadow .14s var(--ease);
+  }
+  .go-patch:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 9px 22px -8px rgba(204,0,0,.7);
+  }
+  .go-patch:active:not(:disabled) { transform: translateY(0) scale(.985); }
+  .go-patch:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; margin-bottom: 13px; }
+  .stat {
+    position: relative; overflow: hidden;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 11px 10px; text-align: center;
+    box-shadow: var(--sh-1);
+    transition: transform .16s var(--spring), box-shadow .16s var(--ease);
+  }
+  .stat:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
+  /* A hairline cap in the stat's own colour — the only thing distinguishing
+     a count that matters from one that does not, now that the number itself
+     cannot be tinted a third hue. */
+  .stat::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: currentColor; opacity: .18;
+  }
+  .stat.alert { color: var(--red); }
+  .stat.alert::before { opacity: 1; }
+  .stat .v { font-size: 22px; font-weight: 800; line-height: 1.18;
+             letter-spacing: -.8px; color: var(--text); }
+  .stat.alert .v { color: var(--red); }
+  .stat .v.sm { font-size: 13px; letter-spacing: -.1px; }
   .stat .k { font-size: 9px; font-weight: 700; letter-spacing: .5px;
-             text-transform: uppercase; color: var(--muted); margin-top: 3px; }
-  .degraded { padding: 12px 15px; border-radius: 9px; margin-bottom: 10px;
-              background: rgba(255,169,77,.09); border-left: 3px solid var(--orange); }
-  .deg-title { font-size: 13px; font-weight: 800; color: var(--orange); }
+             text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+  .degraded { padding: 13px 16px; border-radius: var(--r); margin-bottom: 11px;
+              background: var(--tint-r); border: 1px solid rgba(204,0,0,.22);
+              border-left: 3px solid var(--red); }
+  .deg-title { font-size: 13px; font-weight: 800; color: var(--red);
+               display: flex; align-items: center; gap: 7px; }
+  .deg-title::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--red); box-shadow: 0 0 0 3px rgba(204,0,0,.18);
+    flex-shrink: 0;
+  }
   .deg-sub { font-size: 11.5px; color: var(--text); opacity: .8; margin: 3px 0 9px; }
   .deg-row { display: grid; grid-template-columns: 160px 210px 1fr; gap: 10px;
              font-size: 11.5px; padding: 3px 0; border-top: 1px solid var(--border); }
-  .deg-step { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--orange); }
+  .deg-step { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--red); }
   .deg-why  { color: var(--text); opacity: .85; }
   .deg-fix  { color: var(--muted); }
-  .verdict { padding: 12px 15px; border-radius: 9px; border-left: 3px solid; }
-  .verdict.warn { background: rgba(255,169,77,.07); border-color: var(--orange); }
-  .verdict.ok   { background: rgba(81,207,102,.07); border-color: var(--green); }
-  .v-title { font-size: 13px; font-weight: 700; letter-spacing: -.1px; }
-  .verdict.warn .v-title { color: var(--orange); }
-  .verdict.ok   .v-title { color: var(--green); }
+  /* The verdict is the one thing on the page a human signs off against, so
+     it gets the strongest treatment available without a new colour: a
+     filled rule, a raised card and the largest body type in the report. */
+  .verdict {
+    position: relative; overflow: hidden;
+    padding: 14px 16px 14px 18px; border-radius: var(--r);
+    border: 1px solid var(--border); box-shadow: var(--sh-1);
+    display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center;
+  }
+  .verdict::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+  .verdict.warn { background: var(--tint-r); border-color: rgba(204,0,0,.22); }
+  .verdict.warn::before { background: linear-gradient(var(--red), var(--red-lo)); }
+  .verdict.ok   { background: var(--tint-n); }
+  .verdict.ok::before { background: var(--text); }
+  .v-main { min-width: 0; }
+  .v-title { font-size: 14px; font-weight: 700; letter-spacing: -.2px; }
+  .verdict.warn .v-title { color: var(--red); }
+  .verdict.ok   .v-title { color: var(--text); }
   .v-detail { font-size: 12px; color: var(--text); opacity: .85; margin-top: 3px; line-height: 1.5; }
   .v-meta { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 10px;
             padding-top: 9px; border-top: 1px solid var(--border);
@@ -203,35 +491,334 @@
   .v-meta .k { display: block; font-size: 9px; font-weight: 700; letter-spacing: .6px;
                text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
   .note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
-  .badge { padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 700; }
-  .badge.review { background: rgba(255,169,77,.14); color: var(--orange); }
-  .badge.ok     { background: rgba(81,207,102,.14); color: var(--green); }
-  .badge.fail   { background: rgba(255,107,107,.14); color: var(--red); }
-  /* Simulated runs must never be mistaken for real ones at a glance. */
-  .badge.sim    { background: rgba(255,169,77,.10); color: var(--orange);
-                  border: 1px dashed var(--orange); margin-left: 6px; }
+  /* Three outcomes, one accent colour. Fill vs outline does the work colour
+     used to: solid red demands an action, outlined red reports a bad end
+     state, plain white is the uneventful one. */
+  /* inline-block + nowrap: a solid-filled badge that wraps paints its
+     background once per line box, leaving the second word outside the fill. */
+  .badge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+           padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700;
+           letter-spacing: .1px; border: 1px solid transparent; }
+  .badge::before {
+    content: ''; width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; flex-shrink: 0;
+  }
+  .badge.review { background: var(--red);    color: #ffffff; border-color: var(--red);
+                  box-shadow: var(--sh-red); }
+  /* The only state waiting on a person. It breathes; the settled ones do not. */
+  .badge.review::before { animation: breathe 1.7s var(--ease) infinite; }
+  @keyframes breathe { 50% { opacity: .25; transform: scale(.7); } }
+  .badge.ok     { background: var(--tint-n); color: var(--text); border-color: var(--border); }
+  .badge.fail   { background: var(--tint-r); color: var(--red);  border-color: var(--red); }
+  /* Simulated runs must never be mistaken for real ones at a glance — the
+     dashed edge is the tell, and survives the palette losing its third hue. */
+  .badge.sim    { background: transparent; color: var(--red);
+                  border: 1px dashed var(--red); margin-left: 6px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   .btn-approve, .btn-reject {
-    padding: 3px 11px; border: none; border-radius: 6px; font-size: 11px;
-    font-weight: 700; cursor: pointer; margin-right: 5px;
+    padding: 4px 12px; border: 1px solid transparent; border-radius: var(--r-xs);
+    font-size: 11px; font-weight: 700; cursor: pointer; margin-right: 5px;
+    transition: transform .13s var(--spring), box-shadow .13s var(--ease),
+                background .13s var(--ease), color .13s var(--ease);
   }
-  .btn-approve { background: var(--green); color: var(--bg); }
-  .btn-reject  { background: var(--red);   color: #fff; }
+  .btn-approve { background: var(--text); color: var(--bg); }
+  /* Reject is outlined until you are on it. Approve and Reject sit side by
+     side and both were solid fills; the one that destroys work should take
+     a deliberate hover to light up. */
+  .btn-reject  { background: transparent; color: var(--red); border-color: var(--red); }
+  .btn-approve:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-2); }
+  .btn-reject:hover:not(:disabled)  { background: var(--red); color: #ffffff;
+                                      transform: translateY(-1px); box-shadow: var(--sh-red); }
+  .btn-approve:active:not(:disabled), .btn-reject:active:not(:disabled) {
+    transform: translateY(0) scale(.97);
+  }
   .btn-approve:disabled, .btn-reject:disabled { opacity: .4; cursor: not-allowed; }
   .muted-sm { font-size: 11px; color: var(--muted); }
   .err-sm   { font-size: 11px; color: var(--red); }
   .desc { white-space: normal; }
-  /* agent trace — who called whom, in order */
-  .trace { margin-top: 16px; padding: 11px 13px; background: var(--surface);
-           border: 1px solid var(--border); border-radius: 9px;
-           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-           font-size: 10.5px; line-height: 1.75; color: var(--muted); }
-  .t-from { color: var(--accent); font-weight: 700; }
-  .t-to   { color: var(--green);  font-weight: 700; }
+  /* ---- risk meter ----
+     A bare number cannot show how close a host came to the gate, which is
+     the whole question the operator is being asked. The bar is the score,
+     the notch is the threshold that score was compared against, and the bar
+     turns red exactly when it crosses — the decision is then legible
+     without reading either number. */
+  .risk { display: flex; align-items: center; gap: 9px; min-width: 128px; }
+  .meter {
+    position: relative; flex: 1; height: 7px; min-width: 62px;
+    background: var(--surface); border-radius: 4px;
+  }
+  .meter-fill {
+    position: absolute; inset: 0 auto 0 0; width: var(--v, 0%);
+    background: var(--text); border-radius: 4px;
+    transform-origin: left; animation: grow .5s var(--ease) both;
+  }
+  .meter.over .meter-fill { background: linear-gradient(90deg, var(--red-lo), var(--red)); }
+  @keyframes grow { from { transform: scaleX(0); } }
+  /* Overhangs the bar on both sides and keeps a white gap around itself, so
+     it stays readable whether the fill has reached it or not. A notch drawn
+     inside the bar disappears the moment the bar passes it. */
+  .meter-tick {
+    position: absolute; top: -4px; bottom: -4px; left: var(--t, 100%);
+    width: 2px; margin-left: -1px; border-radius: 1px;
+    background: var(--text);
+    box-shadow: 0 0 0 1.5px var(--panel);
+  }
+  .meter-val { font-weight: 700; font-size: 12px; min-width: 34px; text-align: right; }
+  .meter-val.over { color: var(--red); }
+
+  /* ---- split donut ----
+     review vs auto as one shape. Two numbers in two boxes do not show a
+     proportion; this does, and it is the shape of the decision being made. */
+  .donut { position: relative; width: 78px; height: 78px; flex-shrink: 0; }
+  .donut::before {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(var(--red) var(--pct), var(--tint-n) 0);
+    mask: radial-gradient(farthest-side, transparent 61%, #000 62%);
+    -webkit-mask: radial-gradient(farthest-side, transparent 61%, #000 62%);
+    animation: fan .55s var(--ease) both;
+  }
+  @keyframes fan { from { opacity: 0; transform: rotate(-32deg) scale(.9); } }
+  .donut .mid {
+    position: absolute; inset: 0; display: grid; place-content: center;
+    text-align: center; line-height: 1.1;
+  }
+  .donut .mid b { font-size: 19px; font-weight: 800; letter-spacing: -.6px;
+                  font-variant-numeric: tabular-nums; }
+  .donut .mid span { font-size: 8.5px; font-weight: 700; letter-spacing: .5px;
+                     text-transform: uppercase; color: var(--muted); }
+
+  /* ---- stage progression ----
+     Where the run is, horizontally across the header, because that is the one
+     question asked continuously and from every view — the right frame changes
+     under it but the run does not. Five stages, matching what the system
+     actually does rather than a generic workflow: Assess, Score, Dry run,
+     Approval, Patch.
+
+     Four states, not three. A stage can be legitimately *skipped* — when no
+     host crosses the threshold there is no approval gate to wait at — and
+     drawing that as 'pending' would promise an operator a prompt that is never
+     coming. See stageStates(). */
+  .stages {
+    margin: 0 auto; display: flex; align-items: center;
+    flex: 0 1 auto; min-width: 0; overflow: hidden;
+  }
+  .stage { display: flex; align-items: center; gap: 8px; flex: none; }
+  .stage-icon {
+    width: 27px; height: 27px; border-radius: 50%; flex: none;
+    display: grid; place-items: center;
+    background: var(--panel); border: 1.5px dashed var(--border);
+    color: var(--muted);
+    transition: background .28s var(--ease), border-color .28s var(--ease),
+                color .28s var(--ease), box-shadow .28s var(--ease);
+  }
+  .stage-label {
+    font-size: 11px; font-weight: 700; letter-spacing: -.1px;
+    color: var(--muted); white-space: nowrap;
+    transition: color .28s var(--ease);
+  }
+  /* The connector carries the progress too, so the bar still reads as a
+     sequence at the narrow width where the labels have been dropped. */
+  .stage-link {
+    width: 26px; height: 2px; margin: 0 9px; flex: none; border-radius: 2px;
+    background: var(--border); transition: background .28s var(--ease);
+  }
+  .stage-link.on { background: var(--red); }
+
+  .stage.done .stage-icon {
+    background: var(--red); border-style: solid; border-color: var(--red);
+    color: #ffffff; box-shadow: var(--sh-red);
+  }
+  .stage.done .stage-label { color: var(--text); }
+  .stage.active .stage-icon {
+    border-style: solid; border-color: var(--red); color: var(--red);
+    animation: ping 1.5s var(--ease) infinite;
+  }
+  .stage.active .stage-label { color: var(--red); }
+  /* Not reached and not coming. Dimmed rather than struck through, which at
+     11px turns into an unreadable smudge. */
+  .stage.skipped .stage-icon { opacity: .4; }
+  .stage.skipped .stage-label { opacity: .4; font-weight: 600; }
+
+  @keyframes ping {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(204,0,0,.45); }
+    70%      { box-shadow: 0 0 0 9px rgba(204,0,0,0); }
+  }
+
+  /* The header is the first thing to run out of room. Shed the labels before
+     the icons, and the whole bar before the title or the status. */
+  @media (max-width: 1240px) {
+    .stage-label { display: none; }
+    .stage-link { width: 16px; margin: 0 6px; }
+  }
+  @media (max-width: 880px) { .stages { display: none; } }
+
+  /* ---- agent trace ----
+     Who called whom, in order. It sits under the stage bar's own column: the
+     header says which stage, this says what the agents actually said while
+     getting there. Live — it fills in as poll() ticks, not only at the end. */
+  .trace { margin-top: 20px; }
+  .trace-k {
+    display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .trace-k::after { content: ''; flex: 1; height: 1px;
+                    background: linear-gradient(90deg, var(--border), transparent); }
+  .trace-log {
+    padding: 11px 13px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--r);
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.75;
+    color: var(--muted); max-height: 260px; overflow-y: auto;
+  }
+  .trace-log > div { animation: rowin .3s var(--ease) both; }
+  .t-from { color: var(--muted); font-weight: 700; }
+  .t-to   { color: var(--red);   font-weight: 700; }
   .t-arrow { color: var(--muted); margin: 0 5px; }
+  /* Idle, this explains what pressing Assess is about to set off, which is
+     more use than an empty box. */
+  .trace-idle { font-size: 11px; line-height: 1.6; color: var(--muted);
+                font-family: inherit; }
+
+  /* ---- toasts ----
+     Approve / Reject used to report only into the table cell the button was
+     in, which is exactly where the row then re-renders and wipes it. */
+  #toasts { position: fixed; right: 20px; bottom: 20px; z-index: 60;
+            display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  .toast {
+    display: flex; align-items: center; gap: 9px;
+    padding: 11px 15px; border-radius: var(--r);
+    background: var(--accent); color: var(--bg); box-shadow: var(--sh-3);
+    font-size: 12.5px; font-weight: 600; max-width: 360px;
+    animation: toastin .3s var(--spring) both;
+  }
+  .toast.bad { background: linear-gradient(180deg, var(--red), var(--red-lo)); }
+  .toast.out { animation: toastout .25s var(--ease) both; }
+  .toast b { font-family: var(--mono); font-size: 11.5px; font-weight: 700; }
+  @keyframes toastin  { from { opacity: 0; transform: translateY(12px) scale(.96); } }
+  @keyframes toastout { to   { opacity: 0; transform: translateX(16px); } }
+
+  /* ---- settings ---- */
+  .icon-btn {
+    display: grid; place-items: center; width: 34px; height: 34px;
+    background: var(--panel); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 11px;
+    font-size: 13px; cursor: pointer; flex-shrink: 0; box-shadow: var(--sh-1);
+    transition: color .15s var(--ease), border-color .15s var(--ease),
+                transform .25s var(--spring), box-shadow .15s var(--ease);
+  }
+  .status + .icon-btn { margin-left: 10px; }
+  .icon-btn:hover { color: var(--text); border-color: #d2d2d8; box-shadow: var(--sh-2); }
+  /* The gear turns. Small, but it is the one control that opens something. */
+  #open-settings:hover svg { transform: rotate(60deg); }
+  #open-settings svg { transition: transform .4s var(--ease); }
+  .drawer-scrim {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(11,11,12,.34); display: flex; justify-content: flex-end;
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    animation: fade .22s var(--ease) both;
+  }
+  @keyframes fade { from { opacity: 0; } }
+  .drawer-scrim[hidden] { display: none; }
+  .drawer {
+    width: min(620px, 100%); height: 100%;
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0;
+    box-shadow: var(--sh-3);
+    animation: slidein .34s var(--ease) both;
+  }
+  @keyframes slidein { from { transform: translateX(26px); opacity: .4; } }
+  .drawer-head {
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+  }
+  .drawer-head h2 { font-size: 15px; font-weight: 700; }
+  .drawer-head .icon-btn { margin-left: auto; }
+  .drawer-note {
+    flex-shrink: 0; padding: 11px 18px; font-size: 11.5px; line-height: 1.6;
+    color: var(--muted); background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .drawer-note code { font-family: ui-monospace, Menlo, monospace;
+                      color: var(--text); }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 4px 18px 18px; min-height: 0; }
+  .drawer-body::-webkit-scrollbar { width: 6px; }
+  .drawer-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .drawer-foot {
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    padding: 12px 18px; border-top: 1px solid var(--border);
+  }
+  .drawer-foot .muted-sm { margin-right: auto; }
+  .ghost-btn {
+    padding: 8px 14px; background: transparent; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .ghost-btn:hover { border-color: var(--accent); }
+  button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: 12px; }
+  .set-group {
+    margin-top: 18px; margin-bottom: 7px;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .set-group::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .set-row {
+    display: grid; grid-template-columns: 1fr 230px; gap: 10px 14px;
+    align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border);
+  }
+  .set-row.changed { box-shadow: inset 3px 0 0 var(--red); padding-left: 10px; }
+  .set-name { font-size: 12.5px; font-weight: 600; }
+  .set-key {
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    color: var(--muted); margin-left: 6px;
+  }
+  .set-help { grid-column: 1 / -1; font-size: 11px; line-height: 1.5;
+              color: var(--muted); margin-top: -4px; }
+  .set-row input[type=text], .set-row select {
+    width: 100%; padding: 7px 10px; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+  .set-row input:disabled { color: var(--muted); cursor: not-allowed; }
+  .set-row input:focus, .set-row select:focus {
+    outline: none; border-color: var(--accent);
+  }
+  /* A toggle, not a text box: OFFLINE and STRICT are the two settings most
+     likely to be flipped mid-demo and they want to read at a glance. */
+  .set-toggle {
+    justify-self: start; width: 46px; height: 24px; padding: 2px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; cursor: pointer; position: relative;
+  }
+  .set-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--muted); transition: left .12s, background .12s;
+  }
+  .set-toggle[aria-checked=true] { background: var(--red); border-color: var(--red); }
+  .set-toggle[aria-checked=true]::after { left: 22px; background: #ffffff; }
+  .set-src {
+    font-size: 9px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    padding: 1px 6px; border-radius: 5px; margin-left: 6px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .set-src.env      { border-color: var(--muted); color: var(--text); }
+  .set-src.override { border-color: var(--red); color: var(--red); }
 
   @media (max-width: 860px) { .frames { grid-template-columns: 1fr; }
-                              .stats { grid-template-columns: repeat(3, 1fr); } }
+                              .stats { grid-template-columns: repeat(3, 1fr); }
+                              .verdict { grid-template-columns: 1fr; }
+                              .pipe-label { font-size: 8.5px; }
+                              .set-row { grid-template-columns: 1fr; } }
+
+  /* Everything above that moves is decoration over a state that is also
+     carried by colour, fill or text. Dropping it costs nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -240,9 +827,53 @@
 
 <header>
   <div class="logo">AP</div>
-  <h1>Agentic Patching Console</h1>
+  <div>
+    <h1>Agentic Patching Console</h1>
+    <div class="tagline">CVE triage, risk assessment and supervised remediation</div>
+  </div>
+  <!-- Where the run is, across the top, filled by renderStages(). -->
+  <nav class="stages" id="stages" aria-label="Run progress"></nav>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
+  <button class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">
+    <!-- gear, drawn rather than pulled from an icon font: no network in offline mode -->
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  </button>
 </header>
+
+<!-- Shown only while a run is in flight; see body.busy. -->
+<div class="scan"></div>
+
+<!-- Approve / reject land here, because the row they were clicked in
+     re-renders out from under any message written into it. -->
+<div id="toasts"></div>
+
+<!-- Settings drawer. Every tunable this process reads, grouped. -->
+<div class="drawer-scrim" id="settings-scrim" hidden>
+  <aside class="drawer" id="settings-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="settings-title">
+    <div class="drawer-head">
+      <h2 id="settings-title">Settings</h2>
+      <button class="icon-btn" id="close-settings" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-note">
+      Changes apply immediately to this running console and are kept in memory
+      only — they are lost on restart. <code>.env</code> is the durable place.
+      Fields show their built-in default until something overrides them.
+    </div>
+    <div class="drawer-body" id="settings-body">
+      <div class="empty"><div class="spinner"></div><span>Loading settings…</span></div>
+    </div>
+    <div class="drawer-foot">
+      <span class="muted-sm" id="settings-msg"></span>
+      <button class="ghost-btn" id="revert-settings">Revert to startup</button>
+      <button class="primary inline" id="save-settings" disabled>Save</button>
+    </div>
+  </aside>
+</div>
 
 <div class="frames">
 
@@ -251,24 +882,39 @@
     <div class="frame-head"><h2>Patch a CVE</h2></div>
     <div class="frame-body">
       <label for="cve">CVE ID</label>
-      <input type="text" id="cve" placeholder="CVE-2026-12405" autocomplete="off" spellcheck="false">
-      <div class="hint">Type a CVE ID, or click one in the list to fill this in.</div>
-      <button class="primary" id="go">Assess CVE Impact</button>
+      <div class="field" id="cve-field">
+        <input type="text" id="cve" placeholder="CVE-2026-12405" autocomplete="off" spellcheck="false">
+        <span class="kbd">/</span>
+      </div>
+      <div class="hint">For a CVE the list does not show — type it and press
+        <strong>Enter</strong>. Otherwise use <strong>Assess</strong> on its row.</div>
       <div class="result" id="result"></div>
+      <!-- Which stage the run is at is in the header bar; this is what the
+           agents said getting there. Filled by renderTrace(). -->
+      <div class="trace" id="trace"></div>
     </div>
   </section>
 
   <!-- Frame 2 — CVE list, grouped into severity blocks -->
   <section class="frame">
+    <!-- One control group, right-aligned. It lives in the head rather than the
+         body so the primary action cannot scroll away under a long report. -->
     <div class="frame-head">
       <h2 id="frame-title">CVEs</h2>
-      <button class="pill view-toggle" id="view-runs">Patch runs</button>
-      <div class="pills" id="pills">
-        <button class="pill active" data-sev="all">All</button>
-        <button class="pill" data-sev="critical">Critical</button>
-        <button class="pill" data-sev="high">High</button>
-        <button class="pill" data-sev="medium">Medium</button>
-        <button class="pill" data-sev="low">Low</button>
+      <span class="frame-sub" id="frame-sub" hidden></span>
+      <div class="head-actions">
+        <div class="pills" id="pills">
+          <button class="pill active" data-sev="all">All</button>
+          <button class="pill" data-sev="critical">Critical</button>
+          <button class="pill" data-sev="high">High</button>
+          <button class="pill" data-sev="medium">Medium</button>
+          <button class="pill" data-sev="low">Low</button>
+        </div>
+        <span class="head-sep" id="head-sep"></span>
+        <button class="pill" id="head-back" hidden>&larr; CVE list</button>
+        <button class="pill view-toggle" id="view-runs">Patch runs</button>
+        <button class="pill" id="head-refresh" hidden>Refresh</button>
+        <button class="go-patch" id="head-patch" hidden>Start Patch</button>
       </div>
     </div>
     <div class="frame-body" id="list">
@@ -301,6 +947,48 @@ function setStatus(text, ok) {
   document.getElementById('dot').className = 'dot' + (ok ? '' : ' off');
 }
 
+// Drives the header sweep and the pulsing status dot. A run spends most of
+// its time waiting on a backend with nothing to paint; this is what says the
+// console has not simply hung.
+const busy = on => document.body.classList.toggle('busy', !!on);
+
+// The shape of the list is known before the data is, so the layout does not
+// jump when it lands — which a spinner cannot avoid.
+const skeleton = (rows = 7, cols = 7) => {
+  const cells = '<div class="sk"></div>'.repeat(cols);
+  return `<div class="sk-head sk-row">${cells}</div>`
+       + `<div class="sk-row">${cells}</div>`.repeat(rows);
+};
+
+// Approve / reject report here rather than into the table cell the button
+// was in — that row re-renders immediately after, taking the message with it.
+function toast(html, bad) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (bad ? ' bad' : '');
+  t.innerHTML = html;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(() => {
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 260);
+  }, 4200);
+}
+
+// Every row shares the "CVE-2024-" prefix, which carries no information.
+// Dimming it puts the weight on the digits that actually differ.
+const cveLabel = id => {
+  const m = /^(CVE-\d{4}-)(\d+)$/i.exec(String(id || ''));
+  return m ? `<span class="cve-pre">${esc(m[1])}</span>${esc(m[2])}` : esc(id);
+};
+
+const emptyState = (title, sub) => `<div class="empty">
+  <svg viewBox="0 0 48 48" width="46" height="46" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="7" y="9" width="34" height="30" rx="4"></rect>
+    <path d="M7 18h34M14 26h9M14 32h16"></path>
+  </svg>
+  <strong>${esc(title)}</strong>${sub ? `<span style="font-size:11.5px">${esc(sub)}</span>` : ''}
+</div>`;
+
 function show(msg, kind) {
   const el = document.getElementById('result');
   el.className = 'result show ' + kind;
@@ -309,8 +997,7 @@ function show(msg, kind) {
 
 async function loadCves(next) {
   if (typeof next === 'number') offset = Math.max(0, next);
-  document.getElementById('list').innerHTML =
-    '<div class="empty"><div class="spinner"></div><span>Loading CVEs from Insights…</span></div>';
+  document.getElementById('list').innerHTML = skeleton();
   try {
     const r = await fetch(`/api/cves?limit=${pageSize}&offset=${offset}`);
     const d = await r.json();
@@ -324,8 +1011,7 @@ async function loadCves(next) {
     cves = [];
     setStatus('Insights unavailable', false);
     document.getElementById('list').innerHTML =
-      `<div class="empty"><span>Could not load CVEs</span>`
-      + `<span style="font-size:11px">${esc(e.message)}</span></div>`;
+      emptyState('Could not load CVEs', e.message);
     return;
   }
   render();
@@ -339,19 +1025,37 @@ function counts() {
 
 function rows(list) {
   return `<table>
-    <thead><tr><th>CVE</th><th>CVSS</th><th>Impact</th><th>Affected</th><th>Published</th><th>Description</th></tr></thead>
-    <tbody>${list.map(c => `
-      <tr data-id="${esc(c.id)}">
-        <td class="cve-id">${esc(c.id)}${c.known_exploit ? '<span class="exploit">EXPLOIT</span>' : ''}</td>
+    <thead><tr><th>CVE</th><th>CVSS</th><th>Impact</th><th>Affected</th><th>Published</th><th>Description</th><th></th></tr></thead>
+    <tbody>${list.map((c, i) => `
+      <tr class="in" style="--i:${Math.min(i, 12)}" data-id="${esc(c.id)}">
+        <td class="cve-id">${cveLabel(c.id)}${c.known_exploit ? '<span class="exploit">EXPLOIT</span>' : ''}</td>
         <td class="cvss ${severity(c.cvss)}">${esc(c.cvss)}</td>
         <td>${esc(c.impact)}</td>
         <td>${esc(c.systems_affected)}</td>
         <td style="white-space:nowrap">${esc(fmtDate(c.public_date))}</td>
         <td class="desc">${esc((c.description || '').slice(0, 110))}</td>
+        <td class="act"><button class="assess">Assess</button></td>
       </tr>`).join('')}</tbody></table>`;
 }
 
+// The right frame hosts three different views. Each declares the whole head
+// it wants — title, subject and which controls apply — so the filters cannot
+// outlive the table they filter and the actions all land on one baseline.
+function frameHead({ title, sub = '', pills = false, back = false,
+                     refresh = false, patch = false }) {
+  document.getElementById('frame-title').textContent = title;
+  const s = document.getElementById('frame-sub');
+  s.innerHTML = sub;
+  s.hidden = !sub;
+  document.getElementById('pills').hidden = !pills;
+  document.getElementById('head-sep').hidden = !pills;
+  document.getElementById('head-back').hidden = !back;
+  document.getElementById('head-refresh').hidden = !refresh;
+  document.getElementById('head-patch').hidden = !patch;
+}
+
 function render() {
+  frameHead({ title: 'CVEs', pills: true });
   const c = counts();
   document.querySelectorAll('#pills .pill').forEach(p => {
     const k = p.dataset.sev;
@@ -372,7 +1076,8 @@ function render() {
     </div>`;
   }).join('');
 
-  if (!html) html = '<div class="empty"><span>No CVEs of this severity on this page.</span></div>';
+  if (!html) html = emptyState('Nothing at this severity',
+                               'No CVEs of this severity on the current page.');
 
   const from = cves.length ? offset + 1 : 0;
   html += `<div class="pager">
@@ -383,22 +1088,143 @@ function render() {
     </span></div>`;
 
   el.innerHTML = html;
-  el.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => {
+  const select = tr => {
     el.querySelectorAll('tbody tr').forEach(r => r.classList.remove('sel'));
     tr.classList.add('sel');
     document.getElementById('cve').value = tr.dataset.id;
-    document.getElementById('result').className = 'result';
-  }));
+    document.getElementById('cve-field').classList.add('used');
+  };
+  el.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      select(tr);
+      document.getElementById('result').className = 'result';
+    });
+    // Assessing is what picking a row was always a prelude to, so the row
+    // offers it directly rather than arming a button in the other frame.
+    tr.querySelector('.assess')?.addEventListener('click', e => {
+      e.stopPropagation();
+      select(tr);
+      startPatch(tr.dataset.id);
+    });
+  });
   document.getElementById('prev')?.addEventListener('click', () => loadCves(offset - pageSize));
   document.getElementById('next')?.addEventListener('click', () => loadCves(offset + pageSize));
 }
 
-function renderTrace(events) {
-  if (!events || !events.length) return '';
-  return `<div class="trace">${events.map(e =>
-    `<div><span class="t-from">${esc(e.from)}</span>`
-    + `<span class="t-arrow">&rarr;</span>`
-    + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</div>`).join('')}</div>`;
+// ---- stage progression ---------------------------------------------------
+// The control flow is what this console exists to demonstrate, and it was
+// only ever visible as a log at the bottom of a finished report.
+//
+// Five stages named after what the system actually does, not after the agents
+// that do it — an operator cares that the thing is being scored, not that the
+// Info agent is the one scoring it. Drawn in the header so the sequence stays
+// on screen whichever view the right frame is showing.
+
+// Inline, because offline mode opens no sockets at all — an icon font or a
+// sprite from a CDN would be a blank square exactly when it matters.
+const ICON = {
+  search:  '<circle cx="11" cy="11" r="7"></circle><path d="M20.5 20.5 16 16"></path>',
+  pulse:   '<path d="M3 12h3.5L9 5l4.5 14L16 12h5"></path>',
+  report:  '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"></path>'
+         + '<path d="M13 3v6h6"></path>',
+  approve: '<path d="M20 11.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8"></path>'
+         + '<path d="M8.5 11.5 11 14l8-8"></path>',
+  patch:   '<path d="M14.5 6.2a4.6 4.6 0 0 1 6.1-5.9l-3.1 3.1 1.9 1.9 3.1-3.1a4.6 4.6 0 0 1-5.9 6.1'
+         + 'l-8.3 8.3a2 2 0 1 1-2.8-2.8z" transform="translate(-1 1.5)"></path>',
+};
+
+const STAGES = [
+  { key: 'assess',  label: 'Assess',   icon: ICON.search,
+    tip: 'Insights: the CVE and every host behind on it.' },
+  { key: 'score',   label: 'Score',    icon: ICON.pulse,
+    tip: 'Risk per host — the model, or the heuristic when it is unreachable.' },
+  { key: 'report',  label: 'Dry run',  icon: ICON.report,
+    tip: 'The report the operator approves against: score, gate, RAG history, verdict.' },
+  { key: 'approve', label: 'Approval', icon: ICON.approve,
+    tip: 'The human gate. Skipped entirely when no host crosses the threshold.' },
+  { key: 'patch',   label: 'Patch',    icon: ICON.patch,
+    tip: 'Steps 5–10, one Ansible Orchestrator workflow run per host.' },
+];
+
+// Derived from what the state actually proves, not from the trace alone:
+// 'risk-model' and 'rag' never appear in the events when their service was
+// unreachable, but the scoring and the lookup still happened — via the
+// fallback — and a stage stuck on pending would misreport that.
+//
+// 'skipped' exists for the same reason. When nothing crosses the threshold
+// there is no gate to wait at, and showing 'pending' there would have an
+// operator waiting on a prompt that is never coming.
+function stageStates(s) {
+  s = s || {};
+  const seen = new Set();
+  (s.events || []).forEach(e => { seen.add(e.from); seen.add(e.to); });
+  const dr = s.dry_run, p = s.patch;
+  const results = (p || {}).results || [];
+  // Two different kinds of unfinished, and they belong to different stages:
+  // a host at the gate holds up Approval, a host mid-workflow holds up Patch.
+  const atGate   = results.some(r => r.outcome === 'awaiting_approval');
+  const inflight = results.some(r => r.outcome === 'running');
+
+  const done = {
+    assess:  !!(dr || seen.has('info')),
+    score:   !!(dr || seen.has('risk-model') || seen.has('rag')),
+    report:  !!dr,
+    // Dispatched and nothing left sitting at a gate — either every host was
+    // decided, or none was ever routed through one.
+    approve: !!(p && !atGate),
+    patch:   !!(p && !atGate && !inflight),
+  };
+
+  const st = {};
+  STAGES.forEach(x => { st[x.key] = done[x.key] ? 'done' : 'pending'; });
+
+  // Active covers both halves of the gate: the operator reading the dry run
+  // before dispatching, and the hosts parked at the workflow's approval node
+  // afterwards. Both are the system waiting on a person.
+  if (p ? atGate : !!(dr && dr.hosts_review)) st.approve = 'active';
+  else if (dr && !dr.hosts_review) st.approve = 'skipped';
+  if (p && !atGate && inflight) st.patch = 'active';
+
+  // Whatever the Supervisor is working on right now, if the bar has not
+  // already named it.
+  if (s.status === 'running' && !Object.values(st).includes('active')) {
+    const next = STAGES.find(x => st[x.key] === 'pending');
+    if (next) st[next.key] = 'active';
+  }
+  return st;
+}
+
+function renderStages(s) {
+  const st = stageStates(s);
+  document.getElementById('stages').innerHTML = STAGES.map((x, i) => {
+    // The connector lights once the stage behind it is settled, so the bar
+    // still reads as progress at widths where the labels have been dropped.
+    const link = i === 0 ? ''
+      : `<span class="stage-link ${['done', 'skipped'].includes(st[STAGES[i - 1].key]) ? 'on' : ''}"></span>`;
+    return `${link}<div class="stage ${st[x.key]}" title="${esc(x.label)} — ${esc(x.tip)}">
+      <span class="stage-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+        stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+        stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
+      <span class="stage-label">${esc(x.label)}</span>
+    </div>`;
+  }).join('');
+  renderTrace(s);
+}
+
+function renderTrace(s) {
+  const events = (s || {}).events || [];
+  document.getElementById('trace').innerHTML = '<div class="trace-k">Agent trace</div>'
+    + (events.length
+      ? `<div class="trace-log" id="trace-log">${events.map(e =>
+          `<div><span class="t-from">${esc(e.from)}</span>`
+          + `<span class="t-arrow">&rarr;</span>`
+          + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</div>`).join('')}</div>`
+      : `<div class="trace-log trace-idle">Nothing running. Assess a CVE and the
+          Supervisor's calls to each agent appear here as they happen.</div>`);
+  // The newest line is the one worth reading, and it is the one that falls off
+  // the bottom once the log is taller than the box.
+  const log = document.getElementById('trace-log');
+  if (log) log.scrollTop = log.scrollHeight;
 }
 
 // Degraded steps ride above the verdict: the operator must see which inputs
@@ -445,55 +1271,90 @@ function renderVerdict(dr) {
       + `and must be approved by an operator.`
     : `No hosts exceed the risk threshold. Remediation can proceed unattended.`;
 
+  // One shape instead of two numbers in two boxes: the split is the decision
+  // being made, and a proportion reads faster than a pair of counts.
+  const pct = total ? Math.round((review / total) * 100) : 0;
+
   return `<div class="verdict ${needsReview ? 'warn' : 'ok'}">
-    <div class="v-title">${esc(title)}</div>
-    <div class="v-detail">${esc(detail)}</div>
-    <div class="v-meta">
-      <span><span class="k">Maintenance window</span>${esc(dr.maintenance_window)}</span>
-      <span><span class="k">Assessed by</span>cve-gather-info-agent</span>
+    <div class="v-main">
+      <div class="v-title">${esc(title)}</div>
+      <div class="v-detail">${esc(detail)}</div>
+      <div class="v-meta">
+        <span><span class="k">Maintenance window</span>${esc(dr.maintenance_window)}</span>
+        <span><span class="k">Risk gate</span>${esc(dr.threshold)} (${esc(dr.risk_source)})</span>
+        <span><span class="k">Assessed by</span>cve-gather-info-agent</span>
+      </div>
     </div>
+    <div class="donut" style="--pct:${pct}%"
+         title="${review} of ${total} host(s) need review">
+      <div class="mid"><b>${review}</b><span>review</span></div>
+    </div>
+  </div>`;
+}
+
+// A bare score cannot show how close a host came to the gate, which is the
+// only question the operator is being asked. The bar is the score, the notch
+// is the threshold it was compared against, and the bar turns red exactly
+// where it crosses — so the decision reads without parsing either number.
+function riskMeter(h, dr) {
+  const over = h.decision === 'review';
+  const score = Number(h.risk_score);
+  const thr = Number(dr.threshold);
+  const v = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
+  const tick = Number.isFinite(thr)
+    ? `<span class="meter-tick" style="left:${Math.max(0, Math.min(100, thr))}%"></span>` : '';
+  const why = Number.isFinite(thr)
+    ? `Risk ${score} vs gate ${thr} (${dr.risk_source || 'unknown'})` : `Risk ${score}`;
+  return `<div class="risk" title="${esc(why)}">
+    <span class="meter${over ? ' over' : ''}" style="--v:${v}%">
+      <span class="meter-fill"></span>${tick}
+    </span>
+    <span class="meter-val${over ? ' over' : ''}">${esc(h.risk_score)}</span>
   </div>`;
 }
 
 function renderDryRun(s) {
   const dr = s.dry_run || {};
   const notes = (dr.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
-  const hosts = (s.hosts || []).map(h => `
-    <tr>
+  const hosts = (s.hosts || []).map((h, i) => `
+    <tr class="in" style="--i:${Math.min(i, 12)}">
       <td class="cve-id">${esc(h.host)}</td>
-      <td class="cvss ${h.decision === 'review' ? 'high' : 'low'}">${esc(h.risk_score)}</td>
+      <td>${riskMeter(h, dr)}</td>
       <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
       <td class="desc">${esc(h.history || h.reason)}</td>
     </tr>`).join('');
 
   document.getElementById('list').innerHTML = `
-    <div class="run-head">
-      <h3>Dry-run report &mdash; ${esc(dr.cve_id)}</h3>
-      <button id="patch" class="go-patch">Start Patch</button>
-      <button id="back" class="pill">&larr; CVE list</button>
-    </div>
     <div class="result" id="patch-result"></div>
     <div id="patch-body"></div>
     <div class="stats">
       <div class="stat"><div class="v">${esc(dr.cvss)}</div><div class="k">CVSS</div></div>
       <div class="stat"><div class="v">${esc(dr.hosts_total)}</div><div class="k">Hosts</div></div>
-      <div class="stat"><div class="v high">${esc(dr.hosts_review)}</div><div class="k">Review</div></div>
-      <div class="stat"><div class="v low">${esc(dr.hosts_auto)}</div><div class="k">Auto</div></div>
-      <div class="stat"><div class="v" style="font-size:14px">${esc(dr.risk_source)}</div><div class="k">Risk source</div></div>
-      <div class="stat"><div class="v" style="font-size:14px">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
+      <div class="stat${dr.hosts_review ? ' alert' : ''}"><div class="v">${esc(dr.hosts_review)}</div><div class="k">Review</div></div>
+      <div class="stat"><div class="v">${esc(dr.hosts_auto)}</div><div class="k">Auto</div></div>
+      <div class="stat"><div class="v sm">${esc(dr.risk_source)}</div><div class="k">Risk source</div></div>
+      <div class="stat"><div class="v sm">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
     </div>
     ${renderDegraded(dr.degraded)}
     ${renderVerdict(dr)}
     ${notes}
-    <div class="sev-block" style="margin-top:16px">
+    <div class="sev-block" style="margin-top:18px">
       <div class="sev-title high">Per-host assessment<span class="c">${(s.hosts||[]).length}</span></div>
-      <table><thead><tr><th>Host</th><th>Risk</th><th>Decision</th><th>RAG history / reason</th></tr></thead>
+      <table><thead><tr><th>Host</th><th>Risk vs gate</th><th>Decision</th><th>RAG history / reason</th></tr></thead>
       <tbody>${hosts}</tbody></table>
     </div>
-    ${renderTrace(s.events)}
     <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
-  document.getElementById('back').addEventListener('click', () => render());
-  document.getElementById('patch').addEventListener('click', () => startRemediation(dr.cve_id));
+  frameHead({
+    title: 'Dry-run report',
+    sub: `<span class="cve-id">${cveLabel(dr.cve_id)}</span>`
+       + `<span>${esc(dr.hosts_total)} host(s) assessed</span>`,
+    back: true, patch: true,
+  });
+  renderStages(s);
+  const pb = document.getElementById('head-patch');
+  pb.textContent = 'Start Patch';
+  pb.disabled = false;
+  pb.onclick = () => startRemediation(dr.cve_id);
 }
 
 const OUTCOME = {
@@ -537,8 +1398,11 @@ async function decide(execId, activityId, decision) {
     if (!(r.ok && d.ok)) {
       if (row) row.querySelector('.decide-cell').innerHTML =
         `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
+      toast(`Could not signal <b>${esc(execId.slice(0, 8))}</b> — ${esc(d.error || 'failed')}`, true);
       return;
     }
+    toast(`${decision === 'approved' ? 'Approved' : 'Rejected'} `
+        + `<b>${esc(execId.slice(0, 8))}</b>`, decision !== 'approved');
     if (patchState && patchState.patch) {
       for (const res of patchState.patch.results || []) {
         if (res.execution_id === execId) Object.assign(res, d);
@@ -593,11 +1457,26 @@ function recountPatch(s) {
 
 function renderPatch(s) {
   patchState = s;
+  renderStages(s);
+  // The frame now holds the dispatch result above the report it was approved
+  // against, so 'Dry-run report' would name only the lower half of it.
+  const dr = s.dry_run || {};
+  frameHead({
+    title: 'Remediation',
+    sub: `<span class="cve-id">${cveLabel(dr.cve_id || '')}</span>`
+       + `<span>${esc((s.patch || {}).results?.length || 0)} host(s) dispatched</span>`,
+    back: true, patch: true,
+  });
+  // Every host already has a workflow run; pressing it again would start a
+  // second one per host, so the primary action retires once it has fired.
+  const pb = document.getElementById('head-patch');
+  pb.textContent = 'Dispatched';
+  pb.disabled = true;
   // Non-terminal rows keep polling until they settle.
   setTimeout(trackPatchRuns, 0);
   const p = s.patch || {};
   const sum = p.summary || {};
-  const rows = (p.results || []).map(r => {
+  const rows = (p.results || []).map((r, i) => {
     const o = OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
     const steps = (r.steps || []).filter(x => x.status && x.status !== 'skipped')
       .map(x => `${esc(x.name)}:${esc(x.status)}`).join(' · ');
@@ -606,7 +1485,7 @@ function renderPatch(s) {
       ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
       : '<span class="muted-sm">&mdash;</span>';
-    return `<tr data-exec="${esc(r.execution_id)}">
+    return `<tr class="in" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
       <td class="cve-id">${esc(r.host)}</td>
       <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
       <td class="decide-cell">${actions}</td>
@@ -620,9 +1499,9 @@ function renderPatch(s) {
       Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
     </div>
     <div class="stats" style="grid-template-columns:repeat(4,1fr)">
-      <div class="stat"><div class="v low">${esc(sum.patched)}</div><div class="k">Patched</div></div>
-      <div class="stat"><div class="v high">${esc(sum.awaiting_approval)}</div><div class="k">Awaiting approval</div></div>
-      <div class="stat"><div class="v" style="color:var(--red)">${esc(sum.failed)}</div><div class="k">Failed</div></div>
+      <div class="stat"><div class="v">${esc(sum.patched)}</div><div class="k">Patched</div></div>
+      <div class="stat${sum.awaiting_approval ? ' alert' : ''}"><div class="v">${esc(sum.awaiting_approval)}</div><div class="k">Awaiting approval</div></div>
+      <div class="stat${sum.failed ? ' alert' : ''}"><div class="v">${esc(sum.failed)}</div><div class="k">Failed</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
     </div>
     <table style="margin-top:10px">
@@ -638,8 +1517,12 @@ function renderPatch(s) {
 // Ansible Orchestrator workflow once per host.
 async function startRemediation(cveId) {
   const el = document.getElementById('patch-result');
-  const btn = document.getElementById('patch');
+  const btn = document.getElementById('head-patch');
+  // renderPatch retires the button itself once the runs exist; re-enabling it
+  // in `finally` would hand back a second dispatch for every host.
+  let dispatched = false;
   btn.disabled = true;
+  busy(true);
   el.className = 'result show info';
   el.innerHTML = `Handing <strong>${esc(cveId)}</strong> to the Patching Agent…`;
   try {
@@ -671,6 +1554,7 @@ async function startRemediation(cveId) {
         el.innerHTML = `Dispatched <strong>${esc(cveId)}</strong> — `
           + `${esc(sm.patched)} patched, ${esc(sm.awaiting_approval)} awaiting approval, `
           + `${esc(sm.failed)} failed.`;
+        dispatched = true;
         renderPatch(s);
         return;
       }
@@ -688,7 +1572,8 @@ async function startRemediation(cveId) {
     el.className = 'result show err';
     el.innerHTML = 'Could not reach the backend: ' + esc(e.message);
   } finally {
-    btn.disabled = false;
+    if (!dispatched) btn.disabled = false;
+    busy(false);
   }
 }
 
@@ -697,6 +1582,7 @@ async function poll(cve) {
     await new Promise(r => setTimeout(r, 1000));
     let s;
     try { s = await (await fetch('/api/state')).json(); } catch { continue; }
+    renderStages(s);
     if (s.events && s.events.length) {
       const last = s.events[s.events.length - 1];
       show(`Running <strong>${esc(cve)}</strong>…<br>`
@@ -717,14 +1603,22 @@ async function poll(cve) {
   show('Timed out waiting for the run to finish.', 'err');
 }
 
-async function startPatch() {
-  const cve = document.getElementById('cve').value.trim();
+// `from` is the row's id when a list row started this; the field is the
+// fallback, for a CVE that was typed rather than picked.
+async function startPatch(from) {
+  const cve = (from || document.getElementById('cve').value).trim();
   if (!/^CVE-\d{4}-\d{4,}$/i.test(cve)) {
     show('Enter a CVE ID in the form <strong>CVE-2026-12405</strong>.', 'err');
     return;
   }
-  const btn = document.getElementById('go');
-  btn.disabled = true;
+  // Every entry point to the same run, so none of them can be pressed twice.
+  const btns = [...document.querySelectorAll('.assess')];
+  btns.forEach(b => { b.disabled = true; });
+  busy(true);
+  // A new assessment, so the bar must stop showing the last one's result —
+  // the first poll tick is a second away and it would read as already done.
+  patchState = null;
+  renderStages({ status: 'running' });
   show(`Starting <strong>${esc(cve)}</strong>…`, 'info');
   try {
     const r = await fetch('/api/start', {
@@ -744,7 +1638,8 @@ async function startPatch() {
   } catch (e) {
     show('Could not start: ' + esc(e.message), 'err');
   } finally {
-    btn.disabled = false;
+    btns.forEach(b => { b.disabled = false; });
+    busy(false);
   }
 }
 
@@ -774,37 +1669,34 @@ const ago = iso => {
 };
 
 async function showRuns() {
-  document.getElementById('frame-title').textContent = 'Patch runs';
-  document.getElementById('pills').style.display = 'none';
+  frameHead({ title: 'Patch runs', refresh: true });
+  // The toggle is its own way back, so the shared back button stays hidden
+  // here rather than offering a second route to the same place.
   const vt = document.getElementById('view-runs');
   vt.textContent = '← CVEs';
-  vt.onclick = () => { vt.textContent = 'Patch runs'; vt.onclick = showRuns;
-                       document.getElementById('pills').style.display = '';
-                       document.getElementById('frame-title').textContent = 'CVEs';
-                       render(); };
+  vt.onclick = () => { vt.textContent = 'Patch runs'; vt.onclick = showRuns; render(); };
 
   const el = document.getElementById('list');
-  el.innerHTML = '<div class="empty"><div class="spinner"></div><span>Loading runs from Ansible Orchestrator…</span></div>';
+  el.innerHTML = skeleton(6, 8);
   let d;
   try { d = await (await fetch('/api/runs?limit=40')).json(); }
-  catch (e) { el.innerHTML = `<div class="empty"><span>Could not load runs</span><span style="font-size:11px">${esc(e.message)}</span></div>`; return; }
+  catch (e) { el.innerHTML = emptyState('Could not load runs', e.message); return; }
   if (!d.ok) {
-    el.innerHTML = `<div class="empty"><span>${esc(d.error || 'Could not load runs')}</span>`
-                 + `<span style="font-size:11px">${esc(d.detail || '')}</span></div>`;
+    el.innerHTML = emptyState(d.error || 'Could not load runs', d.detail || '');
     return;
   }
 
   const runs = d.runs || [];
   const n = o => runs.filter(r => r.outcome === o).length;
-  const rows = runs.map(r => {
+  const rows = runs.map((r, i) => {
     const o = RUN_OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
     const act = r.approval_pending && r.outcome === 'awaiting_approval'
       ? `<button class="btn-approve" onclick="decideRun('${esc(r.execution_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decideRun('${esc(r.execution_id)}','rejected')">Reject</button>`
       : '<span class="muted-sm">—</span>';
-    return `<tr data-exec="${esc(r.execution_id)}">
+    return `<tr class="in" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
       <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
-      <td class="cve-id">${esc(r.cve_id)}</td>
+      <td class="cve-id">${cveLabel(r.cve_id)}</td>
       <td class="cve-id">${esc(r.host)}</td>
       <td>${esc(r.group)}</td>
       <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
@@ -814,11 +1706,12 @@ async function showRuns() {
     </tr>`;
   }).join('');
 
+  frameHead({
+    title: 'Patch runs',
+    sub: `<span>${esc(d.workflow)}</span><span>last ${runs.length} run(s)</span>`,
+    refresh: true,
+  });
   el.innerHTML = `
-    <div class="run-head">
-      <h3>${esc(d.workflow)} &mdash; last ${runs.length} run(s)</h3>
-      <button id="refresh-runs" class="pill">Refresh</button>
-    </div>
     ${(d.degraded && !MODE.offline) ? `<div class="degraded">
       <div class="deg-title">Ansible Orchestrator unreachable &mdash; simulated runs only</div>
       <div class="deg-sub">This list is the local simulator's history. Real AO executions are
@@ -826,9 +1719,9 @@ async function showRuns() {
         <span class="deg-fix">${esc(d.degraded)}</span></div></div>` : ''}
     ${simNotice(runs.filter(r => r.simulated).length)}
     <div class="stats" style="grid-template-columns:repeat(5,1fr)">
-      <div class="stat"><div class="v low">${n('completed') + n('patched')}</div><div class="k">Completed</div></div>
-      <div class="stat"><div class="v high">${n('awaiting_approval')}</div><div class="k">Awaiting approval</div></div>
-      <div class="stat"><div class="v" style="color:var(--red)">${n('failed')}</div><div class="k">Failed</div></div>
+      <div class="stat"><div class="v">${n('completed') + n('patched')}</div><div class="k">Completed</div></div>
+      <div class="stat${n('awaiting_approval') ? ' alert' : ''}"><div class="v">${n('awaiting_approval')}</div><div class="k">Awaiting approval</div></div>
+      <div class="stat${n('failed') ? ' alert' : ''}"><div class="v">${n('failed')}</div><div class="k">Failed</div></div>
       <div class="stat"><div class="v">${n('cancelled')}</div><div class="k">Cancelled</div></div>
       <div class="stat"><div class="v">${n('running')}</div><div class="k">Running</div></div>
     </div>
@@ -836,9 +1729,11 @@ async function showRuns() {
       <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Branch</th><th>Outcome</th>
       <th>Decision</th><th>Error</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>`
-    : '<div class="empty"><span>No patch runs yet.</span></div>'}
-    <div class="note">Read live from Ansible Orchestrator — includes runs started outside this console.</div>`;
-  document.getElementById('refresh-runs').addEventListener('click', showRuns);
+    : emptyState('No patch runs yet',
+                 'Assess a CVE and start a patch — runs appear here, newest first.')}
+    <div class="note">${MODE.offline
+      ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
+      : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}</div>`;
 }
 
 // Approve/reject from the runs table. The activity id is fetched first, since
@@ -858,10 +1753,13 @@ async function decideRun(execId, decision) {
       body: JSON.stringify({ execution_id: execId, activity_id: act, decision }),
     });
     const d = await r.json().catch(() => ({}));
-    if (!(r.ok && d.ok) && row) {
-      row.innerHTML = `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
+    if (!(r.ok && d.ok)) {
+      if (row) row.innerHTML = `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
+      toast(`Could not signal <b>${esc(execId.slice(0, 8))}</b> — ${esc(d.error || 'failed')}`, true);
       return;
     }
+    toast(`${decision === 'approved' ? 'Approved' : 'Rejected'} `
+        + `<b>${esc(execId.slice(0, 8))}</b>`, decision !== 'approved');
     showRuns();
   } catch (e) {
     if (row) row.innerHTML = `<span class="err-sm">${esc(e.message)}</span>`;
@@ -869,13 +1767,38 @@ async function decideRun(execId, decision) {
 }
 
 document.getElementById('view-runs').addEventListener('click', showRuns);
+document.getElementById('head-back').addEventListener('click', () => render());
+document.getElementById('head-refresh').addEventListener('click', showRuns);
 
 document.getElementById('pills').addEventListener('click', e => {
   const p = e.target.closest('.pill');
   if (p) { filter = p.dataset.sev; render(); }
 });
-document.getElementById('go').addEventListener('click', startPatch);
+// The field has no button of its own; Enter is the whole typed-CVE path.
 document.getElementById('cve').addEventListener('keydown', e => { if (e.key === 'Enter') startPatch(); });
+
+// "/" jumps to the CVE field from anywhere, the way every search box does.
+// Guarded so it does not steal the key from the settings drawer's inputs.
+document.addEventListener('keydown', e => {
+  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (!document.getElementById('settings-scrim').hidden) return;
+  e.preventDefault();
+  document.getElementById('cve-field').classList.add('used');
+  document.getElementById('cve').focus();
+});
+
+// Escape backs out of whatever the right frame is showing. The settings
+// drawer gets it first — see the handler next to closeSettings().
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('settings-scrim').hidden) return;
+  if (document.getElementById('head-back').hidden
+      && document.getElementById('view-runs').textContent.startsWith('Patch')) return;
+  document.getElementById('view-runs').textContent = 'Patch runs';
+  document.getElementById('view-runs').onclick = showRuns;
+  render();
+});
 
 // The banner is the only thing on screen that says the whole session is
 // fabricated, so it is resolved before the first CVE renders rather than
@@ -886,6 +1809,10 @@ async function renderMode() {
   if (!m || !m.ok) return;
   MODE = m;
   const el = document.getElementById('mode-banner');
+  // Cleared first: OFFLINE and STRICT can be switched off from the settings
+  // drawer, and a banner that only ever gets added would outlive the mode.
+  el.classList.remove('on');
+  el.innerHTML = '';
   if (m.offline) {
     el.innerHTML = `<span class="tag">OFFLINE</span>
       <span>Fallback mode &mdash; every value on this page is a stored default.</span>
@@ -900,7 +1827,192 @@ async function renderMode() {
   }
 }
 
+// ---- settings drawer ------------------------------------------------------
+// Every tunable the backend process reads, grouped, each showing its built-in
+// default until something overrides it. Overrides are process-local; the
+// drawer says so rather than implying they survive a restart.
+
+let SETTINGS = [];              // last payload from /api/settings
+const dirty = new Map();        // key -> new value, pending Save
+
+const SRC_LABEL = { env: '.env', override: 'changed' };
+
+function settingsMsg(text, isErr) {
+  const el = document.getElementById('settings-msg');
+  el.textContent = text || '';
+  el.className = isErr ? 'err-sm' : 'muted-sm';
+}
+
+function markDirty(key, value, row) {
+  const s = SETTINGS.find(x => x.key === key);
+  // A blank secret means "leave it alone", so it is not a change.
+  const same = s.secret ? value === '' : value === s.value;
+  if (same) dirty.delete(key); else dirty.set(key, value);
+  row.classList.toggle('changed', dirty.has(key));
+  document.getElementById('save-settings').disabled = dirty.size === 0;
+  settingsMsg(dirty.size ? `${dirty.size} unsaved` : '');
+}
+
+function settingField(s) {
+  if (s.kind === 'bool') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'set-toggle';
+    b.setAttribute('role', 'switch');
+    b.setAttribute('aria-checked', String(s.value === 'true'));
+    b.setAttribute('aria-label', s.label);
+    b.disabled = s.readonly;
+    b.addEventListener('click', () => {
+      const next = b.getAttribute('aria-checked') !== 'true';
+      b.setAttribute('aria-checked', String(next));
+      markDirty(s.key, String(next), b.closest('.set-row'));
+    });
+    return b;
+  }
+  if (s.kind === 'choice') {
+    const sel = document.createElement('select');
+    sel.disabled = s.readonly;
+    for (const c of s.choices) {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c; o.selected = c === s.value;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => markDirty(s.key, sel.value, sel.closest('.set-row')));
+    return sel;
+  }
+  const i = document.createElement('input');
+  i.type = 'text';
+  i.spellcheck = false;
+  i.autocomplete = 'off';
+  i.disabled = s.readonly;
+  i.value = s.secret ? '' : s.value;
+  i.placeholder = s.secret
+    ? (s.is_set ? '•••••••• (set — blank keeps it)' : 'not set')
+    : (s.default || '(empty)');
+  i.addEventListener('input', () => markDirty(s.key, i.value, i.closest('.set-row')));
+  return i;
+}
+
+function renderSettings() {
+  const body = document.getElementById('settings-body');
+  body.innerHTML = '';
+  let group = null;
+  for (const s of SETTINGS) {
+    if (s.group !== group) {
+      group = s.group;
+      const h = document.createElement('div');
+      h.className = 'set-group';
+      h.append(group);
+      body.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'set-row';
+
+    const name = document.createElement('div');
+    name.className = 'set-name';
+    name.append(s.label);
+    const key = document.createElement('span');
+    key.className = 'set-key';
+    key.textContent = s.key;
+    name.appendChild(key);
+    if (s.source !== 'default') {
+      const src = document.createElement('span');
+      src.className = `set-src ${s.source}`;
+      src.textContent = SRC_LABEL[s.source];
+      src.title = s.source === 'env'
+        ? `Set before startup. Built-in default: ${s.default || '(empty)'}`
+        : `Changed in this panel. Built-in default: ${s.default || '(empty)'}`;
+      name.appendChild(src);
+    }
+    row.appendChild(name);
+    row.appendChild(settingField(s));
+
+    if (s.help) {
+      const help = document.createElement('div');
+      help.className = 'set-help';
+      help.textContent = s.help;
+      row.appendChild(help);
+    }
+    body.appendChild(row);
+  }
+}
+
+async function loadSettings() {
+  const r = await fetch('/api/settings');
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || 'could not load settings');
+  SETTINGS = d.settings;
+  dirty.clear();
+  document.getElementById('save-settings').disabled = true;
+  settingsMsg('');
+  renderSettings();
+}
+
+async function postSettings(payload) {
+  const r = await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!(r.ok && d.ok)) throw new Error(d.error || `HTTP ${r.status}`);
+  SETTINGS = d.settings;
+  dirty.clear();
+  document.getElementById('save-settings').disabled = true;
+  renderSettings();
+  // OFFLINE and STRICT drive the top banner, and the CVE list itself comes
+  // from a backend whose reachability may have just changed.
+  await renderMode();
+  loadCves(0);
+  return d.changed || [];
+}
+
+function openSettings() {
+  document.getElementById('settings-scrim').hidden = false;
+  loadSettings().catch(e => {
+    document.getElementById('settings-body').innerHTML =
+      `<div class="empty"><span class="err-sm">${esc(e.message)}</span></div>`;
+  });
+}
+
+function closeSettings() {
+  document.getElementById('settings-scrim').hidden = true;
+}
+
+document.getElementById('open-settings').addEventListener('click', openSettings);
+document.getElementById('close-settings').addEventListener('click', closeSettings);
+document.getElementById('settings-scrim').addEventListener('click', e => {
+  if (e.target.id === 'settings-scrim') closeSettings();   // click-outside only
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('settings-scrim').hidden) closeSettings();
+});
+
+document.getElementById('save-settings').addEventListener('click', async () => {
+  const btn = document.getElementById('save-settings');
+  btn.disabled = true;
+  settingsMsg('Saving…');
+  try {
+    const changed = await postSettings({ settings: Object.fromEntries(dirty) });
+    settingsMsg(changed.length ? `Applied ${changed.length} change(s)` : 'No change');
+  } catch (e) {
+    settingsMsg(e.message, true);
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('revert-settings').addEventListener('click', async () => {
+  settingsMsg('Reverting…');
+  try {
+    const changed = await postSettings({ revert: true });
+    settingsMsg(changed.length ? `Reverted ${changed.length}` : 'Nothing to revert');
+  } catch (e) {
+    settingsMsg(e.message, true);
+  }
+});
+
+renderStages({});
 renderMode().finally(() => loadCves(0));
+
 </script>
 </body>
 </html>

@@ -95,7 +95,7 @@ def cve_detail(cve_id: str) -> dict[str, Any]:
 # which is why the caller has to use HEURISTIC_THRESHOLD rather than the usual
 # one. cvss*6 alone passes 30 at CVSS 5.0, so almost everything would otherwise
 # land in 'review'.
-HEURISTIC_THRESHOLD = 55.0
+HEURISTIC_THRESHOLD = float(os.environ.get('HEURISTIC_THRESHOLD', '55') or 55)
 
 
 def heuristic_risk(cvss: float, age_days: int, affected_hosts: int) -> float:

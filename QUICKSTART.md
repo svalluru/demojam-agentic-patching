@@ -38,7 +38,7 @@ Press `Ctrl-C` in the terminal to stop. It shuts down both processes.
 
 ## Checking it worked
 
-You should see an **orange banner across the top of the page**:
+You should see a **red banner across the top of the page**:
 
 > OFFLINE — Fallback mode. Every value on this page is a stored default. No
 > cluster is being contacted and nothing will be patched.
@@ -56,14 +56,13 @@ Try both.
 
 **1 — A CVE that needs human approval**
 
-1. Click **CVE-2024-3094** in the list (CVSS 10.0, 5 affected hosts).
-2. Click **Assess CVE Impact**.
+1. Hit **Assess** on the **CVE-2024-3094** row (CVSS 10.0, 5 affected hosts).
    You get a dry-run report: a risk score per host, that host's past patch
    history, the maintenance window, and a verdict. All five hosts score above
    the review threshold, so the verdict is *manual review required*.
-3. Click **Start Patch**.
+2. Click **Start Patch**.
    Each host gets its own workflow run and stops at the approval gate.
-4. Click **Approve** (or **Reject**) on each row and watch the outcome change.
+3. Click **Approve** (or **Reject**) on each row and watch the outcome change.
 
 **2 — A CVE that patches unattended**
 
@@ -129,7 +128,7 @@ cp .env.example .env     # then fill it in
 ./demo.sh --live
 ```
 
-In live mode the orange banner disappears. In its place, any individual step
+In live mode the red banner disappears. In its place, any individual step
 that could not reach its backend is called out in the dry-run report itself,
 naming the service and how to fix it — so you always know which numbers on the
 page are measured and which are substituted.
