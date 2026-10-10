@@ -220,7 +220,7 @@
         <div class="step"><div class="i">1</div><div class="t">RAG lookup &mdash; patch history per host <em>&mdash; Milvus</em></div><div class="f">Skip history; flag <b>history: unavailable</b></div></div>
         <div class="step"><div class="i">2</div><div class="t">Scheduler &mdash; maintenance window</div><div class="f">Config default window &mdash; never &ldquo;now&rdquo; for prod</div></div>
         <div class="step"><div class="i">3</div><div class="t">Assess risk score <em>&mdash; XGBoost / OCP</em></div><div class="f">Heuristic tagged <b>degraded:true</b> + recalibrated threshold</div></div>
-        <div class="step"><div class="i">4</div><div class="t">Produce <b>dry-run report</b></div><div class="f">Partial report naming every degraded input</div></div>
+        <div class="step"><div class="i">4</div><div class="t">Produce the <b>patch plan</b></div><div class="f">Partial report naming every degraded input</div></div>
         <div class="retby">&#8617; returns <b>cve-info</b> to Supervisor &nbsp;&middot;&nbsp; also serves <b>diagnose()</b> during self-heal</div>
       </div>
     </div>
@@ -335,7 +335,7 @@
     <h3>Fallback principles</h3>
     <div class="pr"><span class="num">1</span><span class="d"><b>Labelled, never silent.</b> Every degraded result carries <code>source</code> and <code>degraded:true</code>. A fallback that works but tells nobody is a bug.</span></div>
     <div class="pr"><span class="num">2</span><span class="d"><b>Degrade on reads, fail closed on writes.</b> Missing history or a heuristic score &mdash; proceed. Approval, project sync and rollback &mdash; stop.</span></div>
-    <div class="pr"><span class="num">3</span><span class="d"><b>Visible before approval.</b> The dry-run report must state which inputs were degraded <i>before</i> anyone approves; the Results agent records it for later correlation.</span></div>
+    <div class="pr"><span class="num">3</span><span class="d"><b>Visible before approval.</b> The patch plan must state which inputs were degraded <i>before</i> anyone approves; the Results agent records it for later correlation.</span></div>
     <div class="legend">
       <span><span class="sw" style="background:var(--fb)"></span>soft &mdash; degrade &amp; continue</span>
       <span><span class="sw" style="background:var(--red)"></span>hard &mdash; fail closed</span>

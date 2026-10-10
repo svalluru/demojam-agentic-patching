@@ -411,7 +411,7 @@
   .sk-head { margin-bottom: 4px; }
   .sk-head .sk { height: 8px; }
 
-  /* ---- dry-run report ---- */
+  /* ---- patch plan ---- */
   .go-patch {
     padding: 8px 18px; color: #ffffff; border: none; border-radius: var(--r-sm);
     background: linear-gradient(180deg, var(--red), var(--red-lo));
@@ -591,7 +591,7 @@
      Where the run is, horizontally across the header, because that is the one
      question asked continuously and from every view — the right frame changes
      under it but the run does not. Five stages, matching what the system
-     actually does rather than a generic workflow: Assess, Score, Dry run,
+     actually does rather than a generic workflow: Assess, Score, Plan,
      Approval, Patch.
 
      Four states, not three. A stage can be legitimately *skipped* — when no
@@ -1125,7 +1125,7 @@ function render() {
 const ICON = {
   search:  '<circle cx="11" cy="11" r="7"></circle><path d="M20.5 20.5 16 16"></path>',
   pulse:   '<path d="M3 12h3.5L9 5l4.5 14L16 12h5"></path>',
-  report:  '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"></path>'
+  doc:     '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"></path>'
          + '<path d="M13 3v6h6"></path>',
   approve: '<path d="M20 11.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8"></path>'
          + '<path d="M8.5 11.5 11 14l8-8"></path>',
@@ -1138,8 +1138,8 @@ const STAGES = [
     tip: 'Insights: the CVE and every host behind on it.' },
   { key: 'score',   label: 'Score',    icon: ICON.pulse,
     tip: 'Risk per host — the model, or the heuristic when it is unreachable.' },
-  { key: 'report',  label: 'Dry run',  icon: ICON.report,
-    tip: 'The report the operator approves against: score, gate, RAG history, verdict.' },
+  { key: 'plan',    label: 'Plan',     icon: ICON.doc,
+    tip: 'What the operator approves against: score vs gate, RAG history, window, verdict.' },
   { key: 'approve', label: 'Approval', icon: ICON.approve,
     tip: 'The human gate. Skipped entirely when no host crosses the threshold.' },
   { key: 'patch',   label: 'Patch',    icon: ICON.patch,
@@ -1158,7 +1158,7 @@ function stageStates(s) {
   s = s || {};
   const seen = new Set();
   (s.events || []).forEach(e => { seen.add(e.from); seen.add(e.to); });
-  const dr = s.dry_run, p = s.patch;
+  const plan = s.plan, p = s.patch;
   const results = (p || {}).results || [];
   // Two different kinds of unfinished, and they belong to different stages:
   // a host at the gate holds up Approval, a host mid-workflow holds up Patch.
@@ -1166,9 +1166,9 @@ function stageStates(s) {
   const inflight = results.some(r => r.outcome === 'running');
 
   const done = {
-    assess:  !!(dr || seen.has('info')),
-    score:   !!(dr || seen.has('risk-model') || seen.has('rag')),
-    report:  !!dr,
+    assess:  !!(plan || seen.has('info')),
+    score:   !!(plan || seen.has('risk-model') || seen.has('rag')),
+    plan:    !!plan,
     // Dispatched and nothing left sitting at a gate — either every host was
     // decided, or none was ever routed through one.
     approve: !!(p && !atGate),
@@ -1178,11 +1178,11 @@ function stageStates(s) {
   const st = {};
   STAGES.forEach(x => { st[x.key] = done[x.key] ? 'done' : 'pending'; });
 
-  // Active covers both halves of the gate: the operator reading the dry run
+  // Active covers both halves of the gate: the operator reading the plan
   // before dispatching, and the hosts parked at the workflow's approval node
   // afterwards. Both are the system waiting on a person.
-  if (p ? atGate : !!(dr && dr.hosts_review)) st.approve = 'active';
-  else if (dr && !dr.hosts_review) st.approve = 'skipped';
+  if (p ? atGate : !!(plan && plan.hosts_review)) st.approve = 'active';
+  else if (plan && !plan.hosts_review) st.approve = 'skipped';
   if (p && !atGate && inflight) st.patch = 'active';
 
   // Whatever the Supervisor is working on right now, if the bar has not
@@ -1258,10 +1258,10 @@ function simNotice(n) {
 
 // The backend's verdict is an enum (review_required / auto_approve_eligible).
 // Translate it rather than printing the raw value at the reviewer.
-function renderVerdict(dr) {
-  const review = dr.hosts_review || 0;
-  const total = dr.hosts_total || 0;
-  const needsReview = dr.verdict === 'review_required';
+function renderVerdict(plan) {
+  const review = plan.hosts_review || 0;
+  const total = plan.hosts_total || 0;
+  const needsReview = plan.verdict === 'review_required';
 
   const title = needsReview
     ? 'Manual review required before remediation'
@@ -1280,8 +1280,8 @@ function renderVerdict(dr) {
       <div class="v-title">${esc(title)}</div>
       <div class="v-detail">${esc(detail)}</div>
       <div class="v-meta">
-        <span><span class="k">Maintenance window</span>${esc(dr.maintenance_window)}</span>
-        <span><span class="k">Risk gate</span>${esc(dr.threshold)} (${esc(dr.risk_source)})</span>
+        <span><span class="k">Maintenance window</span>${esc(plan.maintenance_window)}</span>
+        <span><span class="k">Risk gate</span>${esc(plan.threshold)} (${esc(plan.risk_source)})</span>
         <span><span class="k">Assessed by</span>cve-gather-info-agent</span>
       </div>
     </div>
@@ -1296,15 +1296,15 @@ function renderVerdict(dr) {
 // only question the operator is being asked. The bar is the score, the notch
 // is the threshold it was compared against, and the bar turns red exactly
 // where it crosses — so the decision reads without parsing either number.
-function riskMeter(h, dr) {
+function riskMeter(h, plan) {
   const over = h.decision === 'review';
   const score = Number(h.risk_score);
-  const thr = Number(dr.threshold);
+  const thr = Number(plan.threshold);
   const v = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
   const tick = Number.isFinite(thr)
     ? `<span class="meter-tick" style="left:${Math.max(0, Math.min(100, thr))}%"></span>` : '';
   const why = Number.isFinite(thr)
-    ? `Risk ${score} vs gate ${thr} (${dr.risk_source || 'unknown'})` : `Risk ${score}`;
+    ? `Risk ${score} vs gate ${thr} (${plan.risk_source || 'unknown'})` : `Risk ${score}`;
   return `<div class="risk" title="${esc(why)}">
     <span class="meter${over ? ' over' : ''}" style="--v:${v}%">
       <span class="meter-fill"></span>${tick}
@@ -1313,13 +1313,13 @@ function riskMeter(h, dr) {
   </div>`;
 }
 
-function renderDryRun(s) {
-  const dr = s.dry_run || {};
-  const notes = (dr.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
+function renderPlan(s) {
+  const plan = s.plan || {};
+  const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
   const hosts = (s.hosts || []).map((h, i) => `
     <tr class="in" style="--i:${Math.min(i, 12)}">
       <td class="cve-id">${esc(h.host)}</td>
-      <td>${riskMeter(h, dr)}</td>
+      <td>${riskMeter(h, plan)}</td>
       <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
       <td class="desc">${esc(h.history || h.reason)}</td>
     </tr>`).join('');
@@ -1328,15 +1328,15 @@ function renderDryRun(s) {
     <div class="result" id="patch-result"></div>
     <div id="patch-body"></div>
     <div class="stats">
-      <div class="stat"><div class="v">${esc(dr.cvss)}</div><div class="k">CVSS</div></div>
-      <div class="stat"><div class="v">${esc(dr.hosts_total)}</div><div class="k">Hosts</div></div>
-      <div class="stat${dr.hosts_review ? ' alert' : ''}"><div class="v">${esc(dr.hosts_review)}</div><div class="k">Review</div></div>
-      <div class="stat"><div class="v">${esc(dr.hosts_auto)}</div><div class="k">Auto</div></div>
-      <div class="stat"><div class="v sm">${esc(dr.risk_source)}</div><div class="k">Risk source</div></div>
+      <div class="stat"><div class="v">${esc(plan.cvss)}</div><div class="k">CVSS</div></div>
+      <div class="stat"><div class="v">${esc(plan.hosts_total)}</div><div class="k">Hosts</div></div>
+      <div class="stat${plan.hosts_review ? ' alert' : ''}"><div class="v">${esc(plan.hosts_review)}</div><div class="k">Review</div></div>
+      <div class="stat"><div class="v">${esc(plan.hosts_auto)}</div><div class="k">Auto</div></div>
+      <div class="stat"><div class="v sm">${esc(plan.risk_source)}</div><div class="k">Risk source</div></div>
       <div class="stat"><div class="v sm">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
     </div>
-    ${renderDegraded(dr.degraded)}
-    ${renderVerdict(dr)}
+    ${renderDegraded(plan.degraded)}
+    ${renderVerdict(plan)}
     ${notes}
     <div class="sev-block" style="margin-top:18px">
       <div class="sev-title high">Per-host assessment<span class="c">${(s.hosts||[]).length}</span></div>
@@ -1345,16 +1345,16 @@ function renderDryRun(s) {
     </div>
     <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
   frameHead({
-    title: 'Dry-run report',
-    sub: `<span class="cve-id">${cveLabel(dr.cve_id)}</span>`
-       + `<span>${esc(dr.hosts_total)} host(s) assessed</span>`,
+    title: 'Patch plan',
+    sub: `<span class="cve-id">${cveLabel(plan.cve_id)}</span>`
+       + `<span>${esc(plan.hosts_total)} host(s) assessed</span>`,
     back: true, patch: true,
   });
   renderStages(s);
   const pb = document.getElementById('head-patch');
   pb.textContent = 'Start Patch';
   pb.disabled = false;
-  pb.onclick = () => startRemediation(dr.cve_id);
+  pb.onclick = () => startRemediation(plan.cve_id);
 }
 
 const OUTCOME = {
@@ -1459,11 +1459,11 @@ function renderPatch(s) {
   patchState = s;
   renderStages(s);
   // The frame now holds the dispatch result above the report it was approved
-  // against, so 'Dry-run report' would name only the lower half of it.
-  const dr = s.dry_run || {};
+  // against, so 'Patch plan' would name only the lower half of it.
+  const plan = s.plan || {};
   frameHead({
     title: 'Remediation',
-    sub: `<span class="cve-id">${cveLabel(dr.cve_id || '')}</span>`
+    sub: `<span class="cve-id">${cveLabel(plan.cve_id || '')}</span>`
        + `<span>${esc((s.patch || {}).results?.length || 0)} host(s) dispatched</span>`,
     back: true, patch: true,
   });
@@ -1513,7 +1513,7 @@ function renderPatch(s) {
     <div class="note">Next: ${esc(s.next || 'n/a')}</div>`;
 }
 
-// Hands the reviewed dry-run to the Patching Agent, which triggers the
+// Hands the approved plan to the Patching Agent, which triggers the
 // Ansible Orchestrator workflow once per host.
 async function startRemediation(cveId) {
   const el = document.getElementById('patch-result');
@@ -1589,8 +1589,8 @@ async function poll(cve) {
          + `<span style="opacity:.8">${esc(last.from)} &rarr; ${esc(last.to)}: ${esc(last.message)}</span>`, 'info');
     }
     if (s.status === 'complete') {
-      show(`Dry-run complete for <strong>${esc(cve)}</strong> in ${esc(s.elapsed_s)}s.`, 'ok');
-      renderDryRun(s);
+      show(`Patch plan ready for <strong>${esc(cve)}</strong> in ${esc(s.elapsed_s)}s.`, 'ok');
+      renderPlan(s);
       return;
     }
     if (s.status === 'failed') {

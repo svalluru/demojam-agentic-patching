@@ -8,7 +8,7 @@ Implements the left column of multi-agent/architecture.jpg:
             v
     Supervisor Agent               owns control flow + per-CVE state
             |
-            +--> 1 cve-gather-info-agent   RAG · scheduler · risk · dry-run
+            +--> 1 cve-gather-info-agent   RAG · scheduler · risk · patch plan
             +--> 2 Patching Agent          one AO workflow run per host
 
 Agents 3 (Communication) and 4 (Results) are not implemented; the Supervisor
@@ -18,7 +18,7 @@ Design: fallbacks are allowed but never silent. Every external call either
 succeeds or raises BackendUnavailable naming the service and the fix; the
 caller may then substitute a stored default from fallbacks.py, but the
 substitution is recorded in DEGRADED and travels with the report, because the
-dry-run is what a human approves against. STRICT=true disables all of it and
+patch plan is what a human approves against. STRICT=true disables all of it and
 re-raises; OFFLINE=1 runs entirely on stored defaults and touches no network.
 Remediation is the exception that is never faked silently — see
 PatchingAgent.patch_host and FALLBACK_PATCH.
@@ -105,7 +105,7 @@ HTTP_TIMEOUT = int(env('HTTP_TIMEOUT', '120'))
 # Per-service budgets, deliberately far below HTTP_TIMEOUT. A stopped cluster
 # leaves the Route resolving but nothing listening, so the socket hangs until
 # it times out rather than refusing it outright — at the 120s default a
-# two-host dry run spent over a minute waiting on services already known down.
+# two-host plan spent over a minute waiting on services already known down.
 INSIGHTS_TIMEOUT = int(env('INSIGHTS_TIMEOUT', '15'))
 RISK_TIMEOUT = int(env('RISK_TIMEOUT', '8'))
 RAG_TIMEOUT = int(env('RAG_TIMEOUT', '20'))     # live RAG does LLM summarisation
@@ -434,7 +434,7 @@ def _age_days(first_reported: str | None) -> int:
 #   1  RAG lookup — patch history per host     (Milvus via Llama Stack)
 #   2  Scheduler — maintenance window
 #   3  Assess risk score                       (XGBoost on OpenShift)
-#   4  Produce dry-run report
+#   4  Produce the patch plan
 #
 # Returns cve-info to the Supervisor. Will also serve diagnose() once the
 # self-healing loop exists.
@@ -452,7 +452,7 @@ class HostAssessment:
 
 
 @dataclass
-class DryRun:
+class PatchPlan:
     cve_id: str
     cvss: float
     hosts_total: int
@@ -661,7 +661,7 @@ class InfoAgent:
         # step 2 — window
         window, window_source = self.maintenance_window()
 
-        # step 4 — dry-run report
+        # step 4 — the patch plan
         notes = []
         # In offline mode the top banner already says the whole page is stored
         # defaults, so repeating it per-step is noise. In live mode it is the
@@ -680,7 +680,7 @@ class InfoAgent:
             notes.append('Every host requires review — check the risk threshold '
                          'is discriminating at this CVSS.')
 
-        dry_run = DryRun(
+        plan = PatchPlan(
             cve_id=cve_id, cvss=cvss,
             hosts_total=len(assessed), hosts_review=len(review),
             hosts_auto=len(assessed) - len(review),
@@ -691,8 +691,8 @@ class InfoAgent:
             degraded=[dict(d) for d in DEGRADED],
         )
         self._trace('info', 'supervisor',
-                    f'{len(review)}/{len(assessed)} need review — {dry_run.verdict}')
-        return {'hosts': [asdict(a) for a in assessed], 'dry_run': asdict(dry_run)}
+                    f'{len(review)}/{len(assessed)} need review — {plan.verdict}')
+        return {'hosts': [asdict(a) for a in assessed], 'plan': asdict(plan)}
 
 
 # ==========================================================================
@@ -1206,16 +1206,16 @@ class Supervisor:
             'cvss': detail['cvss'],
             'description': detail['description'],
             'hosts': info['hosts'],
-            'dry_run': info['dry_run'],
+            'plan': info['plan'],
             'events': self.events,
             'elapsed_s': round(time.monotonic() - started, 1),
             'degraded': [dict(d) for d in DEGRADED],
-            # The dry-run is a stopping point, not a completion: dispatch is
+            # The plan is a stopping point, not a completion: dispatch is
             # a separate, operator-initiated step.
             'next': 'Patching Agent — press Start Patch to dispatch',
             'status': 'awaiting_patch_dispatch',
         }
-        self.trace('supervisor', 'console', 'dry-run ready — awaiting operator review')
+        self.trace('supervisor', 'console', 'patch plan ready — awaiting operator review')
         return self.state
 
     # --- agent 2 ----------------------------------------------------------
@@ -1223,7 +1223,7 @@ class Supervisor:
     def patch(self, assessment: dict) -> dict:
         """Hand each assessed host to the Patching Agent, one AO run per host.
 
-        Takes the dry-run from run() so the per-host decision determines which
+        Takes the plan from run() so the per-host decision determines which
         branch of the workflow that host takes.
         """
         cve_id = assessment['cve_id']
@@ -1336,7 +1336,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
             'Cap the number of hosts assessed. 0 means no cap.'),
     Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
-            f'Reported in the dry-run. Empty uses {DEFAULT_WINDOW!r}.',
+            f'Reported in the patch plan. Empty uses {DEFAULT_WINDOW!r}.',
             binds='MAINTENANCE_WINDOW'),
     Setting('MAX_ATTEMPTS_PER_HOST', 'Triage', 'Max attempts per host', 'int', '2',
             'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
@@ -1811,18 +1811,18 @@ def serve(host: str, port: int) -> None:
 # --------------------------------------------------------------------------
 
 def _print_run(state: dict) -> None:
-    dr = state['dry_run']
+    plan = state['plan']
     print()
-    print(f'  CVE          : {dr["cve_id"]}  (CVSS {dr["cvss"]})')
-    print(f'  Hosts        : {dr["hosts_total"]}  '
-          f'({dr["hosts_review"]} review, {dr["hosts_auto"]} auto)')
-    print(f'  Risk source  : {dr["risk_source"]}  (gate {dr["threshold"]:g})')
-    print(f'  Window       : {dr["maintenance_window"]}')
-    print(f'  Verdict      : {dr["verdict"]}')
+    print(f'  CVE          : {plan["cve_id"]}  (CVSS {plan["cvss"]})')
+    print(f'  Hosts        : {plan["hosts_total"]}  '
+          f'({plan["hosts_review"]} review, {plan["hosts_auto"]} auto)')
+    print(f'  Risk source  : {plan["risk_source"]}  (gate {plan["threshold"]:g})')
+    print(f'  Window       : {plan["maintenance_window"]}')
+    print(f'  Verdict      : {plan["verdict"]}')
     print(f'  Elapsed      : {state["elapsed_s"]}s')
-    for n in dr['notes']:
+    for n in plan['notes']:
         print(f'  Note         : {n}')
-    for d in (dr.get('degraded') or []):
+    for d in (plan.get('degraded') or []):
         print(f'  DEGRADED     : {d["step"]} — {d["service"]} unreachable')
         print(f'                 fix: {d["fix"]}')
     print()

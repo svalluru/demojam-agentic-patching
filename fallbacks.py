@@ -2,7 +2,7 @@
 
 Every value here is fabricated. Nothing in this file is a real measurement, so
 anything derived from it must be labelled `degraded` and carry `source` all the
-way to the operator — the dry-run report is what a human approves against, and
+way to the operator — the patch plan is what a human approves against, and
 an unlabelled guess is worse than an outright failure.
 
 Set STRICT=true to disable all of it and let the real error surface instead;

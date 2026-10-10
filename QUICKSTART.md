@@ -57,7 +57,7 @@ Try both.
 **1 — A CVE that needs human approval**
 
 1. Hit **Assess** on the **CVE-2024-3094** row (CVSS 10.0, 5 affected hosts).
-   You get a dry-run report: a risk score per host, that host's past patch
+   You get a patch plan: a risk score per host, that host's past patch
    history, the maintenance window, and a verdict. All five hosts score above
    the review threshold, so the verdict is *manual review required*.
 2. Click **Start Patch**.
@@ -82,7 +82,7 @@ thing once you are past the banner.
 
 | | |
 |---|---|
-| Real | The agent logic, the control flow, the approval gate, the risk threshold and routing rules, the dry-run report format, the workflow step sequence |
+| Real | The agent logic, the control flow, the approval gate, the risk threshold and routing rules, the patch plan format, the workflow step sequence |
 | Not real | The CVEs, the hostnames, the risk scores, the patch history text, the workflow executions |
 
 **Nothing is patched and no host exists.** The workflow runs are resolved
@@ -129,7 +129,7 @@ cp .env.example .env     # then fill it in
 ```
 
 In live mode the red banner disappears. In its place, any individual step
-that could not reach its backend is called out in the dry-run report itself,
+that could not reach its backend is called out in the patch plan itself,
 naming the service and how to fix it — so you always know which numbers on the
 page are measured and which are substituted.
 

@@ -14,7 +14,7 @@ Common code (not an agent)      CVE list + affected hosts from Insights
         ▼
    Supervisor Agent             owns control flow + per-CVE state
         │
-        ├─▶ 1 cve-gather-info-agent   RAG history · scheduler · risk · dry-run
+        ├─▶ 1 cve-gather-info-agent   RAG history · scheduler · risk · patch plan
         ├─▶ 2 Patching Agent          triggers the AO workflow, per host
         ├─▶ 3 Communication Agent     not implemented
         └─▶ 4 Results Agent           not implemented
@@ -25,7 +25,7 @@ Common code (not an agent)      CVE list + affected hosts from Insights
 | Agent | State |
 |---|---|
 | Common code (CVE list / detail) | done — Insights REST |
-| 1 cve-gather-info-agent | done — RAG, risk model, dry-run report |
+| 1 cve-gather-info-agent | done — RAG, risk model, patch plan |
 | 2 Patching Agent | done — triggers AO workflow per host, approve/reject |
 | 3 Communication Agent | not started |
 | 4 Results Agent | not started |
@@ -108,7 +108,7 @@ cd frontend && python3 server.py --env ../.env
 ```
 
 Open <http://127.0.0.1:8788>, hit **Assess** on a CVE row, review the
-dry-run, then **Start Patch**. Hosts routed to the approval branch show
+patch plan, then **Start Patch**. Hosts routed to the approval branch show
 Approve / Reject buttons. **Patch runs** lists past executions read live from AO.
 
 ### CLI
@@ -179,10 +179,10 @@ differs:
   labels would be noise repeated on every row.
 - *Live, with one backend down* — there is no banner, and a single step that
   quietly fell back is exactly what a reviewer needs told before approving a
-  production patch. So the dry-run shows a `degraded` panel naming the step,
+  production patch. So the plan shows a `degraded` panel naming the step,
   the service and the fix, and any simulated row is chipped `SIMULATED`.
 
-The API always carries the truth either way: `degraded` on the dry-run and
+The API always carries the truth either way: `degraded` on the plan and
 `simulated: true` on affected runs, whatever the console chooses to draw.
 
 | Variable | Effect |
@@ -204,7 +204,7 @@ reset the demo.
 first with a short budget, because a stopped pod leaves its Route resolving
 with nothing behind it and the socket hangs for the full read timeout. A
 service that fails is then tripped for `CIRCUIT_TTL`, so a dead backend costs
-one probe per run rather than one per host. Together these took a dry run
+one probe per run rather than one per host. Together these took a patch plan
 against stopped backends from 76s to under 7s; `OFFLINE=1` skips the probe
 entirely and opens no socket at all.
 
