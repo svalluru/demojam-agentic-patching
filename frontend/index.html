@@ -38,11 +38,30 @@
     --sh-red:0 5px 16px -7px rgba(204,0,0,.55);
     --ring:0 0 0 3px rgba(11,11,12,.11);
 
+    /* Every font-size on the page is calc(Npx * var(--ts)), so this one
+       number moves all of them together and the type scale keeps its
+       proportions. Padding and borders deliberately do not scale: at Large
+       the text grows into whitespace that was already there, which is what
+       somebody asking for bigger text actually wants. The verdict donut is
+       the single exception, because it is a fixed circle whose whole job is
+       to hold its own label.
+
+       Two sets of rules opt out of the scale entirely — the architecture
+       diagram and the ROI chart draw their labels in SVG user units, where px
+       is a share of the viewBox rather than a size on screen, so scaling them
+       pushes text out of boxes that stayed the same width. Verified: at Large
+       the diagram's ANSIBLE ORCH overflows its node. Both drawings already
+       grow with the panel they sit in. */
+    --ts: 1.1;                        /* medium — the default */
+
     --r-xs:6px; --r-sm:9px; --r:12px; --r-lg:16px;
     --ease:cubic-bezier(.22,.61,.36,1);
     --spring:cubic-bezier(.34,1.26,.64,1);
     --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
+  html[data-ts="s"] { --ts: 1; }      /* small — what the console used to be */
+  html[data-ts="m"] { --ts: 1.1; }
+  html[data-ts="l"] { --ts: 1.24; }
   body {
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
                  system-ui, sans-serif;
@@ -64,7 +83,7 @@
   #mode-banner {
     position: relative; overflow: hidden;
     display: none; flex-shrink: 0; align-items: center; gap: 12px;
-    padding: 10px 22px; font-size: 12.5px; font-weight: 600;
+    padding: 10px 22px; font-size: calc(12.5px * var(--ts)); font-weight: 600;
     color: #ffffff; box-shadow: var(--sh-red);
     background: linear-gradient(100deg, var(--red-lo), var(--red) 48%, var(--red-lo));
   }
@@ -82,13 +101,13 @@
   @keyframes hazard { to { background-position: 36px 0; } }
   #mode-banner > * { position: relative; }
   #mode-banner .tag {
-    font-size: 10px; font-weight: 800; letter-spacing: .6px;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: .6px;
     padding: 3px 9px; border-radius: var(--r-xs);
     background: #000000; color: #ffffff;
   }
   #mode-banner .sub { font-weight: 500; opacity: .85; }
   #mode-banner .how { margin-left: auto; font-weight: 500; opacity: .85;
-                      font-family: var(--mono); font-size: 11px;
+                      font-family: var(--mono); font-size: calc(11px * var(--ts));
                       padding: 3px 9px; border-radius: var(--r-xs);
                       background: rgba(0,0,0,.22); }
 
@@ -103,16 +122,16 @@
     background: linear-gradient(145deg, var(--red), var(--red-lo));
     box-shadow: var(--sh-red);
     display: grid; place-items: center;
-    font-weight: 800; font-size: 12.5px; letter-spacing: .4px; color: #ffffff;
+    font-weight: 800; font-size: calc(12.5px * var(--ts)); letter-spacing: .4px; color: #ffffff;
   }
-  header h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.34px; }
-  header .tagline { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  header h1 { font-size: calc(16px * var(--ts)); font-weight: 700; letter-spacing: -0.34px; }
+  header .tagline { font-size: calc(11px * var(--ts)); color: var(--muted); margin-top: 1px; }
   .status {
     margin-left: auto; display: flex; align-items: center; gap: 8px;
     padding: 5px 12px 5px 10px; border-radius: 20px;
     border: 1px solid var(--border); background: var(--panel);
     box-shadow: var(--sh-1);
-    font-size: 11.5px; font-weight: 600; color: var(--muted);
+    font-size: calc(11.5px * var(--ts)); font-weight: 600; color: var(--muted);
   }
   .dot { position: relative; width: 7px; height: 7px; border-radius: 50%;
          background: var(--text); flex-shrink: 0; }
@@ -157,23 +176,40 @@
     border-radius: var(--r-lg); display: flex; flex-direction: column;
     overflow: hidden; min-height: 0; box-shadow: var(--sh-2);
   }
+  /* Wraps rather than squeezes. Narrow enough — a small window, or Large text,
+     or both — and the title, the CVE it is about and three buttons genuinely
+     do not fit on one line. Squeezing picked a victim: first the CVE id, half
+     shown as a different CVE, then the primary button, pushed off the panel
+     edge. Second row, nothing lost. */
   .frame-head {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 9px;
     padding: 13px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
     background: linear-gradient(var(--panel), var(--surface));
   }
-  .frame-head h2 { font-size: 14px; font-weight: 700; letter-spacing: -.2px;
+  .frame-head h2 { font-size: calc(14px * var(--ts)); font-weight: 700; letter-spacing: -.2px;
                    white-space: nowrap; }
   /* What the title is about — the CVE and its host count — rather than a
      second heading row inside the body saying the same thing. */
+  /* No overflow:hidden and no min-width:0 here, both deliberately. Either one
+     makes this row's automatic minimum size zero, and then a narrow window
+     clips the row itself — the id came out as "CVE-2024-30", which does not
+     read as a truncation, it reads as a different CVE. Left on auto, the row
+     refuses to shrink past its unshrinkable children, so the clipping lands on
+     the host count below instead. */
   .frame-sub {
-    display: flex; align-items: center; gap: 8px; min-width: 0;
-    font-size: 12px; color: var(--muted); overflow: hidden;
+    display: flex; align-items: center; gap: 8px;
+    font-size: calc(12px * var(--ts)); color: var(--muted);
   }
   .frame-sub::before {
     content: ''; width: 1px; height: 15px; background: var(--border); flex: none;
   }
-  .frame-sub .cve-id { font-size: 12.5px; color: var(--text); }
+  .frame-sub .cve-id { font-size: calc(12.5px * var(--ts)); color: var(--text);
+                       flex: none; white-space: nowrap; }
+  /* Everything that is not the id gives way first — the host count is repeated
+     in the stat row a few pixels below, so losing it costs nothing. */
+  .frame-sub > span:not(.cve-id) {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   /* Every view-level control, one row, one right edge. Uniform height and
      radius so they read as a set; only the fill says which one is primary. */
   .head-actions {
@@ -197,12 +233,12 @@
 
   /* ---- frame 1 ---- Only the settings drawer has text inputs now; frame 1
      is the architecture and the trace. */
-  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+  label { display: block; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .5px;
           text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
   input[type=text] {
     width: 100%; padding: 12px 13px; background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--r-sm);
-    font-family: var(--mono); font-size: 14px; letter-spacing: .2px;
+    font-family: var(--mono); font-size: calc(14px * var(--ts)); letter-spacing: .2px;
     transition: border-color .15s var(--ease), box-shadow .15s var(--ease),
                 background .15s var(--ease);
   }
@@ -218,7 +254,7 @@
     width: 100%; margin-top: 14px; padding: 12px;
     background: linear-gradient(180deg, #1d1d20, var(--accent));
     color: var(--bg); border: none; border-radius: var(--r-sm);
-    font-size: 14px; font-weight: 700; letter-spacing: -.1px; cursor: pointer;
+    font-size: calc(14px * var(--ts)); font-weight: 700; letter-spacing: -.1px; cursor: pointer;
     box-shadow: var(--sh-2);
     transition: transform .14s var(--spring), box-shadow .14s var(--ease),
                 opacity .14s var(--ease);
@@ -241,7 +277,7 @@
   .assess {
     padding: 6px 13px; border-radius: 999px; cursor: pointer;
     border: 1px solid var(--border); background: var(--panel); color: var(--text);
-    font-size: 11.5px; font-weight: 700; letter-spacing: -.1px; white-space: nowrap;
+    font-size: calc(11.5px * var(--ts)); font-weight: 700; letter-spacing: -.1px; white-space: nowrap;
     transition: background .14s var(--ease), color .14s var(--ease),
                 border-color .14s var(--ease), transform .14s var(--spring),
                 box-shadow .14s var(--ease);
@@ -258,7 +294,7 @@
      than above — hidden, it must take no room at all. */
   .result {
     margin-bottom: 18px; padding: 12px 14px; border-radius: 9px;
-    font-size: 12px; line-height: 1.55; display: none; border-left: 3px solid;
+    font-size: calc(12px * var(--ts)); line-height: 1.55; display: none; border-left: 3px solid;
   }
   .result.show { display: block; }
   .result.ok   { background: var(--tint-n); border-color: var(--text);   color: var(--text); }
@@ -271,7 +307,7 @@
   .pill {
     padding: 5px 13px; border: 1px solid var(--border); border-radius: 20px;
     background: var(--panel); color: var(--muted);
-    font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer; white-space: nowrap;
     transition: color .14s var(--ease), border-color .14s var(--ease),
                 background .14s var(--ease), transform .14s var(--spring),
                 box-shadow .14s var(--ease);
@@ -284,7 +320,7 @@
   }
   .pill .n {
     display: inline-block; min-width: 17px; padding: 0 5px; margin-left: 6px;
-    border-radius: 10px; font-size: 10px; line-height: 16px; text-align: center;
+    border-radius: 10px; font-size: calc(10px * var(--ts)); line-height: calc(16px * var(--ts)); text-align: center;
     font-weight: 700; background: rgba(0,0,0,.07);
   }
   /* the active pill is filled black, so its bubble inverts too */
@@ -294,7 +330,7 @@
   .sev-block:last-child { margin-bottom: 0; }
   .sev-title {
     display: flex; align-items: center; gap: 9px; margin-bottom: 9px;
-    font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+    font-size: calc(11px * var(--ts)); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
   }
   .sev-title::after { content: ''; flex: 1; height: 1px;
                       background: linear-gradient(90deg, var(--border), transparent); }
@@ -302,7 +338,7 @@
     font-weight: 700; color: var(--muted); letter-spacing: 0;
     min-width: 18px; padding: 1px 6px; border-radius: 9px;
     background: var(--surface); border: 1px solid var(--border);
-    font-size: 10px; text-align: center;
+    font-size: calc(10px * var(--ts)); text-align: center;
   }
   /* A rail carrying the same fill-vs-outline logic as the badges: solid for
      the two that warrant action, dashed then faint for the two that do not. */
@@ -326,11 +362,11 @@
     /* Sticky per table, so scrolling a long severity block keeps its own
        column headings rather than the first block's. */
     position: sticky; top: 0; z-index: 2;
-    text-align: left; padding: 7px 9px; font-size: 10px; font-weight: 700;
+    text-align: left; padding: 7px 9px; font-size: calc(10px * var(--ts)); font-weight: 700;
     text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
     background: var(--panel); border-bottom: 1px solid var(--border);
   }
-  td { padding: 9px; font-size: 12px; border-bottom: 1px solid rgba(0,0,0,.065); }
+  td { padding: 9px; font-size: calc(12px * var(--ts)); border-bottom: 1px solid rgba(0,0,0,.065); }
   tbody tr { cursor: pointer; }
   tbody tr td:first-child { position: relative; }
   /* The selected-row rail grows out of the hover rail rather than appearing
@@ -360,24 +396,24 @@
   .exploit {
     display: inline-block; margin-left: 6px; padding: 1px 5px;
     border: 1px solid var(--red); border-radius: 4px;
-    font-size: 8.5px; font-weight: 800; letter-spacing: .4px; color: var(--red);
+    font-size: calc(8.5px * var(--ts)); font-weight: 800; letter-spacing: .4px; color: var(--red);
     vertical-align: 1px;
   }
 
   .pager { display: flex; align-items: center; justify-content: space-between;
-           padding-top: 14px; font-size: 12px; color: var(--muted); }
+           padding-top: 14px; font-size: calc(12px * var(--ts)); color: var(--muted); }
   .pager button {
     padding: 5px 13px; background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: 7px;
-    font-size: 12px; font-weight: 600; cursor: pointer;
+    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer;
   }
   .pager button:disabled { opacity: .4; cursor: not-allowed; }
 
   .empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
-           height: 100%; gap: 9px; color: var(--muted); font-size: 13px; text-align: center;
+           height: 100%; gap: 9px; color: var(--muted); font-size: calc(13px * var(--ts)); text-align: center;
            padding: 30px 20px; }
   .empty svg { opacity: .22; }
-  .empty strong { color: var(--text); font-size: 13.5px; font-weight: 700; }
+  .empty strong { color: var(--text); font-size: calc(13.5px * var(--ts)); font-weight: 700; }
   .spinner {
     width: 20px; height: 20px; border: 2px solid var(--border);
     border-top-color: var(--red); border-radius: 50%;
@@ -407,7 +443,7 @@
     padding: 8px 18px; color: #ffffff; border: none; border-radius: var(--r-sm);
     background: linear-gradient(180deg, var(--red), var(--red-lo));
     box-shadow: var(--sh-red);
-    font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+    font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer; white-space: nowrap;
     transition: transform .14s var(--spring), box-shadow .14s var(--ease);
   }
   .go-patch:hover:not(:disabled) {
@@ -445,25 +481,25 @@
   }
   .stat.alert { color: var(--red); }
   .stat.alert::before { opacity: 1; }
-  .stat .v { font-size: 22px; font-weight: 800; line-height: 1.18;
+  .stat .v { font-size: calc(22px * var(--ts)); font-weight: 800; line-height: 1.18;
              letter-spacing: -.8px; color: var(--text); }
   .stat.alert .v { color: var(--red); }
-  .stat .v.sm { font-size: 13px; letter-spacing: -.1px; }
-  .stat .k { font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  .stat .v.sm { font-size: calc(13px * var(--ts)); letter-spacing: -.1px; }
+  .stat .k { font-size: calc(9px * var(--ts)); font-weight: 700; letter-spacing: .5px;
              text-transform: uppercase; color: var(--muted); margin-top: 4px; }
   .degraded { padding: 13px 16px; border-radius: var(--r); margin-bottom: 11px;
               background: var(--tint-r); border: 1px solid rgba(204,0,0,.22);
               border-left: 3px solid var(--red); }
-  .deg-title { font-size: 13px; font-weight: 800; color: var(--red);
+  .deg-title { font-size: calc(13px * var(--ts)); font-weight: 800; color: var(--red);
                display: flex; align-items: center; gap: 7px; }
   .deg-title::before {
     content: ''; width: 7px; height: 7px; border-radius: 50%;
     background: var(--red); box-shadow: 0 0 0 3px rgba(204,0,0,.18);
     flex-shrink: 0;
   }
-  .deg-sub { font-size: 11.5px; color: var(--text); opacity: .8; margin: 3px 0 9px; }
+  .deg-sub { font-size: calc(11.5px * var(--ts)); color: var(--text); opacity: .8; margin: 3px 0 9px; }
   .deg-row { display: grid; grid-template-columns: 160px 210px 1fr; gap: 10px;
-             font-size: 11.5px; padding: 3px 0; border-top: 1px solid var(--border); }
+             font-size: calc(11.5px * var(--ts)); padding: 3px 0; border-top: 1px solid var(--border); }
   .deg-step { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--red); }
   .deg-why  { color: var(--text); opacity: .85; }
   .deg-fix  { color: var(--muted); }
@@ -482,23 +518,23 @@
   .verdict.ok   { background: var(--tint-n); }
   .verdict.ok::before { background: var(--text); }
   .v-main { min-width: 0; }
-  .v-title { font-size: 14px; font-weight: 700; letter-spacing: -.2px; }
+  .v-title { font-size: calc(14px * var(--ts)); font-weight: 700; letter-spacing: -.2px; }
   .verdict.warn .v-title { color: var(--red); }
   .verdict.ok   .v-title { color: var(--text); }
-  .v-detail { font-size: 12px; color: var(--text); opacity: .85; margin-top: 3px; line-height: 1.5; }
+  .v-detail { font-size: calc(12px * var(--ts)); color: var(--text); opacity: .85; margin-top: 3px; line-height: 1.5; }
   .v-meta { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 10px;
             padding-top: 9px; border-top: 1px solid var(--border);
-            font-size: 11.5px; color: var(--text); }
-  .v-meta .k { display: block; font-size: 9px; font-weight: 700; letter-spacing: .6px;
+            font-size: calc(11.5px * var(--ts)); color: var(--text); }
+  .v-meta .k { display: block; font-size: calc(9px * var(--ts)); font-weight: 700; letter-spacing: .6px;
                text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
-  .note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
+  .note { font-size: calc(11px * var(--ts)); color: var(--muted); margin-top: 7px; line-height: 1.5; }
   /* Three outcomes, one accent colour. Fill vs outline does the work colour
      used to: solid red demands an action, outlined red reports a bad end
      state, plain white is the uneventful one. */
   /* inline-block + nowrap: a solid-filled badge that wraps paints its
      background once per line box, leaving the second word outside the fill. */
   .badge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
-           padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700;
+           padding: 3px 9px; border-radius: 20px; font-size: calc(10px * var(--ts)); font-weight: 700;
            letter-spacing: .1px; border: 1px solid transparent; }
   .badge::before {
     content: ''; width: 5px; height: 5px; border-radius: 50%;
@@ -520,10 +556,10 @@
      dashed edge is the tell, and survives the palette losing its third hue. */
   .badge.sim    { background: transparent; color: var(--red);
                   border: 1px dashed var(--red); margin-left: 6px; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(11px * var(--ts)); }
   .btn-approve, .btn-reject {
     padding: 4px 12px; border: 1px solid transparent; border-radius: var(--r-xs);
-    font-size: 11px; font-weight: 700; cursor: pointer; margin-right: 5px;
+    font-size: calc(11px * var(--ts)); font-weight: 700; cursor: pointer; margin-right: 5px;
     transition: transform .13s var(--spring), box-shadow .13s var(--ease),
                 background .13s var(--ease), color .13s var(--ease);
   }
@@ -539,8 +575,8 @@
     transform: translateY(0) scale(.97);
   }
   .btn-approve:disabled, .btn-reject:disabled { opacity: .4; cursor: not-allowed; }
-  .muted-sm { font-size: 11px; color: var(--muted); }
-  .err-sm   { font-size: 11px; color: var(--red); }
+  .muted-sm { font-size: calc(11px * var(--ts)); color: var(--muted); }
+  .err-sm   { font-size: calc(11px * var(--ts)); color: var(--red); }
   .desc { white-space: normal; }
   /* ---- risk meter ----
      A bare number cannot show how close a host came to the gate, which is
@@ -569,7 +605,7 @@
     background: var(--text);
     box-shadow: 0 0 0 1.5px var(--panel);
   }
-  .meter-val { font-weight: 700; font-size: 12px; min-width: 34px; text-align: right; }
+  .meter-val { font-weight: 700; font-size: calc(12px * var(--ts)); min-width: 34px; text-align: right; }
   .meter-val.over { color: var(--red); }
 
   /* Run progress. The width is the fraction of the execution's workflow nodes
@@ -598,12 +634,12 @@
   @keyframes sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
   .prog-meta {
     display: flex; align-items: baseline; gap: 10px; margin-top: 6px;
-    font-size: 10px; color: var(--muted);
+    font-size: calc(10px * var(--ts)); color: var(--muted);
   }
   .prog-step { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis;
                white-space: nowrap; }
   .prog-n { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .prog-err { margin-top: 5px; font-size: 10.5px; color: var(--red); }
+  .prog-err { margin-top: 5px; font-size: calc(10.5px * var(--ts)); color: var(--red); }
 
   /* ---- ROI ----------------------------------------------------------
      The page compares a measured thing against an assumed one, and the
@@ -621,10 +657,10 @@
     border-radius: var(--r); padding: 14px 16px 15px; box-shadow: var(--sh-1);
   }
   .roi-card > h3 {
-    font-size: 11px; font-weight: 800; letter-spacing: .5px;
+    font-size: calc(11px * var(--ts)); font-weight: 800; letter-spacing: .5px;
     text-transform: uppercase;
   }
-  .roi-card .sub { font-size: 11px; color: var(--muted); line-height: 1.5;
+  .roi-card .sub { font-size: calc(11px * var(--ts)); color: var(--muted); line-height: 1.5;
                    margin-top: 4px; }
 
   /* The caveat, not a footnote. Offline, the measured half of this page is
@@ -632,7 +668,7 @@
      a fabricated speed-up as a real one. */
   .roi-caveat {
     background: var(--tint-r); border: 1px solid var(--red);
-    border-radius: var(--r); padding: 11px 13px; font-size: 11.5px;
+    border-radius: var(--r); padding: 11px 13px; font-size: calc(11.5px * var(--ts));
     line-height: 1.55;
   }
   .roi-caveat b { color: var(--red); }
@@ -642,7 +678,7 @@
      minimum width would quietly flatter it. */
   .roi-bar + .roi-bar { margin-top: 13px; }
   .roi-bar-head { display: flex; align-items: baseline; gap: 10px;
-                  margin-bottom: 5px; font-size: 11px; }
+                  margin-bottom: 5px; font-size: calc(11px * var(--ts)); }
   .roi-bar-name { font-weight: 800; }
   .roi-bar-tot { margin-left: auto; font-weight: 700;
                  font-variant-numeric: tabular-nums; }
@@ -651,7 +687,7 @@
   .roi-seg {
     position: relative; min-width: 2px; height: 100%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 9.5px; font-weight: 700; color: #fff; white-space: nowrap;
+    font-size: calc(9.5px * var(--ts)); font-weight: 700; color: #fff; white-space: nowrap;
     overflow: hidden;
     animation: roigrow .5s var(--ease) both; animation-delay: calc(var(--i) * 60ms);
   }
@@ -662,7 +698,7 @@
   .roi-seg + .roi-seg { border-left: 1px solid rgba(255,255,255,.55); }
   @keyframes roigrow { from { transform: scaleX(0); transform-origin: left; } }
   .roi-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 11px; }
-  .roi-key { display: flex; align-items: center; gap: 6px; font-size: 10.5px;
+  .roi-key { display: flex; align-items: center; gap: 6px; font-size: calc(10.5px * var(--ts));
              color: var(--muted); }
   .roi-sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
   .roi-sw.man { background: var(--red); }
@@ -692,22 +728,22 @@
              margin-top: 10px; }
   .roi-exp > div { border: 1px solid var(--border); border-radius: var(--r-xs);
                    padding: 10px 12px; }
-  .roi-exp .t { font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  .roi-exp .t { font-size: calc(9px * var(--ts)); font-weight: 700; letter-spacing: .5px;
                 text-transform: uppercase; color: var(--muted); }
-  .roi-exp .v { font-size: 20px; font-weight: 800; letter-spacing: -.6px;
+  .roi-exp .v { font-size: calc(20px * var(--ts)); font-weight: 800; letter-spacing: -.6px;
                 margin-top: 3px; font-variant-numeric: tabular-nums; }
   .roi-exp .v.man { color: var(--red); }
-  .roi-exp .src { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .roi-exp .src { font-size: calc(10px * var(--ts)); color: var(--muted); margin-top: 2px; }
 
   /* Assumptions. A plain table, deliberately plainer than the charts: it is
      the part the reader is invited to disagree with, and dressing it up as
      a result would misrepresent what it is. */
   .roi-asm { width: 100%; margin-top: 9px; }
-  .roi-asm td { padding: 5px 0; font-size: 11px;
+  .roi-asm td { padding: 5px 0; font-size: calc(11px * var(--ts));
                 border-bottom: 1px solid var(--border); }
   .roi-asm td:last-child { text-align: right; font-weight: 700;
                            font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .roi-asm .k { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+  .roi-asm .k { font-family: var(--mono); font-size: calc(9.5px * var(--ts)); color: var(--muted); }
 
   /* The sliders. Deliberately at the top of the page rather than buried
      under the charts: the first thing this page should say is that its
@@ -719,8 +755,8 @@
             gap: 9px 20px; margin-top: 11px; }
   .roi-sl > div { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px;
                   align-items: center; }
-  .roi-sl .n { font-size: 10.5px; color: var(--muted); }
-  .roi-sl .val { font-size: 11.5px; font-weight: 800; text-align: right;
+  .roi-sl .n { font-size: calc(10.5px * var(--ts)); color: var(--muted); }
+  .roi-sl .val { font-size: calc(11.5px * var(--ts)); font-weight: 800; text-align: right;
                  font-variant-numeric: tabular-nums; white-space: nowrap; }
   .roi-sl .val.edited { color: var(--red); }
   .roi-sl input { grid-column: 1 / -1; width: 100%; height: 16px; margin: 0;
@@ -730,14 +766,14 @@
 
   /* The range under the headline figure. Same weight as the number it
      qualifies would drown it; much lighter would make it decorative. */
-  .roi-range { font-size: 10px; color: var(--muted); margin-top: 2px;
+  .roi-range { font-size: calc(10px * var(--ts)); color: var(--muted); margin-top: 2px;
                font-variant-numeric: tabular-nums; }
 
   /* Break-even. One sentence doing more work than any chart on the page, so
      it gets the emphasis of a quote rather than the furniture of a stat. */
   .roi-be { margin-top: 10px; padding: 11px 13px; background: var(--surface);
-            border-radius: var(--r-xs); font-size: 12px; line-height: 1.55; }
-  .roi-be b { font-size: 14px; }
+            border-radius: var(--r-xs); font-size: calc(12px * var(--ts)); line-height: 1.55; }
+  .roi-be b { font-size: calc(14px * var(--ts)); }
   .roi-be + .roi-be { margin-top: 7px; }
 
   /* Lifetime and payback share a compact figure row. */
@@ -745,11 +781,11 @@
               grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
   .roi-grid > div { border: 1px solid var(--border); border-radius: var(--r-xs);
                     padding: 9px 11px; }
-  .roi-grid .v { font-size: 17px; font-weight: 800; letter-spacing: -.5px;
+  .roi-grid .v { font-size: calc(17px * var(--ts)); font-weight: 800; letter-spacing: -.5px;
                  font-variant-numeric: tabular-nums; }
   .roi-grid .v.man { color: var(--red); }
-  .roi-grid .v.sm { font-size: 12.5px; letter-spacing: 0; }
-  .roi-grid .t { font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  .roi-grid .v.sm { font-size: calc(12.5px * var(--ts)); letter-spacing: 0; }
+  .roi-grid .t { font-size: calc(9px * var(--ts)); font-weight: 700; letter-spacing: .5px;
                  text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
 
   /* Payback progress. Black fill on a plain track: this is progress toward a
@@ -761,7 +797,7 @@
 
   /* Verdict chips against a policy deadline. Red is a missed deadline, which
      is exactly the consequential meaning this palette reserves it for. */
-  .roi-chip { display: inline-block; font-size: 9.5px; font-weight: 800;
+  .roi-chip { display: inline-block; font-size: calc(9.5px * var(--ts)); font-weight: 800;
               letter-spacing: .4px; text-transform: uppercase; padding: 2px 7px;
               border-radius: 99px; margin-top: 6px; }
   .roi-chip.ok { background: var(--text); color: #fff; }
@@ -770,7 +806,12 @@
   /* ---- split donut ----
      review vs auto as one shape. Two numbers in two boxes do not show a
      proportion; this does, and it is the shape of the decision being made. */
-  .donut { position: relative; width: 78px; height: 78px; flex-shrink: 0; }
+  /* The one place the box scales with the text rather than letting the text
+     grow into it. Every other fixed-size thing on the page holds an icon or a
+     single digit; this ring is a container for its own word, and at a fixed
+     78px "REVIEW" spills over the stroke at Large. */
+  .donut { position: relative; width: calc(78px * var(--ts)); height: calc(78px * var(--ts));
+           flex-shrink: 0; }
   .donut::before {
     content: ''; position: absolute; inset: 0; border-radius: 50%;
     background: conic-gradient(var(--red) var(--pct), var(--tint-n) 0);
@@ -783,9 +824,9 @@
     position: absolute; inset: 0; display: grid; place-content: center;
     text-align: center; line-height: 1.1;
   }
-  .donut .mid b { font-size: 19px; font-weight: 800; letter-spacing: -.6px;
+  .donut .mid b { font-size: calc(19px * var(--ts)); font-weight: 800; letter-spacing: -.6px;
                   font-variant-numeric: tabular-nums; }
-  .donut .mid span { font-size: 8.5px; font-weight: 700; letter-spacing: .5px;
+  .donut .mid span { font-size: calc(8.5px * var(--ts)); font-weight: 700; letter-spacing: .5px;
                      text-transform: uppercase; color: var(--muted); }
 
   /* ---- stage progression ----
@@ -813,7 +854,7 @@
                 color .28s var(--ease), box-shadow .28s var(--ease);
   }
   .stage-label {
-    font-size: 11px; font-weight: 700; letter-spacing: -.1px;
+    font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: -.1px;
     color: var(--muted); white-space: nowrap;
     transition: color .28s var(--ease);
   }
@@ -864,7 +905,7 @@
     display: inline-flex; align-items: center; gap: 6px; flex: none;
     margin-left: auto; padding: 4px 10px 4px 8px; border-radius: 20px;
     border: 1px solid var(--border); background: var(--surface);
-    font-size: 10px; font-weight: 800; letter-spacing: .5px;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: .5px;
     text-transform: uppercase; color: var(--muted); white-space: nowrap;
   }
   .run-state::before {
@@ -936,7 +977,7 @@
 
   .arch-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 9px;
                  padding-top: 9px; border-top: 1px solid var(--border);
-                 font-size: 9.5px; color: var(--muted); }
+                 font-size: calc(9.5px * var(--ts)); color: var(--muted); }
   .arch-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .arch-legend i { width: 14px; height: 0; border-top: 1.4px solid currentColor;
                    flex: none; }
@@ -950,7 +991,7 @@
   .trace { margin-top: 20px; }
   .trace-k, .side-k {
     display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
-    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px;
     text-transform: uppercase; color: var(--muted);
   }
   .trace-k::after, .side-k::after { content: ''; flex: 1; height: 1px;
@@ -960,7 +1001,7 @@
   .trace-log {
     padding: 11px 13px; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r);
-    font-family: var(--mono); font-size: 10.5px; line-height: 1.75;
+    font-family: var(--mono); font-size: calc(10.5px * var(--ts)); line-height: 1.75;
     color: var(--muted); max-height: 260px; overflow-y: auto;
   }
   /* Two columns, so the calls line up and the log reads as a sequence rather
@@ -977,7 +1018,7 @@
   .t-arrow { color: var(--muted); margin: 0 5px; }
   /* Idle, this explains what pressing Assess is about to set off, which is
      more use than an empty box. */
-  .trace-idle { font-size: 11px; line-height: 1.6; color: var(--muted);
+  .trace-idle { font-size: calc(11px * var(--ts)); line-height: 1.6; color: var(--muted);
                 font-family: inherit; }
 
   /* ---- toasts ----
@@ -989,12 +1030,12 @@
     display: flex; align-items: center; gap: 9px;
     padding: 11px 15px; border-radius: var(--r);
     background: var(--accent); color: var(--bg); box-shadow: var(--sh-3);
-    font-size: 12.5px; font-weight: 600; max-width: 360px;
+    font-size: calc(12.5px * var(--ts)); font-weight: 600; max-width: 360px;
     animation: toastin .3s var(--spring) both;
   }
   .toast.bad { background: linear-gradient(180deg, var(--red), var(--red-lo)); }
   .toast.out { animation: toastout .25s var(--ease) both; }
-  .toast b { font-family: var(--mono); font-size: 11.5px; font-weight: 700; }
+  .toast b { font-family: var(--mono); font-size: calc(11.5px * var(--ts)); font-weight: 700; }
   @keyframes toastin  { from { opacity: 0; transform: translateY(12px) scale(.96); } }
   @keyframes toastout { to   { opacity: 0; transform: translateX(16px); } }
 
@@ -1003,7 +1044,7 @@
     display: grid; place-items: center; width: 34px; height: 34px;
     background: var(--panel); color: var(--muted);
     border: 1px solid var(--border); border-radius: 11px;
-    font-size: 13px; cursor: pointer; flex-shrink: 0; box-shadow: var(--sh-1);
+    font-size: calc(13px * var(--ts)); cursor: pointer; flex-shrink: 0; box-shadow: var(--sh-1);
     transition: color .15s var(--ease), border-color .15s var(--ease),
                 transform .25s var(--spring), box-shadow .15s var(--ease);
   }
@@ -1039,10 +1080,10 @@
     display: flex; align-items: center; gap: 10px; flex-shrink: 0;
     padding: 14px 18px; border-bottom: 1px solid var(--border);
   }
-  .drawer-head h2 { font-size: 15px; font-weight: 700; }
+  .drawer-head h2 { font-size: calc(15px * var(--ts)); font-weight: 700; }
   .drawer-head .icon-btn { margin-left: auto; }
   .drawer-note {
-    flex-shrink: 0; padding: 11px 18px; font-size: 11.5px; line-height: 1.6;
+    flex-shrink: 0; padding: 11px 18px; font-size: calc(11.5px * var(--ts)); line-height: 1.6;
     color: var(--muted); background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
@@ -1061,20 +1102,20 @@
      Read off a laptop while talking to a room, so: one column, generous
      leading, and the line to actually say set apart from the thing to click.
      A presenter glancing down needs to find their place in under a second. */
-  .guide { font-size: 13px; line-height: 1.65; color: var(--text); }
+  .guide { font-size: calc(13px * var(--ts)); line-height: 1.65; color: var(--text); }
   .guide > section { margin-top: 26px; }
   .guide > section:first-child { margin-top: 14px; }
   .guide h3 {
-    font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
     color: var(--muted); display: flex; align-items: center; gap: 9px; margin-bottom: 11px;
   }
   .guide h3::after { content: ''; flex: 1; height: 1px; background: var(--border); }
   .guide p { margin: 9px 0; }
-  .guide p.lede { font-size: 14px; }
+  .guide p.lede { font-size: calc(14px * var(--ts)); }
   .guide ul { margin: 9px 0; padding-left: 18px; }
   .guide li { margin: 5px 0; }
   .guide code {
-    font-family: var(--mono); font-size: 11.5px; background: var(--surface);
+    font-family: var(--mono); font-size: calc(11.5px * var(--ts)); background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r-xs); padding: 1px 5px;
   }
   .guide strong { font-weight: 700; }
@@ -1084,7 +1125,7 @@
   .g-pitch {
     padding: 15px 17px; border-radius: var(--r-sm); background: var(--surface);
     border: 1px solid var(--border); border-left: 3px solid var(--text);
-    font-size: 14px; line-height: 1.6;
+    font-size: calc(14px * var(--ts)); line-height: 1.6;
   }
 
   .g-beat { display: grid; grid-template-columns: 26px 1fr; gap: 0 13px;
@@ -1094,20 +1135,20 @@
     width: 26px; height: 26px; border-radius: 50%; margin-top: 1px;
     border: 1px solid var(--border); background: var(--surface);
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--muted);
+    font-family: var(--mono); font-size: calc(11px * var(--ts)); font-weight: 700; color: var(--muted);
   }
-  .g-beat h4 { font-size: 13.5px; font-weight: 700; display: flex;
+  .g-beat h4 { font-size: calc(13.5px * var(--ts)); font-weight: 700; display: flex;
                align-items: baseline; gap: 9px; }
-  .g-beat h4 .t { margin-left: auto; font-family: var(--mono); font-size: 10.5px;
+  .g-beat h4 .t { margin-left: auto; font-family: var(--mono); font-size: calc(10.5px * var(--ts));
                   font-weight: 600; color: var(--muted); letter-spacing: .3px; }
   .g-beat > div:last-child { min-width: 0; }
 
   /* Do and Say are different jobs and get read at different moments — the
      one before you speak, the other while you are speaking. */
   .g-do, .g-say { display: grid; grid-template-columns: 34px 1fr; gap: 9px;
-                  margin-top: 9px; font-size: 12.5px; line-height: 1.6; }
+                  margin-top: 9px; font-size: calc(12.5px * var(--ts)); line-height: 1.6; }
   .g-do  > b, .g-say > b {
-    font-size: 9px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase;
+    font-size: calc(9px * var(--ts)); font-weight: 800; letter-spacing: .8px; text-transform: uppercase;
     color: var(--muted); padding-top: 3px;
   }
   .g-say > span {
@@ -1115,13 +1156,13 @@
   }
   .g-say em { font-style: italic; }
 
-  .g-why { margin-top: 8px; margin-left: 43px; font-size: 11.5px;
+  .g-why { margin-top: 8px; margin-left: 43px; font-size: calc(11.5px * var(--ts));
            line-height: 1.6; color: var(--muted); }
 
   .g-qa { border-top: 1px solid var(--border); padding: 11px 0; }
   .g-qa:last-child { border-bottom: 1px solid var(--border); }
-  .g-qa b { display: block; font-size: 12.5px; font-weight: 700; }
-  .g-qa span { display: block; margin-top: 4px; font-size: 12.5px;
+  .g-qa b { display: block; font-size: calc(12.5px * var(--ts)); font-weight: 700; }
+  .g-qa span { display: block; margin-top: 4px; font-size: calc(12.5px * var(--ts));
                line-height: 1.6; color: var(--muted); }
 
   /* Red here is doing what red does everywhere else on this page: marking
@@ -1136,13 +1177,13 @@
   .ghost-btn {
     padding: 8px 14px; background: transparent; color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
-    font-size: 12px; font-weight: 600; cursor: pointer;
+    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer;
   }
   .ghost-btn:hover { border-color: var(--accent); }
-  button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: 12px; }
+  button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: calc(12px * var(--ts)); }
   .set-group {
     margin-top: 18px; margin-bottom: 7px;
-    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px;
     text-transform: uppercase; color: var(--muted);
     display: flex; align-items: center; gap: 9px;
   }
@@ -1152,17 +1193,17 @@
     align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border);
   }
   .set-row.changed { box-shadow: inset 3px 0 0 var(--red); padding-left: 10px; }
-  .set-name { font-size: 12.5px; font-weight: 600; }
+  .set-name { font-size: calc(12.5px * var(--ts)); font-weight: 600; }
   .set-key {
-    font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    font-family: ui-monospace, Menlo, monospace; font-size: calc(10px * var(--ts));
     color: var(--muted); margin-left: 6px;
   }
-  .set-help { grid-column: 1 / -1; font-size: 11px; line-height: 1.5;
+  .set-help { grid-column: 1 / -1; font-size: calc(11px * var(--ts)); line-height: 1.5;
               color: var(--muted); margin-top: -4px; }
   .set-row input[type=text], .set-row select {
     width: 100%; padding: 7px 10px; background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: 7px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(12px * var(--ts));
   }
   .set-row input:disabled { color: var(--muted); cursor: not-allowed; }
   .set-row input:focus, .set-row select:focus {
@@ -1183,17 +1224,38 @@
   .set-toggle[aria-checked=true] { background: var(--red); border-color: var(--red); }
   .set-toggle[aria-checked=true]::after { left: 22px; background: #ffffff; }
   .set-src {
-    font-size: 9px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    font-size: calc(9px * var(--ts)); font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
     padding: 1px 6px; border-radius: 5px; margin-left: 6px;
     border: 1px solid var(--border); color: var(--muted);
   }
   .set-src.env      { border-color: var(--muted); color: var(--text); }
   .set-src.override { border-color: var(--red); color: var(--red); }
 
+  /* Text size. A segmented control rather than a select, because the whole
+     point is to try one and see — a dropdown hides two of the three options
+     behind a click and closes over the page you are judging. */
+  .seg { display: flex; border: 1px solid var(--border); border-radius: var(--r-sm);
+         background: var(--surface); padding: 2px; gap: 2px; }
+  .seg button {
+    flex: 1; padding: 6px 4px; border: none; border-radius: 7px; cursor: pointer;
+    background: transparent; color: var(--muted);
+    font-family: inherit; font-size: calc(11.5px * var(--ts)); font-weight: 700;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] {
+    background: var(--panel); color: var(--text); box-shadow: var(--sh-1);
+  }
+  /* Each label is set at the size it selects, so the control is its own
+     preview — you can see the difference before committing to it. */
+  .seg button[data-ts="s"] { font-size: calc(11.5px * 1); }
+  .seg button[data-ts="m"] { font-size: calc(11.5px * 1.1); }
+  .seg button[data-ts="l"] { font-size: calc(11.5px * 1.24); }
+
   @media (max-width: 860px) { .frames { grid-template-columns: 1fr; }
                               .stats { grid-template-columns: repeat(3, 1fr); }
                               .verdict { grid-template-columns: 1fr; }
-                              .pipe-label { font-size: 8.5px; }
+                              .pipe-label { font-size: calc(8.5px * var(--ts)); }
                               .set-row { grid-template-columns: 1fr; } }
 
   /* Everything above that moves is decoration over a state that is also
@@ -1205,6 +1267,15 @@
     }
   }
 </style>
+<script>
+  // Before first paint, on purpose: applied from the main script instead,
+  // the whole console would render at medium and then jump. localStorage
+  // throws in some privacy modes, so the default survives it failing.
+  try {
+    const t = localStorage.getItem('ap-text-size');
+    if (t === 's' || t === 'm' || t === 'l') document.documentElement.dataset.ts = t;
+  } catch (e) { /* default stands */ }
+</script>
 </head>
 <body>
 
@@ -1268,6 +1339,9 @@
             <li>Reset to a clean slate between runs: <code>rm -f runs/simulated.json</code>, then reload.</li>
             <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-demo — it
                 does not disturb the run.</li>
+            <li>On a projector, set <strong>Text size</strong> to Large in the gear panel.
+                It is a browser setting — nothing is sent to the server and nobody
+                else's view changes.</li>
             <li>Budget <strong>10 minutes</strong> for the seven beats below, plus questions.
                 The short version is beats 1, 2, 4 and 6.</li>
           </ul>
@@ -1488,8 +1562,26 @@
       only — they are lost on restart. <code>.env</code> is the durable place.
       Fields show their built-in default until something overrides them.
     </div>
-    <div class="drawer-body" id="settings-body">
-      <div class="empty"><div class="spinner"></div><span>Loading settings…</span></div>
+    <div class="drawer-body">
+      <!-- Outside #settings-body, which renderSettings() empties on every
+           load. This one belongs to the browser, not to the process, so it
+           must not come and go with a fetch that can fail. -->
+      <div class="set-group">Display</div>
+      <div class="set-row">
+        <div class="set-name">Text size<span class="set-key">this browser only</span></div>
+        <div class="seg" id="text-size" role="group" aria-label="Text size">
+          <button type="button" data-ts="s">Small</button>
+          <button type="button" data-ts="m">Medium</button>
+          <button type="button" data-ts="l">Large</button>
+        </div>
+        <div class="set-help">Applies the moment you pick it and is remembered in
+          this browser. Nothing is sent to the server and nobody else's view
+          changes. Small is what the console looked like before this existed.</div>
+      </div>
+
+      <div id="settings-body">
+        <div class="empty"><div class="spinner"></div><span>Loading settings…</span></div>
+      </div>
     </div>
     <div class="drawer-foot">
       <span class="muted-sm" id="settings-msg"></span>
@@ -1623,7 +1715,7 @@ const emptyState = (title, sub) => `<div class="empty">
     <rect x="7" y="9" width="34" height="30" rx="4"></rect>
     <path d="M7 18h34M14 26h9M14 32h16"></path>
   </svg>
-  <strong>${esc(title)}</strong>${sub ? `<span style="font-size:11.5px">${esc(sub)}</span>` : ''}
+  <strong>${esc(title)}</strong>${sub ? `<span style="font-size:calc(11.5px * var(--ts))">${esc(sub)}</span>` : ''}
 </div>`;
 
 function show(msg, kind) {
@@ -3522,6 +3614,25 @@ async function postSettings(payload) {
   loadCves(0);
   return d.changed || [];
 }
+
+// ---- text size ------------------------------------------------------------
+// A browser preference, not a process setting: it never goes near
+// /api/settings, so it survives a restart and does not change what anyone
+// else sees. The head script has already applied it by the time this runs —
+// all this does is keep the buttons in step and write the choice down.
+function setTextSize(t) {
+  document.documentElement.dataset.ts = t;
+  try { localStorage.setItem('ap-text-size', t); } catch (e) { /* session only */ }
+  for (const b of document.querySelectorAll('#text-size button')) {
+    b.setAttribute('aria-pressed', String(b.dataset.ts === t));
+  }
+}
+
+document.getElementById('text-size').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) setTextSize(b.dataset.ts);
+});
+setTextSize(document.documentElement.dataset.ts || 'm');
 
 function openSettings() {
   document.getElementById('settings-scrim').hidden = false;

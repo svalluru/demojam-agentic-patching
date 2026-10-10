@@ -192,6 +192,32 @@ write-only: the panel never reads them back, and leaving one blank keeps the
 current value. `BACKEND_HOST` / `BACKEND_PORT` are shown but not editable; the
 socket is already open by the time the panel can reach the process.
 
+### Text size
+
+The one row in that panel that is not a process setting. **Display → Text size**
+offers Small, Medium (the default) and Large, and it belongs to the browser: it
+goes nowhere near `/api/settings`, survives a restart of the backend, and
+changes nothing for anyone else looking at the same console. Small is exactly
+what the console was before the control existed.
+
+It works by one custom property. Every `font-size` on the page is written
+`calc(Npx * var(--ts))`, and `--ts` is `1` / `1.1` / `1.24`, so the whole type
+scale moves together and keeps its proportions. Padding and borders deliberately
+do not scale — at Large the text grows into whitespace that was already there,
+which is what somebody asking for bigger text is asking for.
+
+Two sets of labels opt out: the architecture diagram's node text and the ROI
+chart's axis and bar labels. Those are drawn inside an SVG `viewBox`, where a
+px is a share of the drawing rather than a size on screen — scaling them pushes
+the text out of boxes that stayed the same width. `ANSIBLE ORCH` overflows its
+node at Large; the diagram already grows with the panel it sits in.
+
+The choice is applied by a small script in `<head>`, before first paint, rather
+than from the main script at the bottom — otherwise the console renders at
+medium and visibly jumps. It is stored in `localStorage` under
+`ap-text-size`, and a privacy mode that refuses to store it falls back to the
+default rather than failing.
+
 ### Demo guide
 
 The book icon beside the gear opens the run of show: a seven-beat script with
