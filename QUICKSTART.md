@@ -75,7 +75,21 @@ below the threshold, so there is no approval gate anywhere downstream of them.
 The button reads **Patch 2 hosts** and stays red, because that press is the
 only human check these hosts get — nothing stops to ask again.
 
-**3 — The run history**
+**3 — What the run saved**
+
+With either walkthrough still on screen, click **Calculate ROI**. It takes this
+run's own numbers — how many hosts, how many stopped for a person, how long
+each one took — and costs the same work out by hand.
+
+Read the red banner at the top of that page before the big numbers. Offline the
+timings come from `DEMO_LATENCY` rather than from patching anything, so the
+speed figures are illustrative; the labour and cost comparison does not depend
+on them. The manual side is not measured either and never can be from here, so
+every assumption behind it is listed at the bottom of the page. Change one in
+the gear panel and press the button again — if you think 15 minutes of change
+prep per host is generous, put your own number in and see what is left.
+
+**4 — The run history**
 
 Click **Patch runs** at the top of the right-hand panel to see everything from
 both walkthroughs, newest first.
@@ -88,7 +102,7 @@ thing once you are past the banner.
 | | |
 |---|---|
 | Real | The agent logic, the control flow, the approval gate, the risk threshold and routing rules, the patch plan format, the workflow step sequence |
-| Not real | The CVEs, the hostnames, the risk scores, the patch history text, the workflow executions |
+| Not real | The CVEs, the hostnames, the risk scores, the patch history text, the workflow executions, the manual baseline the ROI page compares against |
 
 **Nothing is patched and no host exists.** The workflow runs are resolved
 inside this process. They do not appear in Ansible Orchestrator and never

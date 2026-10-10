@@ -614,6 +614,110 @@
   .prog-n { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
   .prog-err { margin-top: 5px; font-size: 10.5px; color: var(--red); }
 
+  /* ---- ROI ----------------------------------------------------------
+     The page compares a measured thing against an assumed one, and the
+     whole design problem is keeping those legible as different kinds of
+     claim rather than blending them into one confident number.
+
+     Red carries the manual path throughout. Not decoration, and not an
+     arbitrary pick between the two colours available: the manual path is
+     the expensive, slow, still-exposed one, which is what this palette
+     reserves red for. Black carries the automated path, as it carries
+     every other ordinary state. */
+  .roi { display: grid; gap: 14px; }
+  .roi-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 14px 16px 15px; box-shadow: var(--sh-1);
+  }
+  .roi-card > h3 {
+    font-size: 11px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .roi-card .sub { font-size: 11px; color: var(--muted); line-height: 1.5;
+                   margin-top: 4px; }
+
+  /* The caveat, not a footnote. Offline, the measured half of this page is
+     DEMO_LATENCY rather than work, and a reader who misses that is reading
+     a fabricated speed-up as a real one. */
+  .roi-caveat {
+    background: var(--tint-r); border: 1px solid var(--red);
+    border-radius: var(--r); padding: 11px 13px; font-size: 11.5px;
+    line-height: 1.55;
+  }
+  .roi-caveat b { color: var(--red); }
+
+  /* Stacked effort bars. Both tracks scale against the same total, so the
+     automated bar being a sliver is the measurement — giving it a readable
+     minimum width would quietly flatter it. */
+  .roi-bar + .roi-bar { margin-top: 13px; }
+  .roi-bar-head { display: flex; align-items: baseline; gap: 10px;
+                  margin-bottom: 5px; font-size: 11px; }
+  .roi-bar-name { font-weight: 800; }
+  .roi-bar-tot { margin-left: auto; font-weight: 700;
+                 font-variant-numeric: tabular-nums; }
+  .roi-track { display: flex; height: 26px; border-radius: var(--r-xs);
+               overflow: hidden; background: var(--surface); }
+  .roi-seg {
+    position: relative; min-width: 2px; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9.5px; font-weight: 700; color: #fff; white-space: nowrap;
+    overflow: hidden;
+    animation: roigrow .5s var(--ease) both; animation-delay: calc(var(--i) * 60ms);
+  }
+  /* One hue carries four segments, so they step down in opacity and a
+     hairline separates adjacent ones. The legend repeats the same steps. */
+  .roi-seg.man { background: var(--red); }
+  .roi-seg.aut { background: var(--text); }
+  .roi-seg + .roi-seg { border-left: 1px solid rgba(255,255,255,.55); }
+  @keyframes roigrow { from { transform: scaleX(0); transform-origin: left; } }
+  .roi-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 11px; }
+  .roi-key { display: flex; align-items: center; gap: 6px; font-size: 10.5px;
+             color: var(--muted); }
+  .roi-sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .roi-sw.man { background: var(--red); }
+  .roi-sw.aut { background: var(--text); }
+
+  /* Line chart. The viewBox keeps type proportional as the card resizes. */
+  .roi-chart { display: block; width: 100%; height: auto; margin-top: 4px; }
+  .roi-chart .grid { stroke: var(--border); stroke-width: 1; }
+  .roi-chart .axis { fill: var(--muted); font-size: 10px; }
+  .roi-chart .gap { fill: var(--tint-r); }
+  .roi-chart .ln { fill: none; stroke-width: 2.5; stroke-linejoin: round;
+                   stroke-linecap: round; }
+  .roi-chart .ln.man { stroke: var(--red); }
+  .roi-chart .ln.aut { stroke: var(--text); }
+  .roi-chart .mk { stroke: var(--text); stroke-width: 1; stroke-dasharray: 3 3;
+                   opacity: .45; }
+  .roi-chart .dot { stroke: var(--panel); stroke-width: 2; }
+  .roi-chart .dot.man { fill: var(--red); }
+  .roi-chart .dot.aut { fill: var(--text); }
+  .roi-chart .lbl { font-size: 10px; font-weight: 800; }
+  .roi-chart .lbl.man { fill: var(--red); }
+  .roi-chart .lbl.aut { fill: var(--text); }
+
+  /* Exposure is two durations rather than a chart, on purpose — see the
+     comment where it is built. */
+  .roi-exp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+             margin-top: 10px; }
+  .roi-exp > div { border: 1px solid var(--border); border-radius: var(--r-xs);
+                   padding: 10px 12px; }
+  .roi-exp .t { font-size: 9px; font-weight: 700; letter-spacing: .5px;
+                text-transform: uppercase; color: var(--muted); }
+  .roi-exp .v { font-size: 20px; font-weight: 800; letter-spacing: -.6px;
+                margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .roi-exp .v.man { color: var(--red); }
+  .roi-exp .src { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* Assumptions. A plain table, deliberately plainer than the charts: it is
+     the part the reader is invited to disagree with, and dressing it up as
+     a result would misrepresent what it is. */
+  .roi-asm { width: 100%; margin-top: 9px; }
+  .roi-asm td { padding: 5px 0; font-size: 11px;
+                border-bottom: 1px solid var(--border); }
+  .roi-asm td:last-child { text-align: right; font-weight: 700;
+                           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .roi-asm .k { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+
   /* ---- split donut ----
      review vs auto as one shape. Two numbers in two boxes do not show a
      proportion; this does, and it is the shape of the decision being made. */
@@ -962,6 +1066,10 @@
         <button class="pill" id="head-back" hidden>&larr; CVE list</button>
         <button class="pill view-toggle" id="view-runs">Patch runs</button>
         <button class="pill" id="head-refresh" hidden>Refresh</button>
+        <!-- Neutral, not red: working out what the run saved changes nothing
+             and costs nothing, so it does not get the colour reserved for
+             actions with consequences. -->
+        <button class="pill" id="head-roi" hidden>Calculate ROI</button>
         <!-- Label is set from the plan by dispatchAction(); this is placeholder
              text that is never shown, since the button is hidden until then. -->
         <button class="go-patch" id="head-patch" hidden>Dispatch</button>
@@ -1088,21 +1196,38 @@ function rows(list) {
       </tr>`).join('')}</tbody></table>`;
 }
 
-// The right frame hosts three different views. Each declares the whole head
-// it wants — title, subject and which controls apply — so the filters cannot
-// outlive the table they filter and the actions all land on one baseline.
-function frameHead({ title, sub = '', pills = false, back = false,
-                     refresh = false, patch = false }) {
+// The right frame hosts several views. Each declares the whole head it wants
+// — title, subject and which controls apply — so the filters cannot outlive
+// the table they filter and the actions all land on one baseline.
+//
+// `back` names where back goes, because it is no longer always the CVE list:
+// the ROI view is reached from the remediation and has to return there.
+function frameHead({ title, sub = '', pills = false, back = null,
+                     refresh = false, patch = false, roi = false }) {
   document.getElementById('frame-title').textContent = title;
   const s = document.getElementById('frame-sub');
   s.innerHTML = sub;
   s.hidden = !sub;
   document.getElementById('pills').hidden = !pills;
   document.getElementById('head-sep').hidden = !pills;
-  document.getElementById('head-back').hidden = !back;
+  const b = document.getElementById('head-back');
+  b.hidden = !back;
+  if (back) {
+    b.innerHTML = `&larr; ${esc(back.label)}`;
+    b.onclick = back.go;
+  }
   document.getElementById('head-refresh').hidden = !refresh;
   document.getElementById('head-patch').hidden = !patch;
+  document.getElementById('head-roi').hidden = !roi;
 }
+
+// The two destinations back can have. Named so a view asks for one by
+// meaning rather than repeating the callback.
+const BACK_CVES = { label: 'CVE list', go: () => render() };
+// renderPatch fills #patch-body, which only exists once renderPlan has laid
+// the frame out, so coming back has to rebuild both halves.
+const BACK_PATCH = { label: 'Remediation',
+                     go: () => { renderPlan(patchState); renderPatch(patchState); } };
 
 function render() {
   frameHead({ title: 'CVEs', pills: true });
@@ -1433,7 +1558,7 @@ function renderPlan(s) {
     title: 'Patch plan',
     sub: `<span class="cve-id">${cveLabel(plan.cve_id)}</span>`
        + `<span>${esc(plan.hosts_total)} host(s) assessed</span>`,
-    back: true, patch: true,
+    back: BACK_CVES, patch: true,
   });
   renderStages(s);
   const pb = document.getElementById('head-patch');
@@ -1649,7 +1774,7 @@ function renderPatch(s) {
     title: 'Remediation',
     sub: `<span class="cve-id">${cveLabel(plan.cve_id || '')}</span>`
        + `<span>${esc((s.patch || {}).results?.length || 0)} host(s) dispatched</span>`,
-    back: true, patch: true,
+    back: BACK_CVES, patch: true, roi: true,
   });
   // Every host already has a workflow run; pressing it again would start a
   // second one per host, so the primary action retires once it has fired.
@@ -1865,6 +1990,263 @@ const ago = iso => {
   return `${Math.floor(s / 86400)}d ago`;
 };
 
+// ======================================================================
+// ROI
+//
+// What the run cost against what the same work costs by hand. Two kinds of
+// number share this view and the layout exists to keep them apart: what this
+// run measured, and a manual baseline nobody measured and nobody here can —
+// the manual run never happened. So the assumptions are listed in full, each
+// one named by the setting that changes it, and every figure resting on them
+// says so. A reader who disagrees with the conclusion should be able to find
+// the input they disagree with inside a few seconds.
+// ======================================================================
+
+const money = (cur, n) => `${cur}${Math.round(n).toLocaleString()}`;
+
+// Minutes to "4h 30m". Past an hour the minutes stop mattering to the
+// argument, so they are dropped rather than padded out.
+function fmtMin(m) {
+  const h = Math.floor(m / 60), r = Math.round(m % 60);
+  if (!h) return `${Math.round(m)}m`;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+const fmtSec = s => s === null || s === undefined ? '—'
+  : s < 90 ? `${s < 10 ? s.toFixed(1) : Math.round(s)}s` : fmtMin(s / 60);
+
+// Both paths drawn against one scale, and that scale is the larger total.
+// Two independently-scaled bars would each fill their track and the
+// comparison — the only reason the chart exists — would vanish.
+function roiBars(roi) {
+  const max = Math.max(roi.manual.minutes, roi.auto.minutes) || 1;
+  const bar = (name, cls, total, breakdown) => {
+    const segs = Object.entries(breakdown).filter(([, m]) => m > 0);
+    const body = segs.map(([label, m], i) => {
+      const pct = m / max * 100;
+      return `<span class="roi-seg ${cls}" style="width:${pct}%;--i:${i};`
+           + `opacity:${(1 - i * 0.16).toFixed(2)}"`
+           + ` title="${esc(label)} — ${esc(fmtMin(m))}">`
+           // Only labelled in place when the segment can hold the text;
+           // otherwise it is in the legend and the tooltip.
+           + `${pct > 13 ? esc(fmtMin(m)) : ''}</span>`;
+    }).join('') || '<span class="roi-seg" style="width:0"></span>';
+    return `<div class="roi-bar">
+      <div class="roi-bar-head"><span class="roi-bar-name">${esc(name)}</span>
+        <span class="roi-bar-tot">${esc(fmtMin(total))} &middot; ${esc(money(roi.currency, total / 60 * roi.rate))}</span>
+      </div>
+      <div class="roi-track">${body}</div>
+    </div>`;
+  };
+  const keys = (cls, breakdown) => Object.entries(breakdown)
+    .filter(([, m]) => m > 0)
+    .map(([label], i) => `<span class="roi-key">`
+      + `<span class="roi-sw ${cls}" style="opacity:${(1 - i * 0.16).toFixed(2)}"></span>`
+      + `${esc(label)}</span>`).join('');
+
+  return bar('By hand', 'man', roi.manual.minutes, roi.manual.breakdown)
+       + bar('With the console', 'aut', roi.auto.minutes, roi.auto.breakdown)
+       + `<div class="roi-legend">${keys('man', roi.manual.breakdown)}`
+       + `${keys('aut', roi.auto.breakdown)}</div>`;
+}
+
+// How the two scale with the size of the estate. This is the real argument:
+// the manual line climbs with every host, the automated one climbs only with
+// the hosts that stop for a person, and the per-CVE triage is paid once by a
+// machine instead of once by someone. The shaded gap between them is the
+// saving, which is why it is the only filled area on the chart.
+function roiCurve(roi) {
+  const pts = roi.curve || [];
+  if (pts.length < 2) return '';
+  const W = 720, H = 250, L = 64, R = 18, T = 16, B = 40;
+  const maxX = pts[pts.length - 1].hosts;
+  // Headroom, so the manual line stops short of the frame rather than
+  // running into the corner and reading as clipped.
+  const maxY = (Math.max(...pts.map(p => p.manual)) || 1) * 1.08;
+  const x = v => L + v / maxX * (W - L - R);
+  const y = v => H - B - v / maxY * (H - T - B);
+  const at = (p, k) => `${x(p.hosts).toFixed(1)} ${y(p[k]).toFixed(1)}`;
+  const line = k => pts.map((p, i) => `${i ? 'L' : 'M'}${at(p, k)}`).join(' ');
+  const gap = line('manual')
+            + pts.slice().reverse().map(p => ` L${at(p, 'auto')}`).join('') + ' Z';
+
+  const grid = Array.from({ length: 5 }, (_, i) => {
+    const v = maxY * i / 4, gy = y(v).toFixed(1);
+    return `<line class="grid" x1="${L}" x2="${W - R}" y1="${gy}" y2="${gy}"/>`
+         + `<text class="axis" x="${L - 9}" y="${(+gy + 3.5).toFixed(1)}"`
+         + ` text-anchor="end">${esc(money(roi.currency, v))}</text>`;
+  }).join('');
+
+  const here = pts.find(p => p.hosts === roi.measured.hosts);
+  const ticks = pts.map(p => `<text class="axis" x="${x(p.hosts).toFixed(1)}"`
+    + ` y="${H - B + 17}" text-anchor="middle">${p.hosts}</text>`).join('');
+
+  // The run on screen, so the projection is anchored to something real
+  // rather than floating free of the page it is on.
+  const mark = here ? `
+    <!-- Starts below the callout, not at the frame. On a small host count the
+         marker sits close to the left edge, which is where the callout is, and
+         a full-height rule would be drawn straight through the text. -->
+    <line class="mk" x1="${x(here.hosts).toFixed(1)}" x2="${x(here.hosts).toFixed(1)}"
+          y1="${T + 20}" y2="${H - B}"/>
+    <circle class="dot man" cx="${x(here.hosts).toFixed(1)}" cy="${y(here.manual).toFixed(1)}" r="4.5"/>
+    <circle class="dot aut" cx="${x(here.hosts).toFixed(1)}" cy="${y(here.auto).toFixed(1)}" r="4.5"/>
+    <!-- The readout sits in the plot's top-left rather than beside the dots.
+         Labels pinned to the dots have to dodge three things at once — the
+         line they label, the other line, and the axes — and where they can
+         safely go changes with the host count and the approval rate. The
+         corner is empty in every case, because the manual line only ever
+         climbs left to right. -->
+    <text x="${L + 6}" y="${T + 11}">
+      <tspan class="lbl man">${esc(money(roi.currency, here.manual))} by hand</tspan>
+      <tspan class="axis" dx="7">vs</tspan>
+      <tspan class="lbl aut" dx="7">${esc(money(roi.currency, here.auto))} here</tspan>
+      <tspan class="axis" dx="7">at ${esc(here.hosts)} host(s) — this run</tspan>
+    </text>` : '';
+
+  return `<svg class="roi-chart" viewBox="0 0 ${W} ${H}" role="img"
+       aria-label="Labour cost against number of hosts, manual versus automated">
+    ${grid}
+    <path class="gap" d="${gap}"/>
+    <path class="ln man" d="${line('manual')}"/>
+    <path class="ln aut" d="${line('auto')}"/>
+    ${mark}
+    ${ticks}
+    <text class="axis" x="${((L + W - R) / 2).toFixed(1)}" y="${H - 4}"
+          text-anchor="middle">Hosts on one CVE</text>
+  </svg>`;
+}
+
+// Exposure gets two numbers rather than a chart, and that is a judgement
+// about honesty rather than about space. Seconds against a three-day
+// baseline cannot share a linear axis, a log axis would need explaining, and
+// either one would dress the weakest claim on the page — an assumed manual
+// lead time against a clock that is demo-paced offline — as the most
+// impressive picture on it. The durations say the same thing and can be
+// argued with.
+function roiExposure(roi) {
+  const s = roi.measured.exposure_s;
+  if (s === null || s === undefined) {
+    return `<div class="sub">Not measurable yet — no host has finished.
+      Exposure runs to the moment a host is actually patched, which includes
+      any time its run sat at the approval gate waiting for a person.
+      Quoting it before then would leave out the wait that usually dominates
+      it.</div>`;
+  }
+  return `<div class="roi-exp">
+      <div><div class="t">By hand</div><div class="v man">${esc(fmtMin(roi.manual.lead_hours * 60))}</div>
+        <div class="src">Assumed — <code>ROI_LEAD_HOURS</code>. Mostly queueing
+          and waiting for a window, not effort.</div></div>
+      <div><div class="t">This run</div><div class="v">${esc(fmtSec(s))}</div>
+        <div class="src">Measured — assessment through to the slowest host
+          reporting patched, gate wait included.</div></div>
+    </div>
+    <div class="note">Around <b>${esc(fmtMin(roi.saved.exposure_hours * 60))}</b>
+      less time with the host exploitable, per host on this CVE.</div>`;
+}
+
+function renderRoi(roi) {
+  frameHead({
+    title: 'Return on investment',
+    sub: `<span class="cve-id">${cveLabel(roi.cve_id || '')}</span>`
+       + `<span>${esc(roi.measured.hosts)} host(s)</span>`,
+    back: BACK_PATCH,
+  });
+  renderStages(patchState || {});
+
+  const sv = roi.saved;
+  // When nothing was gated the automated path cost no human time at all, so
+  // there is no ratio to print. That is the better outcome, not a gap in the
+  // data, and it should not render as a broken statistic.
+  const mult = sv.effort_x
+    ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
+    : `<div class="v sm">Fully unattended</div><div class="k">Operator time</div>`;
+
+  document.getElementById('list').innerHTML = `<div class="roi">
+    ${roi.illustrative ? `<div class="roi-caveat">
+      <b>Offline — the measured half of this page is paced, not worked.</b>
+      Timings here come from <code>DEMO_LATENCY</code>, not from patching
+      anything, so treat the speed figures as an illustration of the shape of
+      the saving rather than as a benchmark. The labour and cost comparison
+      does not depend on them: it is driven by host counts, which are real,
+      and by the assumptions listed at the bottom, which are not.</div>` : ''}
+
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
+        <div class="k">Labour saved</div></div>
+      <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div>
+        <div class="k">Engineer time saved</div></div>
+      <div class="stat">${mult}</div>
+      <div class="stat"><div class="v sm">${esc(roi.measured.gated)} of ${esc(roi.measured.hosts)}</div>
+        <div class="k">Needed a person</div></div>
+    </div>
+
+    <div class="roi-card">
+      <h3>Where the effort goes</h3>
+      <div class="sub">One CVE, ${esc(roi.measured.hosts)} host(s),
+        ${esc(roi.measured.gated)} of them through the approval gate. Both bars
+        are on the same scale. ${roi.measured.gated
+          ? `The console's bar is not empty — it is the operator reading the
+             plan and pressing Approve, which is real time and is counted
+             against the automation here.`
+          : `Nothing on this CVE scored above the gate, so no host stopped for
+             a person and the console's bar really is empty. On a CVE that
+             does gate, the operator's review time lands here.`}</div>
+      ${roiBars(roi)}
+    </div>
+
+    <div class="roi-card">
+      <h3>How it scales</h3>
+      <div class="sub">Labour cost at ${esc(money(roi.currency, roi.rate))}/hour as
+        the same CVE touches more hosts, holding this run's approval rate.
+        Machine time is not priced in: an engineer-hour and a container-second
+        do not convert, and the compute would be a rounding error against the
+        labour either way.</div>
+      ${roiCurve(roi)}
+    </div>
+
+    <div class="roi-card">
+      <h3>Time to remediation</h3>
+      <div class="sub">How long the host stays exploitable — the figure that
+        usually matters more than the labour.</div>
+      ${roiExposure(roi)}
+    </div>
+
+    <div class="roi-card">
+      <h3>What this assumed</h3>
+      <div class="sub">None of the manual side is measured, and none of it can
+        be from here: that run never happened. These are the inputs it rests
+        on. Each is a setting — change it in the gear panel and press
+        <b>Calculate ROI</b> again.</div>
+      <table class="roi-asm"><tbody>${(roi.assumptions || []).map(a => `
+        <tr><td>${esc(a.label)}<div class="k">${esc(a.key)}</div></td>
+            <td>${esc(a.value)} ${esc(a.unit)}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="note">Measured from the run instead:
+        ${esc(roi.measured.hosts)} host(s), ${esc(roi.measured.gated)} gated,
+        assessment ${esc(fmtSec(roi.measured.assess_s))},
+        dispatch ${esc(fmtSec(roi.measured.dispatch_s))}.</div>
+    </div>
+  </div>`;
+}
+
+async function showRoi() {
+  const btn = document.getElementById('head-roi');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/roi');
+    const d = await r.json().catch(() => ({}));
+    if (!(r.ok && d.ok)) {
+      toast(`Could not work out ROI — ${esc(d.error || 'failed')}`, true);
+      return;
+    }
+    renderRoi(d.roi);
+  } catch (e) {
+    toast(`Could not work out ROI — ${esc(e.message)}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function showRuns() {
   frameHead({ title: 'Patch runs', refresh: true });
   // The toggle is its own way back, so the shared back button stays hidden
@@ -2005,7 +2387,7 @@ async function decideRun(execId, decision) {
 }
 
 document.getElementById('view-runs').addEventListener('click', showRuns);
-document.getElementById('head-back').addEventListener('click', () => render());
+document.getElementById('head-roi').addEventListener('click', showRoi);
 document.getElementById('head-refresh').addEventListener('click', showRuns);
 
 document.getElementById('pills').addEventListener('click', e => {

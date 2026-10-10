@@ -41,7 +41,7 @@ INSIGHTS_BASE = 'https://console.redhat.com/api'
 CVE_LIST_PATH = '/vulnerability/v1/vulnerabilities/cves'
 
 PROXY_PATHS = {'/api/state', '/api/start', '/api/patch', '/api/decide', '/api/runs', '/api/mode',
-               '/api/approve', '/api/deny',
+               '/api/approve', '/api/deny', '/api/roi',
                '/api/settings', '/api/flow-log', '/api/what-if', '/api/why',
                '/api/approval-targets'}
 

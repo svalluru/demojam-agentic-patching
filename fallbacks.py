@@ -221,6 +221,58 @@ def simulate_patch() -> bool:
     return os.environ.get('FALLBACK_PATCH', 'simulate').strip().lower() != 'unavailable'
 
 
+# --------------------------------------------------------------------- ROI
+#
+# The manual baseline the console compares itself against. Every number below
+# is an assumption and none of it is measurable from this system: the manual
+# run never happened, so there is no clock to read it off. They live here with
+# the rest of the fabricated data for exactly that reason, they are exposed in
+# the settings panel, and roi_report() ships them back to the console with the
+# result so the operator can see what the claim rests on and argue with it.
+#
+# The automated side is the opposite — it comes from this run's own clock. In
+# offline mode that clock is DEMO_LATENCY rather than real work, which is why
+# the report marks itself illustrative when OFFLINE is set.
+#
+# Defaults are deliberately unflattering to the automation. A baseline that
+# assumes four unattended hours per host produces a wonderful number and
+# convinces nobody; these are meant to survive an argument with whoever
+# actually does this work today. Someone who patches faster than this should
+# change them in the panel and watch the result move.
+
+# Per CVE, once: read the advisory, pull the affected host list out of
+# Insights or a spreadsheet, decide what the exposure actually is.
+ROI_TRIAGE_MIN = float(os.environ.get('ROI_TRIAGE_MIN', '45') or 45)
+
+# Per host: adapt the playbook, raise the change record, book the window.
+ROI_PREP_MIN = float(os.environ.get('ROI_PREP_MIN', '15') or 15)
+
+# Per host: run it, watch it, confirm the package moved and the service came
+# back. Counted separately from prep so the chart can show that automation
+# collapses these two very differently.
+ROI_EXEC_MIN = float(os.environ.get('ROI_EXEC_MIN', '10') or 10)
+
+# Per host that needs sign-off: assembling the request, finding the approver,
+# waiting on the back-and-forth. On top of prep, not instead of it.
+ROI_APPROVAL_MIN = float(os.environ.get('ROI_APPROVAL_MIN', '20') or 20)
+
+# The automated path is not free of people, and a comparison that pretends it
+# is would be dishonest. This is what the operator still spends per gated
+# host: reading the plan, judging the risk score, pressing Approve.
+ROI_REVIEW_MIN = float(os.environ.get('ROI_REVIEW_MIN', '2') or 2)
+
+# Fully-loaded hourly cost of whoever does the work. Fully loaded, not salary.
+ROI_HOURLY_RATE = float(os.environ.get('ROI_HOURLY_RATE', '85') or 85)
+ROI_CURRENCY = os.environ.get('ROI_CURRENCY', '$') or '$'
+
+# Elapsed hours from "this CVE is ours" to "this host is patched" by hand.
+# This is wall clock, not effort — it is mostly queueing, waiting on an
+# approver and waiting for the next maintenance window, which is why it is
+# an order of magnitude larger than the labour figures above. It is also the
+# number that matters most, since it is how long the host stays exploitable.
+ROI_LEAD_HOURS = float(os.environ.get('ROI_LEAD_HOURS', '72') or 72)
+
+
 # -------------------------------------------------------------------- mode
 
 def strict() -> bool:

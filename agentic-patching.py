@@ -1314,6 +1314,178 @@ class Supervisor:
 
 
 # ==========================================================================
+# ROI — this run's measured effort against what the same work costs by hand
+#
+# Two kinds of number meet here, and the report keeps them apart all the way
+# to the operator because they carry very different warranties:
+#
+#   measured   this run's own clock — how many hosts, how many needed
+#              sign-off, how long the assessment took, how long each
+#              execution ran. Real, with one caveat: offline those clocks are
+#              DEMO_LATENCY rather than work, so `illustrative` is set and the
+#              console leads with that.
+#   assumed    the manual baseline, from fallbacks.ROI_*. Not measurable from
+#              here by any means: the manual run never happened, so there is
+#              no clock to read it off. Every one of them is itemised in the
+#              response with its value, so the page can show the arithmetic
+#              instead of a number with a flourish.
+#
+# What is deliberately not claimed matters as much as what is. The automated
+# side counts the operator's review time as a real cost, because it is one —
+# a comparison that pretends the approval gate is free is a sales slide, not
+# an estimate. Machine seconds count toward the exposure window but not
+# toward money: an engineer-hour and a container-second do not convert, and
+# pricing the compute would add a rounding error to a figure that labour
+# already dominates.
+#
+# The exposure figure intentionally includes time a run spent parked at the
+# gate waiting for a person. That wait is not automation working, but the
+# host is exploitable throughout it, and exposure is measured from the host's
+# point of view.
+# ==========================================================================
+
+def _parse_iso(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (ValueError, TypeError):
+        return None
+
+
+def _run_seconds(run: dict) -> float | None:
+    """Wall clock of one execution, or None if it has not finished."""
+    start, end = _parse_iso(run.get('created_at')), _parse_iso(run.get('completed_at'))
+    if not (start and end):
+        return None
+    return max(0.0, (end - start).total_seconds())
+
+
+def roi_report(state: dict) -> dict:
+    """Compare the dispatched run in `state` against the manual baseline."""
+    patch = state.get('patch') or {}
+    results = patch.get('results') or []
+    if not results:
+        raise BackendUnavailable(
+            'roi', 'nothing has been dispatched yet',
+            'assess a CVE and dispatch the plan first — this compares against '
+            'what the run actually did, so it needs a run')
+
+    n = len(results)
+    gated = sum(1 for r in results if r.get('group') == 'approved_patch')
+    finished = [s for s in (_run_seconds(r) for r in results) if s is not None]
+    done = sum(1 for r in results if r.get('outcome') == 'patched')
+
+    # Measured. assess_s is the Supervisor's own stopwatch over agent 1,
+    # dispatch_s is agent 2 handing every host to AO.
+    assess_s = float(state.get('elapsed_s') or 0)
+    dispatch_s = float(patch.get('elapsed_s') or 0)
+
+    # Exposure runs on the host's clock, not the console's: from "we know"
+    # to "this one is patched", including whatever time the run spent parked
+    # at the gate waiting for a person. It is the slowest host rather than
+    # the sum, since the estate does not queue behind one machine.
+    #
+    # None until something actually gets there. Quoting dispatch_s instead
+    # would drop precisely the human wait that dominates this figure, and an
+    # exposure window measured with the waiting taken out is not a small
+    # overstatement — it is the entire claim, fabricated.
+    exposure_s = assess_s + max(finished) if finished else None
+
+    # Assumed. Read through the module so a settings override takes effect.
+    f = fallbacks
+    manual = {
+        'Triage & risk assessment': f.ROI_TRIAGE_MIN,
+        'Change prep & playbook': f.ROI_PREP_MIN * n,
+        'Approval paperwork': f.ROI_APPROVAL_MIN * gated,
+        'Execute & verify': f.ROI_EXEC_MIN * n,
+    }
+    manual_min = sum(manual.values())
+    # The only human minutes the automated path still spends. Hosts on the
+    # unattended branch cost none of it, which is the whole point of the split.
+    auto = {'Review & approve': f.ROI_REVIEW_MIN * gated}
+    auto_min = sum(auto.values())
+
+    rate = f.ROI_HOURLY_RATE
+    cost = lambda mins: round(mins / 60.0 * rate, 2)
+    saved_min = manual_min - auto_min
+
+    # How the two scale. The manual line climbs with every host; the
+    # automated one climbs only with the hosts that stop for a person, and
+    # the per-CVE triage is paid once by a machine instead of once by a
+    # person. That divergence is the actual argument, and it is worth more
+    # than the single-run number above it.
+    ratio = gated / n if n else 0
+    span = max(25, n * 5)
+    step = max(1, round(span / 8))
+    # n is forced into the series so the console can anchor the projection to
+    # the run actually on screen rather than interpolating near it.
+    curve = []
+    for k in sorted(set(list(range(1, span + 1, step)) + [n, span])):
+        g = round(k * ratio)
+        m = f.ROI_TRIAGE_MIN + (f.ROI_PREP_MIN + f.ROI_EXEC_MIN) * k + f.ROI_APPROVAL_MIN * g
+        a = f.ROI_REVIEW_MIN * g
+        curve.append({'hosts': k, 'manual': cost(m), 'auto': cost(a)})
+
+    return {
+        'cve_id': state.get('cve_id'),
+        # Set when the measured half came from DEMO_LATENCY rather than work.
+        # The console leads with this; without it the page would be claiming a
+        # timing it did not take.
+        'illustrative': offline(),
+        'measured': {
+            'hosts': n, 'gated': gated, 'auto_branch': n - gated, 'patched': done,
+            'assess_s': round(assess_s, 1),
+            'dispatch_s': round(dispatch_s, 1),
+            'exposure_s': round(exposure_s, 1) if exposure_s is not None else None,
+            'host_s': [round(s, 1) for s in finished],
+        },
+        'manual': {'breakdown': manual, 'minutes': round(manual_min, 1),
+                   'cost': cost(manual_min),
+                   'lead_hours': f.ROI_LEAD_HOURS},
+        'auto': {'breakdown': auto, 'minutes': round(auto_min, 1),
+                 'cost': cost(auto_min),
+                 'lead_hours': round(exposure_s / 3600.0, 4) if exposure_s is not None else None},
+        'saved': {
+            'minutes': round(saved_min, 1),
+            'cost': cost(saved_min),
+            # Guarded: every host on the unattended branch makes auto_min 0,
+            # and that is the good case, not a divide-by-zero.
+            'effort_x': round(manual_min / auto_min, 1) if auto_min else None,
+            # No exposure multiplier is published on purpose. Seconds against
+            # a three-day baseline divides out to five figures, which is a
+            # number nobody can sanity-check and which rests entirely on the
+            # assumed side. The two durations and the hours avoided say the
+            # same thing and can be argued with.
+            'exposure_hours': (round(f.ROI_LEAD_HOURS - exposure_s / 3600.0, 2)
+                               if exposure_s is not None else None),
+        },
+        'curve': curve,
+        'currency': f.ROI_CURRENCY,
+        'rate': rate,
+        # Itemised so the page can show what it assumed rather than asserting
+        # a total. Each is a settings key, so 'change it and look again' is a
+        # real offer and not a figure of speech.
+        'assumptions': [
+            {'key': 'ROI_TRIAGE_MIN', 'label': 'Triage per CVE',
+             'value': f.ROI_TRIAGE_MIN, 'unit': 'min'},
+            {'key': 'ROI_PREP_MIN', 'label': 'Change prep per host',
+             'value': f.ROI_PREP_MIN, 'unit': 'min'},
+            {'key': 'ROI_EXEC_MIN', 'label': 'Execute & verify per host',
+             'value': f.ROI_EXEC_MIN, 'unit': 'min'},
+            {'key': 'ROI_APPROVAL_MIN', 'label': 'Approval paperwork per gated host',
+             'value': f.ROI_APPROVAL_MIN, 'unit': 'min'},
+            {'key': 'ROI_REVIEW_MIN', 'label': 'Operator review per gated host',
+             'value': f.ROI_REVIEW_MIN, 'unit': 'min'},
+            {'key': 'ROI_HOURLY_RATE', 'label': 'Fully-loaded hourly rate',
+             'value': rate, 'unit': f.ROI_CURRENCY + '/h'},
+            {'key': 'ROI_LEAD_HOURS', 'label': 'Manual time-to-remediation',
+             'value': f.ROI_LEAD_HOURS, 'unit': 'h'},
+        ],
+    }
+
+
+# ==========================================================================
 # SETTINGS — one registry describing every tunable this process reads
 #
 # Scope is deliberately "what this process reads", not "everything in
@@ -1455,6 +1627,42 @@ SETTINGS: tuple[Setting, ...] = (
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
     Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
+
+    # --- ROI --------------------------------------------------------------
+    # The manual baseline is guesswork by construction, so every input to it
+    # is exposed. Someone who disagrees with the comparison can change the
+    # number they disagree with and press the button again, which is a more
+    # useful answer than arguing about the total.
+    Setting('ROI_TRIAGE_MIN', 'ROI baseline', 'Manual triage per CVE', 'float', '45',
+            'Read the advisory, pull the affected host list, judge the '
+            'exposure. Once per CVE, not per host.',
+            binds='fallbacks.ROI_TRIAGE_MIN'),
+    Setting('ROI_PREP_MIN', 'ROI baseline', 'Manual change prep per host', 'float', '15',
+            'Adapt the playbook, raise the change record, book the window.',
+            binds='fallbacks.ROI_PREP_MIN'),
+    Setting('ROI_EXEC_MIN', 'ROI baseline', 'Manual execute & verify per host',
+            'float', '10',
+            'Run it, watch it, confirm the service came back.',
+            binds='fallbacks.ROI_EXEC_MIN'),
+    Setting('ROI_APPROVAL_MIN', 'ROI baseline', 'Manual approval per gated host',
+            'float', '20',
+            'Assembling the request and chasing the approver. On top of prep, '
+            'and only for hosts that need sign-off.',
+            binds='fallbacks.ROI_APPROVAL_MIN'),
+    Setting('ROI_REVIEW_MIN', 'ROI baseline', 'Operator review per gated host',
+            'float', '2',
+            'What the automated path still costs a person: read the plan, '
+            'judge the score, press Approve. Counted against the automation.',
+            binds='fallbacks.ROI_REVIEW_MIN'),
+    Setting('ROI_HOURLY_RATE', 'ROI baseline', 'Fully-loaded hourly rate', 'float', '85',
+            'Fully loaded, not salary.', binds='fallbacks.ROI_HOURLY_RATE'),
+    Setting('ROI_CURRENCY', 'ROI baseline', 'Currency symbol', 'str', '$',
+            'Display only — no conversion is done.', binds='fallbacks.ROI_CURRENCY'),
+    Setting('ROI_LEAD_HOURS', 'ROI baseline', 'Manual time-to-remediation', 'float', '72',
+            'Elapsed hours from "this CVE is ours" to "this host is patched" '
+            'by hand. Wall clock, not effort — mostly queueing and waiting '
+            'for a window, which is why it dwarfs the labour figures.',
+            binds='fallbacks.ROI_LEAD_HOURS'),
 
     # --- server -----------------------------------------------------------
     Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
@@ -1704,6 +1912,17 @@ class Handler(BaseHTTPRequestHandler):
                                  'degraded_steps': [dict(d) for d in DEGRADED]})
             except BackendUnavailable as exc:
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',
+                                 'detail': exc.fix})
+        elif path == '/api/roi':
+            # Computed on demand rather than stored on the run: the baseline
+            # is settings-driven, so the answer has to track the assumptions
+            # as they are now, not as they were when the run was dispatched.
+            with _RUN_LOCK:
+                snapshot = dict(_RUN)
+            try:
+                self._send(200, {'ok': True, 'roi': roi_report(snapshot)})
+            except BackendUnavailable as exc:
+                self._send(409, {'ok': False, 'error': str(exc.cause),
                                  'detail': exc.fix})
         elif path == '/api/runs':
             # Live from AO, so a run that failed after the console stopped

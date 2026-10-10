@@ -113,8 +113,8 @@ verdict — *Patch N hosts* in red when the press really does patch them
 unattended, *Send N for approval* in black when every host will halt at the
 gate instead. Hosts routed to the approval branch show Approve / Reject
 buttons, and once approved the row tracks its execution through the remaining
-workflow nodes to *Patched*. **Patch runs** lists past executions read live
-from AO.
+workflow nodes to *Patched*. **Calculate ROI** costs that run out against doing
+the same work by hand. **Patch runs** lists past executions read live from AO.
 
 ### CLI
 
@@ -140,7 +140,8 @@ from AO.
 | `RISK_VERIFY_TLS=false` | for sandbox cluster certificates |
 | `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | per-service read budgets (15 / 8 / 20 / 10s) |
 
-See **Offline / fallback mode** below for `STRICT` and `FALLBACK_PATCH`.
+See **Offline / fallback mode** below for `STRICT` and `FALLBACK_PATCH`, and
+**ROI** for the `ROI_*` baseline.
 
 ### Settings panel
 
@@ -202,6 +203,53 @@ The API always carries the truth either way: `degraded` on the plan and
 Simulated runs persist to `runs/simulated.json` so the Patch runs page survives
 a restart. Real runs need no such thing — AO is their store. Delete the file to
 reset the demo.
+
+## ROI
+
+**Calculate ROI** on the remediation view (`GET /api/roi`) compares the run that
+is on screen against doing the same work by hand. Two kinds of number meet
+there and the page keeps them apart, because they carry very different
+warranties:
+
+- **Measured** — host count, how many stopped at the gate, how long the
+  assessment took, how long each execution ran. This run's own clock. Offline
+  that clock is `DEMO_LATENCY` rather than work, so the report sets
+  `illustrative` and the page leads with a banner saying so.
+- **Assumed** — the manual baseline, every bit of it. None of it is measurable
+  from here: the manual run never happened, so there is no clock to read it
+  off. It lives in `fallbacks.py` with the rest of the fabricated data, is
+  itemised in the response, and is listed on the page with the setting key
+  beside each figure.
+
+The comparison counts the operator's review time **against** the automated
+side. An approval gate is not free, and a chart that treats it as free is a
+sales slide. Machine time is not priced at all: an engineer-hour and a
+container-second do not convert, and the compute would be a rounding error
+against the labour either way.
+
+Time-to-remediation is reported as two durations rather than a ratio, and it is
+withheld entirely until a host actually reaches *Patched* — quoting the
+dispatch time instead would drop the wait at the approval gate, which is most
+of the figure. That wait counts: it is not automation working, but the host is
+exploitable throughout it.
+
+| Variable | Default | Manual baseline |
+|---|---|---|
+| `ROI_TRIAGE_MIN` | 45 | read the advisory and scope it — once per CVE |
+| `ROI_PREP_MIN` | 15 | per host: adapt the playbook, raise the change, book the window |
+| `ROI_EXEC_MIN` | 10 | per host: run it, watch it, confirm the service came back |
+| `ROI_APPROVAL_MIN` | 20 | per gated host: assemble the request, chase the approver |
+| `ROI_REVIEW_MIN` | 2 | per gated host, charged to the **automated** side: read the plan, press Approve |
+| `ROI_HOURLY_RATE` | 85 | fully loaded, not salary |
+| `ROI_CURRENCY` | `$` | display only, no conversion |
+| `ROI_LEAD_HOURS` | 72 | elapsed hours to remediation by hand — wall clock, mostly queueing |
+
+The defaults are deliberately unflattering to the automation; a baseline that
+assumes four unattended hours per host produces a wonderful number and
+convinces nobody. All eight are in the settings panel, so the answer to "I
+don't believe that number" is to change the one you disagree with and press the
+button again. The report is computed on demand rather than stored on the run,
+so it always reflects the assumptions as they are now.
 
 ## Design notes
 
