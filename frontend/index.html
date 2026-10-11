@@ -29,6 +29,10 @@
     --muted:#70707a; --accent:#0b0b0c; --border:#e7e7ea;
     --red:#cc0000;                    /* deep enough to pass AA on white */
     --red-lo:#980000;                 /* gradient stop only, never text */
+    --red-hi:#ff2f2f;                 /* on black only — #cc0000 goes muddy
+                                         there, ~3.6:1 against #0b0b0c where
+                                         this clears 5:1. Same hue, and the
+                                         page still has exactly one red. */
     --tint-n:rgba(0,0,0,.05);         /* faint neutral wash — neutral states */
     --tint-r:rgba(204,0,0,.07);       /* faint red wash     — states to act on */
 
@@ -252,17 +256,17 @@
   button.primary {
     position: relative; overflow: hidden;
     width: 100%; margin-top: 14px; padding: 12px;
-    background: linear-gradient(180deg, #1d1d20, var(--accent));
-    color: var(--bg); border: none; border-radius: var(--r-sm);
+    background: linear-gradient(180deg, var(--red), var(--red-lo));
+    color: #ffffff; border: none; border-radius: var(--r-sm);
     font-size: calc(14px * var(--ts)); font-weight: 700; letter-spacing: -.1px; cursor: pointer;
-    box-shadow: var(--sh-2);
+    box-shadow: var(--sh-red);
     transition: transform .14s var(--spring), box-shadow .14s var(--ease),
                 opacity .14s var(--ease);
   }
   button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-3); }
   button.primary:active:not(:disabled) { transform: translateY(0) scale(.994); }
-  /* A sheen that crosses once on hover. Pure black fills have no hover
-     affordance otherwise — opacity alone just looks like a disabled state. */
+  /* A sheen that crosses once on hover. A flat fill has no hover affordance
+     otherwise — opacity alone just looks like a disabled state. */
   button.primary::after {
     content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
     background: linear-gradient(100deg, transparent, rgba(255,255,255,.17), transparent);
@@ -271,21 +275,29 @@
   button.primary:hover:not(:disabled)::after { left: 125%; }
   button.primary:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
 
-  /* Per-row action. Outlined at rest so twenty of them do not read as twenty
-     calls to action; fills in on the row the pointer is over or that is
-     selected, which is the only one that can be acted on by mistake. */
+  /* Per-row action. Red at rest: the grey-on-white outline it had before did
+     not read as a button at all, so the one control every row exists to offer
+     was the least visible thing on the page. Outlined rather than filled so
+     twenty rows do not read as twenty equal calls to action — it fills on the
+     row the pointer is over or that is selected, which is the only one that
+     can be pressed by mistake. */
   .assess {
     padding: 6px 13px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    border: 1px solid var(--red); background: var(--panel); color: var(--red);
     font-size: calc(11.5px * var(--ts)); font-weight: 700; letter-spacing: -.1px; white-space: nowrap;
     transition: background .14s var(--ease), color .14s var(--ease),
                 border-color .14s var(--ease), transform .14s var(--spring),
                 box-shadow .14s var(--ease);
   }
   tbody tr:hover .assess, tbody tr.sel .assess {
-    background: var(--accent); border-color: var(--accent); color: var(--bg);
-    box-shadow: var(--sh-2);
+    background: var(--red); border-color: var(--red); color: #ffffff;
+    box-shadow: var(--sh-red);
   }
+  /* The row whose plan is still open says Resume instead of Assess, and is
+     filled, so the list shows where the unfinished work is without having
+     to be read. */
+  .assess.resume { background: var(--red); border-color: var(--red);
+                   color: #ffffff; box-shadow: var(--sh-red); }
   .assess:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-3); }
   .assess:active:not(:disabled) { transform: translateY(0) scale(.97); }
   .assess:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; }
@@ -312,18 +324,47 @@
                 background .14s var(--ease), transform .14s var(--spring),
                 box-shadow .14s var(--ease);
   }
-  .pill:hover { border-color: #d2d2d8; color: var(--text);
+  .pill:hover { border-color: var(--red); color: var(--red);
                 transform: translateY(-1px); box-shadow: var(--sh-1); }
+  /* Some of these pills are not filters but actions — Patch runs, the back
+     arrow out of a plan, Calculate ROI. A filter is legible at rest from
+     which one of the set is lit; an action has no lit sibling to be read
+     against, so it carries the red outline at rest like every other button
+     on the page. */
+  #head-back, .view-toggle, #head-roi {
+    color: var(--red); border-color: var(--red); font-weight: 700;
+  }
+  #head-back:hover, .view-toggle:hover, #head-roi:hover {
+    background: var(--red); color: #ffffff;
+  }
+  /* Filled rather than outlined, and the only filled control on the two
+     views it appears in. It is shown exactly when there is unfinished work
+     to go back to, so it should be the thing the eye lands on — and the
+     dispatch button it leads to cannot be reached any other way. */
+  #head-resume {
+    background: var(--red); border-color: var(--red); color: #ffffff;
+    font-weight: 700; box-shadow: var(--sh-red);
+  }
+  #head-resume:hover {
+    background: var(--red-lo); border-color: var(--red-lo); color: #ffffff;
+  }
+  #head-resume .n {
+    display: inline-block; min-width: 17px; margin-left: 7px; padding: 0 5px;
+    border-radius: 10px; background: rgba(255,255,255,.26);
+    font-size: calc(10px * var(--ts)); font-weight: 700; text-align: center;
+  }
+  /* Red on the selected filter for the same reason as the buttons: it is the
+     one pill you changed, and red is now what interactive looks like here. */
   .pill.active {
-    background: var(--accent); border-color: var(--accent); color: var(--bg);
-    box-shadow: var(--sh-2);
+    background: var(--red); border-color: var(--red); color: #ffffff;
+    box-shadow: var(--sh-red);
   }
   .pill .n {
     display: inline-block; min-width: 17px; padding: 0 5px; margin-left: 6px;
     border-radius: 10px; font-size: calc(10px * var(--ts)); line-height: calc(16px * var(--ts)); text-align: center;
     font-weight: 700; background: rgba(0,0,0,.07);
   }
-  /* the active pill is filled black, so its bubble inverts too */
+  /* the active pill is filled red, so its bubble inverts too */
   .pill.active .n { background: rgba(255,255,255,.26); }
 
   .sev-block { margin-bottom: 22px; }
@@ -403,11 +444,16 @@
   .pager { display: flex; align-items: center; justify-content: space-between;
            padding-top: 14px; font-size: calc(12px * var(--ts)); color: var(--muted); }
   .pager button {
-    padding: 5px 13px; background: var(--surface); color: var(--text);
-    border: 1px solid var(--border); border-radius: 7px;
-    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer;
+    padding: 5px 13px; background: var(--panel); color: var(--red);
+    border: 1px solid var(--red); border-radius: 7px;
+    font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer;
+    transition: background .14s var(--ease), color .14s var(--ease);
   }
-  .pager button:disabled { opacity: .4; cursor: not-allowed; }
+  .pager button:hover:not(:disabled) { background: var(--red); color: #ffffff; }
+  /* Greyed out rather than red: at the first or last page there is nothing
+     to press, and a red button that does nothing is worse than no button. */
+  .pager button:disabled { opacity: .4; cursor: not-allowed;
+                           color: var(--muted); border-color: var(--border); }
 
   .empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
            height: 100%; gap: 9px; color: var(--muted); font-size: calc(13px * var(--ts)); text-align: center;
@@ -440,11 +486,15 @@
 
   /* ---- patch plan ---- */
   .go-patch {
-    padding: 8px 18px; color: #ffffff; border: none; border-radius: var(--r-sm);
+    /* Transparent rather than none, so the .calm variant below can take a
+       visible border without the button changing size. */
+    padding: 8px 18px; color: #ffffff; border: 1px solid transparent;
+    border-radius: var(--r-sm);
     background: linear-gradient(180deg, var(--red), var(--red-lo));
     box-shadow: var(--sh-red);
     font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer; white-space: nowrap;
-    transition: transform .14s var(--spring), box-shadow .14s var(--ease);
+    transition: transform .14s var(--spring), box-shadow .14s var(--ease),
+                background .14s var(--ease), color .14s var(--ease);
   }
   .go-patch:hover:not(:disabled) {
     transform: translateY(-1px);
@@ -452,15 +502,18 @@
   }
   .go-patch:active:not(:disabled) { transform: translateY(0) scale(.985); }
   .go-patch:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
-  /* Red is reserved for the consequential action. Queuing hosts at the
-     approval gate patches nothing, so that variant drops to neutral black —
-     the colour difference is the honest part of the label. */
+  /* Queuing hosts at the approval gate patches nothing, and that difference
+     is the honest part of the label, so it still shows — but as weight
+     rather than hue. Red now means "this is a button" everywhere on the
+     page, so a black variant here would read as disabled rather than as
+     safer. Outlined instead: same colour, visibly less emphatic than the
+     filled button that actually patches. */
   .go-patch.calm {
-    background: linear-gradient(180deg, #27272c, var(--text));
-    box-shadow: var(--sh-2);
+    background: var(--panel); color: var(--red);
+    border: 1px solid var(--red); box-shadow: var(--sh-1);
   }
   .go-patch.calm:hover:not(:disabled) {
-    box-shadow: 0 9px 22px -8px rgba(11,11,12,.5);
+    background: var(--red); color: #ffffff; box-shadow: var(--sh-red);
   }
 
   .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; margin-bottom: 13px; }
@@ -563,12 +616,14 @@
     transition: transform .13s var(--spring), box-shadow .13s var(--ease),
                 background .13s var(--ease), color .13s var(--ease);
   }
-  .btn-approve { background: var(--text); color: var(--bg); }
-  /* Reject is outlined until you are on it. Approve and Reject sit side by
-     side and both were solid fills; the one that destroys work should take
-     a deliberate hover to light up. */
+  /* Approve is the press that patches a host, so it takes the solid fill. */
+  .btn-approve { background: var(--red); color: #ffffff; box-shadow: var(--sh-red); }
+  /* Reject is outlined until you are on it. The two sit side by side and are
+     now the same colour, so fill is what separates them: the one that
+     destroys work takes a deliberate hover to light up. */
   .btn-reject  { background: transparent; color: var(--red); border-color: var(--red); }
-  .btn-approve:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-2); }
+  .btn-approve:hover:not(:disabled) { transform: translateY(-1px);
+                                      box-shadow: 0 9px 22px -8px rgba(204,0,0,.7); }
   .btn-reject:hover:not(:disabled)  { background: var(--red); color: #ffffff;
                                       transform: translateY(-1px); box-shadow: var(--sh-red); }
   .btn-approve:active:not(:disabled), .btn-reject:active:not(:disabled) {
@@ -735,16 +790,6 @@
   .roi-exp .v.man { color: var(--red); }
   .roi-exp .src { font-size: calc(10px * var(--ts)); color: var(--muted); margin-top: 2px; }
 
-  /* Assumptions. A plain table, deliberately plainer than the charts: it is
-     the part the reader is invited to disagree with, and dressing it up as
-     a result would misrepresent what it is. */
-  .roi-asm { width: 100%; margin-top: 9px; }
-  .roi-asm td { padding: 5px 0; font-size: calc(11px * var(--ts));
-                border-bottom: 1px solid var(--border); }
-  .roi-asm td:last-child { text-align: right; font-weight: 700;
-                           font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .roi-asm .k { font-family: var(--mono); font-size: calc(9.5px * var(--ts)); color: var(--muted); }
-
   /* The sliders. Deliberately at the top of the page rather than buried
      under the charts: the first thing this page should say is that its
      assumptions are adjustable, not that it has reached a number. Moving one
@@ -802,6 +847,191 @@
               border-radius: 99px; margin-top: 6px; }
   .roi-chip.ok { background: var(--text); color: #fff; }
   .roi-chip.bad { background: var(--red); color: #fff; }
+
+  /* ---- the outside check, inverted ----
+     The only black card in a white page, and it earns that by being the only
+     part of the report whose numbers are not ours. The inversion does the job
+     a heading cannot: you can see at a glance where our arithmetic stops and
+     somebody else's measurement starts. One card, not two — a second would
+     spend the contrast rather than bank it. */
+  .roi-hero {
+    background: var(--text); color: #fff; border: 1px solid var(--text);
+    border-radius: var(--r); padding: 17px 19px 19px; box-shadow: var(--sh-3);
+  }
+  .roi-hero > h3 { color: #fff; font-size: calc(11px * var(--ts)); font-weight: 800;
+                   letter-spacing: .5px; text-transform: uppercase; }
+  .roi-hero .sub { font-size: calc(11px * var(--ts)); line-height: 1.5; margin-top: 4px;
+                   color: rgba(255,255,255,.6); }
+  .roi-hero .roi-ref { color: var(--red-hi); }
+  .roi-hero hr { border: 0; border-top: 1px solid rgba(255,255,255,.14);
+                 margin: 17px 0 15px; }
+
+  /* The remediation clock, to scale. Four durations on one axis is the whole
+     argument in one picture, and it is the picture the eight boxes below were
+     failing to be. Linear, never log: a log axis would make 43 days and 14
+     seconds look comparable, which is the exact impression this page spends
+     the rest of its length refusing to create. */
+  .roi-ruler { display: grid; grid-template-columns: auto 1fr auto;
+               align-items: center; gap: 9px 13px; margin-top: 15px; }
+  .roi-ruler .k { font-size: calc(10.5px * var(--ts)); color: rgba(255,255,255,.72);
+                  white-space: nowrap; }
+  .roi-ruler .k b { color: #fff; font-weight: 700; }
+  .roi-ruler .tr { height: 13px; border-radius: 3px; background: rgba(255,255,255,.09); }
+  .roi-ruler .tr i {
+    display: block; height: 100%; border-radius: 3px;
+    /* The floor is load-bearing. This run's bar is a millionth of the track
+       and would round to nothing; 3px is "too small to draw", which is the
+       honest rendering and also the most persuasive one on the page. The
+       caption says so in words so the floor is never mistaken for a value. */
+    width: max(3px, var(--w)); background: #fff;
+    animation: rrgrow .62s var(--ease) both;
+    animation-delay: calc(var(--i) * 110ms);
+    animation-play-state: paused;
+  }
+  .roi-ruler .tr i.bad { background: var(--red-hi); }
+  /* Published limits are drawn as an outline: a deadline is a line you are
+     measured against, not a quantity of anything. */
+  .roi-ruler .tr i.lim { background: repeating-linear-gradient(135deg,
+       rgba(255,255,255,.5) 0 2px, transparent 2px 5px);
+     box-shadow: inset 0 0 0 1px rgba(255,255,255,.5); }
+  @keyframes rrgrow { from { transform: scaleX(0); transform-origin: left; } }
+  .roi-ruler .v { font-size: calc(13px * var(--ts)); font-weight: 800;
+                  font-variant-numeric: tabular-nums; white-space: nowrap;
+                  text-align: right; }
+  .roi-ruler .v.bad { color: var(--red-hi); }
+  .roi-note { font-size: calc(10.5px * var(--ts)); line-height: 1.55; margin-top: 13px;
+              color: rgba(255,255,255,.6); }
+  .roi-note b { color: #fff; }
+
+  /* ---- the day-7 ceiling ----
+     One hundred dots because a percentage is a word and a hundred dots is a
+     quantity. This is the figure that says the problem is not solvable by
+     working harder, so it gets the one drawing on the page a reader can count. */
+  .roi-mx { display: grid; grid-template-columns: auto 1fr; gap: 18px;
+            align-items: start; }
+  @media (max-width: 760px) { .roi-mx { grid-template-columns: 1fr; } }
+  .roi-dots { display: grid; grid-template-columns: repeat(10, 11px);
+              gap: 4px; flex-shrink: 0; }
+  .roi-dots i { width: 11px; height: 11px; border-radius: 50%;
+                box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
+                animation: dotin .3s var(--ease) both;
+                animation-delay: calc(var(--i) * 7ms);
+                animation-play-state: paused; }
+  .roi-dots i.on { background: var(--red-hi); box-shadow: none; }
+  @keyframes dotin { from { opacity: 0; transform: scale(.4); } }
+  .roi-mx .v { font-size: calc(30px * var(--ts)); font-weight: 800;
+               letter-spacing: -1.4px; line-height: 1; color: var(--red-hi); }
+  .roi-mx .t { font-size: calc(13px * var(--ts)); font-weight: 700; margin-top: 3px; }
+  .roi-mx .d { font-size: calc(11px * var(--ts)); line-height: 1.55; margin-top: 7px;
+               color: rgba(255,255,255,.66); }
+
+  /* The one sentence worth quoting verbatim, set as a quotation rather than
+     paraphrased into our own voice — the force of it is that Verizon said it,
+     not that we agree. */
+  .roi-quote { margin: 13px 0 0; padding-left: 15px;
+               border-left: 2px solid var(--red-hi); }
+  .roi-quote q { font-size: calc(15px * var(--ts)); font-weight: 600; line-height: 1.45;
+                 letter-spacing: -.2px; }
+  .roi-quote cite { display: block; margin-top: 5px; font-style: normal;
+                    font-size: calc(10px * var(--ts)); letter-spacing: .4px;
+                    text-transform: uppercase; color: rgba(255,255,255,.55); }
+
+  /* ---- published benchmarks ----
+     Wider cells than .roi-grid because each one carries a sentence of
+     provenance underneath, not just a label. Without the sentence the figure
+     is a statistic on a slide; with it, it is something the reader can go and
+     check, which is the whole reason these are on the page. */
+  .roi-bm { display: grid; gap: 11px; margin-top: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); }
+  .roi-bm > div { border: 1px solid var(--border); border-left: 3px solid var(--red);
+                  border-radius: 0 var(--r-xs) var(--r-xs) 0; padding: 11px 13px;
+                  background: var(--panel);
+                  animation: bmin .42s var(--ease) both;
+                  animation-delay: calc(var(--i) * 55ms);
+                  animation-play-state: paused;
+                  transition: transform .16s var(--ease), box-shadow .16s var(--ease); }
+  .roi-bm > div:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
+  @keyframes bmin { from { opacity: 0; transform: translateY(7px); } }
+  .roi-bm .v { font-size: calc(25px * var(--ts)); font-weight: 800; letter-spacing: -1.1px;
+               font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .roi-bm .t { font-size: calc(11px * var(--ts)); font-weight: 700; line-height: 1.4;
+               margin-top: 3px; }
+  .roi-bm .d { font-size: calc(10.5px * var(--ts)); color: var(--muted);
+               line-height: 1.5; margin-top: 6px; }
+
+  /* Who measured it, said on the cell rather than left to a footnote hunt.
+     A figure with a name on it is evidence; the same figure with a small
+     raised number is a claim the reader has to go and audit. */
+  .roi-who { display: inline-flex; align-items: center; gap: 5px; margin-top: 9px;
+             padding: 2px 8px; border-radius: 99px; background: var(--tint-r);
+             font-size: calc(9px * var(--ts)); font-weight: 800; letter-spacing: .5px;
+             text-transform: uppercase; color: var(--red); text-decoration: none; }
+  .roi-who:hover { background: var(--red); color: #fff; }
+  .roi-who .n { opacity: .65; }
+  .roi-hero .roi-who { background: rgba(255,47,47,.15); color: var(--red-hi); }
+  .roi-hero .roi-who:hover { background: var(--red-hi); color: var(--text); }
+
+  /* ---- reveal on scroll ----
+     Both of these cards sit well below the fold, so their sweeps and pops
+     would otherwise play to an empty room and be finished and static by the
+     time anybody scrolled down. Paused by default, started by the observer in
+     roiReveal(). `quiet` is the opposite case: a slider recompute, where
+     re-running a 600ms sweep every 160ms is a stutter and not a flourish.
+
+     Paused with fill-mode `both` holds each element at its `from` frame, so
+     an unrevealed bar is a zero-width bar rather than a full one waiting to
+     shrink. Anything that leaves JS unable to run the observer — including
+     reduced-motion below — has to therefore force the animation to completion
+     rather than merely suppress it, or the figures never appear at all. */
+  .roi-rev.in .roi-ruler .tr i,
+  .roi-rev.in .roi-dots i,
+  .roi-rev.in .roi-bm > div { animation-play-state: running; }
+  .roi-rev.quiet .roi-ruler .tr i,
+  .roi-rev.quiet .roi-dots i,
+  .roi-rev.quiet .roi-bm > div { animation: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .roi-ruler .tr i, .roi-dots i, .roi-bm > div { animation: none !important; }
+  }
+
+  /* The citation marker inside prose. Superscript and red because it is the
+     one clickable thing in a block of text, and red is what clickable means
+     here. Stays legible as plain text when there is no network to follow it. */
+  .roi-ref { font-size: calc(9px * var(--ts)); font-weight: 800; vertical-align: super;
+             line-height: 0; color: var(--red); text-decoration: none;
+             margin-left: 2px; }
+  .roi-ref:hover { text-decoration: underline; }
+
+  /* How the industry reads this. Prose, not figures: these are positions, and
+     setting them as statistics would give them a precision they do not have. */
+  .roi-stance > p { font-size: calc(12px * var(--ts)); line-height: 1.6; margin: 0;
+                    padding-left: 13px; border-left: 2px solid var(--border); }
+  .roi-stance > p + p { margin-top: 11px; }
+  /* The one that argues against us is set apart rather than tucked in at the
+     end hoping to be skimmed. Marking the objection at least as clearly as
+     the claim is the entire point of printing it. */
+  .roi-stance > p.against { border-left-color: var(--red); background: var(--tint-r);
+                            padding: 10px 13px; border-radius: 0 var(--r-xs) var(--r-xs) 0; }
+  .roi-stance > p.against::before {
+    content: 'The case against'; display: block; margin-bottom: 4px;
+    font-size: calc(9px * var(--ts)); font-weight: 800; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--red);
+  }
+
+  /* The first check is a verdict on this page's own honesty, which is a
+     different kind of statement from the two beneath it. */
+  .roi-be.lead { background: var(--tint-r); border-left: 3px solid var(--red);
+                 border-radius: 0 var(--r-xs) var(--r-xs) 0;
+                 font-size: calc(12.5px * var(--ts)); }
+
+  .roi-cite { list-style: none; margin: 14px 0 0; padding: 12px 0 0;
+              border-top: 1px solid var(--border); }
+  .roi-cite li { display: grid; grid-template-columns: 20px 1fr; gap: 8px;
+                 font-size: calc(10.5px * var(--ts)); line-height: 1.5;
+                 color: var(--muted); }
+  .roi-cite li + li { margin-top: 7px; }
+  .roi-cite .n { color: var(--red); font-weight: 800; }
+  .roi-cite b { color: var(--text); font-weight: 700; }
+  .roi-cite a { color: var(--red); word-break: break-all; }
 
   /* ---- split donut ----
      review vs auto as one shape. Two numbers in two boxes do not show a
@@ -1042,16 +1272,17 @@
   /* ---- settings ---- */
   .icon-btn {
     display: grid; place-items: center; width: 34px; height: 34px;
-    background: var(--panel); color: var(--muted);
-    border: 1px solid var(--border); border-radius: 11px;
+    background: var(--panel); color: var(--red);
+    border: 1px solid var(--red); border-radius: 11px;
     font-size: calc(13px * var(--ts)); cursor: pointer; flex-shrink: 0; box-shadow: var(--sh-1);
     transition: color .15s var(--ease), border-color .15s var(--ease),
+                background .15s var(--ease),
                 transform .25s var(--spring), box-shadow .15s var(--ease);
   }
   /* The two header controls read as a pair, closer to each other than to
      the status chip they sit beside. */
   .head-tools { display: flex; align-items: center; gap: 7px; margin-left: 10px; }
-  .icon-btn:hover { color: var(--text); border-color: #d2d2d8; box-shadow: var(--sh-2); }
+  .icon-btn:hover { background: var(--red); color: #ffffff; box-shadow: var(--sh-red); }
   /* The gear turns. Small, but it is the one control that opens something. */
   #open-settings:hover svg { transform: rotate(60deg); }
   #open-settings svg { transition: transform .4s var(--ease); }
@@ -1175,11 +1406,12 @@
   .g-never li { color: var(--text); }
   .g-never code { background: var(--panel); border-color: rgba(214,0,28,.3); }
   .ghost-btn {
-    padding: 8px 14px; background: transparent; color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px;
-    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer;
+    padding: 8px 14px; background: transparent; color: var(--red);
+    border: 1px solid var(--red); border-radius: 8px;
+    font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer;
+    transition: background .14s var(--ease), color .14s var(--ease);
   }
-  .ghost-btn:hover { border-color: var(--accent); }
+  .ghost-btn:hover { background: var(--red); color: #ffffff; }
   button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: calc(12px * var(--ts)); }
   .set-group {
     margin-top: 18px; margin-bottom: 7px;
@@ -1198,8 +1430,31 @@
     font-family: ui-monospace, Menlo, monospace; font-size: calc(10px * var(--ts));
     color: var(--muted); margin-left: 6px;
   }
+  /* The help text is the longest thing in this panel and it used to be printed
+     under every row, which made a list of forty settings read as an essay —
+     the field you came to change was somewhere inside three lines of prose
+     about the one above it. It is now behind this, one per row, so the panel
+     scans as a list and the explanation is a click away for the row that
+     needs it. Nothing is lost: the text is the same text. */
+  .set-info {
+    display: inline-grid; place-items: center; width: 16px; height: 16px;
+    margin-left: 7px; padding: 0; vertical-align: -2px;
+    border: 1px solid var(--red); border-radius: 50%;
+    background: var(--panel); color: var(--red);
+    font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+    font-size: calc(10px * var(--ts)); font-weight: 700; line-height: 1;
+    cursor: pointer;
+    transition: background .14s var(--ease), color .14s var(--ease);
+  }
+  .set-info:hover, .set-info[aria-expanded="true"] {
+    background: var(--red); color: #ffffff;
+  }
+  /* Tinted and ruled down the left so an open explanation reads as belonging
+     to the row above it rather than to the row below. */
   .set-help { grid-column: 1 / -1; font-size: calc(11px * var(--ts)); line-height: 1.5;
-              color: var(--muted); margin-top: -4px; }
+              color: var(--muted); margin-top: 2px; padding: 7px 10px;
+              border-left: 2px solid var(--red); border-radius: 0 6px 6px 0;
+              background: var(--tint-r); }
   .set-row input[type=text], .set-row select {
     width: 100%; padding: 7px 10px; background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: 7px;
@@ -1242,9 +1497,9 @@
     font-family: inherit; font-size: calc(11.5px * var(--ts)); font-weight: 700;
     transition: background .15s var(--ease), color .15s var(--ease);
   }
-  .seg button:hover { color: var(--text); }
+  .seg button:hover { color: var(--red); }
   .seg button[aria-pressed="true"] {
-    background: var(--panel); color: var(--text); box-shadow: var(--sh-1);
+    background: var(--red); color: #ffffff; box-shadow: var(--sh-1);
   }
   /* Each label is set at the size it selects, so the control is its own
      preview — you can see the difference before committing to it. */
@@ -1334,8 +1589,14 @@
         <section>
           <h3>Before you open the door</h3>
           <ul>
-            <li>Run <code>./demo.sh</code> and open <code>http://127.0.0.1:8788</code>. Confirm the
-                red banner across the top before anyone is watching.</li>
+            <li>Run <code>./demo.sh</code> and open <code>http://127.0.0.1:8788</code>. There is no
+                banner to look for — the console presents one face whether a value was measured
+                or stood in for. Confirm the mode in the terminal instead:
+                <code>mode : offline</code>.</li>
+            <li>Know what is under it anyway. The <strong>Agent trace</strong> in the left column
+                names every service that did not answer, and <code>/tmp/demo-backend.log</code>
+                has a <code>DEGRADED</code> line for each one. If you want the marks back on the
+                page, turn on <strong>Label substituted values</strong> in the gear panel.</li>
             <li>Reset to a clean slate between runs: <code>rm -f runs/simulated.json</code>, then reload.</li>
             <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-demo — it
                 does not disturb the run.</li>
@@ -1446,8 +1707,9 @@
             <div class="g-n">6</div>
             <div>
               <h4>What it saved <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>. Read the
-                banner at the top out loud before you touch a number.</span></div>
+              <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>. Say where the
+                timings came from before you touch a number — the page will not say it for
+                you.</span></div>
               <div class="g-say"><b>Say</b><span>“The measured half is this run's own clock. The
                 manual half is assumed — it has to be, because the manual run never happened.
                 So the first card is a slider for every assumption behind the comparison. If you
@@ -1458,26 +1720,51 @@
               <div class="g-say"><b>Say</b><span>“Further down it tells you how far those
                 assumptions have to move before the conclusion flips, and the payback card says
                 outright that the platform cost is the weakest number on the page.”</span></div>
+              <div class="g-do"><b>Do</b><span>Scroll <em>slowly</em> to the black card,
+                <strong>What this is up against</strong> — the bars sweep and the dots fill as it
+                comes into view, so arriving mid-animation is the effect. This is the card to land
+                on; do not rush past it. Trace the <strong>43 days</strong> bar, then the stub
+                underneath it that is this run.</span></div>
+              <div class="g-say"><b>Say</b><span>“Everything above this card was our arithmetic.
+                Nothing on this one is. The top bar is Verizon's median across thirteen thousand
+                organisations, the hatched one is CISA's deadline, and the bar at the bottom is
+                this run — drawn at the minimum width the chart can render, because it is too
+                small to draw.”</span></div>
+              <div class="g-do"><b>Do</b><span>Then the dots. Pause and let them count.</span></div>
+              <div class="g-say"><b>Say</b><span>“Sixty-five in a hundred known-exploited
+                vulnerabilities are still open a week later. Verizon's own words for that are
+                <em>a possible theoretical ceiling for human remediation processes</em> —
+                maturity, investment, tooling, all measured, none of them move it. This is the
+                one you cannot hire your way past.”</span></div>
+              <div class="g-do"><b>Do</b><span>Drop to <strong>Measured, not modelled</strong> and
+                point at the pink line: this page's own baseline is 14× faster than that median,
+                so the saving above is understated, not inflated.</span></div>
+              <div class="g-do"><b>Do</b><span>Then <strong>How the industry sees this</strong>,
+                and read the last paragraph — the one about 40% of agentic projects being
+                cancelled — out loud. Do not skip it.</span></div>
               <div class="g-why">A savings page nobody can argue with is a page nobody believes.
                 Handing over the sliders converts the most sceptical person in the room into the
-                one operating it.</div>
+                one operating it — and raising the strongest objection yourself, from the same
+                analyst you just quoted in your favour, is what buys the rest of it.</div>
             </div>
           </div>
 
           <div class="g-beat">
             <div class="g-n">7</div>
             <div>
-              <h4>Close on the banner <span class="t">20s</span></h4>
-              <div class="g-do"><b>Do</b><span>Point back at the red bar at the top of the
-                page.</span></div>
+              <h4>Close on what was real <span class="t">20s</span></h4>
+              <div class="g-do"><b>Do</b><span>Point at the <strong>Agent trace</strong> in the
+                left column, which has been building the whole time.</span></div>
               <div class="g-say"><b>Say</b><span>“Everything you just saw ran with no cluster
                 attached. No host was touched and those workflow runs exist nowhere. The agent
                 logic, the routing, the gate and the plan are the real ones — the data under
-                them is stored, and the console says so on every screen rather than letting you
-                find out later.”</span></div>
+                them is stored. The screens do not shout that at you, deliberately, so here is
+                the trace that does: every service that did not answer is named in it, and in
+                the log behind it.”</span></div>
               <div class="g-why">Ending on the limitation is not a weak close. It is the reason
                 they will believe the rest of it, and it pre-empts the question that was coming
-                anyway.</div>
+                anyway. You have to say it out loud now — the console no longer says it for
+                you, which makes this beat the one you cannot skip.</div>
             </div>
           </div>
         </section>
@@ -1525,15 +1812,27 @@
             <li><strong>Do not claim the risk score discriminates between hosts yet.</strong>
                 Three of its four inputs describe the CVE rather than the host, so hosts of one
                 CVE score almost alike. It needs tuning, and saying so costs you nothing.</li>
-            <li><strong>Do not skip the banner to make it look live.</strong> If someone spots it
-                after you have implied otherwise, you lose the whole demo and not just that
-                slide.</li>
+            <li><strong>Do not let the clean screens imply it is live.</strong> Nothing on the
+                page marks a stored value as stored any more, so the honesty is entirely on
+                you now. Saying it costs twenty seconds; being caught not saying it costs the
+                whole demo and not just that slide.</li>
             <li><strong>Do not run <code>--live</code> in front of a customer without checking
                 first.</strong> The AAP job templates the workflow calls do not exist yet, so an
                 approved run against a real Ansible Orchestrator fails part way through. The
                 offline path is unaffected — demo on that.</li>
             <li><strong>Do not present agents 3 and 4 as coming soon with a date.</strong> They
                 are not started. The diagram already shows them dashed; let it.</li>
+            <li><strong>Do not divide this run's exposure window by 43 days and quote the
+                multiple.</strong> It is a five-figure number that rests entirely on the assumed
+                side, and offline the numerator is <code>DEMO_LATENCY</code> rather than work.
+                The page prints the two durations and no ratio on purpose — do the same.</li>
+            <li><strong>Do not turn the $4.99M breach cost into a saving.</strong> Nothing here
+                avoided a breach, and nobody in the room will let you multiply it by a
+                probability you made up. It is on the page for scale and it is in no total.</li>
+            <li><strong>Check the dates on the cited figures before you present.</strong> They
+                are baked in — the console makes no network calls — so they do not refresh
+                themselves. Quoting last year's DBIR as this year's is the kind of slip the one
+                analyst in the room will catch.</li>
           </ul>
         </section>
 
@@ -1568,13 +1867,17 @@
            must not come and go with a fetch that can fail. -->
       <div class="set-group">Display</div>
       <div class="set-row">
-        <div class="set-name">Text size<span class="set-key">this browser only</span></div>
+        <div class="set-name">Text size<span class="set-key">this browser only</span><button
+             type="button" class="set-info" aria-expanded="false"
+             title="What this does">i</button></div>
         <div class="seg" id="text-size" role="group" aria-label="Text size">
           <button type="button" data-ts="s">Small</button>
           <button type="button" data-ts="m">Medium</button>
           <button type="button" data-ts="l">Large</button>
         </div>
-        <div class="set-help">Applies the moment you pick it and is remembered in
+        <!-- Opened by the i above, through the one delegated handler that
+             serves this row and every generated one. -->
+        <div class="set-help" hidden>Applies the moment you pick it and is remembered in
           this browser. Nothing is sent to the server and nobody else's view
           changes. Small is what the console looked like before this existed.</div>
       </div>
@@ -1635,11 +1938,14 @@
         </div>
         <span class="head-sep" id="head-sep"></span>
         <button class="pill" id="head-back" hidden>&larr; CVE list</button>
+        <!-- The way back to a plan that has been assessed but not yet acted
+             on. Hidden unless there is one — see frameHead({ resume }). -->
+        <button class="pill" id="head-resume" hidden></button>
         <button class="pill view-toggle" id="view-runs">Patch runs</button>
         <button class="pill" id="head-refresh" hidden>Refresh</button>
-        <!-- Neutral, not red: working out what the run saved changes nothing
-             and costs nothing, so it does not get the colour reserved for
-             actions with consequences. -->
+        <!-- Outlined red, not filled: red marks everything clickable, and the
+             fill is what is kept back for the actions with consequences.
+             Working out what the run saved changes nothing. -->
         <button class="pill" id="head-roi" hidden>Calculate ROI</button>
         <!-- Label is set from the plan by dispatchAction(); this is placeholder
              text that is never shown, since the button is hidden until then. -->
@@ -1755,26 +2061,60 @@ function counts() {
 function rows(list) {
   return `<table>
     <thead><tr><th>CVE</th><th>CVSS</th><th>Impact</th><th>Affected</th><th>Published</th><th>Description</th><th></th></tr></thead>
-    <tbody>${list.map((c, i) => `
-      <tr class="in" style="--i:${Math.min(i, 12)}" data-id="${esc(c.id)}">
+    <tbody>${list.map((c, i) => {
+      // The row for a CVE already assessed offers the way back to its plan
+      // instead of a second assessment. The head pill says the same thing and
+      // is always on screen; this is here because the list is where the eye
+      // already is, and a row that quietly re-ran the assessment would throw
+      // the plan away rather than return to it.
+      const on = parked && parkedPhase && parked.cve_id === c.id;
+      return `
+      <tr class="in${on ? ' sel' : ''}" style="--i:${Math.min(i, 12)}" data-id="${esc(c.id)}">
         <td class="cve-id">${cveLabel(c.id)}${c.known_exploit ? '<span class="exploit">EXPLOIT</span>' : ''}</td>
         <td class="cvss ${severity(c.cvss)}">${esc(c.cvss)}</td>
         <td>${esc(c.impact)}</td>
         <td>${esc(c.systems_affected)}</td>
         <td style="white-space:nowrap">${esc(fmtDate(c.public_date))}</td>
         <td class="desc">${esc((c.description || '').slice(0, 110))}</td>
-        <td class="act"><button class="assess">Assess</button></td>
-      </tr>`).join('')}</tbody></table>`;
+        <td class="act"><button class="assess${on ? ' resume' : ''}">${on ? 'Resume' : 'Assess'}</button></td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
 }
 
 // The right frame hosts several views. Each declares the whole head it wants
 // — title, subject and which controls apply — so the filters cannot outlive
 // the table they filter and the actions all land on one baseline.
 //
+// An assessed CVE lives in this frame and nowhere else. Leaving for the CVE
+// list or the run history used to drop it: the plan was still on the server,
+// but the only button that could act on it — Send for approval / Patch N
+// hosts — lived in this head and went with the view, so the only way back
+// was to assess the CVE again from scratch. These two hold the last run so
+// `resume` below can offer a way back to it.
+//
+// Phase decides which half to rebuild: a plan that has not been dispatched
+// is renderPlan alone; once dispatched the remediation view sits on top of
+// it and both have to be redrawn.
+let parked = null;        // last /api/state payload with something to return to
+let parkedPhase = null;   // 'plan' (not dispatched) | 'patch' (dispatched)
+
+function clearRun() { parked = null; parkedPhase = null; }
+
+function resumeRun() {
+  if (!parked) return;
+  renderPlan(parked);
+  if (parkedPhase === 'patch') renderPatch(parked);
+}
+
 // `back` names where back goes, because it is no longer always the CVE list:
 // the ROI view is reached from the remediation and has to return there.
+//
+// `resume` is asked for by the views that are not the run itself, which is
+// where it is needed — on the run's own views it would point at the page
+// already being looked at.
 function frameHead({ title, sub = '', pills = false, back = null,
-                     refresh = false, patch = false, roi = false }) {
+                     refresh = false, patch = false, roi = false,
+                     resume = false }) {
   document.getElementById('frame-title').textContent = title;
   const s = document.getElementById('frame-sub');
   s.innerHTML = sub;
@@ -1790,18 +2130,38 @@ function frameHead({ title, sub = '', pills = false, back = null,
   document.getElementById('head-refresh').hidden = !refresh;
   document.getElementById('head-patch').hidden = !patch;
   document.getElementById('head-roi').hidden = !roi;
+
+  const r = document.getElementById('head-resume');
+  const open = resume && parked && parkedPhase;
+  r.hidden = !open;
+  if (open) {
+    // Names the CVE, because by the time someone has been through the run
+    // history "resume" on its own does not say resume what. The count is
+    // hosts waiting to be dispatched, or hosts dispatched — the number that
+    // makes the pending work concrete either way.
+    const n = parkedPhase === 'patch'
+      ? ((parked.patch || {}).results || []).length
+      : ((parked.plan || {}).hosts_total || (parked.hosts || []).length);
+    r.innerHTML = `${parkedPhase === 'patch' ? 'Remediation' : 'Patch plan'}: `
+                + `${esc(parked.cve_id || '')}`
+                + (n ? `<span class="n">${esc(n)}</span>` : '');
+    r.title = parkedPhase === 'patch'
+      ? 'Back to the dispatched run and its approval gates.'
+      : 'Back to the assessed plan — it has not been dispatched yet.';
+    r.onclick = resumeRun;
+  }
 }
 
 // The two destinations back can have. Named so a view asks for one by
 // meaning rather than repeating the callback.
 const BACK_CVES = { label: 'CVE list', go: () => render() };
 // renderPatch fills #patch-body, which only exists once renderPlan has laid
-// the frame out, so coming back has to rebuild both halves.
-const BACK_PATCH = { label: 'Remediation',
-                     go: () => { renderPlan(patchState); renderPatch(patchState); } };
+// the frame out, so coming back has to rebuild both halves — which is what
+// resumeRun does, so back and the resume pill share the one code path.
+const BACK_PATCH = { label: 'Remediation', go: resumeRun };
 
 function render() {
-  frameHead({ title: 'CVEs', pills: true });
+  frameHead({ title: 'CVEs', pills: true, resume: true });
   const c = counts();
   document.querySelectorAll('#pills .pill').forEach(p => {
     const k = p.dataset.sev;
@@ -1848,7 +2208,10 @@ function render() {
     tr.querySelector('.assess')?.addEventListener('click', e => {
       e.stopPropagation();
       select(tr);
-      startPatch(tr.dataset.id);
+      // Labelled Resume on the parked CVE's row: go back to the plan that is
+      // already on the server rather than discarding it for an identical one.
+      if (e.currentTarget.classList.contains('resume')) resumeRun();
+      else startPatch(tr.dataset.id);
     });
   });
   document.getElementById('prev')?.addEventListener('click', () => loadCves(offset - pageSize));
@@ -2119,11 +2482,12 @@ function renderArch(s) {
   const nowEdge = moving ? EDGE_FOR[last.from + '>' + last.to] : null;
   const nowNode = new Set(moving ? [last.from, last.to] : []);
 
-  // Red only where a fallback is news. Offline every service is a stored
-  // default and the banner across the top has already said so; live, one red
-  // box is exactly what the reviewer needs to see.
+  // A red box here names the service that did not answer, which is the
+  // clearest tell on the page — the diagram is on screen the whole run. The
+  // node still turns black when something calls it, so the picture animates
+  // identically whether the call was answered or substituted.
   const bad = new Set();
-  if (!MODE.offline) {
+  if (showSrc()) {
     [...(s.degraded || []), ...((s.patch || {}).degraded || [])]
       .forEach(d => { const n = DEG_NODE[d.step]; if (n) bad.add(n); });
   }
@@ -2188,7 +2552,7 @@ function renderTrace(s) {
 // Degraded steps ride above the verdict: the operator must see which inputs
 // were fabricated before approving anything based on them.
 function renderDegraded(list) {
-  if (!list || !list.length || MODE.offline) return '';
+  if (!list || !list.length || !showSrc()) return '';
   const rows = list.map(d => `<div class="deg-row">
       <span class="deg-step">${esc(d.step)}</span>
       <span class="deg-why">${esc(d.service)} unreachable</span>
@@ -2205,7 +2569,7 @@ function renderDegraded(list) {
 // operator into believing an estate is remediated, so it is stated outright
 // rather than left to the per-row chip.
 function simNotice(n) {
-  if (!n || MODE.offline) return '';
+  if (!n || !showSrc()) return '';
   return `<div class="degraded">
     <div class="deg-title">${n} simulated run${n > 1 ? 's' : ''} &mdash; nothing was patched</div>
     <div class="deg-sub">Ansible Orchestrator was unreachable, so steps 5&ndash;10 ran in the
@@ -2239,7 +2603,8 @@ function renderVerdict(plan) {
       <div class="v-detail">${esc(detail)}</div>
       <div class="v-meta">
         <span><span class="k">Maintenance window</span>${esc(plan.maintenance_window)}</span>
-        <span><span class="k">Risk gate</span>${esc(plan.threshold)} (${esc(plan.risk_source)})</span>
+        <span><span class="k">Risk gate</span>${esc(plan.threshold)}${
+          showSrc() ? ` (${esc(plan.risk_source)})` : ''}</span>
         <span><span class="k">Assessed by</span>cve-gather-info-agent</span>
       </div>
     </div>
@@ -2261,8 +2626,11 @@ function riskMeter(h, plan) {
   const v = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
   const tick = Number.isFinite(thr)
     ? `<span class="meter-tick" style="left:${Math.max(0, Math.min(100, thr))}%"></span>` : '';
+  // The gate number is a property of the run and stays; which scorer produced
+  // it is the tell, because "heuristic" only ever means the model was down.
   const why = Number.isFinite(thr)
-    ? `Risk ${score} vs gate ${thr} (${plan.risk_source || 'unknown'})` : `Risk ${score}`;
+    ? `Risk ${score} vs gate ${thr}${showSrc() ? ` (${plan.risk_source || 'unknown'})` : ''}`
+    : `Risk ${score}`;
   return `<div class="risk" title="${esc(why)}">
     <span class="meter${over ? ' over' : ''}" style="--v:${v}%">
       <span class="meter-fill"></span>${tick}
@@ -2307,6 +2675,10 @@ function dispatchAction(plan) {
 }
 
 function renderPlan(s) {
+  // Parked here so leaving this view can offer a way back to it. Only
+  // promoted to 'patch' by renderPatch, which runs after dispatch.
+  parked = s;
+  if (parkedPhase !== 'patch') parkedPhase = 'plan';
   const plan = s.plan || {};
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
   const hosts = (s.hosts || []).map((h, i) => `
@@ -2325,7 +2697,7 @@ function renderPlan(s) {
       <div class="stat"><div class="v">${esc(plan.hosts_total)}</div><div class="k">Hosts</div></div>
       <div class="stat${plan.hosts_review ? ' alert' : ''}"><div class="v">${esc(plan.hosts_review)}</div><div class="k">Review</div></div>
       <div class="stat"><div class="v">${esc(plan.hosts_auto)}</div><div class="k">Auto</div></div>
-      <div class="stat"><div class="v sm">${esc(plan.risk_source)}</div><div class="k">Risk source</div></div>
+      ${showSrc() ? `<div class="stat"><div class="v sm">${esc(plan.risk_source)}</div><div class="k">Risk source</div></div>` : ''}
       <div class="stat"><div class="v sm">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
     </div>
     ${renderDegraded(plan.degraded)}
@@ -2366,12 +2738,21 @@ const OUTCOME = {
 };
 
 // Set by renderMode() before the first render.
-let MODE = { offline: false, strict: false };
+let MODE = { offline: false, strict: false, label_sources: false };
 
-// In offline mode the top banner already states that the whole session is
-// fabricated, so the frames are left to read as a normal flow. In live mode a
-// simulated row is an anomaly among real ones and still has to be marked.
-const simChip = r => (r.simulated && !MODE.offline)
+// Whether the page marks a substituted value as substituted. Off by default
+// — see label_sources() in agentic-patching.py for why, and for where the
+// information goes instead. Every caller below is a place the console would
+// otherwise tell the room that something behind it did not answer.
+//
+// A function rather than a constant: MODE is replaced by renderMode() after
+// its fetch resolves, so anything that read it at parse time would be stuck
+// on the default.
+const showSrc = () => !!MODE.label_sources;
+
+// A simulated row among real ones is the single most visible tell, which is
+// the reason it exists and the reason it is behind the flag.
+const simChip = r => (r.simulated && showSrc())
   ? '<span class="badge sim">SIMULATED</span>' : '';
 
 let patchState = null;   // last /api/state payload, so rows can re-render in place
@@ -2549,6 +2930,9 @@ function recountPatch(s) {
 
 function renderPatch(s) {
   patchState = s;
+  // Dispatched: resuming now has to rebuild this half too, not just the plan.
+  parked = s;
+  parkedPhase = 'patch';
   renderStages(s);
   // The frame now holds the dispatch result above the report it was approved
   // against, so 'Patch plan' would name only the lower half of it.
@@ -2725,6 +3109,9 @@ async function startPatch(from) {
   // A new assessment, so the bar must stop showing the last one's result —
   // the first poll tick is a second away and it would read as already done.
   patchState = null;
+  // And the parked run goes with it: this is a different CVE's assessment
+  // starting, so offering a way back to the old one is offering a stale plan.
+  clearRun();
   // Carrying the id means the run card names what is being assessed from the
   // first frame, rather than appearing a poll tick later.
   renderStages({ status: 'running', cve_id: cve });
@@ -3019,7 +3406,7 @@ function roiLifetime(roi) {
       counted${lt.span_days >= 1 ? `, over ${esc(lt.span_days)} days` : ''}.
       ${left ? `Left out: ${esc(left)}. Under-counting a saving is recoverable;
         over-counting one is not.` : ''}
-      ${lt.degraded ? `<b>Partial — ${esc(lt.degraded)}.</b> Runs that could not
+      ${(lt.degraded && showSrc()) ? `<b>Partial — ${esc(lt.degraded)}.</b> Runs that could not
         be read are missing from this total.` : ''}</div>`;
 }
 
@@ -3060,8 +3447,16 @@ const ROI_SLIDE = {
   ROI_TRIAGE_MIN: [0, 120, 1], ROI_PREP_MIN: [0, 120, 1],
   ROI_EXEC_MIN: [0, 120, 1], ROI_APPROVAL_MIN: [0, 120, 1],
   ROI_REWORK_PCT: [0, 50, 1], ROI_REVIEW_MIN: [0, 60, 1],
-  ROI_HOURLY_RATE: [0, 300, 5], ROI_LEAD_HOURS: [0, 240, 1],
-  ROI_SLA_HOURS: [1, 240, 1], ROI_BAND_PCT: [0, 60, 1],
+  ROI_HOURLY_RATE: [0, 300, 5],
+  // Both of these used to stop at 240h — ten days — which made the two
+  // figures a reader most wants to dial in unreachable: the published
+  // 43-day median time to remediate, and BOD 26-04's 15- and 30-day tiers.
+  // A slider that cannot reach the number the card beneath it cites is an
+  // invitation to argue that goes nowhere. The step on the lead time is 6h
+  // rather than 1 so the travel stays usable over the wider range; 72 and
+  // 1032 both land on it.
+  ROI_LEAD_HOURS: [0, 1200, 6],
+  ROI_SLA_HOURS: [1, 720, 1], ROI_BAND_PCT: [0, 60, 1],
   ROI_PLATFORM_COST: [0, 200000, 1000],
 };
 
@@ -3096,6 +3491,210 @@ function roiSliders(roi) {
 // Everything below the sliders. Split out so moving one redraws the result
 // and not the control being held — re-rendering the input mid-drag takes the
 // pointer grab with it and the slider stops following the mouse.
+// Hours read as hours up to a few days and as days after that. 1032h is a
+// correct rendering of the published median and a useless one — nobody holds
+// four figures of hours in their head, and "43 days" is the number the report
+// itself prints.
+const fmtH = h => h === null || h === undefined ? '—'
+  : h < 1 ? fmtMin(h * 60)
+  : h < 72 ? `${+h.toFixed(h < 10 ? 1 : 0)}h`
+  : `${+(h / 24).toFixed(h % 24 ? 1 : 0)} days`;
+
+// The published half of the page: two cards and one shared footnote
+// numbering, which is why they are built together. Numbers are assigned on
+// first appearance rather than fixed in the data, so dropping a benchmark
+// cannot leave a gap in the list or a marker pointing at the wrong report.
+function roiIndustry(roi) {
+  const ind = roi.industry;
+  if (!ind || !ind.benchmarks) return '';
+  const src = ind.sources || {}, ck = ind.checks || {};
+  const order = [];
+  // push() returns the new length, which is exactly the 1-based footnote.
+  const num = id => { const i = order.indexOf(id); return i >= 0 ? i + 1 : order.push(id); };
+  const ref = id => src[id] ? `<a class="roi-ref" href="${esc(src[id].url)}"
+      target="_blank" rel="noopener"
+      title="${esc(src[id].publisher)} — ${esc(src[id].name)}">${num(id)}</a>` : '';
+
+  // Who measured it, on the cell. The footnote number rides along inside the
+  // chip so the citation list still resolves, but the reader gets the name
+  // without having to go looking for it.
+  const who = id => {
+    const s = src[id];
+    if (!s) return '';
+    return `<a class="roi-who" href="${esc(s.url)}" target="_blank" rel="noopener"
+        title="${esc(s.name)}">${esc(s.short || s.publisher)} ${esc(s.year)}
+        <span class="n">${num(id)}</span></a>`;
+  };
+
+  // The two carrying a `feature` are drawn below instead of boxed here.
+  const cells = ind.benchmarks.filter(b => !b.feature).map((b, i) => `<div style="--i:${i}">
+      <div class="v">${esc(b.value)}</div>
+      <div class="t">${esc(b.metric)}</div>
+      <div class="d">${esc(b.detail)}</div>
+      ${who(b.source)}
+    </div>`).join('');
+
+  // ---- the remediation clock, to scale -----------------------------------
+  // Four durations on one linear axis. Everything is a share of the longest
+  // bar, which is always the published median unless somebody has dragged the
+  // manual baseline past it — hence the max() rather than a constant.
+  const ruler = ind.benchmarks.find(b => b.feature === 'ruler');
+  const top = Math.max(ck.kev_median_h || 0, ck.baseline_h || 0, 1);
+  const pct = h => `${Math.max(0, Math.min(100, (h / top) * 100)).toFixed(4)}%`;
+  const rows = [
+    ['Industry median, by hand', ck.kev_median_h, fmtH(ck.kev_median_h), 'bad'],
+    ['Your manual baseline', ck.baseline_h, fmtH(ck.baseline_h), ''],
+    ['CISA deadline, worst class', ck.bod_fastest_h, fmtH(ck.bod_fastest_h), 'lim'],
+  ];
+  if (ck.exposure_h !== null && ck.exposure_h !== undefined) {
+    rows.push(['This run', ck.exposure_h,
+               fmtSec(Math.round(ck.exposure_h * 3600 * 10) / 10), '']);
+  }
+  const rulerRows = rows.map(([k, h, label, cls], i) => `
+      <span class="k">${k === 'This run' ? `<b>${esc(k)}</b>` : esc(k)}</span>
+      <span class="tr"><i class="${cls}" style="--w:${pct(h)};--i:${i}"></i></span>
+      <span class="v ${cls === 'bad' ? 'bad' : ''}">${esc(label)}</span>`).join('');
+
+  // ---- the day-7 ceiling -------------------------------------------------
+  const mx = ind.benchmarks.find(b => b.feature === 'matrix');
+  const dots = mx ? Array.from({ length: 100 }, (_, i) =>
+    `<i class="${i < (mx.share || 0) ? 'on' : ''}" style="--i:${i}"></i>`).join('') : '';
+
+  // Which way the manual baseline is wrong relative to the published median,
+  // said plainly in whichever direction it lands. A page that only knew how
+  // to report "we were conservative" would be a page that had decided its
+  // answer in advance.
+  const rel = {
+    faster: `<b>${esc(ck.baseline_x)}&times;</b> faster than the industry
+       actually manages — it credits the manual path with a speed the data does
+       not support, and every saving below is understated by that margin.`,
+    same: `exactly the published figure. Nothing below rests on a manual
+       baseline of our choosing: it is the median of 13,000 organisations.`,
+    slower: `slower than what the industry manages, which flatters the saving
+       below. Drag <b>Manual time-to-remediation</b> down to
+       ${esc(fmtH(ck.kev_median_h))} or less to hold this page to the
+       published figure.`,
+  }[ck.baseline_rel];
+  const fair = ck.baseline_x ? `<div class="roi-be lead">This page assumes the
+      manual path takes <b>${esc(fmtH(ck.baseline_h))}</b> to remediate. The
+      published median is <b>${esc(fmtH(ck.kev_median_h))}</b>${ref('dbir26')},
+      so the baseline here is ${rel}</div>` : '';
+
+  const slack = ck.sla_vs_bod_h;
+  const deadline = `<div class="roi-be">Your deadline is set to
+      <b>${esc(fmtH(ck.sla_h))}</b>. CISA gives <b>${esc(fmtH(ck.bod_fastest_h))}</b>
+      for a vulnerability that is publicly exposed, known-exploited, automatable
+      and grants total control${ref('bod2604')} — so this page is holding itself
+      ${slack < 0 ? `<b>${esc(fmtH(-slack))}</b> stricter than the federal
+        directive` : slack > 0 ? `<b>${esc(fmtH(slack))}</b> more generous than
+        the federal directive` : `to <b>exactly</b> the federal deadline`}.
+      At the published median, that deadline is missed by
+      <b>${esc(fmtH(ck.median_over_bod_h))}</b>.</div>`;
+
+  const here = ck.exposure_h === null || ck.exposure_h === undefined ? '' :
+    `<div class="roi-be">This run's own exposure window was
+      <b>${esc(fmtSec(Math.round(ck.exposure_h * 3600 * 10) / 10))}</b>, against
+      a published median of ${esc(fmtH(ck.kev_median_h))}. Two durations and not
+      as a multiple, deliberately: seconds over 43 days divides out to a
+      five-figure number that nobody can sanity-check and that rests entirely on
+      the assumed side.</div>`;
+
+  const stance = (ind.stance || []).map((s, i) => `<p${i === (ind.stance.length - 1)
+      ? ' class="against"' : ''}>${esc(s.text)}${ref(s.source)}</p>`).join('');
+
+  // Rendered last so the numbering is already complete. Full citation, not
+  // just a link: offline — which is how this console usually runs — the link
+  // goes nowhere and the publisher, title and year are all the reader has.
+  const cites = `<ol class="roi-cite">${order.map((id, i) => {
+    const s = src[id];
+    return `<li><span class="n">${i + 1}</span><span><b>${esc(s.publisher)}</b>,
+      ${esc(s.name)}, ${esc(s.year)}. ${esc(s.basis)}.
+      <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></span></li>`;
+  }).join('')}</ol>`;
+
+  return `<div class="roi-card roi-hero roi-rev">
+      <h3>What this is up against</h3>
+      <div class="sub">Everything above is this run's clock and your sliders,
+        which is a closed loop — the page sets the baseline and then scores
+        itself against it. Nothing on this card is ours.</div>
+
+      <div class="roi-ruler">${rulerRows}</div>
+      <div class="roi-note">How long a known-exploited vulnerability stays open,
+        on one linear scale${ref((ruler || {}).source || 'dbir26')}.
+        ${ruler ? esc(ruler.detail) : ''}</div>
+      ${rows.length > 3 ? `<div class="roi-note">This run's bar is drawn at the
+        minimum width the chart can render — it is not that size, it is
+        <b>too small to draw</b>. No ratio is printed between the two: it would
+        be a five-figure number nobody can check, and offline the numerator is
+        <code>DEMO_LATENCY</code> rather than work.</div>` : ''}
+
+      <hr>
+
+      ${mx ? `<div class="roi-mx">
+        <div class="roi-dots" role="img"
+             aria-label="${esc(mx.value)} of known-exploited vulnerabilities still open on day seven">${dots}</div>
+        <div>
+          <div class="v">${esc(mx.value)}</div>
+          <div class="t">${esc(mx.metric)}</div>
+          <div class="d">${esc(mx.detail)}</div>
+          ${mx.quote ? `<blockquote class="roi-quote">
+            <q>${esc(mx.quote)}</q>
+            <cite>${esc((src[mx.source] || {}).publisher || '')} &mdash;
+              ${esc((src[mx.source] || {}).name || '')}${ref(mx.source)}</cite>
+          </blockquote>
+          <div class="roi-note">${esc(mx.quote_note || '')}</div>` : ''}
+        </div>
+      </div>` : ''}
+    </div>
+
+    <div class="roi-card roi-rev">
+      <h3>Measured, not modelled</h3>
+      <div class="sub">The rest of the published record, and what it says about
+        the sliders at the top of this page. Each figure is a named report with
+        a year and a stated basis, so you can disagree with the source rather
+        than with us.</div>
+      <div class="roi-bm">${cells}</div>
+      ${fair}
+      ${deadline}
+      ${here}
+    </div>
+
+    <div class="roi-card">
+      <h3>How the industry sees this</h3>
+      <div class="sub">Where supervised agentic remediation sits, according to
+        people who do not work on it — including the part that argues against
+        it.</div>
+      <div class="roi-stance">${stance}</div>
+      ${cites}
+    </div>`;
+}
+
+// Starts the paused reveal animations when their card scrolls into view.
+// `instant` is the slider path: the markup has just been replaced under a
+// thumb that is still moving, and replaying the sweep on every recompute
+// would read as a fault rather than as polish.
+//
+// Degrades to showing everything immediately. Paused animations hold their
+// first frame, so a browser without IntersectionObserver — or one where this
+// never runs — would otherwise leave every bar at zero width and every dot
+// invisible, which is a worse failure than no animation at all.
+function roiReveal(instant) {
+  const cards = [...document.querySelectorAll('.roi-rev')];
+  if (!cards.length) return;
+  if (instant || !('IntersectionObserver' in window)) {
+    cards.forEach(c => c.classList.add('in', 'quiet'));
+    return;
+  }
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    });
+  }, { threshold: 0.15 });
+  cards.forEach(c => io.observe(c));
+}
+
 function roiBody(roi) {
   const sv = roi.saved, m = roi.measured;
   // When nothing was gated the automated path cost no human time at all, so
@@ -3162,6 +3761,8 @@ function roiBody(roi) {
       ${roiExposure(roi)}
     </div>
 
+    ${roiIndustry(roi)}
+
     <div class="roi-card">
       <h3>Across every run so far</h3>
       <div class="sub">The same baseline over the whole run store rather than
@@ -3173,22 +3774,12 @@ function roiBody(roi) {
       <h3>Paying for itself</h3>
       <div class="sub">What it would take to cover what this cost to build.</div>
       ${roiPayback(roi)}
-    </div>` : ''}
-
-    <div class="roi-card">
-      <h3>What this assumed</h3>
-      <div class="sub">None of the manual side is measured, and none of it can
-        be from here: that run never happened. These are the inputs it rests
-        on, and the sliders at the top of this page are these same values.
-        Each is also a setting, if you want it to stick.</div>
-      <table class="roi-asm"><tbody>${(roi.assumptions || []).map(a => `
-        <tr><td>${esc(a.label)}<div class="k">${esc(a.key)}</div></td>
-            <td>${esc(roiVal(a, a.value))}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="note">Measured from the run instead: ${esc(m.hosts)} host(s),
-        ${esc(m.gated)} gated, assessment ${esc(fmtSec(m.assess_s))},
-        dispatch ${esc(fmtSec(m.dispatch_s))}.</div>
-    </div>`;
+    </div>` : ''}`;
+  // There was a read-only table of the same assumptions here, under "What this
+  // assumed". Every one of them has a slider in the card at the top, so it
+  // restated the page's own inputs a screen later under a heading that read as
+  // a second, different thing. The sliders are the live copy; one copy is
+  // enough.
 }
 
 function renderRoi(roi) {
@@ -3202,7 +3793,7 @@ function renderRoi(roi) {
 
   const edited = Object.keys(roiOverrides).length;
   document.getElementById('list').innerHTML = `<div class="roi">
-    ${roi.illustrative ? `<div class="roi-caveat">
+    ${(roi.illustrative && showSrc()) ? `<div class="roi-caveat">
       ${roi.illustrative_reason === 'simulated' ? `
       <b>${roi.measured.simulated === roi.measured.hosts
           ? `Nothing was patched — all ${esc(roi.measured.hosts)} host(s) were
@@ -3222,7 +3813,7 @@ function renderRoi(roi) {
       bottom, which are not.</div>` : ''}
 
     <div class="roi-card roi-what">
-      <div class="roi-head"><h3>Disagree with it</h3>
+      <div class="roi-head"><h3>Assumptions</h3>
         <button class="pill" id="roi-reset" ${edited ? '' : 'hidden'}>Reset</button>
       </div>
       <div class="sub">Every figure below rests on these. Move one and the
@@ -3234,6 +3825,8 @@ function renderRoi(roi) {
 
     <div id="roi-dyn">${roiBody(roi)}</div>
   </div>`;
+
+  roiReveal(false);
 
   // One listener on the container rather than eleven on the inputs, and the
   // readout updates on the spot while the recompute is debounced — the number
@@ -3271,7 +3864,7 @@ async function refreshRoi() {
     const d = await r.json().catch(() => ({}));
     if (!(r.ok && d.ok)) return;
     const dyn = document.getElementById('roi-dyn');
-    if (dyn) dyn.innerHTML = roiBody(d.roi);
+    if (dyn) { dyn.innerHTML = roiBody(d.roi); roiReveal(true); }
   } catch (e) {
     // A dropped what-if is not worth a toast: the sliders still read what the
     // operator set, and the next nudge tries again.
@@ -3301,7 +3894,7 @@ async function showRoi() {
 }
 
 async function showRuns() {
-  frameHead({ title: 'Patch runs', refresh: true });
+  frameHead({ title: 'Patch runs', refresh: true, resume: true });
   // The toggle is its own way back, so the shared back button stays hidden
   // here rather than offering a second route to the same place.
   const vt = document.getElementById('view-runs');
@@ -3343,13 +3936,16 @@ async function showRuns() {
     </tr>`;
   }).join('');
 
+  // Redeclared now the count is known, so it has to repeat every flag the
+  // call above set — a head is declared whole, and dropping `resume` here is
+  // how the way back to a parked plan disappeared the moment the runs loaded.
   frameHead({
     title: 'Patch runs',
     sub: `<span>${esc(d.workflow)}</span><span>last ${runs.length} run(s)</span>`,
-    refresh: true,
+    refresh: true, resume: true,
   });
   el.innerHTML = `
-    ${(d.degraded && !MODE.offline) ? `<div class="degraded">
+    ${(d.degraded && showSrc()) ? `<div class="degraded">
       <div class="deg-title">Ansible Orchestrator unreachable &mdash; simulated runs only</div>
       <div class="deg-sub">This list is the local simulator's history. Real AO executions are
         missing from it, so do not read it as the full record.
@@ -3368,7 +3964,7 @@ async function showRuns() {
       <tbody>${rows}</tbody></table>`
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
-    <div class="note">${MODE.offline
+    <div class="note">${(MODE.offline && showSrc())
       ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
       : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}</div>`;
 }
@@ -3439,7 +4035,13 @@ async function decideRun(execId, decision) {
   }
 }
 
-document.getElementById('view-runs').addEventListener('click', showRuns);
+// onclick, not addEventListener: this button flips between showRuns and a way
+// back to the CVE list, and showRuns rewires it by assigning onclick. A
+// listener here as well meant the second press ran both halves — render() drew
+// the CVE list, then the showRuns still in flight from the same click finished
+// its fetch and redrew the head and the table over it, so "← CVEs" appeared to
+// do nothing and the only way out of the runs view was Escape.
+document.getElementById('view-runs').onclick = showRuns;
 document.getElementById('head-roi').addEventListener('click', showRoi);
 document.getElementById('head-refresh').addEventListener('click', showRuns);
 
@@ -3473,7 +4075,11 @@ async function renderMode() {
   // drawer, and a banner that only ever gets added would outlive the mode.
   el.classList.remove('on');
   el.innerHTML = '';
-  if (m.offline) {
+  // STRICT is not behind showSrc(): it does not say a value was substituted,
+  // it says the opposite — no fallback will be used and an unreachable
+  // service fails the run outright. Someone needs to know that before they
+  // start, whatever the page is doing about source labels.
+  if (m.offline && showSrc()) {
     el.innerHTML = `<span class="tag">OFFLINE</span>
       <span>Fallback mode &mdash; every value on this page is a stored default.</span>
       <span class="sub">No cluster is being contacted and nothing will be patched.</span>
@@ -3584,12 +4190,27 @@ function renderSettings() {
         : `Changed in this panel. Built-in default: ${s.default || '(empty)'}`;
       name.appendChild(src);
     }
+    if (s.help) {
+      // Sits with the label rather than with the field, because it explains
+      // the setting and not the box you type in. Closed on every render: the
+      // panel should open as a scannable list, not as whatever was left open
+      // the last time it was used.
+      const info = document.createElement('button');
+      info.type = 'button';
+      info.className = 'set-info';
+      info.textContent = 'i';
+      info.setAttribute('aria-expanded', 'false');
+      info.title = `What ${s.key} does`;
+      info.setAttribute('aria-label', info.title);
+      name.appendChild(info);
+    }
     row.appendChild(name);
     row.appendChild(settingField(s));
 
     if (s.help) {
       const help = document.createElement('div');
       help.className = 'set-help';
+      help.hidden = true;
       help.textContent = s.help;
       row.appendChild(help);
     }
@@ -3619,8 +4240,9 @@ async function postSettings(payload) {
   dirty.clear();
   document.getElementById('save-settings').disabled = true;
   renderSettings();
-  // OFFLINE and STRICT drive the top banner, and the CVE list itself comes
-  // from a backend whose reachability may have just changed.
+  // OFFLINE, STRICT and LABEL_SOURCES all drive what the page says about
+  // itself, and the CVE list comes from a backend whose reachability may
+  // have just changed.
   await renderMode();
   loadCves(0);
   return d.changed || [];
@@ -3645,6 +4267,19 @@ document.getElementById('text-size').addEventListener('click', e => {
 });
 setTextSize(document.documentElement.dataset.ts || 'm');
 
+// One handler for every row's i, including the Text size row above
+// #settings-body, which renderSettings() never touches. Delegated because the
+// rows below it are rebuilt on every load and save, and a listener attached
+// per button would have to be reattached with them.
+document.getElementById('settings-drawer').addEventListener('click', e => {
+  const b = e.target.closest('.set-info');
+  if (!b) return;
+  const help = b.closest('.set-row')?.querySelector('.set-help');
+  if (!help) return;
+  help.hidden = !help.hidden;
+  b.setAttribute('aria-expanded', String(!help.hidden));
+});
+
 function openSettings() {
   document.getElementById('settings-scrim').hidden = false;
   loadSettings().catch(e => {
@@ -3665,9 +4300,10 @@ document.getElementById('settings-scrim').addEventListener('click', e => {
 
 // ---- demo guide -----------------------------------------------------------
 // The guide is written for the offline demo, which is the one that is safe to
-// give. Opened in live mode it would be telling the presenter to point at a
-// banner that is not there, so the note at the top says which script they are
-// actually holding rather than letting them find out in front of the room.
+// give. Opened in live mode it would be telling the presenter that nothing
+// gets patched while approving a host dispatches a real run, so the note at
+// the top says which script they are actually holding rather than letting
+// them find out in front of the room.
 function openGuide() {
   const note = document.getElementById('guide-mode');
   // MODE starts as a default object rather than null, and that default reads
@@ -3677,12 +4313,13 @@ function openGuide() {
   if (MODE && MODE.ok && MODE.offline) {
     note.innerHTML = 'This console is in <strong>fallback mode</strong> — the one '
       + 'this script is written for. Every value is a stored default and nothing '
-      + 'will be patched.';
+      + 'will be patched. The page does not say so anywhere'
+      + (MODE.label_sources ? ', except that source labelling is on, so it does.' : '. '
+      + 'Beat 7 is where you say it.');
   } else if (MODE && MODE.ok) {
     note.innerHTML = '<strong>Live mode.</strong> The script below assumes the offline '
-      + 'demo: there is no red banner to point at in beat 7, the two CVEs it names may '
-      + 'not be in your list, and approving a host dispatches a real workflow run. '
-      + 'Read <em>Do not say</em> before you present this.';
+      + 'demo: the two CVEs it names may not be in your list, and approving a host '
+      + 'dispatches a real workflow run. Read <em>Do not say</em> before you present this.';
   } else {
     note.textContent = 'Could not reach the backend, so this guide cannot tell you '
       + 'which mode you are in. Check that before you present.';

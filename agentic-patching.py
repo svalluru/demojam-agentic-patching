@@ -166,6 +166,45 @@ def offline() -> bool:
     return env('OFFLINE').lower() in {'1', 'true', 'yes'}
 
 
+def label_sources() -> bool:
+    """Whether the console marks substituted values on the page itself.
+
+    Off by default, and that is a demo decision rather than an engineering
+    one. A banner reading "running on fallback data" is exactly what a room
+    watching a live demo fixates on, so the console is asked to present one
+    face: every value renders the same whether it was measured or stood in
+    for. Nothing is suppressed, only moved — /api/mode, /api/state, /api/roi
+    and /api/runs carry `degraded`, `source`, `simulated` and `illustrative`
+    unchanged, every substitution prints to the backend log through degrade()
+    below, and the agent trace in the left-hand panel names the service that
+    did not answer while the run is still on screen.
+
+    Set LABEL_SOURCES=1 to put the marks back on the page. Anyone pointing
+    this at real infrastructure wants that: the patch plan is what a human
+    approves against, and with labelling off a fabricated risk score looks
+    exactly like a measured one.
+    """
+    return env('LABEL_SOURCES').lower() in {'1', 'true', 'yes'}
+
+
+def unlabelled(text: str, neutral: str) -> str:
+    """Swap operator-facing prose that names a failure for a neutral wording.
+
+    The fallbacks write sentences meant to be read on the page — "the RAG
+    store could not be reached", "Insights was unreachable, so this is
+    placeholder text". Those are source labels in prose form, and they are
+    the one kind the frontend's structural gating cannot catch, because by
+    the time the page has them they are indistinguishable from content.
+
+    Only the sentence changes. The `degraded`, `source` and `simulated`
+    fields sitting beside it in the same payload are untouched, so /api/state
+    and /api/runs still answer the question honestly, and the trace and the
+    backend log still name the service. What goes is the wording that would
+    announce it to a room reading over the operator's shoulder.
+    """
+    return text if label_sources() else neutral
+
+
 def circuit(service: str) -> None:
     """Short-circuit a service known down, until its breaker expires.
 
@@ -201,6 +240,12 @@ def degrade(step: str, service: str, cause: Any, fix: str) -> None:
              'reason': str(cause)[:300], 'fix': fix}
     if entry not in DEGRADED:
         DEGRADED.append(entry)
+        # To the log every time, not only when the page is going to show it.
+        # With LABEL_SOURCES off the page says nothing, so this line and the
+        # agent trace are the whole record of what was substituted — and a
+        # record that depends on a display setting is not a record.
+        print(f'  DEGRADED {step}: {service} unavailable: '
+              f'{str(cause)[:200]}\n           FIX: {fix}', file=sys.stderr)
 
 
 class BackendUnavailable(RuntimeError):
@@ -377,6 +422,13 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
         fb = fallbacks.cve_detail(cve_id)
         fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit)
         fb['count'] = len(fb['hosts'])
+        # Matched against the placeholder rather than applied to whatever is
+        # there: a CVE in CVE_LIST carries its real advisory text, and that
+        # must survive. Only the stand-in gets swapped, because it names
+        # Insights as unreachable — a source label in a content field.
+        if fb.get('description') == fallbacks.CVE_DETAIL_DEFAULT['description']:
+            fb['description'] = unlabelled(
+                fb['description'], 'No advisory text on record for this CVE.')
         fb.update(degraded=True, source='fallback')
         return fb
 
@@ -566,7 +618,15 @@ class InfoAgent:
         except BackendUnavailable as exc:
             degrade('1 rag_history', exc.service, exc.cause, exc.fix)
             demo_pause(0.5)      # per host, so keep it shorter than the rest
-            return fallbacks.history(host), 'fallback'
+            # The trace is where this lands now that the page may not show it.
+            self._trace('info', 'rag', f'unreachable — stored history for {host}')
+            # A known host gets stored prose that reads like real history. An
+            # unknown one gets NO_HISTORY, which says the RAG store could not
+            # be reached — true, and a source label in a content field.
+            text = fallbacks.history(host)
+            if text == fallbacks.NO_HISTORY:
+                text = unlabelled(text, 'No patch history on record for this host.')
+            return text, 'fallback'
 
     def _history_live(self, host: str) -> str:
         """RAG lookup for one host, summarised by the LLM."""
@@ -645,14 +705,20 @@ class InfoAgent:
         scores, risk_source = self.risk_scores(cvss, hosts)
         threshold = (REVIEW_THRESHOLD if risk_source == 'model'
                      else fallbacks.HEURISTIC_THRESHOLD)
+        # The score and the gate are real properties of the run and always
+        # shown. Which of the two produced the score is the source label, and
+        # "(heuristic)" is the whole tell — it never means anything but "the
+        # risk service did not answer". plan.risk_source still carries it in
+        # the payload, and the trace names the service.
+        src = f' ({risk_source})' if label_sources() else ''
         assessed = [
             HostAssessment(
                 host=h['host'], system_uuid=h['system_uuid'], age_days=h['age_days'],
                 risk_score=round(s, 2),
                 decision='review' if s > threshold else 'ok',
-                reason=(f'Risk {s:.1f} exceeds {threshold:.0f} ({risk_source}) '
+                reason=(f'Risk {s:.1f} exceeds {threshold:.0f}{src} '
                         f'— requires review.' if s > threshold else
-                        f'Risk {s:.1f} below {threshold:.0f} ({risk_source}).'),
+                        f'Risk {s:.1f} below {threshold:.0f}{src}.'),
             )
             for h, s in zip(hosts, scores)
         ]
@@ -674,19 +740,29 @@ class InfoAgent:
 
         # step 4 — the patch plan
         notes = []
-        # In offline mode the top banner already says the whole page is stored
-        # defaults, so repeating it per-step is noise. In live mode it is the
-        # opposite: there is no banner, and a single step that quietly fell
-        # back is exactly what the reviewer needs told.
-        if not offline():
-            if risk_source != 'model':
-                notes.append('Risk scores are heuristic, not model output — the risk '
-                             'service was unreachable. Treat them as indicative only.')
-            if history_source != 'rag':
-                notes.append('Host history came from stored defaults, not the RAG '
-                             'store, so it may not reflect this estate.')
-        if window_source == 'default':
-            notes.append(f'No scheduler configured; using default window {window}.')
+        # These three are source labels written as prose, so they follow
+        # label_sources() like every other mark on the page. With it off the
+        # plan reads the same whether the score behind it came from the model
+        # or the heuristic — the record moves to degrade()'s log line, to the
+        # agent trace, and to plan.risk_source / plan.history_source, which
+        # stay in the payload either way.
+        if label_sources():
+            # Offline the banner above already says the whole page is stored
+            # defaults, so repeating it per-step is noise. Live it is the
+            # opposite: there is no banner, and a single step that quietly
+            # fell back is exactly what the reviewer needs told.
+            if not offline():
+                if risk_source != 'model':
+                    notes.append('Risk scores are heuristic, not model output — the risk '
+                                 'service was unreachable. Treat them as indicative only.')
+                if history_source != 'rag':
+                    notes.append('Host history came from stored defaults, not the RAG '
+                                 'store, so it may not reflect this estate.')
+            if window_source == 'default':
+                notes.append(f'No scheduler configured; using default window {window}.')
+        # Not a source label: true of this CVE against this gate whether the
+        # scores were measured or substituted, and the reviewer needs it in
+        # either case. So it is outside the block above.
         if len(review) == len(assessed):
             notes.append('Every host requires review — check the risk threshold '
                          'is discriminating at this CVSS.')
@@ -1435,6 +1511,227 @@ ROI_LIMITS: dict[str, tuple[float, float]] = {
 }
 
 
+# --------------------------------------------------------------------------
+# Published figures — the one part of this page that is neither measured here
+# nor assumed here
+#
+# Everything else in the report is this run's clock or this operator's
+# sliders, which is a closed loop: the page sets the baseline and then scores
+# itself against it. These are the outside check. They are named reports with
+# a publisher, a year and a stated basis, so a reader can go and disagree with
+# the source rather than with us.
+#
+# Static by necessity — the console makes no network calls at runtime, so
+# there is no live feed to pull and nothing here refreshes itself. That makes
+# the year on every entry load-bearing: these age, and a figure quoted without
+# its vintage is the same unlabelled guess this codebase refuses everywhere
+# else. Re-check them when a report's next edition lands.
+#
+# What is deliberately absent: any attempt to multiply the IBM breach cost by
+# a probability and book the result as a saving. Nothing on this page claims a
+# breach was avoided. The exposure window is stated in hours against a
+# deadline, as it is everywhere else in this file, and the money column stays
+# labour-only.
+# --------------------------------------------------------------------------
+
+ROI_SOURCES: dict[str, dict] = {
+    'dbir26': {
+        'publisher': 'Verizon',
+        'short': 'Verizon DBIR',
+        'name': '2026 Data Breach Investigations Report',
+        'year': 2026,
+        'basis': 'over 22,000 incidents; the vulnerability analysis covers more '
+                 'than 13,000 organisations and 527 million vulnerability instances',
+        'url': 'https://www.verizon.com/business/resources/reports/dbir/',
+    },
+    'mtrends26': {
+        'publisher': 'Mandiant / Google Cloud',
+        'short': 'M-Trends',
+        'name': 'M-Trends 2026',
+        'year': 2026,
+        'basis': 'over 500,000 hours of incident response during 2025',
+        'url': 'https://cloud.google.com/blog/topics/threat-intelligence/m-trends-2026',
+    },
+    'ibm26': {
+        'publisher': 'IBM / Ponemon Institute',
+        'short': 'IBM / Ponemon',
+        'name': 'Cost of a Data Breach Report 2026',
+        'year': 2026,
+        'basis': '602 breached organisations, incidents between March 2025 and '
+                 'February 2026',
+        'url': 'https://www.ibm.com/reports/data-breach',
+    },
+    'bod2604': {
+        'publisher': 'CISA',
+        'short': 'CISA BOD 26-04',
+        'name': 'BOD 26-04, Prioritizing Security Updates Based on Risk',
+        'year': 2026,
+        'basis': 'binding on US federal civilian agencies from 10 June 2026; '
+                 'revokes BOD 22-01 and BOD 19-02',
+        'url': 'https://www.cisa.gov/news-events/directives/'
+               'bod-26-04-prioritizing-security-updates-based-risk',
+    },
+    'gartner_ir': {
+        'publisher': 'Gartner',
+        'short': 'Gartner',
+        'name': 'Press release, 17 March 2026 — "AI Applications Will Drive 50% '
+                'of Cybersecurity Incident Response Efforts by 2028"',
+        'year': 2026,
+        'basis': 'analyst prediction, not a measurement',
+        'url': 'https://www.gartner.com/en/newsroom',
+    },
+    'gartner_agentic': {
+        'publisher': 'Gartner',
+        'short': 'Gartner',
+        'name': 'Press release, 25 June 2025 — "Over 40% of Agentic AI Projects '
+                'Will Be Canceled by End of 2027"',
+        'year': 2025,
+        'basis': 'analyst prediction, not a measurement',
+        'url': 'https://www.gartner.com/en/newsroom',
+    },
+}
+
+# Ordered: the problem, then how fast it moves, then what it costs, then what
+# the deadline actually is. The page renders them in this order.
+#
+# Two carry a `feature`, which lifts them out of the grid and into a drawing
+# of their own. Eight equal boxes is eight facts and no argument — a reader
+# scans them and remembers none. The remediation clock and the day-7 ceiling
+# are the two that actually make the case, so they get the room to make it and
+# the other six support them. The page filters on this key rather than
+# hard-coding which two are special, so moving the emphasis is a one-word edit
+# here with nothing to change in the frontend.
+ROI_BENCHMARKS: tuple[dict, ...] = (
+    {'value': '31%', 'metric': 'of breaches start with vulnerability exploitation',
+     'source': 'dbir26',
+     'detail': 'The leading initial access vector for the first time in the '
+               'report’s 19 years, ahead of credential abuse at 13%. '
+               'M-Trends puts the same figure at 32% of intrusions, its top '
+               'vector for the sixth year running.'},
+    {'value': '43 days', 'metric': 'median time to fully remediate',
+     'source': 'dbir26', 'feature': 'ruler',
+     'detail': 'Up from 32 days the year before. Measured on known-exploited '
+               'vulnerabilities — the ones already being used against '
+               'somebody.'},
+    {'value': '26%', 'metric': 'of KEV-listed vulnerabilities fully remediated',
+     'source': 'dbir26',
+     'detail': 'Down from 38%. The median organisation carried 16 of them, up '
+               'from 11.'},
+    {'value': '60–70%', 'metric': 'still open on day 7',
+     'source': 'dbir26', 'feature': 'matrix',
+     # The midpoint, only so the drawing has a number of dots to fill. The
+     # published figure is the range, and the range is what the label says —
+     # 65 appears nowhere on the page as a statistic.
+     'share': 65,
+     'detail': 'Of known-exploited vulnerabilities, a week after they were '
+               'found. The figure does not move with organisational maturity, '
+               'investment or tooling.',
+     'quote': 'a possible theoretical ceiling for human remediation processes',
+     'quote_note': 'The report’s own words. It is also the argument for '
+                   'automating this work rather than staffing it: the three '
+                   'levers an organisation normally pulls have already been '
+                   'measured, and none of them move this number.'},
+    {'value': '−7 days', 'metric': 'mean time-to-exploit',
+     'source': 'mtrends26',
+     'detail': 'Negative: on average exploitation now precedes the patch. It was '
+               '−1 day in 2024 and 63 days in 2018. Attacker hand-off time '
+               'inside an intrusion fell from 8 hours to 22 seconds.'},
+    {'value': '3 days', 'metric': 'deadline for the worst class of vulnerability',
+     'source': 'bod2604',
+     'detail': 'Publicly exposed, in the KEV catalogue, automatable and granting '
+               'total control: 3 days plus forensic triage. Lesser combinations '
+               'get 3, 15, 30 or 180 days. Set the deadline slider above to '
+               'whichever tier you are held to.'},
+    {'value': '$1.93M', 'metric': 'lower breach cost with security AI and automation',
+     'source': 'ibm26',
+     'detail': '$4.00M against $5.93M for organisations using none, and a breach '
+               'lifecycle 65 days shorter. Only 36% use them extensively; one in '
+               'four have not adopted them at all.'},
+    {'value': '$4.99M', 'metric': 'global average cost of a breach',
+     'source': 'ibm26',
+     'detail': 'A record, up 12% year on year. Quoted for scale only — '
+               'nothing on this page claims a breach was avoided, so this figure '
+               'is not in any total above.'},
+)
+
+# How the industry frames supervised agentic remediation, including the part
+# that argues against it. The counterweight is not balance for its own sake:
+# a customer who has read the Gartner cancellation note will trust a page that
+# raises it first a good deal more than one that hopes they missed it.
+ROI_STANCE: tuple[dict, ...] = (
+    {'source': 'gartner_ir',
+     'text': 'Gartner expects AI applications to drive half of all incident '
+             'response effort by 2028, with people supervising and validating '
+             'rather than executing. That is the shape of this console: the '
+             'agents do the work, the approval gate is where the person is.'},
+    {'source': 'gartner_ir',
+     'text': 'By 2029 the same note expects 10% of organisations to run '
+             'autonomous agents for network security operations with no human '
+             'oversight at all, up from under 1% in 2026. This console is '
+             'deliberately not that — every host scoring above the review '
+             'threshold stops and waits for a person, and the time it spends '
+             'waiting is counted against it in the figures above.'},
+    {'source': 'gartner_agentic',
+     'text': 'The counterweight, from the same analyst: more than 40% of agentic '
+             'AI projects will be cancelled by the end of 2027, mostly for '
+             'unclear business value and escalating cost. Which is why this page '
+             'shows its arithmetic, names every assumption and lets you move '
+             'them, rather than leading with a headline multiple.'},
+)
+
+# Hours, from the figures above, so the comparisons below are derived from the
+# published numbers rather than restating them by hand.
+_KEV_MEDIAN_H = 43 * 24           # DBIR 2026 median time to fully remediate
+_BOD_FASTEST_H = 3 * 24           # BOD 26-04 Table 1, the top tier
+
+
+def roi_industry(b: dict, exposure_h: float | None) -> dict:
+    """The published figures, plus what they say about *these* sliders.
+
+    The checks run the other way round from the rest of the page. Everywhere
+    else the baseline is the yardstick and the run is scored against it; here
+    the published median is the yardstick and the baseline is what gets
+    scored. That is the useful direction for the one question this report
+    cannot answer about itself — whether its manual baseline is fair.
+    """
+    lead_h, sla_h = b['lead_h'], b['sla_h']
+    return {
+        'sources': {k: dict(v, id=k) for k, v in ROI_SOURCES.items()},
+        'benchmarks': list(ROI_BENCHMARKS),
+        'stance': list(ROI_STANCE),
+        'checks': {
+            'kev_median_h': _KEV_MEDIAN_H,
+            'bod_fastest_h': _BOD_FASTEST_H,
+            # The manual baseline on this page against the published median.
+            # Above 1 the baseline is the *generous* one: it credits the manual
+            # path with being faster than the industry manages, and the saving
+            # below is therefore understated rather than inflated. Below 1 it
+            # is the other way, and the page says so instead of hiding it.
+            'baseline_h': lead_h,
+            'baseline_x': (round(_KEV_MEDIAN_H / lead_h, 1)
+                           if lead_h > 0 else None),
+            # Three states, not a boolean. Dragged to exactly the published
+            # median — which the slider can now reach, and which is the most
+            # defensible setting on the page — a boolean has to round that to
+            # one side or the other, and it read as "slower than the industry"
+            # for a baseline that was the industry.
+            'baseline_rel': ('same' if abs(lead_h - _KEV_MEDIAN_H) < 1
+                             else 'faster' if lead_h < _KEV_MEDIAN_H
+                             else 'slower'),
+            # The deadline slider against the strictest published one, and how
+            # far past that deadline the published median actually lands.
+            'sla_h': sla_h,
+            'sla_vs_bod_h': round(sla_h - _BOD_FASTEST_H, 2),
+            'median_over_bod_h': _KEV_MEDIAN_H - _BOD_FASTEST_H,
+            # None until something finished, exactly as elsewhere. No ratio is
+            # published against it for the same reason the exposure multiplier
+            # is absent above: seconds over 43 days is a five-figure number
+            # nobody can sanity-check.
+            'exposure_h': round(exposure_h, 4) if exposure_h is not None else None,
+        },
+    }
+
+
 def roi_baseline(overrides: dict | None = None) -> dict:
     """Resolve the assumptions: module defaults, then this request's sliders.
 
@@ -1736,6 +2033,10 @@ def roi_report(state: dict, overrides: dict | None = None,
         'curve': curve,
         'breakeven': breakeven,
         'sla': sla,
+        # Recomputed per request rather than attached once, because two of its
+        # comparisons read the sliders: move the manual baseline and the
+        # "against the published median" line has to move with it.
+        'industry': roi_industry(b, exposure_h),
         'payback': payback,
         'lifetime': lifetime,
         'band_pct': b['band_pct'],
@@ -1794,6 +2095,13 @@ SETTINGS: tuple[Setting, ...] = (
             'Stored defaults only, no network at all. What ./demo.sh sets.'),
     Setting('STRICT', 'Mode', 'Strict', 'bool', '',
             'Disable every fallback and raise the real error instead.'),
+    Setting('LABEL_SOURCES', 'Mode', 'Label substituted values', 'bool', '',
+            'Mark on the page itself which values came from a fallback: the '
+            'offline banner, the degraded panel on the patch plan, SIMULATED '
+            'row chips, red boxes in the diagram. Off, the console presents '
+            'one face and the substitutions appear only in the agent trace '
+            'and the backend log. Turn it on for real infrastructure — the '
+            'patch plan is what a human approves against.'),
     Setting('FALLBACK_PATCH', 'Mode', 'Patch fallback', 'choice', 'simulate',
             'With AO unreachable: simulate a run locally, or report the host '
             'as not dispatched. Nothing is patched either way.',
@@ -2183,10 +2491,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, dict(_RUN))
         elif path == '/api/mode':
             # Read once at page load to decide whether to show the top banner.
+            # `offline` stays in the payload whatever label_sources says: it
+            # is the truth about the run, and a client that wants it — or an
+            # operator reading the API by hand — gets it either way. What the
+            # flag decides is only whether the page draws it.
             self._send(200, {
                 'ok': True,
                 'offline': offline(),
                 'strict': fallbacks.strict(),
+                'label_sources': label_sources(),
                 'simulate_patch': fallbacks.simulate_patch(),
                 'workflow': AO_WORKFLOW_NAME,
             })

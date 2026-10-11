@@ -79,7 +79,10 @@ instance. Ctrl-C to stop.
 
 ## Setup
 
-Copy the template and fill in credentials — `.env` is gitignored:
+Fill in credentials in `.env`, which is gitignored. `./demo.sh --live` creates
+it from `.env.example` if it is missing and starts regardless — an empty one
+just means every step falls back, which the console labels. To make it
+yourself:
 
 ```bash
 cp .env.example .env     # then edit
@@ -143,10 +146,12 @@ did not take place. There is exactly one derived edge, Patching → Ansible
 Orchestrator, lit from the patch result existing, because AO is the only
 backing service the Supervisor does not trace a hop to.
 
-**Red is live-only.** A service that fell back to `fallbacks.py` turns red in
-the diagram, matching the `degraded` panel on the plan. Offline every service
-would be red, which is the per-step noise described under *Offline / fallback
-mode* below — the banner has already said it once, of all of them.
+**Red needs `LABEL_SOURCES=1`.** A service that fell back to `fallbacks.py`
+turns red in the diagram, matching the `degraded` panel on the plan — but only
+with source labelling on, which it is not by default. See *What the page shows
+about its sources* below. The node still turns black the moment something calls
+it either way, so the picture animates identically whether the call was
+answered or substituted.
 
 The plan carries `history_source` (`rag` / `fallback` / `skipped`) as a field
 for the same reason. A step that was never reached — no host needed review, so
@@ -230,9 +235,9 @@ It is static markup rather than a fetch, because it has to still be readable
 when every backend is down and nobody opening it thirty seconds before walking
 into a room should be waiting on the network. The one live part is the note at
 the top, which names the mode the console is actually in: the script is written
-for the offline demo, so opened in live mode it says so rather than sending a
-presenter to point at a banner that is not there. A backend it cannot reach
-reads as *unknown*, never as live.
+for the offline demo, so opened in live mode it says so rather than letting a
+presenter claim the wrong one. A backend it cannot reach reads as *unknown*,
+never as live.
 
 ## Offline / fallback mode
 
@@ -256,23 +261,48 @@ the approval gate and resolves to `patched` or `rejected` locally, so the
 approval path stays demonstrable, but no host is touched and the execution
 exists in no AO instance.
 
-**Where the labelling goes depends on the mode**, because the reader's question
-differs:
+### What the page shows about its sources
 
-- *Offline* — the whole session is fabricated, so one banner across the top of
-  the page says so and the frames are left to read as a normal flow. Per-step
-  labels would be noise repeated on every row.
-- *Live, with one backend down* — there is no banner, and a single step that
-  quietly fell back is exactly what a reviewer needs told before approving a
-  production patch. So the plan shows a `degraded` panel naming the step,
-  the service and the fix, and any simulated row is chipped `SIMULATED`.
+**By default the page says nothing.** Every value renders the same whether it
+was measured or stood in for: no `OFFLINE` banner, no `degraded` panel, no
+`SIMULATED` chips, no red nodes in the diagram, no `(heuristic)` beside a risk
+score. That is a demo decision. A banner reading *running on fallback data* is
+the thing a room fixates on, and a demo that half-fails mid-flow should not
+announce it from the screen.
 
-The API always carries the truth either way: `degraded` on the plan and
-`simulated: true` on affected runs, whatever the console chooses to draw.
+**Nothing is suppressed, only moved.** Three channels carry it regardless of
+the setting:
+
+- **The backend log** — `degrade()` prints every substitution to
+  `/tmp/demo-backend.log` with the step, the service, the reason and the fix,
+  the first time each one happens. It prints whether or not the page is going
+  to show it; a record that depends on a display setting is not a record.
+- **The agent trace**, left-hand panel, on screen while the run is: `risk-model
+  : unreachable — heuristic for 2 host(s)`, `rag : unreachable — stored history
+  for <host>`, `<host>: SIMULATED patched — AO unreachable`.
+- **The API** — `degraded` on the plan, `source` / `risk_source` /
+  `history_source` on the values, `simulated: true` on affected runs,
+  `illustrative` on the ROI report. These are untouched by the setting.
+
+**`LABEL_SOURCES=1` puts the marks back on the page**, and anyone pointing this
+at real infrastructure wants that: the patch plan is what a human approves
+against, and unlabelled a fabricated risk score looks exactly like a measured
+one. It restores the offline banner, the `degraded` panel naming step, service
+and fix, the `SIMULATED` row chips, the red diagram nodes, the *Risk source*
+tile, the ROI caveat, and the per-step plan notes. It is also a toggle in the
+gear panel, taking effect on the next render.
+
+Two things stay visible either way, because neither is a source label. `STRICT`
+keeps its banner: it means the opposite — no fallback will be used and an
+unreachable service fails the run outright, which someone needs to know before
+they start. And the risk gate number itself is always shown, because the score
+and the threshold it was judged against are real properties of the run; only
+the `(heuristic)` that names where the score came from is hidden.
 
 | Variable | Effect |
 |---|---|
 | `OFFLINE=1` | what `./demo.sh` sets — stored defaults only, no network at all |
+| `LABEL_SOURCES=1` | mark substituted values on the page; off by default |
 | `STRICT=true` | disable all fallbacks; raise the real error instead |
 | `FALLBACK_PATCH=unavailable` | report "not dispatched" rather than simulating |
 | `CONNECT_TIMEOUT=3` | reachability budget per service |
@@ -296,9 +326,10 @@ warranties:
   clock only measures patching if something was patched. Offline it is
   `DEMO_LATENCY` rather than work; live with Ansible Orchestrator unreachable
   it is real wall time spent failing over, and `measured.simulated` counts the
-  hosts nothing touched. Either way the report sets `illustrative`,
-  `illustrative_reason` says which of the two (`offline` or `simulated`), and
-  the page leads with the banner for that cause.
+  hosts nothing touched. Either way the report sets `illustrative` and
+  `illustrative_reason` says which of the two (`offline` or `simulated`). Both
+  fields are in the response always; the page leads with a banner naming the
+  cause only under `LABEL_SOURCES=1`.
 - **Assumed** — the manual baseline, every bit of it. None of it is measurable
   from here: the manual run never happened, so there is no clock to read it
   off. It lives in `fallbacks.py` with the rest of the fabricated data, is
@@ -321,15 +352,17 @@ exploitable throughout it.
 
 | Card | What it answers |
 |---|---|
-| **Disagree with it** | A slider per assumption. Move one and everything below recomputes. |
+| **Assumptions** | A slider per assumption. Move one and everything below recomputes. |
 | Headline | Labour saved, engineer time saved, the effort ratio, how many hosts needed a person. |
 | Where the effort goes | Both paths broken down by activity, on one scale. |
 | How it scales | The same CVE across more hosts, at this run's approval rate. |
 | How wrong could this be | Break-even: how far the assumptions have to move before the conclusion flips. |
 | Time to remediation | Exposure window, measured, stated against the policy deadline. |
+| What this is up against | The remediation clock to scale, and the day-7 ceiling as a hundred dots. The one inverted card on the page — nothing on it is ours. |
+| Measured, not modelled | The rest of the published record, each figure chipped with who measured it, plus the sliders scored against it. |
+| How the industry sees this | Where supervised agentic remediation sits, including the case against it. Numbered sources. |
 | Across every run so far | The same arithmetic over the whole run store, not just this CVE. |
 | Paying for itself | Hosts to cover `ROI_PLATFORM_COST`, and how much is recovered. |
-| What this assumed | Every input, with its setting key. |
 
 **The sliders are the argument, not a disclaimer.** `POST /api/roi` with
 `{"overrides": {"ROI_PREP_MIN": 3}}` returns the whole report recomputed
@@ -339,6 +372,33 @@ server is threaded and one person asking "what if" must not change the page
 anyone else is looking at. The arithmetic lives only on the server, so there is
 one implementation of it rather than a second copy in the browser drifting from
 the first.
+
+**Published figures are the outside check.** Everything else on the page is
+this run's clock and this reader's sliders, which is a closed loop: the page
+sets the baseline and then scores itself against it. `ROI_SOURCES`,
+`ROI_BENCHMARKS` and `ROI_STANCE` in `agentic-patching.py` hold eight measured
+figures and three analyst positions, each carrying a publisher, a title, a year
+and the basis of the measurement, rendered as numbered citations. Two of the
+eight carry a `feature` key, which lifts them out of the grid and into a
+drawing of their own — the remediation clock and the day-7 dot matrix. Moving
+the emphasis is a one-word edit in that tuple; the frontend filters on the key
+rather than hard-coding which two are special. They are
+static by necessity — the console makes no network calls at runtime — which
+makes the year on each entry load-bearing. **Re-check them when a report's next
+edition lands.**
+
+Two of them are wired to the sliders rather than merely printed. The manual
+baseline is scored against the Verizon DBIR's published median time to
+remediate a known-exploited vulnerability, in whichever direction it lands:
+at the default 72 hours the page says out loud that it is crediting the manual
+path with being 14.3× faster than the industry manages, and therefore
+understating its own saving. The deadline slider is scored against CISA BOD
+26-04's tiers. Both sliders now reach far enough to be set to the published
+numbers — a slider that cannot reach the figure the card beneath it cites is an
+invitation to argue that goes nowhere.
+
+Nothing multiplies a breach cost by a probability and books the result as a
+saving. IBM's $4.99M average is on the page for scale and is in no total.
 
 **Break-even is stated instead of a confidence claim.** The page says how much
 smaller the manual baseline would have to be, and what per-host handling time

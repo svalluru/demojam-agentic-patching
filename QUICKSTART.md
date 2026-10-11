@@ -38,16 +38,19 @@ Press `Ctrl-C` in the terminal to stop. It shuts down both processes.
 
 ## Checking it worked
 
-You should see a **red banner across the top of the page**:
+The CVE list should show exactly **two** CVEs. If you see hundreds, you are
+pointed at the real Red Hat Insights, not the fallback data.
 
-> OFFLINE — Fallback mode. Every value on this page is a stored default. No
-> cluster is being contacted and nothing will be patched.
+**The page will not tell you it is offline.** That is deliberate: the console
+presents one face, and every value renders the same whether it was measured or
+stood in for. To check which mode you are actually in, read the `mode :` line
+the start script printed in your terminal, or open `/api/mode` in a browser
+tab. The **Agent trace** in the left-hand panel also names each service that
+did not answer, as the run happens.
 
-If that banner is missing, stop and re-read the terminal output — you may have
-started it in live mode by mistake.
-
-Below it, the CVE list should show exactly **two** CVEs. If you see hundreds,
-you are pointed at the real Red Hat Insights, not the fallback data.
+If you would rather the page did say so — the banner, the degraded panel, the
+`SIMULATED` chips — open the **gear** and turn on **Label substituted values**,
+or start with `LABEL_SOURCES=1 ./demo.sh`.
 
 ## Walking through the flow
 
@@ -72,6 +75,10 @@ browser, and it changes nothing on the server or for anyone else.
 2. Click **Send 5 for approval**. The button says that, and not "patch",
    because on this path it patches nothing — each host gets its own workflow
    run and every one of them stops at the approval gate.
+   Wandering off to **Patch runs** or the CVE list at this point does not lose
+   the plan. A red **Patch plan: CVE-…** button appears at the top of the right
+   panel, and that CVE's row offers **Resume** instead of **Assess** — either
+   one puts you back where you were, dispatch button and all.
 3. Click **Approve** (or **Reject**) on each row. The row's progress bar fills
    as the workflow works through its nodes behind the gate — the count beside
    it is nodes finished, not elapsed time, so a bar that stops moving means the
@@ -102,14 +109,14 @@ With either walkthrough still on screen, click **Calculate ROI**. It takes this
 run's own numbers — how many hosts, how many stopped for a person, how long
 each one took — and costs the same work out by hand.
 
-Read the red banner at the top of that page before the big numbers. Offline the
-timings come from `DEMO_LATENCY` rather than from patching anything, so the
-speed figures are illustrative; the labour and cost comparison does not depend
-on them.
+Know before you read the big numbers: offline, the timings come from
+`DEMO_LATENCY` rather than from patching anything, so the speed figures are
+illustrative. The page will not say so unless `LABEL_SOURCES=1` — say it out
+loud instead. The labour and cost comparison does not depend on those timings.
 
 The manual side is not measured either and never can be from here — the manual
 run never happened, so there is no clock to read it off. So the first card on
-the page is **Disagree with it**: a slider for every assumption behind the
+the page is **Assumptions**: a slider for every assumption behind the
 comparison. If you think 15 minutes of change prep per host is generous, drag
 it down and watch the whole page follow. Nothing is saved and nobody else's
 view changes; use the gear panel if you want a value to stick.
@@ -120,6 +127,32 @@ against a 48 hour deadline, and *Across every run so far* runs the same
 arithmetic over everything in the run store rather than this one CVE — so it
 grows as you work through both walkthroughs.
 
+Three cards near the bottom are the ones to show a customer, and they are the
+only part of the page that is neither measured here nor assumed here. Eight
+published figures from the 2026 Verizon DBIR, Mandiant M-Trends, IBM's Cost of
+a Data Breach and CISA's remediation directive, each numbered to a full
+citation.
+
+**Scroll to them slowly** — the bars sweep and the dots fill as they come into
+view, and arriving mid-animation is the whole effect.
+
+*What this is up against* is the black one, and it is black on purpose: it is
+the only card on the page whose numbers are not ours. It draws the remediation
+clock to scale — 43 days industry median, your own baseline, the CISA deadline,
+and this run, whose bar is literally too small to draw — and then the day-7
+ceiling as a hundred dots, 65 of them red. Let people count the dots.
+
+*Measured, not modelled* is the rest of the record, and it checks the sliders
+against it: the page scores its own manual baseline against the published
+median and says which way it is wrong. At the defaults it says it is
+understating its own saving by 14×, which is a better thing to be able to say
+than a bigger number. Drag **Manual time-to-remediation** to 1032 h and the
+whole page is running on Verizon's figure rather than ours.
+
+*How the industry sees this* puts the approval-gate design next to what
+analysts expect, and prints the case against agentic projects as plainly as the
+case for them. If somebody is going to raise that objection, raise it first.
+
 **4 — The run history**
 
 Click **Patch runs** at the top of the right-hand panel to see everything from
@@ -128,7 +161,7 @@ both walkthroughs, newest first.
 ## What is real and what is not
 
 Worth being clear about, because the console deliberately looks like the real
-thing once you are past the banner.
+thing and, by default, says nothing on the page to the contrary.
 
 | | |
 |---|---|
@@ -174,14 +207,25 @@ kill <pid>
 Only once you have cluster credentials and the backing services are up:
 
 ```bash
-cp .env.example .env     # then fill it in
 ./demo.sh --live
 ```
 
-In live mode the red banner disappears. In its place, any individual step that
-could not reach its backend is called out in the patch plan itself, naming the
-service and how to fix it, and that service's box in the architecture diagram
-turns red — so you always know which numbers on the page are measured and
-which are substituted.
+If `.env` does not exist it is created from `.env.example` and the console
+starts anyway, saying so in the terminal and naming the keys that matter. It
+is gitignored; never commit it. You do not need all of them — a key left
+blank falls back for that step alone. Fill in what you have and restart to use
+the real services.
+
+**Turn source labelling on when you do this.** Either set `LABEL_SOURCES=1`
+before `./demo.sh --live`, or flip **Label substituted values** in the gear
+panel. With it on, any step that could not reach its backend is called out in
+the patch plan itself, naming the service and how to fix it, that service's box
+in the architecture diagram turns red, and simulated rows are chipped
+`SIMULATED` — so you always know which numbers are measured and which are
+substituted. With it off you are reading an unmarked mix of the two, which is
+fine for a demo and not fine for a patch plan someone is about to approve.
+
+Without it, the record is still in `/tmp/demo-backend.log` and the **Agent
+trace** panel. It is just not on the page.
 
 See [README.md](README.md) for the architecture and the full set of switches.
