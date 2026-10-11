@@ -914,9 +914,11 @@ class PatchingAgent:
                 self._trace('patching', 'supervisor',
                             f'{host["host"]}: not dispatched — {exc.cause}')
                 return fallbacks.patch_unavailable(host['host'], group, str(exc.cause))
-            # Simulated: nothing is patched. The run carries a sim- id that
-            # exists in no AO instance, so a later status read cannot mistake
-            # it for a real execution.
+            # Simulated: nothing is patched. The run is registered in SIM, so
+            # a later status read resolves it here instead of asking AO about
+            # an execution that exists in no AO instance — and it carries
+            # simulated: true, which is what the plan and the ROI page label
+            # themselves from.
             demo_pause()
             run = SIM.put(fallbacks.patch_simulated(
                 cve_id, host['host'], group, str(exc.cause), SIM.new_id()))
@@ -1358,9 +1360,11 @@ class Supervisor:
 #
 #   measured   this run's own clock — how many hosts, how many needed
 #              sign-off, how long the assessment took, how long each
-#              execution ran. Real, with one caveat: offline those clocks are
-#              DEMO_LATENCY rather than work, so `illustrative` is set and the
-#              console leads with that.
+#              execution ran. Real, with one caveat: a clock is only a
+#              measurement of patching if something was patched. Offline it is
+#              DEMO_LATENCY rather than work; live with AO unreachable it is
+#              real time spent failing over. Either way `illustrative` is set,
+#              `illustrative_reason` says which, and the console leads with it.
 #   assumed    the manual baseline, from fallbacks.ROI_*. Not measurable from
 #              here by any means: the manual run never happened, so there is
 #              no clock to read it off. Every one of them is itemised in the
@@ -1663,12 +1667,30 @@ def roi_report(state: dict, overrides: dict | None = None,
                           if b['platform'] > 0 else None),
     }
 
+    # Whether the measured half of this page describes patching. There are two
+    # ways it does not, and they are different enough that the console has to
+    # say which: offline, the clocks are DEMO_LATENCY rather than work; live
+    # with AO unreachable, the clocks are real wall time, but what they timed
+    # is this console failing over and the fallback standing in, not a host
+    # being patched.
+    #
+    # Reading offline() alone was the one break in this file's labelling
+    # chain. A live run with every backend down produced host results each
+    # carrying simulated: true and an ROI page that quoted a saving with no
+    # caveat anywhere on it — precisely the unlabelled guess the rest of this
+    # codebase refuses to print.
+    sim = sum(1 for r in results if r.get('simulated'))
+    reason = 'offline' if offline() else ('simulated' if sim else None)
+
     return {
         'cve_id': state.get('cve_id'),
-        # Set when the measured half came from DEMO_LATENCY rather than work.
+        # Set when the measured half did not come from patching anything.
         # The console leads with this; without it the page would be claiming a
         # timing it did not take.
-        'illustrative': offline(),
+        'illustrative': reason is not None,
+        # Which of the two, because they need different words on the page.
+        # None when the timings are a straight measurement.
+        'illustrative_reason': reason,
         'measured': {
             'hosts': n, 'gated': gated, 'auto_branch': n - gated, 'patched': done,
             'assess_s': round(assess_s, 1),
@@ -1682,6 +1704,11 @@ def roi_report(state: dict, overrides: dict | None = None,
             # whatever it happened to have would be the kind of silent
             # degradation this codebase labels everywhere else.
             'timed': len(finished),
+            # How many of them nothing actually patched. A count rather than a
+            # flag because a run can be mixed: the breaker re-probes every
+            # CIRCUIT_TTL, so AO can come back partway through a host list and
+            # the later hosts are then genuinely dispatched.
+            'simulated': sim,
         },
         'manual': {'breakdown': manual, 'minutes': round(manual_min, 1),
                    'cost': cost(manual_min),

@@ -230,9 +230,11 @@ def simulate_patch() -> bool:
 # the settings panel, and roi_report() ships them back to the console with the
 # result so the operator can see what the claim rests on and argue with it.
 #
-# The automated side is the opposite — it comes from this run's own clock. In
-# offline mode that clock is DEMO_LATENCY rather than real work, which is why
-# the report marks itself illustrative when OFFLINE is set.
+# The automated side is the opposite — it comes from this run's own clock.
+# That clock only measures patching if something was patched: offline it is
+# DEMO_LATENCY rather than work, and live with Ansible Orchestrator down it is
+# real time spent failing over to patch_simulated() below. The report marks
+# itself illustrative in both cases and says which.
 #
 # Defaults are deliberately unflattering to the automation. A baseline that
 # assumes four unattended hours per host produces a wonderful number and

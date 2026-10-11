@@ -292,9 +292,13 @@ warranties:
 
 
 - **Measured** — host count, how many stopped at the gate, how long the
-  assessment took, how long each execution ran. This run's own clock. Offline
-  that clock is `DEMO_LATENCY` rather than work, so the report sets
-  `illustrative` and the page leads with a banner saying so.
+  assessment took, how long each execution ran. This run's own clock — but a
+  clock only measures patching if something was patched. Offline it is
+  `DEMO_LATENCY` rather than work; live with Ansible Orchestrator unreachable
+  it is real wall time spent failing over, and `measured.simulated` counts the
+  hosts nothing touched. Either way the report sets `illustrative`,
+  `illustrative_reason` says which of the two (`offline` or `simulated`), and
+  the page leads with the banner for that cause.
 - **Assumed** — the manual baseline, every bit of it. None of it is measurable
   from here: the manual run never happened, so there is no clock to read it
   off. It lives in `fallbacks.py` with the rest of the fabricated data, is

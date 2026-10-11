@@ -3203,12 +3203,23 @@ function renderRoi(roi) {
   const edited = Object.keys(roiOverrides).length;
   document.getElementById('list').innerHTML = `<div class="roi">
     ${roi.illustrative ? `<div class="roi-caveat">
+      ${roi.illustrative_reason === 'simulated' ? `
+      <b>${roi.measured.simulated === roi.measured.hosts
+          ? `Nothing was patched — all ${esc(roi.measured.hosts)} host(s) were
+             simulated.`
+          : `${esc(roi.measured.simulated)} of ${esc(roi.measured.hosts)}
+             host(s) were not patched — the fallback simulated them.`}</b>
+      Ansible Orchestrator was unreachable, so the fallback stood in for it.
+      The clocks on this page are real wall time, unlike offline, but at least
+      part of what they timed is this console failing over rather than a host
+      being patched — so the speed figures are not a benchmark either.` : `
       <b>Offline — the measured half of this page is paced, not worked.</b>
       Timings here come from <code>DEMO_LATENCY</code>, not from patching
       anything, so treat the speed figures as an illustration of the shape of
-      the saving rather than as a benchmark. The labour and cost comparison
-      does not depend on them: it is driven by host counts, which are real,
-      and by the assumptions listed at the bottom, which are not.</div>` : ''}
+      the saving rather than as a benchmark.`}
+      The labour and cost comparison does not depend on them: it is driven by
+      host counts, which are real, and by the assumptions listed at the
+      bottom, which are not.</div>` : ''}
 
     <div class="roi-card roi-what">
       <div class="roi-head"><h3>Disagree with it</h3>
