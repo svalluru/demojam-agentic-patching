@@ -2,7 +2,7 @@
 
 Every value here is fabricated. Nothing in this file is a real measurement, so
 anything derived from it must be labelled `degraded` and carry `source` all the
-way to the operator — the dry-run report is what a human approves against, and
+way to the operator — the patch plan is what a human approves against, and
 an unlabelled guess is worse than an outright failure.
 
 Set STRICT=true to disable all of it and let the real error surface instead;
@@ -95,7 +95,7 @@ def cve_detail(cve_id: str) -> dict[str, Any]:
 # which is why the caller has to use HEURISTIC_THRESHOLD rather than the usual
 # one. cvss*6 alone passes 30 at CVSS 5.0, so almost everything would otherwise
 # land in 'review'.
-HEURISTIC_THRESHOLD = 55.0
+HEURISTIC_THRESHOLD = float(os.environ.get('HEURISTIC_THRESHOLD', '55') or 55)
 
 
 def heuristic_risk(cvss: float, age_days: int, affected_hosts: int) -> float:
@@ -219,6 +219,100 @@ def patch_unavailable(host: str, group: str, reason: str) -> dict[str, Any]:
 
 def simulate_patch() -> bool:
     return os.environ.get('FALLBACK_PATCH', 'simulate').strip().lower() != 'unavailable'
+
+
+# --------------------------------------------------------------------- ROI
+#
+# The manual baseline the console compares itself against. Every number below
+# is an assumption and none of it is measurable from this system: the manual
+# run never happened, so there is no clock to read it off. They live here with
+# the rest of the fabricated data for exactly that reason, they are exposed in
+# the settings panel, and roi_report() ships them back to the console with the
+# result so the operator can see what the claim rests on and argue with it.
+#
+# The automated side is the opposite — it comes from this run's own clock.
+# That clock only measures patching if something was patched: offline it is
+# DEMO_LATENCY rather than work, and live with Ansible Orchestrator down it is
+# real time spent failing over to patch_simulated() below. The report marks
+# itself illustrative in both cases and says which.
+#
+# Defaults are deliberately unflattering to the automation. A baseline that
+# assumes four unattended hours per host produces a wonderful number and
+# convinces nobody; these are meant to survive an argument with whoever
+# actually does this work today. Someone who patches faster than this should
+# change them in the panel and watch the result move.
+
+# Per CVE, once: read the advisory, pull the affected host list out of
+# Insights or a spreadsheet, decide what the exposure actually is.
+ROI_TRIAGE_MIN = float(os.environ.get('ROI_TRIAGE_MIN', '45') or 45)
+
+# Per host: adapt the playbook, raise the change record, book the window.
+ROI_PREP_MIN = float(os.environ.get('ROI_PREP_MIN', '15') or 15)
+
+# Per host: run it, watch it, confirm the package moved and the service came
+# back. Counted separately from prep so the chart can show that automation
+# collapses these two very differently.
+ROI_EXEC_MIN = float(os.environ.get('ROI_EXEC_MIN', '10') or 10)
+
+# Per host that needs sign-off: assembling the request, finding the approver,
+# waiting on the back-and-forth. On top of prep, not instead of it.
+ROI_APPROVAL_MIN = float(os.environ.get('ROI_APPROVAL_MIN', '20') or 20)
+
+# The automated path is not free of people, and a comparison that pretends it
+# is would be dishonest. This is what the operator still spends per gated
+# host: reading the plan, judging the risk score, pressing Approve.
+ROI_REVIEW_MIN = float(os.environ.get('ROI_REVIEW_MIN', '2') or 2)
+
+# Fully-loaded hourly cost of whoever does the work. Fully loaded, not salary.
+ROI_HOURLY_RATE = float(os.environ.get('ROI_HOURLY_RATE', '85') or 85)
+ROI_CURRENCY = os.environ.get('ROI_CURRENCY', '$') or '$'
+
+# Elapsed hours from "this CVE is ours" to "this host is patched" by hand.
+# This is wall clock, not effort — it is mostly queueing, waiting on an
+# approver and waiting for the next maintenance window, which is why it is
+# an order of magnitude larger than the labour figures above. It is also the
+# number that matters most, since it is how long the host stays exploitable.
+ROI_LEAD_HOURS = float(os.environ.get('ROI_LEAD_HOURS', '72') or 72)
+
+# Share of hosts that have to be done twice by hand — the patch does not take,
+# the service does not come back, the window is lost and the whole booking
+# repeats. Not invented for the chart: HISTORY above describes exactly this on
+# pay-app-07, where a drain timeout that was too short caused repeated
+# post-patch failures until someone worked out why.
+#
+# Applied to the manual side only, and that asymmetry is deliberate rather
+# than generous. Automated failures are not waved away — a run that fails
+# never reaches 'patched', so roi_history() drops it from the saving entirely
+# and counts it under `excluded`. The manual equivalent has no such record,
+# which is why it has to be estimated here.
+ROI_REWORK_PCT = float(os.environ.get('ROI_REWORK_PCT', '12') or 12)
+
+# How wrong the manual baseline might be, as a percentage either way. An
+# estimate built out of seven guesses and quoted to the cent is making a
+# promise it cannot keep, so the console publishes a range beside the point
+# figure. The band is itself a judgement — it is listed with the other
+# assumptions for the same reason they are.
+ROI_BAND_PCT = float(os.environ.get('ROI_BAND_PCT', '30') or 30)
+
+# The remediation deadline this organisation holds itself to, in hours. Policy,
+# not physics, which is why it has no defensible default — 48 is a common
+# internal standard for a Critical and is a placeholder for whatever yours is.
+#
+# This exists so the exposure figure can be stated against something the
+# business already agreed to, instead of being converted into money. Pricing
+# an exposure window needs a breach probability and a breach cost, both
+# unknowable, multiplied together — which would put the largest number on the
+# page on the weakest footing of anything in this file.
+ROI_SLA_HOURS = float(os.environ.get('ROI_SLA_HOURS', '48') or 48)
+
+# What standing this platform up cost, one off: the build, the integration
+# work, the cluster it sits on. The weakest assumption here by some distance —
+# nobody can source it from this repo and it varies by an order of magnitude
+# between organisations. It earns its place because it is the first question
+# anyone holding a budget asks, and refusing to answer is not neutral: it
+# leaves them to assume a number, and the one they assume is usually worse.
+# Set it to 0 to drop the payback card entirely.
+ROI_PLATFORM_COST = float(os.environ.get('ROI_PLATFORM_COST', '25000') or 25000)
 
 
 # -------------------------------------------------------------------- mode

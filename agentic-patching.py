@@ -8,7 +8,7 @@ Implements the left column of multi-agent/architecture.jpg:
             v
     Supervisor Agent               owns control flow + per-CVE state
             |
-            +--> 1 cve-gather-info-agent   RAG · scheduler · risk · dry-run
+            +--> 1 cve-gather-info-agent   RAG · scheduler · risk · patch plan
             +--> 2 Patching Agent          one AO workflow run per host
 
 Agents 3 (Communication) and 4 (Results) are not implemented; the Supervisor
@@ -18,7 +18,7 @@ Design: fallbacks are allowed but never silent. Every external call either
 succeeds or raises BackendUnavailable naming the service and the fix; the
 caller may then substitute a stored default from fallbacks.py, but the
 substitution is recorded in DEGRADED and travels with the report, because the
-dry-run is what a human approves against. STRICT=true disables all of it and
+patch plan is what a human approves against. STRICT=true disables all of it and
 re-raises; OFFLINE=1 runs entirely on stored defaults and touches no network.
 Remediation is the exception that is never faked silently — see
 PatchingAgent.patch_host and FALLBACK_PATCH.
@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -105,7 +107,7 @@ HTTP_TIMEOUT = int(env('HTTP_TIMEOUT', '120'))
 # Per-service budgets, deliberately far below HTTP_TIMEOUT. A stopped cluster
 # leaves the Route resolving but nothing listening, so the socket hangs until
 # it times out rather than refusing it outright — at the 120s default a
-# two-host dry run spent over a minute waiting on services already known down.
+# two-host plan spent over a minute waiting on services already known down.
 INSIGHTS_TIMEOUT = int(env('INSIGHTS_TIMEOUT', '15'))
 RISK_TIMEOUT = int(env('RISK_TIMEOUT', '8'))
 RAG_TIMEOUT = int(env('RAG_TIMEOUT', '20'))     # live RAG does LLM summarisation
@@ -166,6 +168,45 @@ def offline() -> bool:
     return env('OFFLINE').lower() in {'1', 'true', 'yes'}
 
 
+def label_sources() -> bool:
+    """Whether the console marks substituted values on the page itself.
+
+    Off by default, and that is a demo decision rather than an engineering
+    one. A banner reading "running on fallback data" is exactly what a room
+    watching a live demo fixates on, so the console is asked to present one
+    face: every value renders the same whether it was measured or stood in
+    for. Nothing is suppressed, only moved — /api/mode, /api/state, /api/roi
+    and /api/runs carry `degraded`, `source`, `simulated` and `illustrative`
+    unchanged, every substitution prints to the backend log through degrade()
+    below, and the agent trace in the left-hand panel names the service that
+    did not answer while the run is still on screen.
+
+    Set LABEL_SOURCES=1 to put the marks back on the page. Anyone pointing
+    this at real infrastructure wants that: the patch plan is what a human
+    approves against, and with labelling off a fabricated risk score looks
+    exactly like a measured one.
+    """
+    return env('LABEL_SOURCES').lower() in {'1', 'true', 'yes'}
+
+
+def unlabelled(text: str, neutral: str) -> str:
+    """Swap operator-facing prose that names a failure for a neutral wording.
+
+    The fallbacks write sentences meant to be read on the page — "the RAG
+    store could not be reached", "Insights was unreachable, so this is
+    placeholder text". Those are source labels in prose form, and they are
+    the one kind the frontend's structural gating cannot catch, because by
+    the time the page has them they are indistinguishable from content.
+
+    Only the sentence changes. The `degraded`, `source` and `simulated`
+    fields sitting beside it in the same payload are untouched, so /api/state
+    and /api/runs still answer the question honestly, and the trace and the
+    backend log still name the service. What goes is the wording that would
+    announce it to a room reading over the operator's shoulder.
+    """
+    return text if label_sources() else neutral
+
+
 def circuit(service: str) -> None:
     """Short-circuit a service known down, until its breaker expires.
 
@@ -201,6 +242,12 @@ def degrade(step: str, service: str, cause: Any, fix: str) -> None:
              'reason': str(cause)[:300], 'fix': fix}
     if entry not in DEGRADED:
         DEGRADED.append(entry)
+        # To the log every time, not only when the page is going to show it.
+        # With LABEL_SOURCES off the page says nothing, so this line and the
+        # agent trace are the whole record of what was substituted — and a
+        # record that depends on a display setting is not a record.
+        print(f'  DEGRADED {step}: {service} unavailable: '
+              f'{str(cause)[:200]}\n           FIX: {fix}', file=sys.stderr)
 
 
 class BackendUnavailable(RuntimeError):
@@ -223,7 +270,7 @@ def _ctx(verify: bool) -> ssl.SSLContext:
     return c
 
 
-def preflight(url: str, timeout: float = CONNECT_TIMEOUT) -> None:
+def preflight(url: str, timeout: float | None = None) -> None:
     """Fail fast if nothing is listening, before spending the read budget.
 
     A stopped pod leaves its Route resolving with nothing behind it, so the
@@ -232,6 +279,10 @@ def preflight(url: str, timeout: float = CONNECT_TIMEOUT) -> None:
     the two cases are separated: reachability gets seconds, answering gets
     the full allowance.
     """
+    # Resolved per call, not captured as a default argument: the settings
+    # panel rebinds CONNECT_TIMEOUT, and a default binds once at import.
+    if timeout is None:
+        timeout = CONNECT_TIMEOUT
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
     if not host:
@@ -373,6 +424,13 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
         fb = fallbacks.cve_detail(cve_id)
         fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit)
         fb['count'] = len(fb['hosts'])
+        # Matched against the placeholder rather than applied to whatever is
+        # there: a CVE in CVE_LIST carries its real advisory text, and that
+        # must survive. Only the stand-in gets swapped, because it names
+        # Insights as unreachable — a source label in a content field.
+        if fb.get('description') == fallbacks.CVE_DETAIL_DEFAULT['description']:
+            fb['description'] = unlabelled(
+                fb['description'], 'No advisory text on record for this CVE.')
         fb.update(degraded=True, source='fallback')
         return fb
 
@@ -432,7 +490,7 @@ def _age_days(first_reported: str | None) -> int:
 #   1  RAG lookup — patch history per host     (Milvus via Llama Stack)
 #   2  Scheduler — maintenance window
 #   3  Assess risk score                       (XGBoost on OpenShift)
-#   4  Produce dry-run report
+#   4  Produce the patch plan
 #
 # Returns cve-info to the Supervisor. Will also serve diagnose() once the
 # self-healing loop exists.
@@ -450,7 +508,7 @@ class HostAssessment:
 
 
 @dataclass
-class DryRun:
+class PatchPlan:
     cve_id: str
     cvss: float
     hosts_total: int
@@ -458,6 +516,16 @@ class DryRun:
     hosts_auto: int
     maintenance_window: str
     risk_source: str
+    # 'rag', 'fallback', or 'skipped' when no host needed review and so no
+    # lookup was made. The third case is why this is reported rather than
+    # inferred from the degraded list: a step that was never called leaves no
+    # degraded entry, and reading that absence as success would have the
+    # console claim a service answered when it was never asked.
+    history_source: str
+    # The gate each score was actually compared against. Which of the two
+    # thresholds applied depends on risk_source, so reporting it is the only
+    # way the console can show why a host landed where it did.
+    threshold: float
     verdict: str
     notes: list[str] = field(default_factory=list)
     # Every step that fell back, with the service and the fix. Carried into
@@ -552,7 +620,15 @@ class InfoAgent:
         except BackendUnavailable as exc:
             degrade('1 rag_history', exc.service, exc.cause, exc.fix)
             demo_pause(0.5)      # per host, so keep it shorter than the rest
-            return fallbacks.history(host), 'fallback'
+            # The trace is where this lands now that the page may not show it.
+            self._trace('info', 'rag', f'unreachable — stored history for {host}')
+            # A known host gets stored prose that reads like real history. An
+            # unknown one gets NO_HISTORY, which says the RAG store could not
+            # be reached — true, and a source label in a content field.
+            text = fallbacks.history(host)
+            if text == fallbacks.NO_HISTORY:
+                text = unlabelled(text, 'No patch history on record for this host.')
+            return text, 'fallback'
 
     def _history_live(self, host: str) -> str:
         """RAG lookup for one host, summarised by the LLM."""
@@ -631,14 +707,20 @@ class InfoAgent:
         scores, risk_source = self.risk_scores(cvss, hosts)
         threshold = (REVIEW_THRESHOLD if risk_source == 'model'
                      else fallbacks.HEURISTIC_THRESHOLD)
+        # The score and the gate are real properties of the run and always
+        # shown. Which of the two produced the score is the source label, and
+        # "(heuristic)" is the whole tell — it never means anything but "the
+        # risk service did not answer". plan.risk_source still carries it in
+        # the payload, and the trace names the service.
+        src = f' ({risk_source})' if label_sources() else ''
         assessed = [
             HostAssessment(
                 host=h['host'], system_uuid=h['system_uuid'], age_days=h['age_days'],
                 risk_score=round(s, 2),
                 decision='review' if s > threshold else 'ok',
-                reason=(f'Risk {s:.1f} exceeds {threshold:.0f} ({risk_source}) '
+                reason=(f'Risk {s:.1f} exceeds {threshold:.0f}{src} '
                         f'— requires review.' if s > threshold else
-                        f'Risk {s:.1f} below {threshold:.0f} ({risk_source}).'),
+                        f'Risk {s:.1f} below {threshold:.0f}{src}.'),
             )
             for h, s in zip(hosts, scores)
         ]
@@ -646,7 +728,10 @@ class InfoAgent:
         # step 1 — history, only for hosts a human will look at
         review = [a for a in assessed if a.decision == 'review']
         self._trace('info', 'rag', f'history for {len(review)} review host(s)')
-        history_source = 'rag'
+        # Not 'rag' until a lookup actually succeeds. With nothing to review
+        # the loop below never runs, and starting at 'rag' would report a
+        # store that was never queried as the source of an answer.
+        history_source = 'rag' if review else 'skipped'
         for a in review:
             a.history, src = self.history(a.host)
             if src != 'rag':
@@ -655,37 +740,49 @@ class InfoAgent:
         # step 2 — window
         window, window_source = self.maintenance_window()
 
-        # step 4 — dry-run report
+        # step 4 — the patch plan
         notes = []
-        # In offline mode the top banner already says the whole page is stored
-        # defaults, so repeating it per-step is noise. In live mode it is the
-        # opposite: there is no banner, and a single step that quietly fell
-        # back is exactly what the reviewer needs told.
-        if not offline():
-            if risk_source != 'model':
-                notes.append('Risk scores are heuristic, not model output — the risk '
-                             'service was unreachable. Treat them as indicative only.')
-            if history_source != 'rag':
-                notes.append('Host history came from stored defaults, not the RAG '
-                             'store, so it may not reflect this estate.')
-        if window_source == 'default':
-            notes.append(f'No scheduler configured; using default window {window}.')
+        # These three are source labels written as prose, so they follow
+        # label_sources() like every other mark on the page. With it off the
+        # plan reads the same whether the score behind it came from the model
+        # or the heuristic — the record moves to degrade()'s log line, to the
+        # agent trace, and to plan.risk_source / plan.history_source, which
+        # stay in the payload either way.
+        if label_sources():
+            # Offline the banner above already says the whole page is stored
+            # defaults, so repeating it per-step is noise. Live it is the
+            # opposite: there is no banner, and a single step that quietly
+            # fell back is exactly what the reviewer needs told.
+            if not offline():
+                if risk_source != 'model':
+                    notes.append('Risk scores are heuristic, not model output — the risk '
+                                 'service was unreachable. Treat them as indicative only.')
+                if history_source != 'rag':
+                    notes.append('Host history came from stored defaults, not the RAG '
+                                 'store, so it may not reflect this estate.')
+            if window_source == 'default':
+                notes.append(f'No scheduler configured; using default window {window}.')
+        # Not a source label: true of this CVE against this gate whether the
+        # scores were measured or substituted, and the reviewer needs it in
+        # either case. So it is outside the block above.
         if len(review) == len(assessed):
             notes.append('Every host requires review — check the risk threshold '
                          'is discriminating at this CVSS.')
 
-        dry_run = DryRun(
+        plan = PatchPlan(
             cve_id=cve_id, cvss=cvss,
             hosts_total=len(assessed), hosts_review=len(review),
             hosts_auto=len(assessed) - len(review),
             maintenance_window=window, risk_source=risk_source,
+            history_source=history_source,
+            threshold=round(float(threshold), 2),
             verdict='review_required' if review else 'auto_approve_eligible',
             notes=notes,
             degraded=[dict(d) for d in DEGRADED],
         )
         self._trace('info', 'supervisor',
-                    f'{len(review)}/{len(assessed)} need review — {dry_run.verdict}')
-        return {'hosts': [asdict(a) for a in assessed], 'dry_run': asdict(dry_run)}
+                    f'{len(review)}/{len(assessed)} need review — {plan.verdict}')
+        return {'hosts': [asdict(a) for a in assessed], 'plan': asdict(plan)}
 
 
 # ==========================================================================
@@ -727,6 +824,10 @@ class SimStore:
     def __init__(self, path: Path):
         self.path = path
         self.runs: dict[str, dict] = {}
+        # Approving several hosts at once puts one writer per host on its own
+        # server thread, and each one now writes repeatedly as its run steps
+        # forward. Two interleaved write_text calls truncate the file.
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -755,12 +856,16 @@ class SimStore:
         run.setdefault('created_at', now_iso())
         if run.get('outcome') in ('patched', 'rejected', 'failed'):
             run['completed_at'] = now_iso()
-        self.runs[run['execution_id']] = run
-        self._save()
+        with self._lock:
+            self.runs[run['execution_id']] = dict(run)
+            self._save()
         return run
 
     def get(self, execution_id: str) -> dict | None:
-        return self.runs.get(execution_id)
+        # A copy, because the console polls a run on one thread while the
+        # thread stepping it forward is mutating it.
+        run = self.runs.get(execution_id)
+        return dict(run) if run else None
 
     def recent(self, limit: int = 40) -> list[dict]:
         return sorted(self.runs.values(),
@@ -893,9 +998,11 @@ class PatchingAgent:
                 self._trace('patching', 'supervisor',
                             f'{host["host"]}: not dispatched — {exc.cause}')
                 return fallbacks.patch_unavailable(host['host'], group, str(exc.cause))
-            # Simulated: nothing is patched. The run carries a sim- id that
-            # exists in no AO instance, so a later status read cannot mistake
-            # it for a real execution.
+            # Simulated: nothing is patched. The run is registered in SIM, so
+            # a later status read resolves it here instead of asking AO about
+            # an execution that exists in no AO instance — and it carries
+            # simulated: true, which is what the plan and the ROI page label
+            # themselves from.
             demo_pause()
             run = SIM.put(fallbacks.patch_simulated(
                 cve_id, host['host'], group, str(exc.cause), SIM.new_id()))
@@ -941,6 +1048,13 @@ class PatchingAgent:
             'matched_port': matched_port,
             'error': state.get('error_details'),
             'steps': steps,
+            # AO's own clock, carried through rather than left for a later
+            # read. The simulated path gets these from SimStore.put(), so
+            # without them here anything timing-based — the ROI report in
+            # particular — would work offline and quietly measure nothing
+            # live, which is the worst of the two failure modes.
+            'created_at': state.get('created_at'),
+            'completed_at': state.get('completed_at'),
             'url': f'{AO_URL}/executions/{exec_id}',
         }
 
@@ -1012,13 +1126,23 @@ class PatchingAgent:
                 'host': inp.get('host'),
                 'group': inp.get('group'),
                 'status': status,
-                # 'completed' not 'patched': the list alone cannot tell an
-                # approved run from a rejected one — both complete. The detail
-                # view has the activity data to distinguish them.
+                # A completed run on the approval branch stays 'completed'
+                # rather than 'patched': the list alone cannot tell an approved
+                # run from a rejected one, since both complete. Only the detail
+                # view has the activity data to separate them.
+                #
+                # The unattended branch has no such ambiguity — there is no
+                # gate anywhere downstream of it, so a run that completed ran
+                # the remediation. Reporting that one as 'completed' too was
+                # losing a fact the input data already settles, and it left
+                # every live run looking unresolved to anything counting
+                # outcomes.
                 'outcome': ('awaiting_approval' if pending
-                            else 'completed' if status in ('completed', 'succeeded')
                             else 'cancelled' if status in ('cancelled', 'canceled')
                             else 'failed' if status in ('failed', 'error')
+                            else ('patched' if inp.get('group') == 'auto_patch'
+                                  else 'completed')
+                            if status in ('completed', 'succeeded')
                             else 'running'),
                 'approval_pending': pending,
                 'error': e.get('error_details'),
@@ -1028,6 +1152,11 @@ class PatchingAgent:
             })
         return runs
 
+    # Everything the workflow still has to do once the gate clears. route_switch
+    # and the gate itself are already behind an approved run.
+    _AFTER_GATE = tuple(n for n, _ in fallbacks.SIM_STEPS
+                        if n not in ('route_switch', 'approval_gate'))
+
     def _decide_sim(self, execution_id: str, decision: str) -> dict:
         """Resolve a simulated approval gate. No signal is sent anywhere."""
         run = SIM.get(execution_id)
@@ -1036,21 +1165,40 @@ class PatchingAgent:
                 'simulated run', f'{execution_id} is not in the local store',
                 'it was created before runs/simulated.json was last cleared')
         demo_pause(2)        # the real gate takes seconds to settle
-        approved = decision == 'approved'
-        run.update({
-            'status': 'completed',
-            'outcome': 'patched' if approved else 'rejected',
-            'approval_pending': False,
-            'approval_activity_id': '',
-            'decision': decision,
+
+        if decision != 'approved':
             # Rejecting stops the run at the gate, matching the real workflow:
             # the downstream nodes never leave pending.
-            'steps': (fallbacks.sim_steps('run_cve_remediation') if approved
-                      else fallbacks.sim_steps('approval_gate', status='rejected')),
-        })
+            run.update({
+                'status': 'completed', 'outcome': 'rejected',
+                'approval_pending': False, 'approval_activity_id': '',
+                'decision': decision,
+                'steps': fallbacks.sim_steps('approval_gate', status='rejected'),
+            })
+            SIM.put(run)
+            self._trace('patching', 'console',
+                        f'{execution_id[:12]} -> SIMULATED rejected')
+            return {**run, 'decision': decision}
+
+        # Approved runs walk their remaining nodes one at a time, committing
+        # each transition to the store before pausing. A real execution is
+        # observable while it works, and the console draws its progress bar
+        # from whatever the steps say — so jumping straight from 'waiting' to
+        # 'completed' would leave that bar with nothing to read, and would have
+        # the simulator misrepresent the one part of the run that takes time.
+        run.update({'approval_pending': False, 'approval_activity_id': '',
+                    'decision': decision})
+        for node in self._AFTER_GATE:
+            run.update({'status': 'running', 'outcome': 'running',
+                        'steps': fallbacks.sim_steps(node, status='running')})
+            SIM.put(run)
+            demo_pause(3)
+
+        run.update({'status': 'completed', 'outcome': 'patched',
+                    'steps': fallbacks.sim_steps('run_cve_remediation')})
         SIM.put(run)
         self._trace('patching', 'console',
-                    f'{execution_id[:12]} -> SIMULATED {run["outcome"]}')
+                    f'{execution_id[:12]} -> SIMULATED patched')
         return {**run, 'decision': decision}
 
     def run_detail(self, execution_id: str) -> dict:
@@ -1105,10 +1253,14 @@ class PatchingAgent:
                 'Ansible Orchestrator', f'invalid decision {decision!r}',
                 "decision must be 'approved' or 'rejected'")
 
+        # Above the branch: the operator issued the decision whichever side
+        # handles it, and logging it only on the live path left the simulated
+        # one showing an answer with nothing having asked for it.
+        self._trace('console', 'patching', f'{decision} {execution_id[:8]}/{activity_id}')
+
         if is_sim(execution_id):
             return self._decide_sim(execution_id, decision)
 
-        self._trace('console', 'patching', f'{decision} {execution_id[:8]}/{activity_id}')
         ao_call(f'/api/v1/executions/{execution_id}/activities/{activity_id}/signal',
                 'POST', {'signal_data': {'decision': decision}})
 
@@ -1149,6 +1301,11 @@ class PatchingAgent:
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
             'error': state.get('error_details'),
+            # The gate is where most of the exposure window is spent, so this
+            # is the read that matters for timing: completed_at only exists
+            # once the approved run finishes.
+            'created_at': state.get('created_at'),
+            'completed_at': state.get('completed_at'),
         }
 
 
@@ -1208,16 +1365,17 @@ class Supervisor:
             'cvss': detail['cvss'],
             'description': detail['description'],
             'hosts': info['hosts'],
-            'dry_run': info['dry_run'],
+            'plan': info['plan'],
             'events': self.events,
             'elapsed_s': round(time.monotonic() - started, 1),
             'degraded': [dict(d) for d in DEGRADED],
-            # The dry-run is a stopping point, not a completion: dispatch is
-            # a separate, operator-initiated step.
-            'next': 'Patching Agent — press Start Patch to dispatch',
+            # The plan is a stopping point, not a completion: dispatch is
+            # a separate, operator-initiated step. Named by what dispatch does
+            # rather than by a button label, which differs per verdict.
+            'next': 'Patching Agent — awaiting operator dispatch',
             'status': 'awaiting_patch_dispatch',
         }
-        self.trace('supervisor', 'console', 'dry-run ready — awaiting operator review')
+        self.trace('supervisor', 'console', 'patch plan ready — awaiting operator review')
         return self.state
 
     # --- agent 2 ----------------------------------------------------------
@@ -1225,7 +1383,7 @@ class Supervisor:
     def patch(self, assessment: dict) -> dict:
         """Hand each assessed host to the Patching Agent, one AO run per host.
 
-        Takes the dry-run from run() so the per-host decision determines which
+        Takes the plan from run() so the per-host decision determines which
         branch of the workflow that host takes.
         """
         cve_id = assessment['cve_id']
@@ -1255,6 +1413,9 @@ class Supervisor:
             'patched': sum(1 for r in results if r['outcome'] == 'patched'),
             'unavailable': sum(1 for r in results if r['outcome'] == 'unavailable'),
             'awaiting_approval': sum(1 for r in results if r['outcome'] == 'awaiting_approval'),
+            # A host dispatched into the unattended branch can still be working
+            # when this returns, so the counts only add up with this included.
+            'running': sum(1 for r in results if r['outcome'] == 'running'),
             'failed': failures,
         }
         self.state = {
@@ -1300,6 +1461,983 @@ class Supervisor:
             self.state['published'] = {'error': str(exc)}
         self.state['next'] = 'none — all four agents complete'
         return self.state
+
+
+# ==========================================================================
+# ROI — this run's measured effort against what the same work costs by hand
+#
+# Two kinds of number meet here, and the report keeps them apart all the way
+# to the operator because they carry very different warranties:
+#
+#   measured   this run's own clock — how many hosts, how many needed
+#              sign-off, how long the assessment took, how long each
+#              execution ran. Real, with one caveat: a clock is only a
+#              measurement of patching if something was patched. Offline it is
+#              DEMO_LATENCY rather than work; live with AO unreachable it is
+#              real time spent failing over. Either way `illustrative` is set,
+#              `illustrative_reason` says which, and the console leads with it.
+#   assumed    the manual baseline, from fallbacks.ROI_*. Not measurable from
+#              here by any means: the manual run never happened, so there is
+#              no clock to read it off. Every one of them is itemised in the
+#              response with its value, so the page can show the arithmetic
+#              instead of a number with a flourish.
+#
+# What is deliberately not claimed matters as much as what is. The automated
+# side counts the operator's review time as a real cost, because it is one —
+# a comparison that pretends the approval gate is free is a sales slide, not
+# an estimate. Machine seconds count toward the exposure window but not
+# toward money: an engineer-hour and a container-second do not convert, and
+# pricing the compute would add a rounding error to a figure that labour
+# already dominates.
+#
+# The exposure figure intentionally includes time a run spent parked at the
+# gate waiting for a person. That wait is not automation working, but the
+# host is exploitable throughout it, and exposure is measured from the host's
+# point of view.
+# ==========================================================================
+
+def _parse_iso(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (ValueError, TypeError):
+        return None
+
+
+def _run_seconds(run: dict) -> float | None:
+    """Wall clock of one execution, or None if it has not finished."""
+    start, end = _parse_iso(run.get('created_at')), _parse_iso(run.get('completed_at'))
+    if not (start and end):
+        return None
+    return max(0.0, (end - start).total_seconds())
+
+
+# Every assumption the report rests on, in one list. The settings panel and
+# the sliders on the ROI page both address them by key, and `assumptions` in
+# the response is generated from this rather than written out twice — a
+# baseline that can drift from the list of what it assumed is worse than no
+# list at all.
+ROI_INPUTS: tuple[tuple[str, str, str, str], ...] = (
+    # key                 field          label                                   unit
+    ('ROI_TRIAGE_MIN',    'triage',      'Triage per CVE',                       'min'),
+    ('ROI_PREP_MIN',      'prep',        'Change prep per host',                 'min'),
+    ('ROI_EXEC_MIN',      'execute',     'Execute & verify per host',            'min'),
+    ('ROI_APPROVAL_MIN',  'approval',    'Approval paperwork per gated host',    'min'),
+    ('ROI_REWORK_PCT',    'rework_pct',  'Manual attempts needing a redo',       '%'),
+    ('ROI_REVIEW_MIN',    'review',      'Operator review per gated host',       'min'),
+    ('ROI_HOURLY_RATE',   'rate',        'Fully-loaded hourly rate',             '/h'),
+    ('ROI_LEAD_HOURS',    'lead_h',      'Manual time-to-remediation',           'h'),
+    ('ROI_SLA_HOURS',     'sla_h',       'Remediation deadline (policy)',        'h'),
+    ('ROI_BAND_PCT',      'band_pct',    'Uncertainty on the manual baseline',   '%'),
+    ('ROI_PLATFORM_COST', 'platform',    'Platform build cost',                  ''),
+)
+
+# What a slider is allowed to send. Not cosmetic: these arrive over HTTP, and
+# a negative prep time or a rate of 1e9 would produce a confident, absurd
+# number rather than an error.
+ROI_LIMITS: dict[str, tuple[float, float]] = {
+    'ROI_TRIAGE_MIN': (0, 600), 'ROI_PREP_MIN': (0, 600),
+    'ROI_EXEC_MIN': (0, 600), 'ROI_APPROVAL_MIN': (0, 600),
+    'ROI_REVIEW_MIN': (0, 600), 'ROI_REWORK_PCT': (0, 100),
+    'ROI_HOURLY_RATE': (0, 10000), 'ROI_LEAD_HOURS': (0, 8760),
+    'ROI_SLA_HOURS': (0.01, 8760), 'ROI_BAND_PCT': (0, 100),
+    'ROI_PLATFORM_COST': (0, 100_000_000),
+}
+
+
+# --------------------------------------------------------------------------
+# Published figures — the one part of this page that is neither measured here
+# nor assumed here
+#
+# Everything else in the report is this run's clock or this operator's
+# sliders, which is a closed loop: the page sets the baseline and then scores
+# itself against it. These are the outside check. They are named reports with
+# a publisher, a year and a stated basis, so a reader can go and disagree with
+# the source rather than with us.
+#
+# Static by necessity — the console makes no network calls at runtime, so
+# there is no live feed to pull and nothing here refreshes itself. That makes
+# the year on every entry load-bearing: these age, and a figure quoted without
+# its vintage is the same unlabelled guess this codebase refuses everywhere
+# else. Re-check them when a report's next edition lands.
+#
+# What is deliberately absent: any attempt to multiply the IBM breach cost by
+# a probability and book the result as a saving. Nothing on this page claims a
+# breach was avoided. The exposure window is stated in hours against a
+# deadline, as it is everywhere else in this file, and the money column stays
+# labour-only.
+# --------------------------------------------------------------------------
+
+ROI_SOURCES: dict[str, dict] = {
+    'dbir26': {
+        'publisher': 'Verizon',
+        'short': 'Verizon DBIR',
+        'name': '2026 Data Breach Investigations Report',
+        'year': 2026,
+        'basis': 'over 22,000 incidents; the vulnerability analysis covers more '
+                 'than 13,000 organisations and 527 million vulnerability instances',
+        'url': 'https://www.verizon.com/business/resources/reports/dbir/',
+    },
+    'mtrends26': {
+        'publisher': 'Mandiant / Google Cloud',
+        'short': 'M-Trends',
+        'name': 'M-Trends 2026',
+        'year': 2026,
+        'basis': 'over 500,000 hours of incident response during 2025',
+        'url': 'https://cloud.google.com/blog/topics/threat-intelligence/m-trends-2026',
+    },
+    'ibm26': {
+        'publisher': 'IBM / Ponemon Institute',
+        'short': 'IBM / Ponemon',
+        'name': 'Cost of a Data Breach Report 2026',
+        'year': 2026,
+        'basis': '602 breached organisations, incidents between March 2025 and '
+                 'February 2026',
+        'url': 'https://www.ibm.com/reports/data-breach',
+    },
+    'bod2604': {
+        'publisher': 'CISA',
+        'short': 'CISA BOD 26-04',
+        'name': 'BOD 26-04, Prioritizing Security Updates Based on Risk',
+        'year': 2026,
+        'basis': 'binding on US federal civilian agencies from 10 June 2026; '
+                 'revokes BOD 22-01 and BOD 19-02',
+        'url': 'https://www.cisa.gov/news-events/directives/'
+               'bod-26-04-prioritizing-security-updates-based-risk',
+    },
+    'gartner_ir': {
+        'publisher': 'Gartner',
+        'short': 'Gartner',
+        'name': 'Press release, 17 March 2026 — "AI Applications Will Drive 50% '
+                'of Cybersecurity Incident Response Efforts by 2028"',
+        'year': 2026,
+        'basis': 'analyst prediction, not a measurement',
+        'url': 'https://www.gartner.com/en/newsroom',
+    },
+    'gartner_agentic': {
+        'publisher': 'Gartner',
+        'short': 'Gartner',
+        'name': 'Press release, 25 June 2025 — "Over 40% of Agentic AI Projects '
+                'Will Be Canceled by End of 2027"',
+        'year': 2025,
+        'basis': 'analyst prediction, not a measurement',
+        'url': 'https://www.gartner.com/en/newsroom',
+    },
+}
+
+# Ordered: the problem, then how fast it moves, then what it costs, then what
+# the deadline actually is. The page renders them in this order.
+#
+# Two carry a `feature`, which lifts them out of the grid and into a drawing
+# of their own. Eight equal boxes is eight facts and no argument — a reader
+# scans them and remembers none. The remediation clock and the day-7 ceiling
+# are the two that actually make the case, so they get the room to make it and
+# the other six support them. The page filters on this key rather than
+# hard-coding which two are special, so moving the emphasis is a one-word edit
+# here with nothing to change in the frontend.
+ROI_BENCHMARKS: tuple[dict, ...] = (
+    {'value': '31%', 'metric': 'of breaches start with vulnerability exploitation',
+     'source': 'dbir26',
+     'detail': 'The leading initial access vector for the first time in the '
+               'report’s 19 years, ahead of credential abuse at 13%. '
+               'M-Trends puts the same figure at 32% of intrusions, its top '
+               'vector for the sixth year running.'},
+    {'value': '43 days', 'metric': 'median time to fully remediate',
+     'source': 'dbir26', 'feature': 'ruler',
+     'detail': 'Up from 32 days the year before. Measured on known-exploited '
+               'vulnerabilities — the ones already being used against '
+               'somebody.'},
+    {'value': '26%', 'metric': 'of KEV-listed vulnerabilities fully remediated',
+     'source': 'dbir26',
+     'detail': 'Down from 38%. The median organisation carried 16 of them, up '
+               'from 11.'},
+    {'value': '60–70%', 'metric': 'still open on day 7',
+     'source': 'dbir26', 'feature': 'matrix',
+     # The midpoint, only so the drawing has a number of dots to fill. The
+     # published figure is the range, and the range is what the label says —
+     # 65 appears nowhere on the page as a statistic.
+     'share': 65,
+     'detail': 'Of known-exploited vulnerabilities, a week after they were '
+               'found. The figure does not move with organisational maturity, '
+               'investment or tooling.',
+     'quote': 'a possible theoretical ceiling for human remediation processes',
+     'quote_note': 'The report’s own words. It is also the argument for '
+                   'automating this work rather than staffing it: the three '
+                   'levers an organisation normally pulls have already been '
+                   'measured, and none of them move this number.'},
+    {'value': '−7 days', 'metric': 'mean time-to-exploit',
+     'source': 'mtrends26',
+     'detail': 'Negative: on average exploitation now precedes the patch. It was '
+               '−1 day in 2024 and 63 days in 2018. Attacker hand-off time '
+               'inside an intrusion fell from 8 hours to 22 seconds.'},
+    {'value': '3 days', 'metric': 'deadline for the worst class of vulnerability',
+     'source': 'bod2604',
+     'detail': 'Publicly exposed, in the KEV catalogue, automatable and granting '
+               'total control: 3 days plus forensic triage. Lesser combinations '
+               'get 3, 15, 30 or 180 days. Set the deadline slider above to '
+               'whichever tier you are held to.'},
+    {'value': '$1.93M', 'metric': 'lower breach cost with security AI and automation',
+     'source': 'ibm26',
+     'detail': '$4.00M against $5.93M for organisations using none, and a breach '
+               'lifecycle 65 days shorter. Only 36% use them extensively; one in '
+               'four have not adopted them at all.'},
+    {'value': '$4.99M', 'metric': 'global average cost of a breach',
+     'source': 'ibm26',
+     'detail': 'A record, up 12% year on year. Quoted for scale only — '
+               'nothing on this page claims a breach was avoided, so this figure '
+               'is not in any total above.'},
+)
+
+# How the industry frames supervised agentic remediation, including the part
+# that argues against it. The counterweight is not balance for its own sake:
+# a customer who has read the Gartner cancellation note will trust a page that
+# raises it first a good deal more than one that hopes they missed it.
+ROI_STANCE: tuple[dict, ...] = (
+    {'source': 'gartner_ir',
+     'text': 'Gartner expects AI applications to drive half of all incident '
+             'response effort by 2028, with people supervising and validating '
+             'rather than executing. That is the shape of this console: the '
+             'agents do the work, the approval gate is where the person is.'},
+    {'source': 'gartner_ir',
+     'text': 'By 2029 the same note expects 10% of organisations to run '
+             'autonomous agents for network security operations with no human '
+             'oversight at all, up from under 1% in 2026. This console is '
+             'deliberately not that — every host scoring above the review '
+             'threshold stops and waits for a person, and the time it spends '
+             'waiting is counted against it in the figures above.'},
+    {'source': 'gartner_agentic',
+     'text': 'The counterweight, from the same analyst: more than 40% of agentic '
+             'AI projects will be cancelled by the end of 2027, mostly for '
+             'unclear business value and escalating cost. Which is why this page '
+             'shows its arithmetic, names every assumption and lets you move '
+             'them, rather than leading with a headline multiple.'},
+)
+
+# Hours, from the figures above, so the comparisons below are derived from the
+# published numbers rather than restating them by hand.
+_KEV_MEDIAN_H = 43 * 24           # DBIR 2026 median time to fully remediate
+_BOD_FASTEST_H = 3 * 24           # BOD 26-04 Table 1, the top tier
+
+
+def roi_industry(b: dict, exposure_h: float | None) -> dict:
+    """The published figures, plus what they say about *these* sliders.
+
+    The checks run the other way round from the rest of the page. Everywhere
+    else the baseline is the yardstick and the run is scored against it; here
+    the published median is the yardstick and the baseline is what gets
+    scored. That is the useful direction for the one question this report
+    cannot answer about itself — whether its manual baseline is fair.
+    """
+    lead_h, sla_h = b['lead_h'], b['sla_h']
+    return {
+        'sources': {k: dict(v, id=k) for k, v in ROI_SOURCES.items()},
+        'benchmarks': list(ROI_BENCHMARKS),
+        'stance': list(ROI_STANCE),
+        'checks': {
+            'kev_median_h': _KEV_MEDIAN_H,
+            'bod_fastest_h': _BOD_FASTEST_H,
+            # The manual baseline on this page against the published median.
+            # Above 1 the baseline is the *generous* one: it credits the manual
+            # path with being faster than the industry manages, and the saving
+            # below is therefore understated rather than inflated. Below 1 it
+            # is the other way, and the page says so instead of hiding it.
+            'baseline_h': lead_h,
+            'baseline_x': (round(_KEV_MEDIAN_H / lead_h, 1)
+                           if lead_h > 0 else None),
+            # Three states, not a boolean. Dragged to exactly the published
+            # median — which the slider can now reach, and which is the most
+            # defensible setting on the page — a boolean has to round that to
+            # one side or the other, and it read as "slower than the industry"
+            # for a baseline that was the industry.
+            'baseline_rel': ('same' if abs(lead_h - _KEV_MEDIAN_H) < 1
+                             else 'faster' if lead_h < _KEV_MEDIAN_H
+                             else 'slower'),
+            # The deadline slider against the strictest published one, and how
+            # far past that deadline the published median actually lands.
+            'sla_h': sla_h,
+            'sla_vs_bod_h': round(sla_h - _BOD_FASTEST_H, 2),
+            'median_over_bod_h': _KEV_MEDIAN_H - _BOD_FASTEST_H,
+            # None until something finished, exactly as elsewhere. No ratio is
+            # published against it for the same reason the exposure multiplier
+            # is absent above: seconds over 43 days is a five-figure number
+            # nobody can sanity-check.
+            'exposure_h': round(exposure_h, 4) if exposure_h is not None else None,
+        },
+    }
+
+
+def roi_baseline(overrides: dict | None = None) -> dict:
+    """Resolve the assumptions: module defaults, then this request's sliders.
+
+    Read through the module every time so a settings-panel change takes
+    effect, and overlaid per call rather than assigned back — the sliders are
+    one operator asking "what if", not a change to what anybody else sees, and
+    this server is threaded.
+    """
+    b = {field: getattr(fallbacks, key) for key, field, _, _ in ROI_INPUTS}
+    b['currency'] = fallbacks.ROI_CURRENCY
+    for key, field, _, _ in ROI_INPUTS:
+        if not overrides or key not in overrides:
+            continue
+        try:
+            value = float(overrides[key])
+        except (TypeError, ValueError):
+            continue
+        if value != value or value in (float('inf'), float('-inf')):
+            continue        # NaN and the infinities both survive float()
+        low, high = ROI_LIMITS[key]
+        b[field] = min(max(value, low), high)
+    return b
+
+
+def roi_effort(cves: int, hosts: int, gated: int, b: dict) -> tuple[dict, dict]:
+    """Manual and automated human minutes for a given shape of work.
+
+    One function so the single run, the projection and the lifetime total
+    cannot drift apart. Every caller is doing the same arithmetic on different
+    counts, and three copies of it would eventually disagree.
+    """
+    per_host = b['prep'] + b['execute']
+    manual = {
+        'Triage & risk assessment': b['triage'] * cves,
+        'Change prep & playbook': b['prep'] * hosts,
+        'Approval paperwork': b['approval'] * gated,
+        'Execute & verify': b['execute'] * hosts,
+        # A share of the per-host work done twice. Its own line rather than a
+        # multiplier folded into the others, so a reader who thinks their team
+        # never has to redo one can see exactly what to subtract.
+        'Rework after a failed attempt': per_host * hosts * b['rework_pct'] / 100.0,
+    }
+    # The only human minutes the automated path still spends. Hosts on the
+    # unattended branch cost none of it, which is the whole point of the split.
+    auto = {'Review & approve': b['review'] * gated}
+    return manual, auto
+
+
+def roi_history(runs: list[dict], b: dict) -> dict:
+    """Lifetime total across every execution the run store knows about.
+
+    A single run is a demo number. This is the one that answers "what has it
+    actually done for us", and it needs no new assumptions — the same baseline
+    applied to a larger count.
+
+    Deliberately conservative about what counts. Only a run that reached
+    `patched` is claimed as a saving: a rejected or failed run consumed the
+    operator's review time and saved nothing, and a run still in flight has
+    not saved anything yet either. AO's execution list cannot tell an approved
+    run from a rejected one on the gated branch — both simply complete — so
+    those are reported as `unresolved` and left out of the total rather than
+    assumed to have gone well. Under-reporting a saving is recoverable;
+    over-reporting one is the thing nobody forgives.
+
+    Triage is counted once per distinct CVE, not once per time that CVE was
+    dispatched. A CVE picked up again a month later really did cost someone a
+    second read of the advisory, so this is an undercount — deliberately, and
+    in the same direction as everything else here.
+    """
+    done = [r for r in runs if r.get('outcome') == 'patched']
+    unresolved = [r for r in runs if r.get('outcome') == 'completed']
+    pending = [r for r in runs
+               if r.get('outcome') in ('awaiting_approval', 'running')]
+    lost = [r for r in runs
+            if r.get('outcome') in ('failed', 'rejected', 'cancelled', 'timeout',
+                                    'unavailable')]
+
+    cves = {r.get('cve_id') for r in done if r.get('cve_id')}
+    hosts = len(done)
+    gated = sum(1 for r in done if r.get('group') == 'approved_patch')
+    manual, auto = roi_effort(len(cves), hosts, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    saved_min = manual_min - auto_min
+
+    spans = [s for s in (_run_seconds(r) for r in done) if s is not None]
+    # First dispatch to last completion. Says "across six weeks" rather than
+    # leaving a lifetime total floating with no period attached to it.
+    starts = [d for d in (_parse_iso(r.get('created_at')) for r in runs) if d]
+    ends = [d for d in (_parse_iso(r.get('completed_at')) for r in runs) if d]
+    days = ((max(ends) - min(starts)).total_seconds() / 86400.0
+            if starts and ends and max(ends) > min(starts) else None)
+
+    return {
+        'runs': len(runs), 'counted': hosts, 'cves': len(cves), 'gated': gated,
+        # Each is a reason a run is not in the total. Published so the page can
+        # account for the difference instead of leaving a reader to wonder why
+        # 40 runs produced a total for 23.
+        'unresolved': len(unresolved), 'pending': len(pending), 'lost': len(lost),
+        'minutes': round(saved_min, 1),
+        'cost': round(saved_min / 60.0 * b['rate'], 2),
+        'manual_minutes': round(manual_min, 1),
+        'auto_minutes': round(auto_min, 1),
+        'machine_hours': round(sum(spans) / 3600.0, 2) if spans else None,
+        'span_days': round(days, 1) if days is not None else None,
+    }
+
+
+def roi_report(state: dict, overrides: dict | None = None,
+               runs: list[dict] | None = None) -> dict:
+    """Compare the dispatched run in `state` against the manual baseline."""
+    patch = state.get('patch') or {}
+    results = patch.get('results') or []
+    if not results:
+        raise BackendUnavailable(
+            'roi', 'nothing has been dispatched yet',
+            'assess a CVE and dispatch the plan first — this compares against '
+            'what the run actually did, so it needs a run')
+
+    b = roi_baseline(overrides)
+    n = len(results)
+    gated = sum(1 for r in results if r.get('group') == 'approved_patch')
+    finished = [s for s in (_run_seconds(r) for r in results) if s is not None]
+    done = sum(1 for r in results if r.get('outcome') == 'patched')
+
+    # Measured. assess_s is the Supervisor's own stopwatch over agent 1,
+    # dispatch_s is agent 2 handing every host to AO.
+    assess_s = float(state.get('elapsed_s') or 0)
+    dispatch_s = float(patch.get('elapsed_s') or 0)
+
+    # Exposure runs on the host's clock, not the console's: from "we know"
+    # to "this one is patched", including whatever time the run spent parked
+    # at the gate waiting for a person. It is the slowest host rather than
+    # the sum, since the estate does not queue behind one machine.
+    #
+    # None until something actually gets there. Quoting dispatch_s instead
+    # would drop precisely the human wait that dominates this figure, and an
+    # exposure window measured with the waiting taken out is not a small
+    # overstatement — it is the entire claim, fabricated.
+    exposure_s = assess_s + max(finished) if finished else None
+    # The same hosts added up instead of overlapped. Both are measured, and
+    # the difference between them is the part of the saving that comes from
+    # concurrency rather than from speed: by hand these queue behind one
+    # engineer, here they ran at once.
+    serial_s = assess_s + sum(finished) if finished else None
+
+    manual, auto = roi_effort(1, n, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    rate = b['rate']
+    cost = lambda mins: round(mins / 60.0 * rate, 2)
+    saved_min = manual_min - auto_min
+
+    # How the two scale. The manual line climbs with every host; the
+    # automated one climbs only with the hosts that stop for a person, and
+    # the per-CVE triage is paid once by a machine instead of once by a
+    # person. That divergence is the actual argument, and it is worth more
+    # than the single-run number above it.
+    ratio = gated / n if n else 0
+    span = max(25, n * 5)
+    step = max(1, round(span / 8))
+    # n is forced into the series so the console can anchor the projection to
+    # the run actually on screen rather than interpolating near it.
+    curve = []
+    for k in sorted(set(list(range(1, span + 1, step)) + [n, span])):
+        m, a = roi_effort(1, k, round(k * ratio), b)
+        curve.append({'hosts': k, 'manual': cost(sum(m.values())),
+                      'auto': cost(sum(a.values()))})
+
+    # How wrong the assumptions can be before the conclusion changes. This is
+    # the honest answer to "I don't believe your baseline": not a defence of
+    # the baseline, but the margin by which it could be wrong and still land
+    # in the same place.
+    #
+    # Note what is absent — there is no break-even on the hourly rate, because
+    # there cannot be one. The rate multiplies both sides equally, so it moves
+    # the money and never the verdict. Offering a rate slider as though it
+    # might change the answer would be theatre.
+    per_host = (b['prep'] + b['execute']) * (1 + b['rework_pct'] / 100.0)
+    headroom = auto_min - b['triage'] - b['approval'] * gated
+    breakeven = {
+        # Shrink the whole manual baseline by this much and the two paths cost
+        # the same. Usually a number in the high nineties, which is the point.
+        'shrink_pct': (round((1 - auto_min / manual_min) * 100, 1)
+                       if manual_min else None),
+        # Per-host handling time at which doing it by hand breaks even,
+        # everything else held. Often negative — meaning no value of it works,
+        # because the per-CVE triage alone already costs more than the whole
+        # automated path. The page says so in words rather than printing a
+        # negative number of minutes.
+        'handling_min': (round(headroom / n, 2) if n and headroom > 0 else None),
+        'handling_now': round(per_host, 2),
+        'rate_independent': True,
+    }
+
+    # A point estimate quoted to the cent is making a promise seven guesses
+    # cannot keep. The band is applied to the manual side only: the automated
+    # side is mostly measured, and its one assumption is small enough that
+    # widening it would imply a precision contest that is not the issue.
+    band = b['band_pct'] / 100.0
+    low_cost, high_cost = cost(manual_min * (1 - band)), cost(manual_min * (1 + band))
+
+    exposure_h = exposure_s / 3600.0 if exposure_s is not None else None
+    # Stated against a deadline the organisation already set, rather than
+    # converted into money. See ROI_SLA_HOURS in fallbacks.py for why there is
+    # no dollar figure on an exposure window anywhere in this file.
+    sla = {
+        'hours': b['sla_h'],
+        'manual_within': b['lead_h'] <= b['sla_h'],
+        'manual_over_h': round(max(0.0, b['lead_h'] - b['sla_h']), 2),
+        'auto_within': (exposure_h <= b['sla_h']) if exposure_h is not None else None,
+        'headroom_pct': (round(100 * (1 - exposure_h / b['sla_h']), 2)
+                         if exposure_h is not None and b['sla_h'] else None),
+        'hosts': n,
+    }
+
+    # The budget question. Marginal saving per host excludes the per-CVE
+    # triage, because the next host does not come with another advisory to
+    # read — amortising triage across hosts would flatter the figure on
+    # exactly the estates where it matters least.
+    marginal = (manual_min - b['triage'] - auto_min) / n if n else 0
+    marginal_cost = marginal / 60.0 * rate
+    lifetime = roi_history(runs, b) if runs else None
+    recovered = (lifetime or {}).get('cost') or 0
+    payback = {
+        'platform_cost': b['platform'],
+        'per_host': round(marginal_cost, 2),
+        'hosts': (math.ceil(b['platform'] / marginal_cost)
+                  if marginal_cost > 0 and b['platform'] > 0 else None),
+        'recovered': round(recovered, 2),
+        'recovered_pct': (round(min(100.0, recovered / b['platform'] * 100), 1)
+                          if b['platform'] > 0 else None),
+    }
+
+    # Whether the measured half of this page describes patching. There are two
+    # ways it does not, and they are different enough that the console has to
+    # say which: offline, the clocks are DEMO_LATENCY rather than work; live
+    # with AO unreachable, the clocks are real wall time, but what they timed
+    # is this console failing over and the fallback standing in, not a host
+    # being patched.
+    #
+    # Reading offline() alone was the one break in this file's labelling
+    # chain. A live run with every backend down produced host results each
+    # carrying simulated: true and an ROI page that quoted a saving with no
+    # caveat anywhere on it — precisely the unlabelled guess the rest of this
+    # codebase refuses to print.
+    sim = sum(1 for r in results if r.get('simulated'))
+    reason = 'offline' if offline() else ('simulated' if sim else None)
+
+    return {
+        'cve_id': state.get('cve_id'),
+        # Set when the measured half did not come from patching anything.
+        # The console leads with this; without it the page would be claiming a
+        # timing it did not take.
+        'illustrative': reason is not None,
+        # Which of the two, because they need different words on the page.
+        # None when the timings are a straight measurement.
+        'illustrative_reason': reason,
+        'measured': {
+            'hosts': n, 'gated': gated, 'auto_branch': n - gated, 'patched': done,
+            'assess_s': round(assess_s, 1),
+            'dispatch_s': round(dispatch_s, 1),
+            'exposure_s': round(exposure_s, 1) if exposure_s is not None else None,
+            'serial_s': round(serial_s, 1) if serial_s is not None else None,
+            'host_s': [round(s, 1) for s in finished],
+            # How many hosts the timings actually cover. Live, a run that has
+            # not finished has no completed_at to read, so the durations
+            # describe a subset — and a page that quietly averaged over
+            # whatever it happened to have would be the kind of silent
+            # degradation this codebase labels everywhere else.
+            'timed': len(finished),
+            # How many of them nothing actually patched. A count rather than a
+            # flag because a run can be mixed: the breaker re-probes every
+            # CIRCUIT_TTL, so AO can come back partway through a host list and
+            # the later hosts are then genuinely dispatched.
+            'simulated': sim,
+        },
+        'manual': {'breakdown': manual, 'minutes': round(manual_min, 1),
+                   'cost': cost(manual_min),
+                   'cost_low': low_cost, 'cost_high': high_cost,
+                   'lead_hours': b['lead_h']},
+        'auto': {'breakdown': auto, 'minutes': round(auto_min, 1),
+                 'cost': cost(auto_min),
+                 'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
+        'saved': {
+            'minutes': round(saved_min, 1),
+            'cost': cost(saved_min),
+            'cost_low': round(low_cost - cost(auto_min), 2),
+            'cost_high': round(high_cost - cost(auto_min), 2),
+            # Guarded: every host on the unattended branch makes auto_min 0,
+            # and that is the good case, not a divide-by-zero.
+            'effort_x': round(manual_min / auto_min, 1) if auto_min else None,
+            # No exposure multiplier is published on purpose. Seconds against
+            # a three-day baseline divides out to five figures, which is a
+            # number nobody can sanity-check and which rests entirely on the
+            # assumed side. The two durations and the hours avoided say the
+            # same thing and can be argued with.
+            'exposure_hours': (round(b['lead_h'] - exposure_h, 2)
+                               if exposure_h is not None else None),
+        },
+        'curve': curve,
+        'breakeven': breakeven,
+        'sla': sla,
+        # Recomputed per request rather than attached once, because two of its
+        # comparisons read the sliders: move the manual baseline and the
+        # "against the published median" line has to move with it.
+        'industry': roi_industry(b, exposure_h),
+        'payback': payback,
+        'lifetime': lifetime,
+        'band_pct': b['band_pct'],
+        'currency': b['currency'],
+        'rate': rate,
+        # Itemised from ROI_INPUTS so the page can show what it assumed rather
+        # than asserting a total. Each carries its settings key and its limits,
+        # which is what lets the sliders exist at all: 'change it and look
+        # again' is a real offer and not a figure of speech.
+        'assumptions': [
+            {'key': key, 'label': label, 'value': b[field],
+             'unit': b['currency'] if unit == '' else
+                     b['currency'] + unit if unit == '/h' else unit,
+             'min': ROI_LIMITS[key][0], 'max': ROI_LIMITS[key][1]}
+            for key, field, label, unit in ROI_INPUTS
+        ],
+    }
+
+
+# ==========================================================================
+# SETTINGS — one registry describing every tunable this process reads
+#
+# Scope is deliberately "what this process reads", not "everything in
+# .env.example". NAMESPACE, GIT_HUB_TOKEN, the AAP_* and VLLM_* keys belong to
+# ao-setup/ and rag-setup/, which are separate shell scripts; offering them
+# here would imply changing them does something, and it would not.
+#
+# Two things make this more than a dict of env vars:
+#
+#   - Most of these were read once at import into a module global, so writing
+#     os.environ alone changes nothing. Each Setting names the global it feeds
+#     (`binds`) and apply() rebinds it. Functions look up globals at call time,
+#     so a rebind takes effect on the next call.
+#   - Overrides live in this process only. Writing them back to .env would
+#     mean rewriting a hand-maintained file full of comments and credentials,
+#     so the panel says plainly that .env is the durable place.
+# ==========================================================================
+
+@dataclass(frozen=True)
+class Setting:
+    key: str
+    group: str
+    label: str
+    kind: str                     # str | int | float | bool | choice
+    default: str                  # the built-in default, as the env would give it
+    help: str = ''
+    choices: tuple[str, ...] = ()
+    secret: bool = False          # never leaves the process; write-only
+    readonly: bool = False        # shown for completeness, cannot take effect
+    binds: str = ''               # module global to rebind, '' if read per call
+
+
+SETTINGS: tuple[Setting, ...] = (
+    # --- mode -------------------------------------------------------------
+    Setting('OFFLINE', 'Mode', 'Offline', 'bool', '',
+            'Stored defaults only, no network at all. What ./demo.sh sets.'),
+    Setting('STRICT', 'Mode', 'Strict', 'bool', '',
+            'Disable every fallback and raise the real error instead.'),
+    Setting('LABEL_SOURCES', 'Mode', 'Label substituted values', 'bool', '',
+            'Mark on the page itself which values came from a fallback: the '
+            'offline banner, the degraded panel on the patch plan, SIMULATED '
+            'row chips, red boxes in the diagram. Off, the console presents '
+            'one face and the substitutions appear only in the agent trace '
+            'and the backend log. Turn it on for real infrastructure — the '
+            'patch plan is what a human approves against.'),
+    Setting('FALLBACK_PATCH', 'Mode', 'Patch fallback', 'choice', 'simulate',
+            'With AO unreachable: simulate a run locally, or report the host '
+            'as not dispatched. Nothing is patched either way.',
+            choices=('simulate', 'unavailable')),
+
+    # --- triage -----------------------------------------------------------
+    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold (model)', 'float', '30',
+            'Risk score above which a host needs operator approval. Applies '
+            'only when the score came from the model — see below.',
+            binds='REVIEW_THRESHOLD'),
+    Setting('HEURISTIC_THRESHOLD', 'Triage', 'Review threshold (heuristic)',
+            'float', '55',
+            'The two are not on the same scale, so the heuristic fallback has '
+            'its own gate. This is the one in play whenever the risk model is '
+            'unreachable, which includes the whole offline demo.',
+            binds='fallbacks.HEURISTIC_THRESHOLD'),
+    Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
+            'Restrict an assessment to hosts whose name contains this.'),
+    Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
+            'Cap the number of hosts assessed. 0 means no cap.'),
+    Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
+            f'Reported in the patch plan. Empty uses {DEFAULT_WINDOW!r}.',
+            binds='MAINTENANCE_WINDOW'),
+    Setting('MAX_ATTEMPTS_PER_HOST', 'Triage', 'Max attempts per host', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_ATTEMPTS_PER_HOST'),
+    Setting('MAX_FAILED_PER_PHASE', 'Triage', 'Max failures per phase', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_FAILED_PER_PHASE'),
+
+    # --- timeouts ---------------------------------------------------------
+    Setting('CONNECT_TIMEOUT', 'Timeouts', 'Connect (reachability)', 'float', '3',
+            'TCP budget per service, separate from the read budgets. A stopped '
+            'pod leaves its Route resolving with nothing behind it.',
+            binds='CONNECT_TIMEOUT'),
+    Setting('CIRCUIT_TTL', 'Timeouts', 'Circuit breaker TTL', 'int', '30',
+            'How long a service stays tripped after failing, so a dead backend '
+            'costs one probe per run rather than one per host.',
+            binds='CIRCUIT_TTL'),
+    Setting('INSIGHTS_TIMEOUT', 'Timeouts', 'Insights read', 'int', '15',
+            '', binds='INSIGHTS_TIMEOUT'),
+    Setting('RISK_TIMEOUT', 'Timeouts', 'Risk model read', 'int', '8',
+            '', binds='RISK_TIMEOUT'),
+    Setting('RAG_TIMEOUT', 'Timeouts', 'RAG read', 'int', '20',
+            'Live RAG does LLM summarisation, so this one is generous.',
+            binds='RAG_TIMEOUT'),
+    Setting('AO_TIMEOUT', 'Timeouts', 'Ansible Orchestrator read', 'int', '10',
+            '', binds='AO_TIMEOUT'),
+    Setting('HTTP_TIMEOUT', 'Timeouts', 'Global HTTP ceiling', 'int', '120',
+            'Upper bound; the per-service budgets above sit well below it.',
+            binds='HTTP_TIMEOUT'),
+    Setting('AO_POLL_TIMEOUT', 'Timeouts', 'AO poll', 'int', '900',
+            'How long to follow a dispatched execution.', binds='AO_POLL_TIMEOUT'),
+    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '90',
+            'Seconds to wait for a run to reach a terminal status after '
+            'approve or reject.'),
+    Setting('DEMO_LATENCY', 'Timeouts', 'Demo pause per step', 'float', '0.35',
+            'Offline only. Answering instantly renders as "complete in 0s" and '
+            'reads as broken. 0 disables.', binds='DEMO_LATENCY'),
+
+    # --- insights ---------------------------------------------------------
+    Setting('INSIGHTS_REST_BASE_URL', 'Insights', 'REST base URL', 'str',
+            'https://console.redhat.com/api', '', binds='INSIGHTS_API'),
+    Setting('INSIGHTS_VERIFY_TLS', 'Insights', 'Verify TLS', 'bool', 'true',
+            'Turn off if this machine cannot verify the sso.redhat.com chain.',
+            binds='INSIGHTS_VERIFY_TLS'),
+    Setting('LIGHTSPEED_CLIENT_ID', 'Insights', 'Client ID', 'str', '',
+            'Lightspeed service account.'),
+    Setting('LIGHTSPEED_CLIENT_SECRET', 'Insights', 'Client secret', 'str', '',
+            'Write-only. Leave blank to keep the current value.', secret=True),
+
+    # --- risk model -------------------------------------------------------
+    Setting('RISK_URL', 'Risk model', 'Predict URL', 'str', '',
+            'KServe endpoint, .../v1/models/risk-score:predict. Unset falls '
+            'back to the heuristic.', binds='RISK_URL'),
+    Setting('RISK_VERIFY_TLS', 'Risk model', 'Verify TLS', 'bool', 'true',
+            'Turn off for sandbox cluster certificates.', binds='RISK_VERIFY_TLS'),
+
+    # --- RAG --------------------------------------------------------------
+    Setting('LLAMA_STACK_URL', 'RAG', 'Llama Stack URL', 'str', '',
+            '', binds='LLAMA_URL'),
+    Setting('VECTOR_DB_ID', 'RAG', 'Vector store ID', 'str', '',
+            'The vs_... that rag-setup/ingest.py --ensure prints. A Llama Stack '
+            'restart empties the registry, so re-run ingest and re-set this.',
+            binds='VECTOR_DB_ID'),
+    Setting('DEFAULT_LLM_MODEL', 'RAG', 'Summarisation model', 'str',
+            'vllm-inference/llama-scout-17b', '', binds='LLM_MODEL'),
+
+    # --- Ansible Orchestrator --------------------------------------------
+    Setting('AO_URL', 'Ansible Orchestrator', 'Base URL', 'str', '',
+            '', binds='AO_URL'),
+    Setting('AO_USERNAME', 'Ansible Orchestrator', 'Username', 'str', '',
+            '', binds='AO_USERNAME'),
+    Setting('AO_PASSWORD', 'Ansible Orchestrator', 'Password', 'str', '',
+            'Write-only. Leave blank to keep the current value.',
+            secret=True, binds='AO_PASSWORD'),
+    Setting('AO_WORKFLOW_NAME', 'Ansible Orchestrator', 'Workflow name', 'str',
+            'DemoJam Agentic Patching',
+            'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
+    Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
+            'trigger_manual', '', binds='AO_TRIGGER_NODE'),
+    Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
+            'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
+
+    # --- ROI --------------------------------------------------------------
+    # The manual baseline is guesswork by construction, so every input to it
+    # is exposed. Someone who disagrees with the comparison can change the
+    # number they disagree with and press the button again, which is a more
+    # useful answer than arguing about the total.
+    Setting('ROI_TRIAGE_MIN', 'ROI baseline', 'Manual triage per CVE', 'float', '45',
+            'Read the advisory, pull the affected host list, judge the '
+            'exposure. Once per CVE, not per host.',
+            binds='fallbacks.ROI_TRIAGE_MIN'),
+    Setting('ROI_PREP_MIN', 'ROI baseline', 'Manual change prep per host', 'float', '15',
+            'Adapt the playbook, raise the change record, book the window.',
+            binds='fallbacks.ROI_PREP_MIN'),
+    Setting('ROI_EXEC_MIN', 'ROI baseline', 'Manual execute & verify per host',
+            'float', '10',
+            'Run it, watch it, confirm the service came back.',
+            binds='fallbacks.ROI_EXEC_MIN'),
+    Setting('ROI_APPROVAL_MIN', 'ROI baseline', 'Manual approval per gated host',
+            'float', '20',
+            'Assembling the request and chasing the approver. On top of prep, '
+            'and only for hosts that need sign-off.',
+            binds='fallbacks.ROI_APPROVAL_MIN'),
+    Setting('ROI_REVIEW_MIN', 'ROI baseline', 'Operator review per gated host',
+            'float', '2',
+            'What the automated path still costs a person: read the plan, '
+            'judge the score, press Approve. Counted against the automation.',
+            binds='fallbacks.ROI_REVIEW_MIN'),
+    Setting('ROI_HOURLY_RATE', 'ROI baseline', 'Fully-loaded hourly rate', 'float', '85',
+            'Fully loaded, not salary.', binds='fallbacks.ROI_HOURLY_RATE'),
+    Setting('ROI_CURRENCY', 'ROI baseline', 'Currency symbol', 'str', '$',
+            'Display only — no conversion is done.', binds='fallbacks.ROI_CURRENCY'),
+    Setting('ROI_LEAD_HOURS', 'ROI baseline', 'Manual time-to-remediation', 'float', '72',
+            'Elapsed hours from "this CVE is ours" to "this host is patched" '
+            'by hand. Wall clock, not effort — mostly queueing and waiting '
+            'for a window, which is why it dwarfs the labour figures.',
+            binds='fallbacks.ROI_LEAD_HOURS'),
+    Setting('ROI_REWORK_PCT', 'ROI baseline', 'Manual attempts needing a redo',
+            'float', '12',
+            'Share of hosts that have to be patched twice by hand — the patch '
+            'does not take, the window is lost, the booking repeats. Manual '
+            'side only: an automated run that fails never reaches patched, so '
+            'it is dropped from the lifetime total rather than estimated.',
+            binds='fallbacks.ROI_REWORK_PCT'),
+    Setting('ROI_BAND_PCT', 'ROI baseline', 'Uncertainty on the baseline',
+            'float', '30',
+            'How wrong the manual baseline might be, either way. The page '
+            'quotes a range beside the point figure, because an estimate '
+            'built from seven guesses should not be given to the cent.',
+            binds='fallbacks.ROI_BAND_PCT'),
+    Setting('ROI_SLA_HOURS', 'ROI baseline', 'Remediation deadline (policy)',
+            'float', '48',
+            'The deadline this organisation holds itself to. Policy, not '
+            'physics — set it to yours. Exposure is stated against this '
+            'rather than converted into money.',
+            binds='fallbacks.ROI_SLA_HOURS'),
+    Setting('ROI_PLATFORM_COST', 'ROI baseline', 'Platform build cost', 'float',
+            '25000',
+            'One off: the build, the integration work, the cluster. The '
+            'weakest assumption here, and the first question anyone with a '
+            'budget asks. Set it to 0 to hide the payback card.',
+            binds='fallbacks.ROI_PLATFORM_COST'),
+
+    # --- server -----------------------------------------------------------
+    Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
+            'Set on the command line; the socket is already open.', readonly=True),
+    Setting('BACKEND_PORT', 'Server', 'Bind port', 'int', '8787',
+            'Set on the command line; the socket is already open.', readonly=True),
+)
+
+SETTINGS_BY_KEY = {s.key: s for s in SETTINGS}
+
+# What each key resolved to at startup, before anything was changed here.
+# Reverting restores this rather than the built-in default: if .env supplied a
+# RISK_URL, "revert" should give it back, not blank it.
+_BASELINE: dict[str, str] = {s.key: env(s.key, s.default) for s in SETTINGS}
+
+# Keys changed through this panel since the process started.
+_OVERRIDDEN: set[str] = set()
+
+
+def _coerce(s: Setting, raw: str) -> Any:
+    """Parse a form value the way the module-level constant was parsed."""
+    raw = (raw or '').strip()
+    if s.kind == 'bool':
+        # Matches env_bool: anything not in the falsey set is true, and empty
+        # means "use the default".
+        return bool(s.default and s.default.lower() not in {'0', 'false', 'no'}) \
+            if not raw else raw.lower() not in {'0', 'false', 'no'}
+    if s.kind == 'int':
+        return int(float(raw or s.default or '0'))
+    if s.kind == 'float':
+        return float(raw or s.default or '0')
+    if s.kind == 'choice' and raw and raw not in s.choices:
+        raise ValueError(f'{s.key} must be one of {", ".join(s.choices)}')
+    return raw
+
+
+def _rebind(s: Setting, raw: str) -> None:
+    """Push a value into the live binding named by `binds`.
+
+    Plain names are module globals here; dotted ones are an attribute on
+    something in this module's namespace — a class (Supervisor.MAX_*) or the
+    fallbacks module (fallbacks.HEURISTIC_THRESHOLD).
+    """
+    if not s.binds:
+        return                      # read fresh from os.environ on every use
+    value = _coerce(s, raw)
+    if s.kind == 'str' and not raw:
+        value = s.default
+    if '.' in s.binds:
+        owner, attr = s.binds.split('.', 1)
+        setattr(globals()[owner], attr, value)
+        return
+    globals()[s.binds] = value
+    # VULN_API is derived, so it has to follow its source.
+    if s.binds == 'INSIGHTS_API':
+        globals()['VULN_API'] = f'{str(value).rstrip("/")}/vulnerability/v1'
+
+
+def settings_state() -> list[dict[str, Any]]:
+    """Current value of every setting, with where it came from.
+
+    `source` is the honest version of "modified": default means the built-in,
+    env means .env or the environment set it before this process started, and
+    override means it was changed here.
+    """
+    out = []
+    for s in SETTINGS:
+        value, default = env(s.key, s.default), s.default
+        if s.kind == 'bool':
+            # Normalise both sides to true/false here rather than leaving the
+            # UI to reimplement env_bool's "empty means the default" rule.
+            value = 'true' if _coerce(s, value) else 'false'
+            default = 'true' if _coerce(s, s.default) else 'false'
+        if s.key in _OVERRIDDEN:
+            source = 'override'
+        elif value != default:
+            source = 'env'
+        else:
+            source = 'default'
+        out.append({
+            'key': s.key, 'group': s.group, 'label': s.label, 'kind': s.kind,
+            'default': default, 'help': s.help, 'choices': list(s.choices),
+            'secret': s.secret, 'readonly': s.readonly, 'source': source,
+            # A secret's value never leaves the process — only whether one is set.
+            'value': '' if s.secret else value,
+            'is_set': bool(value) if s.secret else None,
+        })
+    return out
+
+
+def settings_update(changes: dict[str, Any]) -> list[str]:
+    """Validate everything, then apply. Returns the keys that changed.
+
+    Validate-then-apply so a bad number in the last field cannot leave the
+    first half of the form applied and the rest not.
+    """
+    staged: list[tuple[Setting, str]] = []
+    for key, raw in changes.items():
+        s = SETTINGS_BY_KEY.get(key)
+        if s is None:
+            raise ValueError(f'unknown setting {key!r}')
+        if s.readonly:
+            continue
+        raw = '' if raw is None else str(raw).strip()
+        # A blank secret means "leave it alone", so the form can be saved
+        # without retyping credentials it was never shown.
+        if s.secret and not raw:
+            continue
+        if raw == env(s.key, s.default):
+            continue
+        _coerce(s, raw)             # raises on a bad value, before anything moves
+        staged.append((s, raw))
+
+    for s, raw in staged:
+        if raw:
+            os.environ[s.key] = raw
+        else:
+            os.environ.pop(s.key, None)
+        _rebind(s, raw)
+        _OVERRIDDEN.add(s.key)
+    return [s.key for s, _ in staged]
+
+
+def settings_revert() -> list[str]:
+    """Restore every setting to what it was when the process started."""
+    reverted = []
+    for key in sorted(_OVERRIDDEN):
+        s = SETTINGS_BY_KEY[key]
+        raw = _BASELINE[key]
+        if raw:
+            os.environ[key] = raw
+        else:
+            os.environ.pop(key, None)
+        _rebind(s, raw)
+        reverted.append(key)
+    _OVERRIDDEN.clear()
+    return reverted
 
 
 # ==========================================================================
@@ -1468,13 +2606,21 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         elif path == '/api/mode':
             # Read once at page load to decide whether to show the top banner.
+            # `offline` stays in the payload whatever label_sources says: it
+            # is the truth about the run, and a client that wants it — or an
+            # operator reading the API by hand — gets it either way. What the
+            # flag decides is only whether the page draws it.
             self._send(200, {
                 'ok': True,
                 'offline': offline(),
                 'strict': fallbacks.strict(),
+                'label_sources': label_sources(),
                 'simulate_patch': fallbacks.simulate_patch(),
                 'workflow': AO_WORKFLOW_NAME,
             })
+        elif path == '/api/settings':
+            self._send(200, {'ok': True, 'settings': settings_state(),
+                             'persisted': False})
         elif path == '/api/cves':
             # C1 lives here, not in the frontend. The frontend used to call
             # Insights itself, which meant the CVE list was the one step with
@@ -1490,6 +2636,8 @@ class Handler(BaseHTTPRequestHandler):
             except BackendUnavailable as exc:
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',
                                  'detail': exc.fix})
+        elif path == '/api/roi':
+            self._roi()
         elif path == '/api/runs':
             # Live from AO, so a run that failed after the console stopped
             # polling still shows its real status here.
@@ -1511,8 +2659,58 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {'ok': False, 'error': 'not found'})
 
+    def _roi(self, overrides: dict | None = None) -> None:
+        """The ROI report, for GET and for the sliders alike.
+
+        Computed on demand rather than stored on the run: the baseline is
+        settings-driven, so the answer has to track the assumptions as they
+        are now, not as they were when the run was dispatched.
+        """
+        with _RUN_LOCK:
+            snapshot = dict(_RUN)
+        # The lifetime total wants the whole run store, which means AO. That
+        # is a different backend from the one the rest of this report needs,
+        # so it fails on its own terms: a lifetime figure we cannot read is a
+        # missing card, not a failed button. The per-run comparison beside it
+        # is unaffected and still answers the question that was asked.
+        agent = PatchingAgent()
+        try:
+            runs = agent.recent_runs(200)
+        except BackendUnavailable as exc:
+            runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
+        try:
+            report = roi_report(snapshot, overrides, runs)
+        except BackendUnavailable as exc:
+            self._send(409, {'ok': False, 'error': str(exc.cause),
+                             'detail': exc.fix})
+            return
+        if report.get('lifetime') and agent.runs_degraded and not offline():
+            # Partial history still counts, but it has to say it is partial —
+            # a lifetime total quietly missing every run AO could not return
+            # is the understatement that gets discovered later.
+            #
+            # Not offline, though. There the simulator is the whole history,
+            # not a degraded view of a real one, and the page already carries
+            # a banner saying every value on it is stored. Repeating it here
+            # would claim runs are missing when none are.
+            report['lifetime']['degraded'] = agent.runs_degraded
+        self._send(200, {'ok': True, 'roi': report})
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip('/') or '/'
+
+        if path == '/api/roi':
+            # Same report, with this operator's sliders applied for this
+            # request only. Nothing is written: a what-if is one person
+            # asking a question, not a change to what anyone else sees, and
+            # this server answers several requests at once.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                payload = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                payload = {}
+            self._roi(payload.get('overrides') or {})
+            return
 
         if path == '/api/patch':
             # Agent 2. Needs a completed assessment to know each host's
@@ -1536,6 +2734,26 @@ class Handler(BaseHTTPRequestHandler):
                              'status': 'running'})
             return
 
+        if path == '/api/settings':
+            # Overrides are process-local and take effect on the next call
+            # that reads them — no restart, but nothing is written to .env.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                p = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                p = {}
+            try:
+                if p.get('revert'):
+                    changed = settings_revert()
+                else:
+                    changed = settings_update(p.get('settings') or {})
+            except (ValueError, TypeError) as exc:
+                self._send(400, {'ok': False, 'error': str(exc)})
+                return
+            self._send(200, {'ok': True, 'changed': changed,
+                             'settings': settings_state()})
+            return
+
         if path == '/api/decide':
             # Approve / reject a paused gate. Synchronous: the caller is a
             # button click and wants the resulting state back.
@@ -1551,14 +2769,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {'ok': False,
                                  'error': 'execution_id, activity_id and decision are required'})
                 return
-            try:
-                result = PatchingAgent().decide(exec_id, act_id, decision)
+            # Append to the run's own log rather than to a fresh Supervisor's.
+            # Without this the trace stopped at dispatch: approving a host is
+            # the single most consequential hop in the whole flow and it was
+            # the one the console had no record of.
+            def trace(src: str, dst: str, message: str) -> None:
                 with _RUN_LOCK:
-                    # Keep the stored run in step with the new outcome.
+                    _RUN.setdefault('events', []).append(
+                        {'time': now_iso(), 'from': src, 'to': dst,
+                         'message': message})
+
+            try:
+                result = PatchingAgent(trace=trace).decide(exec_id, act_id, decision)
+                with _RUN_LOCK:
+                    # Keep the stored run in step with the new outcome. A null
+                    # in the newer read does not overwrite a value we already
+                    # have: AO can answer without created_at while the run is
+                    # still settling, and losing the dispatch timestamp would
+                    # take this host out of the ROI timings for good.
                     for r in ((_RUN.get('patch') or {}).get('results') or []):
                         if r.get('execution_id') == exec_id:
-                            r.update(result)
+                            r.update({k: v for k, v in result.items()
+                                      if v is not None or r.get(k) is None})
                     snapshot = dict(_RUN) if _RUN.get('patch') else None
+                # Agents 3 and 4 run once the decision has settled the host.
                 report = _rereport(snapshot) if snapshot else None
                 self._send(200, {'ok': True, **result,
                                  **({'report': report} if report else {})})
@@ -1616,18 +2850,18 @@ def serve(host: str, port: int) -> None:
 # --------------------------------------------------------------------------
 
 def _print_run(state: dict) -> None:
-    dr = state['dry_run']
+    plan = state['plan']
     print()
-    print(f'  CVE          : {dr["cve_id"]}  (CVSS {dr["cvss"]})')
-    print(f'  Hosts        : {dr["hosts_total"]}  '
-          f'({dr["hosts_review"]} review, {dr["hosts_auto"]} auto)')
-    print(f'  Risk source  : {dr["risk_source"]}')
-    print(f'  Window       : {dr["maintenance_window"]}')
-    print(f'  Verdict      : {dr["verdict"]}')
+    print(f'  CVE          : {plan["cve_id"]}  (CVSS {plan["cvss"]})')
+    print(f'  Hosts        : {plan["hosts_total"]}  '
+          f'({plan["hosts_review"]} review, {plan["hosts_auto"]} auto)')
+    print(f'  Risk source  : {plan["risk_source"]}  (gate {plan["threshold"]:g})')
+    print(f'  Window       : {plan["maintenance_window"]}')
+    print(f'  Verdict      : {plan["verdict"]}')
     print(f'  Elapsed      : {state["elapsed_s"]}s')
-    for n in dr['notes']:
+    for n in plan['notes']:
         print(f'  Note         : {n}')
-    for d in (dr.get('degraded') or []):
+    for d in (plan.get('degraded') or []):
         print(f'  DEGRADED     : {d["step"]} — {d["service"]} unreachable')
         print(f'                 fix: {d["fix"]}')
     print()
