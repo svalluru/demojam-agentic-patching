@@ -33,6 +33,23 @@
     background: rgba(0,0,0,.28); color: #ffd9a0;
   }
   #mode-banner .sub { font-weight: 500; opacity: .85; }
+
+  .report-card {
+    display: flex; align-items: center; gap: 14px; margin: 14px 0 6px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px;
+    background: rgba(116,160,255,.05);
+  }
+  .report-main { min-width: 0; }
+  .report-title { font-size: 13px; font-weight: 700; }
+  .report-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px;
+                font-family: var(--mono); }
+  .report-ch { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .report-btn {
+    margin-left: auto; flex-shrink: 0; text-decoration: none;
+    padding: 7px 14px; border-radius: 7px; font-size: 12px; font-weight: 700;
+    background: var(--accent); color: var(--bg);
+  }
+  .report-btn:hover { filter: brightness(1.08); }
   #mode-banner .how { margin-left: auto; font-weight: 500; opacity: .8;
                       font-family: var(--mono); font-size: 11px; }
 
@@ -420,6 +437,55 @@ function renderDegraded(list) {
 // actually patched is the one thing in this console that could mislead an
 // operator into believing an estate is remediated, so it is stated outright
 // rather than left to the per-row chip.
+// Agent 3. The PDF is the deliverable for now; Slack and ServiceNow will
+// carry the same summary once they exist, so the card names all three rather
+// than implying the report is the whole of the notify step.
+function renderReport(r) {
+  if (!r) return '';
+  if (r.error) {
+    return `<div class="note" style="color:var(--red)">
+      Communication Agent could not write the report: ${esc(r.error)}</div>`;
+  }
+  const kb = Math.max(1, Math.round((r.bytes || 0) / 1024));
+  return `<div class="report-card">
+    <div class="report-main">
+      <div class="report-title">Patch status report</div>
+      <div class="report-sub">${esc(r.headline || '')} &middot; ${esc(r.file)} &middot; ${kb} KB</div>
+      <div class="report-ch">Slack and ServiceNow will carry this same summary
+        &mdash; not yet wired up.</div>
+    </div>
+    <a class="report-btn" href="/api/report?file=${encodeURIComponent(r.file)}"
+       target="_blank" rel="noopener">Open PDF</a>
+  </div>`;
+}
+
+// Agent 4. Shows what was fed back, because the whole point of the step is
+// invisible otherwise — two files written somewhere on disk.
+function renderPublished(p) {
+  if (!p) return '';
+  if (p.error) {
+    return `<div class="note" style="color:var(--red)">
+      Results Agent could not publish: ${esc(p.error)}</div>`;
+  }
+  if (p.skipped) {
+    return `<div class="note">Results Agent: ${esc(p.skipped)} &mdash;
+      outcomes are published once hosts settle.</div>`;
+  }
+  const sim = p.simulated_rows
+    ? ` <span class="muted-sm">(${p.simulated_rows} marked simulated &mdash;
+        excluded from training by default)</span>` : '';
+  return `<div class="report-card" style="background:rgba(81,207,102,.05)">
+    <div class="report-main">
+      <div class="report-title">Fed back for learning</div>
+      <div class="report-sub">${(p.records || []).length} RAG record(s) &middot;
+        ${p.rows} training row(s)${sim}</div>
+      <div class="report-ch">Re-ingest: <code>${esc(p.reingest || '')}</code></div>
+      <div class="report-ch">Retrain: <code>risk_score/training/build_dataset.py</code>
+        then <code>save_model.py</code></div>
+    </div>
+  </div>`;
+}
+
 function simNotice(n) {
   if (!n || MODE.offline) return '';
   return `<div class="degraded">
@@ -539,10 +605,17 @@ async function decide(execId, activityId, decision) {
         `<span class="err-sm">${esc(d.error || 'failed')}</span>`;
       return;
     }
+    // `ok` and `report` are envelope fields, not properties of the host —
+    // splatting the whole response onto the row both polluted it and left
+    // patchState.report pointing at the report written back at dispatch, so
+    // the card kept offering the "awaiting approval" PDF after every host
+    // had been approved.
+    const { ok, report, ...runFields } = d;
     if (patchState && patchState.patch) {
       for (const res of patchState.patch.results || []) {
-        if (res.execution_id === execId) Object.assign(res, d);
+        if (res.execution_id === execId) Object.assign(res, runFields);
       }
+      if (report) patchState.report = report;
       recountPatch(patchState);
       renderPatch(patchState);
     }
@@ -628,6 +701,8 @@ function renderPatch(s) {
     <table style="margin-top:10px">
       <thead><tr><th>Host</th><th>Outcome</th><th>Decision</th><th>Workflow steps</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>
+    ${renderReport(s.report)}
+    ${renderPublished(s.published)}
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
     <div class="note">Each host triggers its own Ansible Orchestrator execution.
       Hosts routed to <code>approved_patch</code> pause at the approval gate in the AO console.</div>
@@ -837,8 +912,41 @@ async function showRuns() {
       <th>Decision</th><th>Error</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>`
     : '<div class="empty"><span>No patch runs yet.</span></div>'}
-    <div class="note">Read live from Ansible Orchestrator — includes runs started outside this console.</div>`;
+    <div class="note">Read live from Ansible Orchestrator — includes runs started outside this console.</div>
+    <div id="reports-section"></div>`;
   document.getElementById('refresh-runs').addEventListener('click', showRuns);
+  renderReportList();
+}
+
+// Past reports, so a completed run can be retrieved after the console has
+// moved on. Loaded separately because the AO run list and the local report
+// directory can each be empty without the other being broken.
+async function renderReportList() {
+  const el = document.getElementById('reports-section');
+  if (!el) return;
+  let d;
+  try { d = await (await fetch('/api/reports')).json(); } catch (e) { return; }
+  const reps = (d && d.reports) || [];
+  if (!reps.length) {
+    el.innerHTML = `<div class="sev-title high" style="margin-top:20px">Reports<span class="c">0</span></div>
+      <div class="note">No reports yet — they are written when a patch run pauses and again when it completes.</div>`;
+    return;
+  }
+  const rows = reps.map(r => `<tr>
+      <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
+      <td class="cve-id">${esc(r.cve_id)}</td>
+      <td class="mono">${esc(r.file)}</td>
+      <td class="muted-sm">${Math.max(1, Math.round((r.bytes || 0) / 1024))} KB</td>
+      <td><a class="report-btn" style="padding:4px 10px;font-size:11px"
+             href="/api/report?file=${encodeURIComponent(r.file)}"
+             target="_blank" rel="noopener">Open</a></td>
+    </tr>`).join('');
+  el.innerHTML = `
+    <div class="sev-title high" style="margin-top:20px">Reports<span class="c">${reps.length}</span></div>
+    <table><thead><tr><th>When</th><th>CVE</th><th>File</th><th>Size</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <div class="note">Written by the Communication Agent when a run pauses for approval and
+      again when it completes. Newest first.</div>`;
 }
 
 // Approve/reject from the runs table. The activity id is fetched first, since

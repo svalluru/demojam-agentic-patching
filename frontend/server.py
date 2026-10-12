@@ -41,7 +41,7 @@ INSIGHTS_BASE = 'https://console.redhat.com/api'
 CVE_LIST_PATH = '/vulnerability/v1/vulnerabilities/cves'
 
 PROXY_PATHS = {'/api/state', '/api/start', '/api/patch', '/api/decide', '/api/runs', '/api/mode',
-               '/api/approve', '/api/deny',
+               '/api/reports', '/api/approve', '/api/deny',
                '/api/settings', '/api/flow-log', '/api/what-if', '/api/why',
                '/api/approval-targets'}
 
@@ -199,6 +199,20 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_proxy(self, method: str) -> bool:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/') or '/'
+        if path == '/api/report':
+            # Streamed as-is: the JSON proxy below would label a PDF
+            # application/json and the browser would download gibberish.
+            url = f'{BACKEND_URL}/api/report?{parsed.query or ""}'
+            try:
+                with urllib.request.urlopen(url, timeout=20) as r:
+                    body, ctype = r.read(), r.headers.get('Content-Type', 'application/pdf')
+                self.respond(200, ctype, body)
+            except urllib.error.HTTPError as exc:
+                self.respond(exc.code, 'application/json', exc.read() or b'{}')
+            except Exception as exc:
+                self.respond(502, 'application/json',
+                             json.dumps({'ok': False, 'error': str(exc)}).encode())
+            return True
         if path not in PROXY_PATHS:
             return False
         body = None

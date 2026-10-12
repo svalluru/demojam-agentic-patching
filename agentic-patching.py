@@ -134,7 +134,9 @@ def now_iso() -> str:
 # errors + http
 # --------------------------------------------------------------------------
 
+import communication
 import fallbacks
+import results as results_mod
 
 # Degradations recorded during the current operation. The Supervisor clears
 # this per run and copies it into the report, so a fabricated value can never
@@ -766,6 +768,12 @@ class SimStore:
 
 
 SIM = SimStore(ROOT / 'runs' / 'simulated.json')
+REPORTS_DIR = ROOT / 'reports'
+# Inside the RAG data dir, so ingest.py's rglob still finds it, but in
+# its own subdirectory: the ten curated records next to it are authored
+# and reviewed, and every demo run would otherwise add noise to them.
+RAG_DATA_DIR = ROOT / 'rag-setup' / 'data' / 'runs'
+TRAINING_DIR = ROOT / 'risk_score' / 'training' / 'observed'
 
 
 def is_sim(execution_id: str) -> bool:
@@ -1163,6 +1171,9 @@ class Supervisor:
         self.events: list[dict] = []
         self.info = InfoAgent(trace=self.trace)
         self.patching = PatchingAgent(trace=self.trace)
+        self.comms = communication.CommunicationAgent(REPORTS_DIR, trace=self.trace)
+        self.results = results_mod.ResultsAgent(RAG_DATA_DIR, TRAINING_DIR,
+                                                trace=self.trace)
         self.reset()
 
     def reset(self) -> None:
@@ -1257,13 +1268,37 @@ class Supervisor:
             'degraded': [dict(d) for d in DEGRADED],
             },
             'events': self.events,
-            'next': 'Communication Agent (not implemented)',
-            'status': 'awaiting_communication_agent',
+            'next': 'Results Publishing Agent (not implemented)',
+            'status': 'reported',
         }
         self.trace('supervisor', 'console',
                    f'patch dispatched — {summary["patched"]} patched, '
                    f'{summary["awaiting_approval"]} awaiting approval, '
                    f'{summary["failed"]} failed')
+
+        # --- agent 3 ------------------------------------------------------
+        # Reporting must not be able to lose a patch result. The dispatch
+        # above has already happened; a failure to render a PDF is worth
+        # surfacing but not worth discarding the run over.
+        self.comms.simulated = any(r.get('simulated') for r in results)
+        self.trace('supervisor', 'communication', f'report for {cve_id}')
+        try:
+            self.state['report'] = self.comms.report(self.state)
+        except Exception as exc:
+            self.trace('communication', 'supervisor', f'report failed — {exc}')
+            self.state['report'] = {'error': str(exc)}
+
+        # --- agent 4 ------------------------------------------------------
+        # Publishing is the last thing and the least important: a run whose
+        # outcome failed to reach the learning stores is still a completed
+        # patch, so this can never raise past here.
+        self.trace('supervisor', 'results', f'publish {cve_id}')
+        try:
+            self.state['published'] = self.results.publish(self.state)
+        except Exception as exc:
+            self.trace('results', 'supervisor', f'publish failed — {exc}')
+            self.state['published'] = {'error': str(exc)}
+        self.state['next'] = 'none — all four agents complete'
         return self.state
 
 
@@ -1332,6 +1367,57 @@ def _patch_async(assessment: dict) -> None:
                         error={'service': 'patching', 'detail': str(exc), 'fix': ''})
 
 
+def _rereport(state: dict) -> dict | None:
+    """Re-run agent 3 once a decision has changed the picture.
+
+    The diagram has the Communication Agent firing at pause, abandon and
+    completion. The first report is written at dispatch, when hosts are still
+    at the gate; without this the PDF would keep saying "awaiting approval"
+    long after every host had been approved.
+    """
+    results = (state.get('patch') or {}).get('results') or []
+    if not results:
+        return None
+    summary = {
+        'patched': sum(1 for r in results if r.get('outcome') == 'patched'),
+        'awaiting_approval': sum(1 for r in results
+                                 if r.get('outcome') == 'awaiting_approval'),
+        'rejected': sum(1 for r in results if r.get('outcome') == 'rejected'),
+        'failed': sum(1 for r in results
+                      if r.get('outcome') in ('failed', 'timeout')),
+        'unavailable': sum(1 for r in results if r.get('outcome') == 'unavailable'),
+    }
+    state['patch'] = {**state['patch'], 'summary': summary}
+    with _RUN_LOCK:
+        _RUN['patch'] = state['patch']
+
+    # Only at the events the diagram names. Writing one per decision turned a
+    # five-host run into six near-identical PDFs; the intermediate ones say
+    # nothing the final one does not.
+    if summary['awaiting_approval'] > 0:
+        return None
+
+    agent = communication.CommunicationAgent(
+        REPORTS_DIR, simulated=any(r.get('simulated') for r in results))
+    try:
+        report = agent.report(state)
+    except Exception as exc:                 # never fail a decision over a PDF
+        report = {'error': str(exc)}
+
+    # Agent 4 runs at the same point: only now are the hosts settled, so only
+    # now is there an outcome worth feeding back.
+    try:
+        published = results_mod.ResultsAgent(RAG_DATA_DIR, TRAINING_DIR).publish(state)
+    except Exception as exc:
+        published = {'error': str(exc)}
+
+    with _RUN_LOCK:
+        _RUN['report'] = report
+        _RUN['published'] = published
+        _RUN['next'] = 'none — all four agents complete'
+    return report
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, payload: Any) -> None:
         body = json.dumps(payload).encode()
@@ -1351,6 +1437,35 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/state':
             with _RUN_LOCK:
                 self._send(200, dict(_RUN))
+        elif path == '/api/reports':
+            agent = communication.CommunicationAgent(REPORTS_DIR)
+            self._send(200, {'ok': True, 'reports': agent.recent()})
+        elif path == '/api/report':
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = (q.get('file') or [''])[0]
+            # Resolve and confirm containment rather than trusting the name.
+            # '..%2F' survives parse_qs, so a prefix check on the raw string
+            # is not enough.
+            try:
+                target = (REPORTS_DIR / name).resolve()
+                target.relative_to(REPORTS_DIR.resolve())
+            except (ValueError, OSError):
+                self._send(400, {'ok': False, 'error': 'invalid report name'})
+                return
+            if target.suffix != '.pdf' or not target.is_file():
+                self._send(404, {'ok': False, 'error': 'report not found'})
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/pdf')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Disposition',
+                             f'inline; filename="{target.name}"')
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         elif path == '/api/mode':
             # Read once at page load to decide whether to show the top banner.
             self._send(200, {
@@ -1443,7 +1558,10 @@ class Handler(BaseHTTPRequestHandler):
                     for r in ((_RUN.get('patch') or {}).get('results') or []):
                         if r.get('execution_id') == exec_id:
                             r.update(result)
-                self._send(200, {'ok': True, **result})
+                    snapshot = dict(_RUN) if _RUN.get('patch') else None
+                report = _rereport(snapshot) if snapshot else None
+                self._send(200, {'ok': True, **result,
+                                 **({'report': report} if report else {})})
             except BackendUnavailable as exc:
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',
                                  'detail': exc.fix})

@@ -19,3 +19,13 @@ venv/
 
 # simulated patch runs — demo state, not source
 runs/
+
+# generated patch reports — demo output, not source
+reports/
+
+# Outcome records written by agent 4. Ingested alongside the curated
+# corpus, but generated per run — the curated files stay tracked.
+rag-setup/data/runs/
+
+# Built by build_dataset.py from the synthetic baseline + observed outcomes
+risk_score/training/data.csv
