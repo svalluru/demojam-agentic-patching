@@ -124,11 +124,31 @@
   .morecols input { cursor: pointer; margin: 0; }
   /* Eight columns leaves the history a narrow strip, and a 230px-tall row
      per host turns the table into a wall. Clamped while the extra columns
-     are up; the full text is a tooltip away, or uncheck the box. */
-  table.wide .desc {
+     are up — and clickable, because a clamp with no way to read the rest is
+     just lost text. A native title tooltip was not enough: it needs a hover
+     held over the right cell and cannot be read at leisure. */
+  table.wide .desc { min-width: 200px; white-space: normal; cursor: pointer; }
+  /* The clamp lives on an inner element, not the cell: a <td> does not
+     honour overflow:hidden, so clamping the cell itself drew the ellipsis
+     but still let the next line bleed past the row border. */
+  table.wide .desc > .clip {
     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden; min-width: 200px; white-space: normal;
+    overflow: hidden;
   }
+  table.wide .desc.open > .clip {
+    display: block; -webkit-line-clamp: none; overflow: visible;
+  }
+  /* Only where the clamp actually bit — measured after layout, since CSS
+     cannot ask whether the text overflowed. */
+  table.wide .desc.cut > .more {
+    display: inline-block; margin-top: 2px;
+    font-size: calc(9.5px * var(--ts)); font-weight: 800; letter-spacing: .4px;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .desc > .more { display: none; }
+  table.wide .desc.cut > .more::after { content: 'more'; }
+  table.wide .desc.cut.open > .more::after { content: 'less'; }
+  table.wide .desc:hover > .more { text-decoration: underline; }
   /* Eight columns are wider than the frame. Scrolling keeps every column
      reachable; clipping silently hid the end of the history text. */
   .tscroll { overflow-x: auto; }
@@ -2991,7 +3011,8 @@ function renderHostTable(s) {
       ${dispatched ? `<td class="decide-cell">${status}</td>` : ''}
       ${showCols && dispatched ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
       <td class="mono">${esc(((r || {}).execution_id || '').slice(0, 8))}</td>` : ''}
-      <td class="desc" title="${esc(h.history || h.reason)}">${esc(h.history || h.reason)}</td>
+      <td class="desc" title="${esc(h.history || h.reason)}"><span class="clip">${
+        esc(h.history || h.reason)}</span><span class="more"></span></td>
     </tr>`;
   }).join('');
 
@@ -3007,6 +3028,25 @@ function renderHostTable(s) {
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
       <th>RAG history / reason</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  // Which cells the clamp actually bit can only be known after layout — a
+  // character count guessed wrong both ways, labelling short text that fit
+  // and missing long text that did not.
+  el.querySelectorAll('td.desc').forEach(td => {
+    const clip = td.querySelector('.clip');
+    if (clip) td.classList.toggle('cut', clip.scrollHeight > clip.clientHeight + 2);
+  });
+
+  // Delegated, and bound once. #host-table survives every re-render, so
+  // attaching here each time stacked listeners: two of them toggled the
+  // class twice per click and the cell never appeared to open at all.
+  if (!el.dataset.bound) {
+    el.dataset.bound = '1';
+    el.addEventListener('click', ev => {
+      const cell = ev.target.closest('td.desc');
+      if (cell) cell.classList.toggle('open');
+    });
+  }
 
   const cb = document.getElementById('more-cols');
   if (cb) cb.addEventListener('change', e => {
