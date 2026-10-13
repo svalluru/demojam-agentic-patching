@@ -46,7 +46,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -890,6 +890,52 @@ def is_sim(execution_id: str) -> bool:
     return SIM.get(execution_id) is not None
 
 
+# How long a patch counts as "already done" for the same CVE. A host does
+# not become vulnerable again on its own, so this is really about how stale
+# a record has to be before it is worth re-checking rather than trusting.
+PATCHED_WITHIN_DAYS = int(env('PATCHED_WITHIN_DAYS', '7'))
+
+
+def already_patched(cve_id: str, agent: 'PatchingAgent') -> dict[str, dict]:
+    """host -> the run that patched it for this CVE, recently.
+
+    Only runs we can prove reached 'patched' count. The execution list cannot
+    tell an approved run from a rejected one — both complete — so a run that
+    merely says 'completed' is resolved with run_detail before being trusted.
+    Guessing the wrong way here would hide a host that was never patched,
+    which is worse than patching one twice.
+    """
+    if not cve_id:
+        return {}
+    try:
+        runs = agent.recent_runs(200)
+    except BackendUnavailable:
+        return {}                      # no history to go on; assess everything
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=PATCHED_WITHIN_DAYS)
+    out: dict[str, dict] = {}
+    for r in runs:
+        if r.get('cve_id') != cve_id or not r.get('host'):
+            continue
+        if r.get('outcome') not in ('patched', 'completed'):
+            continue
+        when = r.get('completed_at') or r.get('created_at') or ''
+        try:
+            at = datetime.fromisoformat(str(when).replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if at < cutoff or r['host'] in out:
+            continue
+        if r['outcome'] == 'completed':                 # ambiguous — resolve it
+            try:
+                if agent.run_detail(r['execution_id']).get('outcome') != 'patched':
+                    continue
+            except BackendUnavailable:
+                continue
+        out[r['host']] = {'at': when, 'execution_id': r.get('execution_id', '')}
+    return out
+
+
 def next_step(summary: dict) -> str:
     """What the console should say happens next, from the run's own counts.
 
@@ -1375,6 +1421,52 @@ class Supervisor:
                    f'CVSS {detail["cvss"]} · {detail["count"]} host(s)'
                    + (f' of {detail["total_affected"]}' if detail.get('total_affected') else ''))
 
+        # Re-assessing a CVE should not offer up hosts that were patched for
+        # it days ago. They are dropped from the plan rather than carried
+        # through and skipped at dispatch, so the risk scoring, the RAG
+        # lookups and the operator's review are all spent on work that is
+        # actually outstanding. The count is kept so the plan can say what
+        # was left out — silently shrinking the host list would be its own
+        # kind of lie.
+        done = already_patched(cve_id, self.patching)
+        skipped = [h for h in detail['hosts'] if h['host'] in done]
+        if skipped:
+            detail['hosts'] = [h for h in detail['hosts'] if h['host'] not in done]
+            detail['count'] = len(detail['hosts'])
+            self.trace('supervisor', 'console',
+                       f'{len(skipped)} host(s) already patched for {cve_id} '
+                       f'within {PATCHED_WITHIN_DAYS}d — not re-assessed')
+
+        # Everything already done. Agent 1 would raise "affects no registered
+        # systems" here, which is the wrong story: the CVE does affect them,
+        # they are just patched.
+        if skipped and not detail['hosts']:
+            self.state = {
+                'cve_id': cve_id, 'cvss': detail['cvss'],
+                'description': detail['description'],
+                'hosts': [], 'plan': {
+                    'cve_id': cve_id, 'cvss': detail['cvss'],
+                    'hosts_total': 0, 'hosts_review': 0, 'hosts_auto': 0,
+                    'verdict': 'nothing_to_do',
+                    'maintenance_window': self.info.maintenance_window()[0],
+                    'risk_source': 'n/a', 'threshold': REVIEW_THRESHOLD,
+                    'notes': [f'All {len(skipped)} affected host(s) were patched '
+                              f'for {cve_id} within the last '
+                              f'{PATCHED_WITHIN_DAYS} day(s). Nothing to do.'],
+                    'degraded': [dict(d) for d in DEGRADED],
+                },
+                'already_patched': [
+                    {'host': h['host'], **done[h['host']]} for h in skipped],
+                'events': self.events,
+                'elapsed_s': round(time.monotonic() - started, 1),
+                'degraded': [dict(d) for d in DEGRADED],
+                'next': 'nothing — every affected host is already patched',
+                'status': 'nothing_to_do',
+            }
+            self.trace('supervisor', 'console',
+                       f'nothing to do — all {len(skipped)} host(s) already patched')
+            return self.state
+
         # --- agent 1 ------------------------------------------------------
         info = self.info.gather(detail)
 
@@ -1384,6 +1476,8 @@ class Supervisor:
             'description': detail['description'],
             'hosts': info['hosts'],
             'plan': info['plan'],
+            'already_patched': [
+                {'host': h['host'], **done[h['host']]} for h in skipped],
             'events': self.events,
             'elapsed_s': round(time.monotonic() - started, 1),
             'degraded': [dict(d) for d in DEGRADED],
@@ -2486,7 +2580,12 @@ def _run_async(cve_id: str, host_filter: str, host_limit: int) -> None:
     try:
         state = sup.run(cve_id, host_filter=host_filter, host_limit=host_limit)
         with _RUN_LOCK:
-            _RUN.update(state, status='complete', error=None)
+            # Keep a status the Supervisor set for itself — flattening
+            # everything to 'complete' lost 'nothing_to_do', so an API
+            # consumer could not tell a plan with work in it from one
+            # where every host was already patched.
+            _RUN.update(state, status=state.get('status') or 'complete',
+                        error=None)
     except BackendUnavailable as exc:
         with _RUN_LOCK:
             _RUN.update(status='failed', cve_id=cve_id, events=list(sup.events),
@@ -2747,10 +2846,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(409, {'ok': False, 'error': 'a run is already in flight'})
                 return
             if not snapshot.get('hosts'):
+                # Two very different reasons to have no hosts, and telling an
+                # operator to assess a CVE they have just assessed is the
+                # wrong one.
+                skipped = snapshot.get('already_patched') or []
                 self._send(409, {
-                    'ok': False, 'error': 'No assessment available',
-                    'detail': 'Run "Assess CVE Impact" first — the Patching Agent '
-                              'needs each host\'s decision to pick a workflow branch.'})
+                    'ok': False,
+                    'error': ('Nothing to patch' if skipped
+                              else 'No assessment available'),
+                    'detail': (f'All {len(skipped)} affected host(s) were already '
+                               f'patched for {snapshot.get("cve_id")} within the '
+                               f'last {PATCHED_WITHIN_DAYS} day(s).' if skipped else
+                               'Run "Assess CVE Impact" first — the Patching Agent '
+                               'needs each host\'s decision to pick a workflow branch.')})
                 return
             with _RUN_LOCK:
                 _RUN.update(status='running', phase='patching', error=None)

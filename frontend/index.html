@@ -1298,6 +1298,17 @@
                     background: linear-gradient(90deg, var(--border), transparent); }
   .side-k .c, .trace-k .c { font-family: var(--mono); font-weight: 700;
                             letter-spacing: 0; color: var(--text); }
+  /* order:1 to clear .trace-k::after, the flex:1 rule line — the same thing
+     that parked the column toggle mid-heading. */
+  #trace-host {
+    order: 1; max-width: 148px; padding: 2px 5px; cursor: pointer;
+    font-family: var(--mono); font-size: calc(10px * var(--ts));
+    font-weight: 700; letter-spacing: 0; text-transform: none;
+    color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: var(--r-xs);
+  }
+  #trace-host:hover { border-color: var(--accent); }
+  #trace-host:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .trace-log {
     padding: 11px 13px; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r);
@@ -2646,24 +2657,63 @@ function renderSide(s) {
   document.getElementById('side').innerHTML = renderArch(s);
 }
 
+let traceHost = '';      // '' = every event
+
+// Trace events carry no host field — the hostname is inside the message
+// text. Rather than pattern-matching hostnames out of prose, which would
+// have to cope with whatever Insights returns in live mode, each message is
+// tested against the run's own host list. Exact substring, known set.
+function eventHost(e, hosts) {
+  return hosts.find(h => e.message.includes(h)) || '';
+}
+
 function renderTrace(s) {
   const events = (s || {}).events || [];
+  const hosts = (((s || {}).hosts) || []).map(h => h.host).filter(Boolean);
+  // A host that has gone from the plan cannot be filtered to, so the
+  // selection resets rather than silently showing nothing.
+  if (traceHost && !hosts.includes(traceHost)) traceHost = '';
+
+  const shown = traceHost
+    ? events.filter(e => eventHost(e, hosts) === traceHost)
+    : events;
+  // Elapsed stays relative to the start of the run, not to the first event
+  // that survived the filter — otherwise filtering rewrites the clock.
   const t0 = events.length ? Date.parse(events[0].time) : 0;
+
+  const picker = hosts.length > 1
+    ? `<select id="trace-host" title="Show only the events naming one host">
+         <option value=""${traceHost ? '' : ' selected'}>All hosts</option>
+         ${hosts.map(h => `<option value="${esc(h)}"${h === traceHost ? ' selected' : ''}>`
+            + `${esc(h.split('.')[0])}</option>`).join('')}
+       </select>` : '';
+
   document.getElementById('trace').innerHTML =
     `<div class="trace-k">Agent trace${events.length
-      ? `<span class="c">${esc(events.length)}</span>` : ''}</div>`
+      ? `<span class="c">${esc(shown.length)}${traceHost ? ` of ${events.length}` : ''}</span>`
+      : ''}${picker}</div>`
     + (events.length
-      ? `<div class="trace-log" id="trace-log">${events.map((e, i) => {
-          const dt = Date.parse(e.time) - t0;
-          const at = isNaN(dt) ? '' : `+${Math.round(dt / 1000)}s`;
-          return `<div class="${i === events.length - 1 ? 'now' : ''}">`
-          + `<span class="t-time">${esc(at)}</span>`
-          + `<span><span class="t-from">${esc(e.from)}</span>`
-          + `<span class="t-arrow">&rarr;</span>`
-          + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</span></div>`;
-        }).join('')}</div>`
+      ? (shown.length
+        ? `<div class="trace-log" id="trace-log">${shown.map((e, i) => {
+            const dt = Date.parse(e.time) - t0;
+            const at = isNaN(dt) ? '' : `+${Math.round(dt / 1000)}s`;
+            return `<div class="${!traceHost && i === shown.length - 1 ? 'now' : ''}">`
+            + `<span class="t-time">${esc(at)}</span>`
+            + `<span><span class="t-from">${esc(e.from)}</span>`
+            + `<span class="t-arrow">&rarr;</span>`
+            + `<span class="t-to">${esc(e.to)}</span> ${esc(e.message)}</span></div>`;
+          }).join('')}</div>`
+        : `<div class="trace-log trace-idle">No events name
+             ${esc(traceHost.split('.')[0])} yet. The run-level steps — the CVE
+             lookup, the risk scoring, the report — cover every host at once.</div>`)
       : `<div class="trace-log trace-idle">Nothing running. Assess a CVE and the
           Supervisor's calls to each agent appear here as they happen.</div>`);
+
+  const sel = document.getElementById('trace-host');
+  if (sel) sel.addEventListener('change', e => {
+    traceHost = e.target.value;
+    renderTrace(s);
+  });
   // The newest line is the one worth reading, and it is the one that falls off
   // the bottom once the log is taller than the box.
   const log = document.getElementById('trace-log');
@@ -2751,6 +2801,19 @@ function renderVerdict(plan, done) {
   const review = plan.hosts_review || 0;
   const total = plan.hosts_total || 0;
   const needsReview = plan.verdict === 'review_required';
+
+  // Nothing left to patch is its own verdict. Falling through to the else
+  // branch said "no hosts exceed the risk threshold, remediation can proceed
+  // unattended" about a plan with no hosts in it at all.
+  if (plan.verdict === 'nothing_to_do') {
+    return `<div class="verdict ok">
+      <div class="v-main">
+        <div class="v-title">Nothing to patch</div>
+        <div class="v-detail">Every host this CVE affects has already been
+          patched for it. No workflow will be dispatched.</div>
+      </div>
+    </div>`;
+  }
 
   // Once the run is over the verdict is history, not an instruction. Left in
   // the present tense it read as "5 of 5 hosts must be approved by an
@@ -2862,6 +2925,19 @@ let showCols = localStorage.getItem('showCols') === '1';
 // Dropped entirely once there is nothing left to do. While it is actionable
 // it is the only line on the page that says the run is waiting on a person
 // rather than on a machine, so it stays.
+// Hosts dropped from the plan because they were already patched for this
+// CVE. Shown, not silently omitted: a plan that quietly lists fewer hosts
+// than the CVE affects is indistinguishable from one that missed some.
+function renderSkipped(list) {
+  if (!list || !list.length) return '';
+  const when = iso => { const t = ago(iso); return t === '\u2014' ? '' : ` ${t}`; };
+  return `<div class="note" style="margin-top:12px">
+    <strong>${list.length} host${list.length === 1 ? '' : 's'} already patched
+    for this CVE</strong> and left out of the plan:
+    ${list.map(a => `<code>${esc(a.host.split('.')[0])}</code>${esc(when(a.at))}`).join(', ')}.
+  </div>`;
+}
+
 function renderNext(s) {
   const el = document.getElementById('next-note');
   if (!el) return;
@@ -2919,6 +2995,7 @@ function renderHostTable(s) {
     </tr>`;
   }).join('');
 
+  if (!(s.hosts || []).length) { el.innerHTML = ''; return; }
   el.innerHTML = `
     <div class="sev-title high" style="margin-top:18px">Hosts<span class="c">${(s.hosts || []).length}</span>
       ${dispatched ? `<label class="morecols" title="Adds workflow progress and execution id. The table scrolls sideways to fit them."><input type="checkbox" id="more-cols"${showCols ? ' checked' : ''}> Show more columns</label>` : ''}
@@ -2962,6 +3039,7 @@ function renderPlan(s) {
     </div>
     ${renderDegraded(plan.degraded)}
     ${renderVerdict(plan, done)}
+    ${renderSkipped(s.already_patched)}
     ${notes}
     <!-- Last: the report and the learning records are what the run
          produced, so they read as its output rather than as something
