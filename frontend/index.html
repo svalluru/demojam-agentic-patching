@@ -2783,7 +2783,6 @@ function renderVerdict(plan, done) {
         <span><span class="k">Maintenance window</span>${esc(plan.maintenance_window)}</span>
         <span><span class="k">Risk gate</span>${esc(plan.threshold)}${
           showSrc() ? ` (${esc(plan.risk_source)})` : ''}</span>
-        <span><span class="k">Assessed by</span>cve-gather-info-agent</span>
       </div>
     </div>
     <div class="donut" style="--pct:${pct}%"
@@ -2859,6 +2858,17 @@ function dispatchAction(plan) {
 // function because both renderers need to refresh it without redrawing the
 // frame around it.
 let showCols = localStorage.getItem('showCols') === '1';
+
+// Dropped entirely once there is nothing left to do. While it is actionable
+// it is the only line on the page that says the run is waiting on a person
+// rather than on a machine, so it stays.
+function renderNext(s) {
+  const el = document.getElementById('next-note');
+  if (!el) return;
+  const n = s.next || '';
+  el.innerHTML = /^(nothing|none)\b/.test(n) ? ''
+    : `<div class="note" style="margin-top:14px">Next: ${esc(n)}</div>`;
+}
 
 function renderHostTable(s) {
   const el = document.getElementById('host-table');
@@ -2957,8 +2967,9 @@ function renderPlan(s) {
          produced, so they read as its output rather than as something
          to scroll past on the way to the hosts and the plan. -->
     <div id="patch-body"></div>
-    <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
+    <div id="next-note"></div>`;
   renderHostTable(s);
+  renderNext(s);
   frameHead({
     title: 'Patch plan',
     sub: `<span class="cve-id">${cveLabel(plan.cve_id)}</span>`
@@ -3250,9 +3261,10 @@ function renderPatch(s) {
     ${renderPublished(s.published)}
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
     `;
-  // Lives in renderPlan's half of the frame, so it has to be refreshed here
-  // too — this is the only place a row's outcome changes.
+  // Both live in renderPlan's half of the frame, so they have to be
+  // refreshed here too — this is the only place a row's outcome changes.
   renderHostTable(s);
+  renderNext(s);
 }
 
 // Hands the approved plan to the Patching Agent, which triggers the
