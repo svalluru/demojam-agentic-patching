@@ -890,6 +890,24 @@ def is_sim(execution_id: str) -> bool:
     return SIM.get(execution_id) is not None
 
 
+def next_step(summary: dict) -> str:
+    """What the console should say happens next, from the run's own counts.
+
+    This used to be a literal set at three points, and the one at dispatch
+    said 'all four agents complete' while hosts were still at the gate — on
+    the same screen where agent 4 reported it had published nothing because
+    nothing had settled.
+    """
+    waiting = summary.get('awaiting_approval') or 0
+    running = summary.get('running') or 0
+    if waiting:
+        return (f'your approval on {waiting} host'
+                f'{"" if waiting == 1 else "s"} at the gate')
+    if running:
+        return f'{running} host{"" if running == 1 else "s"} still patching'
+    return 'nothing — all four agents are done with this CVE'
+
+
 # Maps the Info agent's per-host decision onto the workflow's routing input.
 GROUP_FOR_DECISION = {'review': 'approved_patch', 'ok': 'auto_patch'}
 
@@ -1429,7 +1447,7 @@ class Supervisor:
             'degraded': [dict(d) for d in DEGRADED],
             },
             'events': self.events,
-            'next': 'Results Publishing Agent (not implemented)',
+            'next': next_step(summary),
             'status': 'reported',
         }
         self.trace('supervisor', 'console',
@@ -1459,7 +1477,7 @@ class Supervisor:
         except Exception as exc:
             self.trace('results', 'supervisor', f'publish failed — {exc}')
             self.state['published'] = {'error': str(exc)}
-        self.state['next'] = 'none — all four agents complete'
+        self.state['next'] = next_step(summary)
         return self.state
 
 
@@ -2526,14 +2544,18 @@ def _rereport(state: dict) -> dict | None:
         'unavailable': sum(1 for r in results if r.get('outcome') == 'unavailable'),
     }
     state['patch'] = {**state['patch'], 'summary': summary}
+    nxt = next_step(summary)
     with _RUN_LOCK:
         _RUN['patch'] = state['patch']
+        _RUN['next'] = nxt
 
     # Only at the events the diagram names. Writing one per decision turned a
     # five-host run into six near-identical PDFs; the intermediate ones say
-    # nothing the final one does not.
+    # nothing the final one does not. The counts still move on every decision,
+    # though — returning nothing here left "your approval on 5 hosts" on
+    # screen after four of the five had been approved.
     if summary['awaiting_approval'] > 0:
-        return None
+        return {'next': nxt}
 
     agent = communication.CommunicationAgent(
         REPORTS_DIR, simulated=any(r.get('simulated') for r in results))
@@ -2552,12 +2574,12 @@ def _rereport(state: dict) -> dict | None:
     with _RUN_LOCK:
         _RUN['report'] = report
         _RUN['published'] = published
-        _RUN['next'] = 'none — all four agents complete'
+        _RUN['next'] = next_step(summary)
     # Both, because the console keeps its own copy of the run: returning only
     # the report left the agent-4 panel showing "no settled hosts yet" beside
     # a report that said the remediation was complete.
     return {'report': report, 'published': published,
-            'next': 'none — all four agents complete'}
+            'next': next_step(summary)}
 
 
 class Handler(BaseHTTPRequestHandler):
