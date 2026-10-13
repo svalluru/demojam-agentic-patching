@@ -2553,7 +2553,11 @@ def _rereport(state: dict) -> dict | None:
         _RUN['report'] = report
         _RUN['published'] = published
         _RUN['next'] = 'none — all four agents complete'
-    return report
+    # Both, because the console keeps its own copy of the run: returning only
+    # the report left the agent-4 panel showing "no settled hosts yet" beside
+    # a report that said the remediation was complete.
+    return {'report': report, 'published': published,
+            'next': 'none — all four agents complete'}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2793,9 +2797,9 @@ class Handler(BaseHTTPRequestHandler):
                                       if v is not None or r.get(k) is None})
                     snapshot = dict(_RUN) if _RUN.get('patch') else None
                 # Agents 3 and 4 run once the decision has settled the host.
-                report = _rereport(snapshot) if snapshot else None
+                finished = _rereport(snapshot) if snapshot else None
                 self._send(200, {'ok': True, **result,
-                                 **({'report': report} if report else {})})
+                                 **(finished or {})})
             except BackendUnavailable as exc:
                 self._send(502, {'ok': False, 'error': f'{exc.service}: {exc.cause}',
                                  'detail': exc.fix})

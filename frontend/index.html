@@ -2084,7 +2084,10 @@ function rows(list) {
       // is always on screen; this is here because the list is where the eye
       // already is, and a row that quietly re-ran the assessment would throw
       // the plan away rather than return to it.
-      const on = parked && parkedPhase && parked.cve_id === c.id;
+      // Resume means "a run of this CVE is unfinished". A finished one is
+      // not resumable — it reports how it ended instead.
+      const fin = completed.get(c.id);
+      const on = parked && parkedPhase && parked.cve_id === c.id && !runFinished(parked);
       return `
       <tr class="in${on ? ' sel' : ''}" style="--i:${Math.min(i, 12)}" data-id="${esc(c.id)}">
         <td class="cve-id">${cveLabel(c.id)}${c.known_exploit ? '<span class="exploit">EXPLOIT</span>' : ''}</td>
@@ -2093,7 +2096,7 @@ function rows(list) {
         <td>${esc(c.systems_affected)}</td>
         <td style="white-space:nowrap">${esc(fmtDate(c.public_date))}</td>
         <td class="desc">${esc((c.description || '').slice(0, 110))}</td>
-        <td class="act"><button class="assess${on ? ' resume' : ''}">${on ? 'Resume' : 'Assess'}</button></td>
+        <td class="act">${fin ? cveDoneBadge(fin) : ''}<button class="assess${on ? ' resume' : ''}">${on ? 'Resume' : (fin ? 'Re-assess' : 'Assess')}</button></td>
       </tr>`;
     }).join('')}</tbody></table>`;
 }
@@ -2112,6 +2115,29 @@ function rows(list) {
 // Phase decides which half to rebuild: a plan that has not been dispatched
 // is renderPlan alone; once dispatched the remediation view sits on top of
 // it and both have to be redrawn.
+// A run is over when every dispatched host has reached a terminal outcome.
+// Until this existed, nothing distinguished "paused, come back to it" from
+// "finished": the CVE row kept offering Resume and the plan kept demanding a
+// review that had already happened.
+// How a completed run ended, shown on its CVE row. Failures and rejections
+// outrank the patched count: "4 patched" beside one silent failure is the
+// kind of summary that gets a CVE signed off while a host is still exposed.
+function cveDoneBadge(f) {
+  if (f.failed)   return `<span class="badge fail" title="${f.failed} of ${f.total} failed">`
+                       + `${f.failed} failed</span>`;
+  if (f.rejected) return `<span class="badge review" title="${f.rejected} of ${f.total} rejected">`
+                       + `${f.rejected} rejected</span>`;
+  return `<span class="badge ok" title="all ${f.total} host(s) patched">Patched</span>`;
+}
+
+function runFinished(s) {
+  const rs = ((s || {}).patch || {}).results || [];
+  return rs.length > 0 && rs.every(r => TERMINAL.includes(r.outcome));
+}
+
+// CVE id -> how its last completed run ended, so the list can say so.
+const completed = new Map();
+
 let parked = null;        // last /api/state payload with something to return to
 let parkedPhase = null;   // 'plan' (not dispatched) | 'patch' (dispatched)
 
@@ -2344,7 +2370,7 @@ function renderStages(s) {
 //
 // Coordinates are in the SVG's own viewBox and the whole thing scales to the
 // column, so the numbers below are a layout, not pixel positions on screen.
-const ARCH_VB = [356, 346];
+const ARCH_VB = [356, 362];   // results box now ends at y=354
 
 // Every box is a real participant. `id` matches the token the backend puts in
 // its trace events, which is what lets the diagram light up from the log
@@ -2366,10 +2392,10 @@ const NODES = [
     t: '2 · PATCHING AGENT', s: 'one AO workflow run per host' },
   { id: 'ao',         x: 252, y: 216, w: 78,  h: 22, ext: 1, mid: 1,
     t: 'ANSIBLE ORCH' },
-  { id: 'comms',      x: 52,  y: 270, w: 186, h: 26, ni: 1,
-    t: '3 · COMMUNICATION', s: 'not implemented' },
-  { id: 'results',    x: 52,  y: 308, w: 186, h: 26, ni: 1,
-    t: '4 · RESULTS', s: 'not implemented' },
+  { id: 'comms',      x: 52,  y: 266, w: 186, h: 38,
+    t: '3 · COMMUNICATION', s: 'PDF report · Slack/SNOW pending' },
+  { id: 'results',    x: 52,  y: 316, w: 186, h: 38,
+    t: '4 · RESULTS', s: 'RAG record · training row' },
 ];
 
 // One path per direction, never one line shared by both: the question this
@@ -2391,9 +2417,10 @@ const EDGES = [
   { id: 'pat>ao',    d: 'M238,227 L249,227' },
   { id: 'con>pat',   d: 'M330,20 L338,20 L338,244 L241,244' },
   { id: 'pat>con',   d: 'M238,250 L346,250 L346,26 L333,26' },
-  // Nothing will ever light these two. They are drawn so the gap is visible.
-  { id: 'sup>com',   d: 'M34,134 L34,283 L45,283', ghost: 1 },
-  { id: 'sup>res',   d: 'M34,134 L34,321 L45,321', ghost: 1 },
+  { id: 'sup>com',   d: 'M34,134 L34,279 L45,279' },
+  { id: 'com>con',   d: 'M48,294 L44,294 L44,139' },
+  { id: 'sup>res',   d: 'M34,134 L34,329 L45,329' },
+  { id: 'res>con',   d: 'M48,344 L44,344 L44,139' },
 ];
 
 // trace 'from>to' -> edge. Every pair the backend emits has an entry; a hop
@@ -2411,6 +2438,10 @@ const EDGE_FOR = {
   'patching>supervisor': 'pat>sup',
   'console>patching':    'con>pat',
   'patching>console':    'pat>con',
+  'supervisor>communication': 'sup>com',
+  'communication>console':    'com>con',
+  'supervisor>results':       'sup>res',
+  'results>console':          'res>con',
 };
 
 // A degraded step names the service that did not answer, so the box for it is
@@ -2526,7 +2557,7 @@ function renderArch(s) {
       </svg>
       <div class="arch-legend">
         <span><i></i>${used.size ? 'called in this run' : 'not called yet'}</span>
-        <span class="q"><i></i>not implemented</span>
+        <span class="q"><i></i>not called yet</span>
       </div>
     </div>
   </div>`;
@@ -2646,24 +2677,35 @@ function simNotice(n) {
 
 // The backend's verdict is an enum (review_required / auto_approve_eligible).
 // Translate it rather than printing the raw value at the reviewer.
-function renderVerdict(plan) {
+function renderVerdict(plan, done) {
   const review = plan.hosts_review || 0;
   const total = plan.hosts_total || 0;
   const needsReview = plan.verdict === 'review_required';
 
-  const title = needsReview
-    ? 'Manual review required before remediation'
-    : 'Eligible for automated remediation';
-  const detail = needsReview
-    ? `${review} of ${total} host${total === 1 ? '' : 's'} exceed the risk threshold `
-      + `and must be approved by an operator.`
-    : `No hosts exceed the risk threshold. Remediation can proceed unattended.`;
+  // Once the run is over the verdict is history, not an instruction. Left in
+  // the present tense it read as "5 of 5 hosts must be approved by an
+  // operator" on a page where all five had already been approved and patched.
+  const title = done
+    ? (needsReview ? 'Reviewed and approved before remediation'
+                   : 'Ran unattended — no review required')
+    : (needsReview ? 'Manual review required before remediation'
+                   : 'Eligible for automated remediation');
+  const detail = done
+    ? (needsReview
+        ? `${review} of ${total} host${total === 1 ? '' : 's'} exceeded the risk `
+          + `threshold and were approved by an operator.`
+        : `No hosts exceeded the risk threshold, so remediation proceeded `
+          + `unattended.`)
+    : (needsReview
+        ? `${review} of ${total} host${total === 1 ? '' : 's'} exceed the risk threshold `
+          + `and must be approved by an operator.`
+        : `No hosts exceed the risk threshold. Remediation can proceed unattended.`);
 
   // One shape instead of two numbers in two boxes: the split is the decision
   // being made, and a proportion reads faster than a pair of counts.
   const pct = total ? Math.round((review / total) * 100) : 0;
 
-  return `<div class="verdict ${needsReview ? 'warn' : 'ok'}">
+  return `<div class="verdict ${done ? 'ok' : (needsReview ? 'warn' : 'ok')}">
     <div class="v-main">
       <div class="v-title">${esc(title)}</div>
       <div class="v-detail">${esc(detail)}</div>
@@ -2746,6 +2788,7 @@ function renderPlan(s) {
   parked = s;
   if (parkedPhase !== 'patch') parkedPhase = 'plan';
   const plan = s.plan || {};
+  const done = runFinished(s);
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
   const hosts = (s.hosts || []).map((h, i) => `
     <tr class="in" style="--i:${Math.min(i, 12)}">
@@ -2767,7 +2810,7 @@ function renderPlan(s) {
       <div class="stat"><div class="v sm">${esc(s.elapsed_s)}s</div><div class="k">Elapsed</div></div>
     </div>
     ${renderDegraded(plan.degraded)}
-    ${renderVerdict(plan)}
+    ${renderVerdict(plan, done)}
     ${notes}
     <div class="sev-block" style="margin-top:18px">
       <div class="sev-title high">Per-host assessment<span class="c">${(s.hosts||[]).length}</span></div>
@@ -2916,12 +2959,21 @@ async function decide(execId, activityId, decision) {
     // patchState.report pointing at the report written back at dispatch, so
     // the card keeps offering the "awaiting approval" PDF after every host
     // has been approved.
-    const { ok, report, ...runFields } = d;
-    if (report && patchState) patchState.report = report;
+    const { ok, report, published, next, ...runFields } = d;
+    if (patchState) {
+      if (report) patchState.report = report;
+      if (published) patchState.published = published;
+      if (next) patchState.next = next;
+    }
     if (res) {
       delete res._signalError;
       Object.assign(res, runFields);
       recountPatch(patchState);
+      // The verdict lives in renderPlan's half of the frame, so re-rendering
+      // only the patch half left "5 of 5 hosts must be approved by an
+      // operator" on screen after all five had been. Same order resumeRun
+      // uses: the plan rebuilds the frame, then the patch fills it back in.
+      if (runFinished(patchState)) renderPlan(patchState);
       renderPatch(patchState);
     }
   } catch (e) {
@@ -3006,6 +3058,14 @@ function renderPatch(s) {
   // Dispatched: resuming now has to rebuild this half too, not just the plan.
   parked = s;
   parkedPhase = 'patch';
+  if (runFinished(s)) {
+    const rs = (s.patch || {}).results || [];
+    const n = o => rs.filter(r => r.outcome === o).length;
+    completed.set(s.cve_id, {
+      patched: n('patched'), failed: n('failed') + n('timeout'),
+      rejected: n('rejected') + n('cancelled'), total: rs.length,
+    });
+  }
   renderStages(s);
   // The frame now holds the dispatch result above the report it was approved
   // against, so 'Patch plan' would name only the lower half of it.
