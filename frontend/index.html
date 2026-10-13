@@ -691,9 +691,13 @@
   }
   .meter-fill {
     position: absolute; inset: 0 auto 0 0; width: var(--v, 0%);
-    background: var(--text); border-radius: 4px;
-    transform-origin: left; animation: grow .5s var(--ease) both;
+    background: var(--text); border-radius: 4px; transform-origin: left;
   }
+  /* Only on a row that is entering. The meters moved into the shared host
+     table, which rebuilds whenever any one host's outcome changes — so an
+     unscoped grow replayed on all five meters every time a single Approve
+     landed. The scores had not changed; nothing should have moved. */
+  tr.in .meter-fill { animation: grow .5s var(--ease) both; }
   .meter.over .meter-fill { background: linear-gradient(90deg, var(--red-lo), var(--red)); }
   @keyframes grow { from { transform: scaleX(0); } }
   /* Overhangs the bar on both sides and keeps a white gap around itself, so
