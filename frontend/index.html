@@ -113,8 +113,11 @@
 
   /* Sits on the Hosts heading, so it reads as a control for that table
      rather than a page-level setting. */
+  /* order:1 puts it after .sev-title::after, the flex:1 rule line that draws
+     the heading's trailing rule. Without it margin-left:auto pushed the
+     checkbox only as far as that rule, parking it mid-heading. */
   .morecols {
-    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    order: 1; margin-left: 10px; display: inline-flex; align-items: center; gap: 6px;
     font-size: calc(11px * var(--ts)); font-weight: 500; letter-spacing: 0;
     text-transform: none; color: var(--muted); cursor: pointer;
   }
@@ -136,8 +139,6 @@
     background: var(--border); border-radius: 5px;
   }
   .tscroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-  .sev-title { display: flex; align-items: center; gap: 8px; }
-
   .report-card {
     display: flex; align-items: center; gap: 14px; margin: 14px 0 6px;
     padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px;
