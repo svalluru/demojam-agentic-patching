@@ -2855,23 +2855,28 @@ function renderHostTable(s) {
     const o = r ? (OUTCOME[r.outcome] || { cls: 'review', label: r.outcome }) : null;
     const canDecide = r && r.outcome === 'awaiting_approval'
                    && r.approval_activity_id && !r._signal;
-    const action = !r ? '<span class="muted-sm">&mdash;</span>'
+    // One cell: what you can do, or what happened. An "Awaiting approval"
+    // badge beside an Approve button says the same thing twice, and the
+    // separate Action column was empty in every terminal state — most of a
+    // row's life. A row that wants a decision now looks different from one
+    // that does not, which is the distinction worth drawing.
+    const status = !r ? '<span class="muted-sm">&mdash;</span>'
       : canDecide
         ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
           + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
       : r._signal ? '<span class="muted-sm">signalling…</span>'
-      : r._signalError ? `<span class="err-sm">${esc(r._signalError)}</span>`
+      : r._signalError
+        ? `<span class="badge ${o.cls}">${esc(o.label)}</span>`
+          + `<div class="err-sm">${esc(r._signalError)}</div>`
       : r.outcome === 'running'
-        ? `<span class="muted-sm">${r.decision === 'approved' ? 'approved — ' : ''}patching…</span>`
-      : '<span class="muted-sm">&mdash;</span>';
+        ? `<span class="badge ${o.cls}">${r.decision === 'approved' ? 'Approved — patching…' : 'Patching…'}</span>`
+      : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     const prog = r ? stepProgress(r) : null;
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
       <td class="cve-id">${esc(h.host)}</td>
       <td>${riskMeter(h, plan)}</td>
       <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
-      ${dispatched ? `<td>${o ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
-                              : '<span class="muted-sm">&mdash;</span>'}</td>
-      <td class="decide-cell">${action}</td>` : ''}
+      ${dispatched ? `<td class="decide-cell">${status}</td>` : ''}
       ${showCols && dispatched ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
       <td class="mono">${esc(((r || {}).execution_id || '').slice(0, 8))}</td>` : ''}
       <td class="desc" title="${esc(h.history || h.reason)}">${esc(h.history || h.reason)}</td>
@@ -2885,7 +2890,7 @@ function renderHostTable(s) {
     <div class="${showCols && dispatched ? 'tscroll' : ''}">
     <table class="${showCols && dispatched ? 'wide' : ''}"><thead><tr>
       <th>Host</th><th>Risk vs gate</th><th>Plan</th>
-      ${dispatched ? '<th>Outcome</th><th>Action</th>' : ''}
+      ${dispatched ? '<th>Status</th>' : ''}
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
       <th>RAG history / reason</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
