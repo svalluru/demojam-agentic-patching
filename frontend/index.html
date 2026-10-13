@@ -2905,6 +2905,8 @@ function renderPlan(s) {
 
   document.getElementById('list').innerHTML = `
     <div class="result" id="patch-result"></div>
+    <div id="patch-stats"></div>
+    <div class="sev-block" id="host-table"></div>
     <div id="patch-body"></div>
     <div class="stats">
       <div class="stat"><div class="v">${esc(plan.cvss)}</div><div class="k">CVSS</div></div>
@@ -2917,7 +2919,6 @@ function renderPlan(s) {
     ${renderDegraded(plan.degraded)}
     ${renderVerdict(plan, done)}
     ${notes}
-    <div class="sev-block" style="margin-top:18px" id="host-table"></div>
     <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
   renderHostTable(s);
   frameHead({
@@ -3189,7 +3190,12 @@ function renderPatch(s) {
   setTimeout(trackPatchRuns, 0);
   const p = s.patch || {};
   const sum = p.summary || {};
-  document.getElementById('patch-body').innerHTML = `
+  // Two containers, with the host table between them: the counters say what
+  // is happening, the hosts are where it happens, and the report is what the
+  // run produced. The table is laid out by renderPlan so there is exactly one
+  // of it — rendering a second here left two elements sharing an id, and the
+  // stale one silently stopped updating.
+  document.getElementById('patch-stats').innerHTML = `
     <div class="sev-title high" style="margin-top:18px">
       Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
     </div>
@@ -3199,7 +3205,9 @@ function renderPatch(s) {
       <div class="stat${sum.awaiting_approval ? ' alert' : ''}"><div class="v">${esc(sum.awaiting_approval)}</div><div class="k">Awaiting approval</div></div>
       <div class="stat${sum.failed ? ' alert' : ''}"><div class="v">${esc(sum.failed)}</div><div class="k">Failed</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
-    </div>
+    </div>`;
+
+  document.getElementById('patch-body').innerHTML = `
     ${renderReport(s.report)}
     ${renderPublished(s.published)}
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
