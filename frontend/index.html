@@ -2372,6 +2372,13 @@ function renderStages(s) {
 // column, so the numbers below are a layout, not pixel positions on screen.
 const ARCH_VB = [356, 362];   // results box now ends at y=354
 
+// An agent node's id MUST equal the actor name the backend puts in its trace
+// events — archNodes lights a box with seen.has(n.id), and seen is built from
+// those names. This node was 'comms' while the backend said 'communication',
+// so agent 3 stayed grey through runs that had plainly called it. Service
+// boxes (ao, rag, risk-model) are the exception: they are reached by edge,
+// not named as an actor.
+
 // Every box is a real participant. `id` matches the token the backend puts in
 // its trace events, which is what lets the diagram light up from the log
 // rather than from a second idea of what the flow is.
@@ -2392,7 +2399,7 @@ const NODES = [
     t: '2 · PATCHING AGENT', s: 'one AO workflow run per host' },
   { id: 'ao',         x: 252, y: 216, w: 78,  h: 22, ext: 1, mid: 1,
     t: 'ANSIBLE ORCH' },
-  { id: 'comms',      x: 52,  y: 266, w: 186, h: 38,
+  { id: 'communication', x: 52, y: 266, w: 186, h: 38,
     t: '3 · COMMUNICATION', s: 'PDF report · Slack/SNOW pending' },
   { id: 'results',    x: 52,  y: 316, w: 186, h: 38,
     t: '4 · RESULTS', s: 'RAG record · training row' },
@@ -2442,6 +2449,11 @@ const EDGE_FOR = {
   'communication>console':    'com>con',
   'supervisor>results':       'sup>res',
   'results>console':          'res>con',
+  // Failure paths. Both agents report back up the same return arrow, so they
+  // share the success edge rather than leaving the hop unmapped — an
+  // unmapped hop lights nothing and reads as though it never happened.
+  'communication>supervisor': 'com>con',
+  'results>supervisor':       'res>con',
 };
 
 // A degraded step names the service that did not answer, so the box for it is
