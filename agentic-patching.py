@@ -2580,12 +2580,15 @@ def _run_async(cve_id: str, host_filter: str, host_limit: int) -> None:
     try:
         state = sup.run(cve_id, host_filter=host_filter, host_limit=host_limit)
         with _RUN_LOCK:
-            # Keep a status the Supervisor set for itself — flattening
-            # everything to 'complete' lost 'nothing_to_do', so an API
-            # consumer could not tell a plan with work in it from one
-            # where every host was already patched.
-            _RUN.update(state, status=state.get('status') or 'complete',
-                        error=None)
+            # 'complete' here means the background job finished, which is a
+            # different axis from what the Supervisor concluded — the console
+            # polls on it to know the assessment is done. Preserving the
+            # Supervisor's own status instead left it on
+            # 'awaiting_patch_dispatch' forever, so the plan never rendered
+            # and Assess appeared to hang. What the run concluded is carried
+            # by plan.verdict and already_patched, which is where the console
+            # reads it from anyway.
+            _RUN.update(state, status='complete', error=None)
     except BackendUnavailable as exc:
         with _RUN_LOCK:
             _RUN.update(status='failed', cve_id=cve_id, events=list(sup.events),
