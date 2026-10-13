@@ -111,6 +111,33 @@
   }
   #mode-banner .sub { font-weight: 500; opacity: .85; }
 
+  /* Sits on the Hosts heading, so it reads as a control for that table
+     rather than a page-level setting. */
+  .morecols {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    font-size: calc(11px * var(--ts)); font-weight: 500; letter-spacing: 0;
+    text-transform: none; color: var(--muted); cursor: pointer;
+  }
+  .morecols input { cursor: pointer; margin: 0; }
+  /* Eight columns leaves the history a narrow strip, and a 230px-tall row
+     per host turns the table into a wall. Clamped while the extra columns
+     are up; the full text is a tooltip away, or uncheck the box. */
+  table.wide .desc {
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; min-width: 200px; white-space: normal;
+  }
+  /* Eight columns are wider than the frame. Scrolling keeps every column
+     reachable; clipping silently hid the end of the history text. */
+  .tscroll { overflow-x: auto; }
+  /* macOS hides overlay scrollbars until you scroll, so the cut-off edge is
+     the only clue the table continues. Keep the bar visible. */
+  .tscroll::-webkit-scrollbar { height: 9px; }
+  .tscroll::-webkit-scrollbar-thumb {
+    background: var(--border); border-radius: 5px;
+  }
+  .tscroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  .sev-title { display: flex; align-items: center; gap: 8px; }
+
   .report-card {
     display: flex; align-items: center; gap: 14px; margin: 14px 0 6px;
     padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px;
@@ -2794,6 +2821,78 @@ function dispatchAction(plan) {
            calm: false, disabled: false };
 }
 
+// One row per host, from assessment through to outcome. There used to be two
+// tables listing the same five hosts — the plan's and the patch's — with a
+// column called Decision in each meaning different things: the risk routing
+// in one, the Approve/Reject buttons in the other. Rendered by its own
+// function because both renderers need to refresh it without redrawing the
+// frame around it.
+let showCols = localStorage.getItem('showCols') === '1';
+
+function renderHostTable(s) {
+  const el = document.getElementById('host-table');
+  if (!el) return;
+  const plan = s.plan || {};
+  const results = ((s.patch || {}).results) || [];
+  const byHost = {};
+  results.forEach(r => { byHost[r.host] = r; });
+  const dispatched = results.length > 0;
+
+  // The table redraws whenever any one row changes state, and replaying the
+  // entry animation on all five because one of them finished reads as the
+  // whole table reloading. It plays once per set of runs.
+  const sig = `${(s.hosts || []).length}:${results.map(r => r.execution_id).join(',')}`;
+  const fresh = sig !== patchRowSig;
+  patchRowSig = sig;
+
+  const rows = (s.hosts || []).map((h, i) => {
+    const r = byHost[h.host];
+    const o = r ? (OUTCOME[r.outcome] || { cls: 'review', label: r.outcome }) : null;
+    const canDecide = r && r.outcome === 'awaiting_approval'
+                   && r.approval_activity_id && !r._signal;
+    const action = !r ? '<span class="muted-sm">&mdash;</span>'
+      : canDecide
+        ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
+          + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
+      : r._signal ? '<span class="muted-sm">signalling…</span>'
+      : r._signalError ? `<span class="err-sm">${esc(r._signalError)}</span>`
+      : r.outcome === 'running'
+        ? `<span class="muted-sm">${r.decision === 'approved' ? 'approved — ' : ''}patching…</span>`
+      : '<span class="muted-sm">&mdash;</span>';
+    const prog = r ? stepProgress(r) : null;
+    return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
+      <td class="cve-id">${esc(h.host)}</td>
+      <td>${riskMeter(h, plan)}</td>
+      <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
+      ${dispatched ? `<td>${o ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
+                              : '<span class="muted-sm">&mdash;</span>'}</td>
+      <td class="decide-cell">${action}</td>` : ''}
+      ${showCols && dispatched ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
+      <td class="mono">${esc(((r || {}).execution_id || '').slice(0, 8))}</td>` : ''}
+      <td class="desc" title="${esc(h.history || h.reason)}">${esc(h.history || h.reason)}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="sev-title high" style="margin-top:18px">Hosts<span class="c">${(s.hosts || []).length}</span>
+      ${dispatched ? `<label class="morecols" title="Adds workflow progress and execution id. The table scrolls sideways to fit them."><input type="checkbox" id="more-cols"${showCols ? ' checked' : ''}> Show more columns</label>` : ''}
+    </div>
+    <div class="${showCols && dispatched ? 'tscroll' : ''}">
+    <table class="${showCols && dispatched ? 'wide' : ''}"><thead><tr>
+      <th>Host</th><th>Risk vs gate</th><th>Plan</th>
+      ${dispatched ? '<th>Outcome</th><th>Action</th>' : ''}
+      ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
+      <th>RAG history / reason</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  const cb = document.getElementById('more-cols');
+  if (cb) cb.addEventListener('change', e => {
+    showCols = e.target.checked;
+    localStorage.setItem('showCols', showCols ? '1' : '0');
+    renderHostTable(s);
+  });
+}
+
 function renderPlan(s) {
   // Parked here so leaving this view can offer a way back to it. Only
   // promoted to 'patch' by renderPatch, which runs after dispatch.
@@ -2802,13 +2901,6 @@ function renderPlan(s) {
   const plan = s.plan || {};
   const done = runFinished(s);
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
-  const hosts = (s.hosts || []).map((h, i) => `
-    <tr class="in" style="--i:${Math.min(i, 12)}">
-      <td class="cve-id">${esc(h.host)}</td>
-      <td>${riskMeter(h, plan)}</td>
-      <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
-      <td class="desc">${esc(h.history || h.reason)}</td>
-    </tr>`).join('');
 
   document.getElementById('list').innerHTML = `
     <div class="result" id="patch-result"></div>
@@ -2824,12 +2916,9 @@ function renderPlan(s) {
     ${renderDegraded(plan.degraded)}
     ${renderVerdict(plan, done)}
     ${notes}
-    <div class="sev-block" style="margin-top:18px">
-      <div class="sev-title high">Per-host assessment<span class="c">${(s.hosts||[]).length}</span></div>
-      <table><thead><tr><th>Host</th><th>Risk vs gate</th><th>Decision</th><th>RAG history / reason</th></tr></thead>
-      <tbody>${hosts}</tbody></table>
-    </div>
+    <div class="sev-block" style="margin-top:18px" id="host-table"></div>
     <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
+  renderHostTable(s);
   frameHead({
     title: 'Patch plan',
     sub: `<span class="cve-id">${cveLabel(plan.cve_id)}</span>`
@@ -2877,7 +2966,7 @@ const simChip = r => (r.simulated && showSrc())
   ? '<span class="badge sim">SIMULATED</span>' : '';
 
 let patchState = null;   // last /api/state payload, so rows can re-render in place
-let patchRowSig = '';    // which runs the patch table is currently showing
+let patchRowSig = '';    // which runs the host table is currently showing
 
 const STEP_DONE = ['completed', 'succeeded'];
 const STEP_BAD  = ['failed', 'error', 'rejected', 'cancelled'];
@@ -3099,34 +3188,6 @@ function renderPatch(s) {
   setTimeout(trackPatchRuns, 0);
   const p = s.patch || {};
   const sum = p.summary || {};
-  // The rows now redraw every time any one of them changes state, and
-  // re-running the entry animation on all five because one of them finished
-  // reads as the table reloading. It plays once per set of runs.
-  const sig = (p.results || []).map(r => r.execution_id).join(',');
-  const fresh = sig !== patchRowSig;
-  patchRowSig = sig;
-  const rows = (p.results || []).map((r, i) => {
-    const o = OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
-    const canDecide = r.outcome === 'awaiting_approval'
-                   && r.approval_activity_id && !r._signal;
-    const actions = canDecide
-      ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
-        + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
-      : r._signal ? '<span class="muted-sm">signalling…</span>'
-      : r._signalError ? `<span class="err-sm">${esc(r._signalError)}</span>`
-      : r.outcome === 'running'
-        ? `<span class="muted-sm">${r.decision === 'approved' ? 'approved — ' : ''}patching…</span>`
-      : '<span class="muted-sm">&mdash;</span>';
-    const prog = stepProgress(r);
-    return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
-      <td class="cve-id">${esc(r.host)}</td>
-      <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
-      <td class="decide-cell">${actions}</td>
-      <td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
-      <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
-    </tr>`;
-  }).join('');
-
   document.getElementById('patch-body').innerHTML = `
     <div class="sev-title high" style="margin-top:18px">
       Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
@@ -3138,15 +3199,15 @@ function renderPatch(s) {
       <div class="stat${sum.failed ? ' alert' : ''}"><div class="v">${esc(sum.failed)}</div><div class="k">Failed</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
     </div>
-    <table style="margin-top:10px">
-      <thead><tr><th>Host</th><th>Outcome</th><th>Decision</th><th>Workflow progress</th><th>Exec</th></tr></thead>
-      <tbody>${rows}</tbody></table>
     ${renderReport(s.report)}
     ${renderPublished(s.published)}
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
     <div class="note">Each host triggers its own Ansible Orchestrator execution.
       Hosts routed to <code>approved_patch</code> pause at the approval gate in the AO console.</div>
     <div class="note">Next: ${esc(s.next || 'n/a')}</div>`;
+  // Lives in renderPlan's half of the frame, so it has to be refreshed here
+  // too — this is the only place a row's outcome changes.
+  renderHostTable(s);
 }
 
 // Hands the approved plan to the Patching Agent, which triggers the
