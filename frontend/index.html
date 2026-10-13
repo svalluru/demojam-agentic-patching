@@ -220,6 +220,27 @@
     background: radial-gradient(circle at 1px 1px,
                 rgba(11,11,12,.055) 1px, transparent 0) 0 0 / 22px 22px;
   }
+  .frames { position: relative; transition: grid-template-columns .22s var(--ease); }
+  .frames.side-off { grid-template-columns: 0 1fr; gap: 0; }
+  .frames.side-off > #side-frame {
+    opacity: 0; pointer-events: none; overflow: hidden;
+    border-width: 0; min-width: 0;
+  }
+  #side-toggle {
+    position: absolute; top: 50%; left: 392px; transform: translate(-50%, -50%);
+    z-index: 5; width: 22px; height: 46px; padding: 0; cursor: pointer;
+    display: grid; place-items: center; font-size: 15px; line-height: 1;
+    color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 7px;
+    transition: left .22s var(--ease), color .15s, border-color .15s;
+  }
+  #side-toggle:hover { color: var(--accent); border-color: var(--accent); }
+  #side-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .frames.side-off #side-toggle { left: 10px; transform: translate(0, -50%); }
+  .frames.side-off #side-toggle span { transform: rotate(180deg); }
+  #side-toggle span { display: block; transition: transform .22s var(--ease); }
+  @media (max-width: 860px) { #side-toggle { display: none; } }
+
   .frame {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--r-lg); display: flex; flex-direction: column;
@@ -1943,10 +1964,18 @@
   </aside>
 </div>
 
-<div class="frames">
+<div class="frames" id="frames">
+
+  <!-- Sits on the seam, vertically centred, so it reads as belonging to the
+       divide rather than to either panel. The run keeps going while it is
+       collapsed — this hides the view, it does not stop anything. -->
+  <button id="side-toggle" type="button" aria-expanded="true"
+          aria-controls="side-frame" title="Hide the run panel">
+    <span aria-hidden="true">&#8249;</span>
+  </button>
 
   <!-- Frame 1 — enter a CVE -->
-  <section class="frame">
+  <section class="frame" id="side-frame">
     <div class="frame-head">
       <h2>Patch a CVE</h2>
       <!-- One word for where the run is, filled by renderSide(). The stage bar
@@ -2702,9 +2731,6 @@ function renderPublished(p) {
       <div class="report-title">Fed back for learning</div>
       <div class="report-sub">${(p.records || []).length} RAG record(s) &middot;
         ${p.rows} training row(s)${sim}</div>
-      <div class="report-ch">Re-ingest: <code>${esc(p.reingest || '')}</code></div>
-      <div class="report-ch">Retrain: <code>risk_score/training/build_dataset.py</code>
-        then <code>save_model.py</code></div>
     </div>
   </div>`;
 }
@@ -2916,7 +2942,6 @@ function renderPlan(s) {
     <div class="result" id="patch-result"></div>
     <div id="patch-stats"></div>
     <div class="sev-block" id="host-table"></div>
-    <div id="patch-body"></div>
     <div class="stats">
       <div class="stat"><div class="v">${esc(plan.cvss)}</div><div class="k">CVSS</div></div>
       <div class="stat"><div class="v">${esc(plan.hosts_total)}</div><div class="k">Hosts</div></div>
@@ -2928,6 +2953,10 @@ function renderPlan(s) {
     ${renderDegraded(plan.degraded)}
     ${renderVerdict(plan, done)}
     ${notes}
+    <!-- Last: the report and the learning records are what the run
+         produced, so they read as its output rather than as something
+         to scroll past on the way to the hosts and the plan. -->
+    <div id="patch-body"></div>
     <div class="note" style="margin-top:14px">Next: ${esc(s.next || 'n/a')}</div>`;
   renderHostTable(s);
   frameHead({
@@ -3220,9 +3249,7 @@ function renderPatch(s) {
     ${renderReport(s.report)}
     ${renderPublished(s.published)}
     ${simNotice((p.results || []).filter(r => r.simulated).length)}
-    <div class="note">Each host triggers its own Ansible Orchestrator execution.
-      Hosts routed to <code>approved_patch</code> pause at the approval gate in the AO console.</div>
-    <div class="note">Next: ${esc(s.next || 'n/a')}</div>`;
+    `;
   // Lives in renderPlan's half of the frame, so it has to be refreshed here
   // too — this is the only place a row's outcome changes.
   renderHostTable(s);
@@ -4629,6 +4656,21 @@ document.getElementById('revert-settings').addEventListener('click', async () =>
 });
 
 renderStages({});
+// Collapsing the run panel is a view preference, so it outlives the session
+// the way the column toggle does.
+(() => {
+  const frames = document.getElementById('frames');
+  const btn = document.getElementById('side-toggle');
+  const apply = off => {
+    frames.classList.toggle('side-off', off);
+    btn.setAttribute('aria-expanded', String(!off));
+    btn.title = off ? 'Show the run panel' : 'Hide the run panel';
+    localStorage.setItem('sideOff', off ? '1' : '0');
+  };
+  apply(localStorage.getItem('sideOff') === '1');
+  btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
+})();
+
 renderMode().finally(() => loadCves(0));
 
 </script>
