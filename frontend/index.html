@@ -1203,6 +1203,13 @@
      branch stacks inside it at half the line height, so the header does not
      grow and the two stages still read as peers of each other rather than
      as a continuation of Patch. */
+  #demo-chip {
+    flex: none; padding: 3px 9px; border-radius: 999px;
+    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: .9px;
+    color: #fff; background: #b45309;
+  }
+  #demo-chip[hidden] { display: none; }
+
   .stage-fork {
     width: 18px; height: 22px; margin: 0 2px 0 9px; flex: none;
     border-left: 2px solid var(--border);
@@ -1710,6 +1717,10 @@
   </div>
   <!-- Where the run is, across the top, filled by renderStages(). -->
   <nav class="stages" id="stages" aria-label="Run progress"></nav>
+  <!-- Always on in demo mode, unlike the banner above, which only appears
+       with source labelling turned on. Someone walking up to the screen, or
+       looking at a screenshot of it, should be able to tell. -->
+  <span id="demo-chip" hidden>DEMO</span>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
   <div class="head-tools">
   <button class="icon-btn" id="open-guide" title="Demo guide" aria-label="Demo guide">
@@ -4635,6 +4646,15 @@ async function renderMode() {
   // Demo mode is banner-worthy because every number on the page is staged.
   // Live mode is not: nothing is substituted, so there is nothing to warn
   // about — a failure there announces itself by failing.
+  // The chip is not behind showSrc(): it says which mode the console is in,
+  // not that a particular value was substituted, and that is worth knowing
+  // whatever the page is doing about source labels.
+  const chip = document.getElementById('demo-chip');
+  if (chip) {
+    chip.hidden = m.mode !== 'demo';
+    chip.title = 'Demo mode — every value is staged, no endpoint is '
+               + 'contacted and nothing will be patched.';
+  }
   if (m.mode === 'demo' && showSrc()) {
     el.innerHTML = `<span class="tag">DEMO</span>
       <span>Staged data &mdash; every value on this page is a stored default.</span>

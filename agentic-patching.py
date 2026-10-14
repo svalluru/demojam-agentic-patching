@@ -909,7 +909,24 @@ def is_sim(execution_id: str) -> bool:
 # How long a patch counts as "already done" for the same CVE. A host does
 # not become vulnerable again on its own, so this is really about how stale
 # a record has to be before it is worth re-checking rather than trusting.
-PATCHED_WITHIN_DAYS = int(env('PATCHED_WITHIN_DAYS', '7'))
+# Minutes, not days, so the same knob serves both audiences: 10080 is the
+# week a real estate wants, and a demo can drop it to 1 — or 0 — to assess
+# the same CVE repeatedly. In days the smallest useful demo value was 0,
+# which turns the guard off rather than shortening it.
+PATCHED_WITHIN_MINUTES = int(env('PATCHED_WITHIN_MINUTES', '10080'))
+
+
+def human_window(minutes: int) -> str:
+    """The window as an operator would say it, whatever unit it was set in."""
+    if minutes <= 0:
+        return 'no window — every host is re-assessed'
+    if minutes < 60:
+        return f'{minutes} minute(s)'
+    if minutes < 1440:
+        h = minutes / 60
+        return f'{h:g} hour(s)'
+    d = minutes / 1440
+    return f'{d:g} day(s)'
 
 
 def already_patched(cve_id: str, agent: 'PatchingAgent') -> dict[str, dict]:
@@ -921,14 +938,14 @@ def already_patched(cve_id: str, agent: 'PatchingAgent') -> dict[str, dict]:
     Guessing the wrong way here would hide a host that was never patched,
     which is worse than patching one twice.
     """
-    if not cve_id:
-        return {}
+    if not cve_id or PATCHED_WITHIN_MINUTES <= 0:
+        return {}                      # guard disabled: assess everything
     try:
         runs = agent.recent_runs(200)
     except BackendUnavailable:
         return {}                      # no history to go on; assess everything
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=PATCHED_WITHIN_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=PATCHED_WITHIN_MINUTES)
     out: dict[str, dict] = {}
     for r in runs:
         if r.get('cve_id') != cve_id or not r.get('host'):
@@ -1451,7 +1468,8 @@ class Supervisor:
             detail['count'] = len(detail['hosts'])
             self.trace('supervisor', 'console',
                        f'{len(skipped)} host(s) already patched for {cve_id} '
-                       f'within {PATCHED_WITHIN_DAYS}d — not re-assessed')
+                       f'within {human_window(PATCHED_WITHIN_MINUTES)} '
+                       f'— not re-assessed')
 
         # Everything already done. Agent 1 would raise "affects no registered
         # systems" here, which is the wrong story: the CVE does affect them,
@@ -1468,7 +1486,8 @@ class Supervisor:
                     'risk_source': 'n/a', 'threshold': REVIEW_THRESHOLD,
                     'notes': [f'All {len(skipped)} affected host(s) were patched '
                               f'for {cve_id} within the last '
-                              f'{PATCHED_WITHIN_DAYS} day(s). Nothing to do.'],
+                              f'{human_window(PATCHED_WITHIN_MINUTES)}. '
+                              f'Nothing to do.'],
                     'degraded': [dict(d) for d in DEGRADED],
                 },
                 'already_patched': [
@@ -2335,6 +2354,14 @@ SETTINGS: tuple[Setting, ...] = (
             'runs score with a heuristic on a different scale and gate on a '
             'constant beside it in fallbacks.py.',
             binds='REVIEW_THRESHOLD'),
+    Setting('PATCHED_WITHIN_MINUTES', 'Triage', 'Skip hosts patched within',
+            'int', '10080',
+            'A host patched for this CVE inside this window is left out of a '
+            're-assessment, so the plan only lists outstanding work. 10080 is '
+            'seven days. Set 0 to turn the guard off and assess every host '
+            'every time — which is what you want to run the same demo CVE '
+            'twice in a row.',
+            binds='PATCHED_WITHIN_MINUTES'),
     Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
             'Restrict an assessment to hosts whose name contains this.'),
     Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
@@ -2871,7 +2898,7 @@ class Handler(BaseHTTPRequestHandler):
                               else 'No assessment available'),
                     'detail': (f'All {len(skipped)} affected host(s) were already '
                                f'patched for {snapshot.get("cve_id")} within the '
-                               f'last {PATCHED_WITHIN_DAYS} day(s).' if skipped else
+                               f'last {human_window(PATCHED_WITHIN_MINUTES)}.' if skipped else
                                'Run "Assess CVE Impact" first — the Patching Agent '
                                'needs each host\'s decision to pick a workflow branch.')})
                 return

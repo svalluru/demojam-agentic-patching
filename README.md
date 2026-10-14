@@ -319,7 +319,7 @@ the `(heuristic)` that names where the score came from is hidden.
 | `CONNECT_TIMEOUT=3` | reachability budget per service |
 | `CIRCUIT_TTL=30` | how long a service stays tripped after failing |
 | `DEMO_LATENCY=0.35` | offline-only pause per agent step; `0` disables |
-| `PATCHED_WITHIN_DAYS=7` | how recently a host must have been patched for this CVE to be left out of a re-assessment; `0` disables the skip |
+| `PATCHED_WITHIN_MINUTES=10080` | how recently a host must have been patched for this CVE to be left out of a re-assessment. 10080 is seven days; `0` turns the guard off, which is what lets you run the same demo CVE twice |
 
 Simulated runs persist to `runs/simulated.json` so the Patch runs page survives
 a restart. Real runs need no such thing — AO is their store. Delete the file to
@@ -508,7 +508,7 @@ records, which are authored and reviewed; `ingest.py` recurses, so both are
 picked up.
 
 **Re-assessing a CVE skips hosts already patched for it.** Within
-`PATCHED_WITHIN_DAYS` they are dropped before agent 1 runs, so scoring, RAG
+`PATCHED_WITHIN_MINUTES` they are dropped before agent 1 runs, so scoring, RAG
 lookups and operator review go to outstanding work only — and they are listed
 in the plan, because quietly showing fewer hosts than the CVE affects is
 indistinguishable from missing some. Only runs provable to have reached
