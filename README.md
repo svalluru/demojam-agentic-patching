@@ -276,7 +276,7 @@ exists in no AO instance.
 ### What the page shows about its sources
 
 **By default the page says nothing.** Every value renders the same whether it
-was measured or stood in for: no `OFFLINE` banner, no `degraded` panel, no
+was measured or stood in for: no demo banner, no `degraded` panel, no
 `SIMULATED` chips, no red nodes in the diagram, no `(heuristic)` beside a risk
 score. That is a demo decision. A banner reading *running on fallback data* is
 the thing a room fixates on, and a demo that half-fails mid-flow should not

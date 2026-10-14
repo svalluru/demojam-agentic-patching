@@ -18,10 +18,10 @@ Design: fallbacks are allowed but never silent. Every external call either
 succeeds or raises BackendUnavailable naming the service and the fix; the
 caller may then substitute a stored default from fallbacks.py, but the
 substitution is recorded in DEGRADED and travels with the report, because the
-patch plan is what a human approves against. STRICT=true disables all of it and
-re-raises; OFFLINE=1 runs entirely on stored defaults and touches no network.
-Remediation is the exception that is never faked silently — see
-PatchingAgent.patch_host and FALLBACK_PATCH.
+patch plan is what a human approves against. That is demo mode. MODE=live
+uses real endpoints only and raises rather than substituting anything,
+because a plan built partly from stored defaults is not something to approve
+a production change against.
 
 Usage
 -----
@@ -234,8 +234,8 @@ def circuit(service: str) -> None:
     # hook. Raising before the preflight keeps it instant — pointing the URLs
     # at a dead host would still cost CONNECT_TIMEOUT per service.
     if offline():
-        raise BackendUnavailable(service, 'offline mode',
-                                 'unset OFFLINE to use the real service')
+        raise BackendUnavailable(service, 'demo mode',
+                                 'set MODE=live to use the real service')
     entry = _DOWN.get(service)
     if not entry:
         return

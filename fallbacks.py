@@ -5,8 +5,9 @@ anything derived from it must be labelled `degraded` and carry `source` all the
 way to the operator — the patch plan is what a human approves against, and
 an unlabelled guess is worse than an outright failure.
 
-Set STRICT=true to disable all of it and let the real error surface instead;
-that is the mode to use when you are checking what is actually wired up.
+MODE=live disables all of it and lets the real error surface instead; that
+is the mode to use against real infrastructure, and for checking what is
+actually wired up.
 
 Hosts here are deliberately the pay-app-* names that rag-setup/data/ describes,
 so a fully offline demo still produces coherent history lookups.
@@ -146,14 +147,10 @@ def history(host: str) -> str:
 # Agent 2 hands steps 5-10 to Ansible Orchestrator. When AO is down there are
 # two possible fallbacks and the choice is a policy one:
 #
-#   simulate    (default) run the workflow locally so the console can be
-#               demonstrated end to end. Nothing is patched. Every result is
-#               marked degraded/source=fallback and carries a sim- execution
-#               id that exists nowhere in AO.
-#   unavailable report that the workflow was never dispatched. Honest, but it
-#               stops the demo at the first host.
-#
-# Set FALLBACK_PATCH=unavailable for the second. STRICT=true disables both.
+# Demo mode runs the workflow locally so the console can be demonstrated end
+# to end. Nothing is patched: every result is marked degraded/source=fallback
+# and carries an execution id that exists in no AO instance. Live mode never
+# reaches here — it raises instead.
 
 # Mirrors the node sequence of the AO workflow 'DemoJam Agentic Patching',
 # which implements steps 5-10 of the architecture. route_switch and
