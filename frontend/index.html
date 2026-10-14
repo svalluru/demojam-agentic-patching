@@ -1198,6 +1198,37 @@
   .stage.active .stage-label { color: var(--red); }
   /* Not reached and not coming. Dimmed rather than struck through, which at
      11px turns into an unreadable smudge. */
+  /* ---- the fork after Patch ----
+     Two branches off one connector. The bar stays a single row high: the
+     branch stacks inside it at half the line height, so the header does not
+     grow and the two stages still read as peers of each other rather than
+     as a continuation of Patch. */
+  .stage-fork {
+    width: 18px; height: 22px; margin: 0 2px 0 9px; flex: none;
+    border-left: 2px solid var(--border);
+    border-top: 2px solid var(--border);
+    border-bottom: 2px solid var(--border);
+    border-radius: 3px 0 0 3px;
+  }
+  .stage-fork.on { border-color: var(--red); }
+  .stage-branch {
+    display: flex; flex-direction: column; gap: 3px; flex: none;
+  }
+  /* Half-size inside the branch: two of them occupy the height of one
+     ordinary stage, which is what keeps the header one row tall. */
+  .stage-branch .stage-icon { width: 19px; height: 19px; }
+  .stage-branch .stage-icon svg { width: 11px; height: 11px; }
+  .stage-branch .stage { gap: 6px; }
+  .stage-branch .stage-label { font-size: calc(10px * var(--ts)); }
+
+  /* A branch that ran and failed: finished, and wrong. Neither pending nor
+     done, and the only state in the bar that needs its own colour. */
+  .stage.failed .stage-icon {
+    background: var(--panel); border-style: solid; border-color: var(--red);
+    color: var(--red);
+  }
+  .stage.failed .stage-label { color: var(--red); }
+
   .stage.skipped .stage-icon { opacity: .4; }
   .stage.skipped .stage-label { opacity: .4; font-weight: 600; }
 
@@ -1211,6 +1242,7 @@
   @media (max-width: 1240px) {
     .stage-label { display: none; }
     .stage-link { width: 16px; margin: 0 6px; }
+    .stage-fork { margin-left: 6px; width: 12px; }
   }
   @media (max-width: 880px) { .stages { display: none; } }
 
@@ -2447,6 +2479,20 @@ const STAGES = [
     tip: 'Steps 5–10, one Ansible Orchestrator workflow run per host.' },
 ];
 
+// Agents 3 and 4 branch off Patch rather than queueing behind it. Neither
+// waits on the other's result and a failure in one does not stop the other,
+// and they are visibly out of step: at the approval gate the report has
+// already been written while the outcome has nothing settled to publish. A
+// single stage after Patch would have to render itself half-done.
+const BRANCH = [
+  { key: 'notify', label: 'Notify', icon: ICON.doc,
+    tip: 'Agent 3 writes the patch status report. Slack and ServiceNow are '
+       + 'not wired up yet, so nothing is sent — the PDF is the deliverable.' },
+  { key: 'learn',  label: 'Learn',  icon: ICON.pulse,
+    tip: 'Agent 4 feeds the outcome back: a RAG record per host and a row '
+       + 'per host in the risk model training data.' },
+];
+
 // Derived from what the state actually proves, not from the trace alone:
 // 'risk-model' and 'rag' never appear in the events when their service was
 // unreachable, but the scoring and the lookup still happened — via the
@@ -2476,8 +2522,18 @@ function stageStates(s) {
     patch:   !!(p && !atGate && !inflight),
   };
 
+  // Each branch reports on its own payload, not on the stage before it.
+  const report = s.report || {};
+  const pub = s.published || {};
+  done.notify = !!(report.file && !report.error);
+  done.learn = !!(pub.rows && !pub.error);
+
   const st = {};
-  STAGES.forEach(x => { st[x.key] = done[x.key] ? 'done' : 'pending'; });
+  [...STAGES, ...BRANCH].forEach(
+    x => { st[x.key] = done[x.key] ? 'done' : 'pending'; });
+  // A branch that ran and failed is not pending — it is finished and wrong.
+  if (report.error) st.notify = 'failed';
+  if (pub.error) st.learn = 'failed';
 
   // Active covers both halves of the gate: the operator reading the plan
   // before dispatching, and the hosts parked at the workflow's approval node
@@ -2495,6 +2551,21 @@ function stageStates(s) {
   return st;
 }
 
+// The fork itself: one connector that splits, and the two stages stacked
+// against it. Drawn as markup rather than an SVG so the stages keep the same
+// hover, title and state classes as the linear ones.
+function renderBranch(st) {
+  const lit = ['done', 'skipped'].includes(st.patch) ? ' on' : '';
+  const row = x => `<div class="stage ${st[x.key]}" title="${esc(x.label)} — ${esc(x.tip)}">
+      <span class="stage-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+        stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+        stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
+      <span class="stage-label">${esc(x.label)}</span>
+    </div>`;
+  return `<span class="stage-fork${lit}" aria-hidden="true"></span>
+    <div class="stage-branch">${BRANCH.map(row).join('')}</div>`;
+}
+
 function renderStages(s) {
   const st = stageStates(s);
   document.getElementById('stages').innerHTML = STAGES.map((x, i) => {
@@ -2508,7 +2579,7 @@ function renderStages(s) {
         stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
       <span class="stage-label">${esc(x.label)}</span>
     </div>`;
-  }).join('');
+  }).join('') + renderBranch(st);
   renderSide(s);
   renderTrace(s);
 }
