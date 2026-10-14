@@ -1427,6 +1427,14 @@
     color: var(--accent); border-bottom-color: var(--accent);
   }
   .set-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .set-tabs button:disabled {
+    opacity: .4; cursor: not-allowed; color: var(--muted);
+    border-bottom-color: transparent;
+  }
+  .pane-note.off {
+    padding: 10px 12px; border-radius: var(--r-xs);
+    background: var(--surface); color: var(--muted);
+  }
   .pane-note {
     font-size: calc(11px * var(--ts)); line-height: 1.6; color: var(--muted);
     margin-bottom: 12px;
@@ -4640,6 +4648,14 @@ function renderSettings() {
   ends.innerHTML = '';
   adv.innerHTML = '';
   modeBox.innerHTML = '';
+
+  // Read the mode from the settings themselves rather than the MODE global,
+  // which renderMode() fills asynchronously — the drawer can be opened
+  // before that has landed, and a wrong answer here greys out the one
+  // control that gets you back.
+  const modeSetting = SETTINGS.find(x => x.key === 'MODE');
+  const isDemo = !modeSetting || String(modeSetting.value) !== 'live';
+  setPanesEnabled(!isDemo);
   let group = null;
   for (const s of SETTINGS) {
     // Mode is pinned above the tabs, so it skips the group machinery.
@@ -4751,6 +4767,37 @@ document.getElementById('text-size').addEventListener('click', e => {
 setTextSize(document.documentElement.dataset.ts || 'm');
 
 // One handler for every row's i, including the Text size row above
+// Both panes are inert in demo mode: nothing in Endpoints is contacted, so
+// the tabs are disabled rather than offering settings that have no bearing
+// on the run in front of you. Mode stays live above them — disabling that
+// too would leave no way back to live.
+function setPanesEnabled(on) {
+  const tabs = [...document.querySelectorAll('.set-tabs button')];
+  tabs.forEach(b => {
+    b.disabled = !on;
+    b.setAttribute('aria-disabled', String(!on));
+  });
+  document.getElementById('pane-endpoints').hidden = !on;
+  document.getElementById('pane-advanced').hidden = true;
+  if (on) tabs.forEach(b => b.setAttribute('aria-selected',
+                                           String(b.dataset.pane === 'endpoints')));
+
+  let note = document.getElementById('panes-off');
+  if (!on) {
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'panes-off';
+      note.className = 'pane-note off';
+      document.querySelector('.set-tabs').after(note);
+    }
+    note.innerHTML = 'Settings are disabled in demo mode — every step runs on '
+      + 'staged data, so no endpoint and no timeout applies. Switch Mode to '
+      + '<strong>live</strong> above to edit them.';
+  } else if (note) {
+    note.remove();
+  }
+}
+
 // Tabs. Bound once at load, not in renderSettings, which replaces only the
 // generated rows inside each pane.
 document.querySelectorAll('.set-tabs button').forEach(btn => {
