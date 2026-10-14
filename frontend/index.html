@@ -2179,7 +2179,7 @@ function rows(list) {
       // Resume means "a run of this CVE is unfinished". A finished one is
       // not resumable — it reports how it ended instead.
       const fin = completed.get(c.id);
-      const on = parked && parkedPhase && parked.cve_id === c.id && !runFinished(parked);
+      const on = parked && parkedPhase && parked.cve_id === c.id && resumable(parked);
       return `
       <tr class="in${on ? ' sel' : ''}" style="--i:${Math.min(i, 12)}" data-id="${esc(c.id)}">
         <td class="cve-id">${cveLabel(c.id)}${c.known_exploit ? '<span class="exploit">EXPLOIT</span>' : ''}</td>
@@ -2227,6 +2227,14 @@ function runFinished(s) {
   return rs.length > 0 && rs.every(r => TERMINAL.includes(r.outcome));
 }
 
+// Whether there is anything to come back to. Not the same as "unfinished":
+// a re-assessment that found every host already patched has no dispatched
+// runs, so runFinished() is false for it, and the CVE row offered Resume
+// into a plan with nothing in it.
+function resumable(s) {
+  return !!s && (((s.hosts) || []).length > 0) && !runFinished(s);
+}
+
 // CVE id -> how its last completed run ended, so the list can say so.
 const completed = new Map();
 
@@ -2267,7 +2275,7 @@ function frameHead({ title, sub = '', pills = false, back = null,
   document.getElementById('head-roi').hidden = !roi;
 
   const r = document.getElementById('head-resume');
-  const open = resume && parked && parkedPhase;
+  const open = resume && parked && parkedPhase && resumable(parked);
   r.hidden = !open;
   if (open) {
     // Names the CVE, because by the time someone has been through the run
