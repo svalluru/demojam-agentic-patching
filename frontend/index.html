@@ -1412,6 +1412,26 @@
     display: flex; align-items: center; gap: 10px; flex-shrink: 0;
     padding: 14px 18px; border-bottom: 1px solid var(--border);
   }
+  .set-tabs {
+    display: flex; gap: 2px; margin: 4px 0 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .set-tabs button {
+    flex: 1; padding: 8px 10px; cursor: pointer; background: none;
+    border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-size: calc(11.5px * var(--ts)); font-weight: 800; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .set-tabs button:hover { color: var(--text); }
+  .set-tabs button[aria-selected="true"] {
+    color: var(--accent); border-bottom-color: var(--accent);
+  }
+  .set-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .pane-note {
+    font-size: calc(11px * var(--ts)); line-height: 1.6; color: var(--muted);
+    margin-bottom: 12px;
+  }
+
   .drawer-head h2 { font-size: calc(15px * var(--ts)); font-weight: 700; }
   .drawer-head .icon-btn { margin-left: auto; }
   .drawer-note {
@@ -1963,28 +1983,46 @@
       Fields show their built-in default until something overrides them.
     </div>
     <div class="drawer-body">
-      <!-- Outside #settings-body, which renderSettings() empties on every
-           load. This one belongs to the browser, not to the process, so it
-           must not come and go with a fetch that can fail. -->
-      <div class="set-group">Display</div>
-      <div class="set-row">
-        <div class="set-name">Text size<span class="set-key">this browser only</span><button
-             type="button" class="set-info" aria-expanded="false"
-             title="What this does">i</button></div>
-        <div class="seg" id="text-size" role="group" aria-label="Text size">
-          <button type="button" data-ts="s">Small</button>
-          <button type="button" data-ts="m">Medium</button>
-          <button type="button" data-ts="l">Large</button>
-        </div>
-        <!-- Opened by the i above, through the one delegated handler that
-             serves this row and every generated one. -->
-        <div class="set-help" hidden>Applies the moment you pick it and is remembered in
-          this browser. Nothing is sent to the server and nobody else's view
-          changes. Small is what the console looked like before this existed.</div>
+      <!-- Mode sits above the tabs on purpose: it decides whether anything in
+           Endpoints is contacted at all, so burying it in one tab would let
+           someone read a pane of URLs the run is not using. -->
+      <div id="settings-mode"></div>
+
+      <div class="set-tabs" role="tablist" aria-label="Settings sections">
+        <button type="button" role="tab" data-pane="endpoints" aria-selected="true">Endpoints</button>
+        <button type="button" role="tab" data-pane="advanced" aria-selected="false">Advanced</button>
       </div>
 
-      <div id="settings-body">
-        <div class="empty"><div class="spinner"></div><span>Loading settings…</span></div>
+      <div id="pane-endpoints" role="tabpanel">
+        <div class="pane-note">The external services this console talks to —
+          what <code>.env</code> carries. Live mode needs them; in demo mode
+          none is contacted.</div>
+        <div id="settings-endpoints">
+          <div class="empty"><div class="spinner"></div><span>Loading settings…</span></div>
+        </div>
+      </div>
+
+      <div id="pane-advanced" role="tabpanel" hidden>
+        <!-- Outside the generated lists, which renderSettings() empties on
+             every load. This one belongs to the browser, not to the process,
+             so it must not come and go with a fetch that can fail. -->
+        <div class="set-group">Display</div>
+        <div class="set-row">
+          <div class="set-name">Text size<span class="set-key">this browser only</span><button
+               type="button" class="set-info" aria-expanded="false"
+               title="What this does">i</button></div>
+          <div class="seg" id="text-size" role="group" aria-label="Text size">
+            <button type="button" data-ts="s">Small</button>
+            <button type="button" data-ts="m">Medium</button>
+            <button type="button" data-ts="l">Large</button>
+          </div>
+          <!-- Opened by the i above, through the one delegated handler that
+               serves this row and every generated one. -->
+          <div class="set-help" hidden>Applies the moment you pick it and is remembered in
+            this browser. Nothing is sent to the server and nobody else's view
+            changes. Small is what the console looked like before this existed.</div>
+        </div>
+        <div id="settings-advanced"></div>
       </div>
     </div>
     <div class="drawer-foot">
@@ -4588,17 +4626,33 @@ function settingField(s) {
   return i;
 }
 
+// Which pane a group belongs in. Endpoints is the external services — what
+// .env carries and what live mode needs. Everything else tunes the console's
+// own behaviour, and sits behind Advanced so the pane someone opens to check
+// a URL is not fifteen rows of timeouts first.
+const ENDPOINT_GROUPS = new Set(
+  ['Insights', 'Risk model', 'RAG', 'Ansible Orchestrator']);
+
 function renderSettings() {
-  const body = document.getElementById('settings-body');
-  body.innerHTML = '';
+  const ends = document.getElementById('settings-endpoints');
+  const adv = document.getElementById('settings-advanced');
+  const modeBox = document.getElementById('settings-mode');
+  ends.innerHTML = '';
+  adv.innerHTML = '';
+  modeBox.innerHTML = '';
   let group = null;
   for (const s of SETTINGS) {
+    // Mode is pinned above the tabs, so it skips the group machinery.
+    const body = s.group === 'Mode' ? modeBox
+               : ENDPOINT_GROUPS.has(s.group) ? ends : adv;
     if (s.group !== group) {
       group = s.group;
-      const h = document.createElement('div');
-      h.className = 'set-group';
-      h.append(group);
-      body.appendChild(h);
+      if (s.group !== 'Mode') {
+        const h = document.createElement('div');
+        h.className = 'set-group';
+        h.append(group);
+        body.appendChild(h);
+      }
     }
     const row = document.createElement('div');
     row.className = 'set-row';
@@ -4697,7 +4751,19 @@ document.getElementById('text-size').addEventListener('click', e => {
 setTextSize(document.documentElement.dataset.ts || 'm');
 
 // One handler for every row's i, including the Text size row above
-// #settings-body, which renderSettings() never touches. Delegated because the
+// Tabs. Bound once at load, not in renderSettings, which replaces only the
+// generated rows inside each pane.
+document.querySelectorAll('.set-tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.set-tabs button').forEach(b => {
+      const on = b === btn;
+      b.setAttribute('aria-selected', String(on));
+      document.getElementById(`pane-${b.dataset.pane}`).hidden = !on;
+    });
+  });
+});
+
+// the Display row, which renderSettings() never touches. Delegated because the
 // rows below it are rebuilt on every load and save, and a listener attached
 // per button would have to be reattached with them.
 document.getElementById('settings-drawer').addEventListener('click', e => {
@@ -4712,7 +4778,7 @@ document.getElementById('settings-drawer').addEventListener('click', e => {
 function openSettings() {
   document.getElementById('settings-scrim').hidden = false;
   loadSettings().catch(e => {
-    document.getElementById('settings-body').innerHTML =
+    document.getElementById('settings-endpoints').innerHTML =
       `<div class="empty"><span class="err-sm">${esc(e.message)}</span></div>`;
   });
 }
