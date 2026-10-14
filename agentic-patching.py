@@ -2267,27 +2267,6 @@ SETTINGS: tuple[Setting, ...] = (
             'against.',
             choices=('demo', 'live')),
 
-    # --- triage -----------------------------------------------------------
-    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold', 'float', '30',
-            'Risk score above which a host needs operator approval. This is '
-            'the model\'s scale, so it is the gate for every live run. Demo '
-            'runs score with a heuristic on a different scale and gate on a '
-            'constant beside it in fallbacks.py.',
-            binds='REVIEW_THRESHOLD'),
-    Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
-            'Restrict an assessment to hosts whose name contains this.'),
-    Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
-            'Cap the number of hosts assessed. 0 means no cap.'),
-    Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
-            f'Reported in the patch plan. Empty uses {DEFAULT_WINDOW!r}.',
-            binds='MAINTENANCE_WINDOW'),
-    Setting('MAX_ATTEMPTS_PER_HOST', 'Triage', 'Max attempts per host', 'int', '2',
-            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
-            binds='Supervisor.MAX_ATTEMPTS_PER_HOST'),
-    Setting('MAX_FAILED_PER_PHASE', 'Triage', 'Max failures per phase', 'int', '2',
-            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
-            binds='Supervisor.MAX_FAILED_PER_PHASE'),
-
     # --- ROI --------------------------------------------------------------
     # The manual baseline is guesswork by construction, so every input to it
     # is exposed. Someone who disagrees with the comparison can change the
@@ -2348,6 +2327,27 @@ SETTINGS: tuple[Setting, ...] = (
             'weakest assumption here, and the first question anyone with a '
             'budget asks. Set it to 0 to hide the payback card.',
             binds='fallbacks.ROI_PLATFORM_COST'),
+
+    # --- triage -----------------------------------------------------------
+    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold', 'float', '30',
+            'Risk score above which a host needs operator approval. This is '
+            'the model\'s scale, so it is the gate for every live run. Demo '
+            'runs score with a heuristic on a different scale and gate on a '
+            'constant beside it in fallbacks.py.',
+            binds='REVIEW_THRESHOLD'),
+    Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
+            'Restrict an assessment to hosts whose name contains this.'),
+    Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
+            'Cap the number of hosts assessed. 0 means no cap.'),
+    Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
+            f'Reported in the patch plan. Empty uses {DEFAULT_WINDOW!r}.',
+            binds='MAINTENANCE_WINDOW'),
+    Setting('MAX_ATTEMPTS_PER_HOST', 'Triage', 'Max attempts per host', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_ATTEMPTS_PER_HOST'),
+    Setting('MAX_FAILED_PER_PHASE', 'Triage', 'Max failures per phase', 'int', '2',
+            'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
+            binds='Supervisor.MAX_FAILED_PER_PHASE'),
 
     # --- timeouts ---------------------------------------------------------
     Setting('CONNECT_TIMEOUT', 'Timeouts', 'Connect (reachability)', 'float', '3',
