@@ -90,12 +90,18 @@ def cve_detail(cve_id: str) -> dict[str, Any]:
 
 # ----------------------------------------------------------------- step 3
 
-# The model clamps to 0-100 and this does not, so the two are not on the same
-# scale. A heuristic score of 30 does not mean what a model score of 30 means,
-# which is why the caller has to use HEURISTIC_THRESHOLD rather than the usual
-# one. cvss*6 alone passes 30 at CVSS 5.0, so almost everything would otherwise
-# land in 'review'.
-HEURISTIC_THRESHOLD = float(os.environ.get('HEURISTIC_THRESHOLD', '55') or 55)
+# The gate for heuristic scores, and a constant rather than a setting: it is
+# only meaningful alongside the formula below, and it is only ever reached in
+# demo mode — a live run scores with the model or fails.
+#
+# The model clamps to 0-100 from a fitted distribution and this is a straight
+# line, so a 30 does not mean the same thing in each. cvss*6 alone passes the
+# model's gate of 30 at CVSS 5.0, which would put every CVE above that into
+# review and leave the unattended branch never exercised. At 55 the two demo
+# CVEs split: CVSS 10.0 scores ~66 and stops at the gate, CVSS 7.8 scores ~50
+# and patches unattended. Change this and the formula together, or the demo
+# loses one of its two paths.
+HEURISTIC_THRESHOLD = 55.0
 
 
 def heuristic_risk(cvss: float, age_days: int, affected_hosts: int) -> float:

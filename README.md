@@ -177,7 +177,6 @@ indistinguishable from one that succeeded unless the plan says so outright.
 | `HOSTS_FILTER=pay-app-07` | restrict to matching hosts |
 | `HOSTS_LIMIT=3` | cap host count |
 | `REVIEW_THRESHOLD=30` | risk score above which a host needs approval — model scores only |
-| `HEURISTIC_THRESHOLD=55` | the same gate for heuristic scores, which are not on the same scale. This is the one in play whenever the risk model is unreachable, so it governs the whole offline demo |
 | `AO_WORKFLOW_NAME` | workflow to trigger (default `DemoJam Agentic Patching`) |
 | `AO_DECIDE_WAIT=90` | seconds to wait for a run to settle after approve/reject |
 | `LAB_TAG` | passed to the workflow as `lab_tag` |
@@ -262,7 +261,7 @@ All staged data lives in one file, [`fallbacks.py`](fallbacks.py).
 | C1 CVE list | Insights | 2 real CVEs with real CVSS |
 | C2 affected hosts | Insights | 5 hosts for CVE-2024-3094, 2 for CVE-2024-1086 |
 | 1 patch history | Llama Stack / Milvus | canned per-host summaries |
-| 3 risk score | XGBoost on OpenShift | heuristic, threshold 55 not 30 |
+| 3 risk score | XGBoost on OpenShift | heuristic; gated at 55 rather than the model's 30, since the two are not on the same scale — both live in `fallbacks.py` |
 | 5–10 remediation | Ansible Orchestrator | simulated run, local to this console |
 
 The two CVEs route differently on purpose: CVE-2024-3094 at CVSS 10.0 sends all

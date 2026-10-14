@@ -2268,16 +2268,12 @@ SETTINGS: tuple[Setting, ...] = (
             choices=('demo', 'live')),
 
     # --- triage -----------------------------------------------------------
-    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold (model)', 'float', '30',
-            'Risk score above which a host needs operator approval. Applies '
-            'only when the score came from the model — see below.',
+    Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold', 'float', '30',
+            'Risk score above which a host needs operator approval. This is '
+            'the model\'s scale, so it is the gate for every live run. Demo '
+            'runs score with a heuristic on a different scale and gate on a '
+            'constant beside it in fallbacks.py.',
             binds='REVIEW_THRESHOLD'),
-    Setting('HEURISTIC_THRESHOLD', 'Triage', 'Review threshold (heuristic)',
-            'float', '55',
-            'The two are not on the same scale, so the heuristic fallback has '
-            'its own gate. This is the one in play whenever the risk model is '
-            'unreachable, which includes the whole offline demo.',
-            binds='fallbacks.HEURISTIC_THRESHOLD'),
     Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
             'Restrict an assessment to hosts whose name contains this.'),
     Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
@@ -2466,8 +2462,8 @@ def _rebind(s: Setting, raw: str) -> None:
     """Push a value into the live binding named by `binds`.
 
     Plain names are module globals here; dotted ones are an attribute on
-    something in this module's namespace — a class (Supervisor.MAX_*) or the
-    fallbacks module (fallbacks.HEURISTIC_THRESHOLD).
+    something in this module's namespace, such as a class attribute
+    (Supervisor.MAX_ATTEMPTS_PER_HOST).
     """
     if not s.binds:
         return                      # read fresh from os.environ on every use
