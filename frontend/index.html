@@ -1431,6 +1431,11 @@
     opacity: .4; cursor: not-allowed; color: var(--muted);
     border-bottom-color: transparent;
   }
+  /* Two ends of one axis, so both labels stay visible and the fill says
+     which end you are on. */
+  .mode-seg { min-width: 168px; }
+  .mode-seg button { text-transform: lowercase; font-family: var(--mono); }
+
   .pane-note.off {
     padding: 10px 12px; border-radius: var(--r-xs);
     background: var(--surface); color: var(--muted);
@@ -4610,6 +4615,32 @@ function settingField(s) {
     });
     return b;
   }
+  // Two values that are opposite ends of one axis, not items in a list. A
+  // slide switch shows both at once and which one you are on; a select hides
+  // the alternative behind a click.
+  if (s.key === 'MODE') {
+    const seg = document.createElement('div');
+    seg.className = 'seg mode-seg';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Mode');
+    for (const c of s.choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = c;
+      b.dataset.val = c;
+      // aria-pressed, not a class of its own: the existing .seg styling and
+      // the text-size control already key off it.
+      b.setAttribute('aria-pressed', String(c === s.value));
+      b.addEventListener('click', () => {
+        if (b.getAttribute('aria-pressed') === 'true') return;
+        seg.querySelectorAll('button').forEach(
+          x => x.setAttribute('aria-pressed', String(x === b)));
+        markDirty(s.key, c, seg.closest('.set-row'));
+      });
+      seg.appendChild(b);
+    }
+    return seg;
+  }
   if (s.kind === 'choice') {
     const sel = document.createElement('select');
     sel.disabled = s.readonly;
@@ -4773,14 +4804,22 @@ setTextSize(document.documentElement.dataset.ts || 'm');
 // too would leave no way back to live.
 function setPanesEnabled(on) {
   const tabs = [...document.querySelectorAll('.set-tabs button')];
+  const endTab = tabs.find(b => b.dataset.pane === 'endpoints');
+  // Only Endpoints. Advanced stays usable because several of its settings
+  // still shape a demo run — the host limit, the maintenance window, and
+  // DEMO_LATENCY, which exists for demo mode and nothing else.
+  endTab.disabled = !on;
+  endTab.setAttribute('aria-disabled', String(!on));
+  endTab.title = on ? '' : 'Demo mode contacts no endpoint';
+
+  // Landing on the pane you cannot open would be a dead end, so demo opens
+  // on Advanced.
+  const start = on ? 'endpoints' : 'advanced';
   tabs.forEach(b => {
-    b.disabled = !on;
-    b.setAttribute('aria-disabled', String(!on));
+    const sel = b.dataset.pane === start;
+    b.setAttribute('aria-selected', String(sel));
+    document.getElementById(`pane-${b.dataset.pane}`).hidden = !sel;
   });
-  document.getElementById('pane-endpoints').hidden = !on;
-  document.getElementById('pane-advanced').hidden = true;
-  if (on) tabs.forEach(b => b.setAttribute('aria-selected',
-                                           String(b.dataset.pane === 'endpoints')));
 
   let note = document.getElementById('panes-off');
   if (!on) {
@@ -4790,8 +4829,8 @@ function setPanesEnabled(on) {
       note.className = 'pane-note off';
       document.querySelector('.set-tabs').after(note);
     }
-    note.innerHTML = 'Settings are disabled in demo mode — every step runs on '
-      + 'staged data, so no endpoint and no timeout applies. Switch Mode to '
+    note.innerHTML = 'Endpoints are disabled in demo mode — no service is '
+      + 'contacted, so nothing in there applies. Switch Mode to '
       + '<strong>live</strong> above to edit them.';
   } else if (note) {
     note.remove();
