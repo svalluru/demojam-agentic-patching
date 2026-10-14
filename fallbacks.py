@@ -218,7 +218,12 @@ def patch_unavailable(host: str, group: str, reason: str) -> dict[str, Any]:
 
 
 def simulate_patch() -> bool:
-    return os.environ.get('FALLBACK_PATCH', 'simulate').strip().lower() != 'unavailable'
+    """Only reachable in demo mode, where simulating is the point.
+
+    Live mode raises before this is consulted, so the 'report it as not
+    dispatched' alternative had no caller left once the middle ground went.
+    """
+    return True
 
 
 # --------------------------------------------------------------------- ROI
@@ -318,5 +323,11 @@ ROI_PLATFORM_COST = float(os.environ.get('ROI_PLATFORM_COST', '25000') or 25000)
 # -------------------------------------------------------------------- mode
 
 def strict() -> bool:
-    """STRICT=true disables every fallback above and re-raises the real error."""
-    return os.environ.get('STRICT', '').strip().lower() in {'1', 'true', 'yes'}
+    """Whether a missing service raises instead of falling back to this file.
+
+    True in live mode, and that is the whole point of live mode: a patch plan
+    built partly from stored defaults is not something to approve a
+    production change against. Demo mode is the opposite — nothing here is
+    reachable by design, so everything falls back.
+    """
+    return os.environ.get('MODE', 'demo').strip().lower() == 'live'

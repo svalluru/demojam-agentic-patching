@@ -185,7 +185,7 @@ indistinguishable from one that succeeded unless the plan says so outright.
 | `RISK_VERIFY_TLS=false` | for sandbox cluster certificates |
 | `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | per-service read budgets (15 / 8 / 20 / 10s) |
 
-See **Offline / fallback mode** below for `STRICT` and `FALLBACK_PATCH`, and
+See **Modes** below for what `MODE` changes, and
 **ROI** for the `ROI_*` baseline.
 
 ### Settings panel
@@ -242,10 +242,20 @@ for the offline demo, so opened in live mode it says so rather than letting a
 presenter claim the wrong one. A backend it cannot reach reads as *unknown*,
 never as live.
 
-## Offline / fallback mode
+## Modes
 
-Every step has a stored default, so the whole console can be demonstrated with
-no cluster at all. All defaults live in one file, [`fallbacks.py`](fallbacks.py).
+One setting, `MODE`, and deliberately nothing between its two ends:
+
+| | |
+|---|---|
+| **demo** (default) | Every step runs on staged data and no endpoint is contacted. The whole flow can be shown without Insights, the risk model, the RAG store or Ansible Orchestrator. Nothing is patched. |
+| **live** | Real endpoints only, with no fallback at any step. An unreachable service fails the run and names itself. |
+
+There is no third mode mixing real endpoints with stored defaults. That
+combination produces the one artefact an operator must not be handed: a patch
+plan that looks measured but is partly fabricated.
+
+All staged data lives in one file, [`fallbacks.py`](fallbacks.py).
 
 | Step | Backend | Fallback |
 |---|---|---|
@@ -295,7 +305,7 @@ and fix, the `SIMULATED` row chips, the red diagram nodes, the *Risk source*
 tile, the ROI caveat, and the per-step plan notes. It is also a toggle in the
 gear panel, taking effect on the next render.
 
-Two things stay visible either way, because neither is a source label. `STRICT`
+Two things stay visible either way, because neither is a source label. Live mode
 keeps its banner: it means the opposite — no fallback will be used and an
 unreachable service fails the run outright, which someone needs to know before
 they start. And the risk gate number itself is always shown, because the score
@@ -304,10 +314,9 @@ the `(heuristic)` that names where the score came from is hidden.
 
 | Variable | Effect |
 |---|---|
-| `OFFLINE=1` | what `./demo.sh` sets — stored defaults only, no network at all |
-| `LABEL_SOURCES=1` | mark substituted values on the page; off by default |
-| `STRICT=true` | disable all fallbacks; raise the real error instead |
-| `FALLBACK_PATCH=unavailable` | report "not dispatched" rather than simulating |
+| `MODE=demo` | the default, and what `./demo.sh` sets — staged data for every step, no endpoint contacted |
+| `MODE=live` | what `./demo.sh --live` sets — real endpoints only, no fallback anywhere |
+| `LABEL_SOURCES=1` | in demo mode, mark staged values on the page rather than only in the banner |
 | `CONNECT_TIMEOUT=3` | reachability budget per service |
 | `CIRCUIT_TTL=30` | how long a service stays tripped after failing |
 | `DEMO_LATENCY=0.35` | offline-only pause per agent step; `0` disables |
@@ -515,11 +524,11 @@ first with a short budget, because a stopped pod leaves its Route resolving
 with nothing behind it and the socket hangs for the full read timeout. A
 service that fails is then tripped for `CIRCUIT_TTL`, so a dead backend costs
 one probe per run rather than one per host. Together these took a patch plan
-against stopped backends from 76s to under 7s; `OFFLINE=1` skips the probe
+against stopped backends from 76s to under 7s; demo mode skips the probe
 entirely and opens no socket at all.
 
 **Degrade on reads, fail closed on writes.** A missing risk score can be
-estimated; a patch cannot be assumed. That asymmetry is why `FALLBACK_PATCH`
+estimated; a patch cannot be assumed. That asymmetry is why demo mode
 exists and why the simulator never reports a host as patched without an
 operator clicking Approve.
 

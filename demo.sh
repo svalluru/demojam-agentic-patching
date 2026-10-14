@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Start the console in offline demo mode.
+# Start the console. Two modes, and nothing in between.
 #
-#   ./demo.sh            stored defaults only — no cluster, no .env, no network
-#   ./demo.sh --live     use the real backends from .env, falling back per
-#                        step. Writes .env from .env.example if it is missing
-#                        and starts anyway — an empty one just means every
-#                        step falls back, which the console labels.
+#   ./demo.sh            demo — staged data for every step, no endpoint is
+#                        contacted. No cluster, no .env, no network. Nothing
+#                        is patched: approving a host resolves a simulated
+#                        run that exists in no Ansible Orchestrator.
 #
-# Offline mode touches nothing: no Insights, no risk model, no RAG, no Ansible
-# Orchestrator. Every step serves stored defaults from fallbacks.py and the
-# console labels all of them. Nothing is patched — approving a host resolves a
-# simulated run that exists in no AO instance.
+#   ./demo.sh --live     live — real endpoints only, no fallback anywhere. An
+#                        unreachable service fails the run and names it.
+#                        Needs a filled-in .env and refuses to start without
+#                        one, because every step would fail at the first
+#                        call.
+#
+# There is deliberately no third mode mixing real endpoints with stored
+# defaults: a patch plan that looks measured but is partly fabricated is the
+# one thing an operator must not be handed to approve.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -37,43 +41,33 @@ if sys.version_info < (3, 10):
 PY
 
 if [[ "${1:-}" == "--live" ]]; then
-  export OFFLINE=0
-  MODE="live (per-step fallback if a backend is down)"
-  # The first --live run writes the file instead of telling you to copy it,
-  # and carries on starting — an empty .env is a valid answer, because every
-  # step tries its backend and falls back on its own. What it must not do is
-  # start quietly: a live run with nothing configured looks exactly like a
-  # working one until you read the degraded panel. So it says so here, says
-  # so again in the banner below, and the page labels each substitution.
-  #
-  # Nothing in this branch runs without --live, so ./demo.sh on its own still
-  # needs no .env and still creates none.
+  export MODE=live
+  MODE_LABEL="live — real endpoints only, no fallback"
+  # Live mode has no fallback: an unreachable service fails the run. So an
+  # empty .env is no longer a half-working state that merely looks odd on
+  # screen — it is a run that cannot get past its first step. Refuse here,
+  # where the reason is obvious, rather than at the first assessment.
   if [[ ! -f .env ]]; then
-    MODE="live — nothing configured yet, every step falling back"
     if [[ -f .env.example ]]; then
       cp .env.example .env
-      NOTE="note : .env did not exist. Created it from .env.example — it is
-         empty, so every step falls back until you fill it in."
       echo >&2 "created .env from .env.example — gitignored, never commit it."
-    else
-      NOTE="note : no .env, and no .env.example to make one from, so every
-         step falls back."
-      echo >&2 "warning: no .env and no .env.example — nothing is configured."
     fi
     cat >&2 <<'EOF'
-Starting anyway: an unset key falls back for that step alone and the console
-labels every substitution. Fill in what you have and restart to go real:
+error: live mode needs real endpoints and .env is empty or missing.
 
   LIGHTSPEED_CLIENT_ID + _SECRET      the CVE list and the per-CVE detail
   RISK_URL                            per-host risk scores
   LLAMA_STACK_URL + VECTOR_DB_ID      per-host patch history
   AO_URL + AO_USERNAME + AO_PASSWORD  the only keys that make a patch real
 
+Fill those in and run ./demo.sh --live again, or run ./demo.sh on its own for
+the staged demo, which needs none of them.
 EOF
+    exit 1
   fi
 else
-  export OFFLINE=1
-  MODE="offline — stored defaults, nothing is patched"
+  export MODE=demo
+  MODE_LABEL="demo — staged data, no endpoint contacted, nothing is patched"
 fi
 
 # A previous run left on these ports would silently serve stale code.
@@ -141,11 +135,10 @@ for _ in $(seq 1 20); do
     cat <<EOF
 
   Agentic Patching Console
-  mode : $MODE
+  mode : $MODE_LABEL
   url  : http://127.0.0.1:$FRONTEND_PORT
   logs : /tmp/demo-backend.log  /tmp/demo-frontend.log
-${NOTE:+  $NOTE
-}
+
   Pick a CVE, Assess CVE Impact, dispatch the plan, then Approve.
   Ctrl-C to stop — the terminal stays, so you can start it again.
 

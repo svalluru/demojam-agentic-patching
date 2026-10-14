@@ -4365,7 +4365,7 @@ async function showRuns() {
       <tbody>${rows}</tbody></table>`
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
-    <div class="note">${(MODE.offline && showSrc())
+    <div class="note">${(MODE.mode === 'demo' && showSrc())
       ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
       : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}</div>
     <div id="reports-section"></div>`;
@@ -4506,24 +4506,18 @@ async function renderMode() {
   if (!m || !m.ok) return;
   MODE = m;
   const el = document.getElementById('mode-banner');
-  // Cleared first: OFFLINE and STRICT can be switched off from the settings
-  // drawer, and a banner that only ever gets added would outlive the mode.
+  // Cleared first: the mode can be switched in the settings drawer, and a
+  // banner that only ever gets added would outlive the mode it describes.
   el.classList.remove('on');
   el.innerHTML = '';
-  // STRICT is not behind showSrc(): it does not say a value was substituted,
-  // it says the opposite — no fallback will be used and an unreachable
-  // service fails the run outright. Someone needs to know that before they
-  // start, whatever the page is doing about source labels.
-  if (m.offline && showSrc()) {
-    el.innerHTML = `<span class="tag">OFFLINE</span>
-      <span>Fallback mode &mdash; every value on this page is a stored default.</span>
-      <span class="sub">No cluster is being contacted and nothing will be patched.</span>
+  // Demo mode is banner-worthy because every number on the page is staged.
+  // Live mode is not: nothing is substituted, so there is nothing to warn
+  // about — a failure there announces itself by failing.
+  if (m.mode === 'demo' && showSrc()) {
+    el.innerHTML = `<span class="tag">DEMO</span>
+      <span>Staged data &mdash; every value on this page is a stored default.</span>
+      <span class="sub">No endpoint is being contacted and nothing will be patched.</span>
       <span class="how">./demo.sh --live</span>`;
-    el.classList.add('on');
-  } else if (m.strict) {
-    el.innerHTML = `<span class="tag">STRICT</span>
-      <span>Fallbacks disabled &mdash; any unreachable service will fail the run.</span>
-      <span class="how">unset STRICT</span>`;
     el.classList.add('on');
   }
 }
@@ -4745,16 +4739,17 @@ function openGuide() {
   // as live. Only `ok` distinguishes a resolved mode from one the backend
   // never answered — getting this wrong would tell a presenter they are
   // pointed at a cluster when the backend is simply down.
-  if (MODE && MODE.ok && MODE.offline) {
-    note.innerHTML = 'This console is in <strong>fallback mode</strong> — the one '
-      + 'this script is written for. Every value is a stored default and nothing '
+  if (MODE && MODE.ok && MODE.mode === 'demo') {
+    note.innerHTML = 'This console is in <strong>demo mode</strong> — the one '
+      + 'this script is written for. Every value is staged and nothing '
       + 'will be patched. The page does not say so anywhere'
       + (MODE.label_sources ? ', except that source labelling is on, so it does.' : '. '
       + 'Beat 7 is where you say it.');
   } else if (MODE && MODE.ok) {
-    note.innerHTML = '<strong>Live mode.</strong> The script below assumes the offline '
-      + 'demo: the two CVEs it names may not be in your list, and approving a host '
-      + 'dispatches a real workflow run. Read <em>Do not say</em> before you present this.';
+      note.innerHTML = '<strong>Live mode.</strong> The script below assumes the '
+        + 'demo: the two CVEs it names will not be in your list, approving a host '
+        + 'dispatches a real workflow run, and nothing falls back — an unreachable '
+        + 'service fails the run. Read <em>Do not say</em> before you present this.';
   } else {
     note.textContent = 'Could not reach the backend, so this guide cannot tell you '
       + 'which mode you are in. Check that before you present.';

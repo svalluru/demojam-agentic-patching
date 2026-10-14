@@ -163,9 +163,25 @@ def degraded_reset() -> None:
     _DOWN.clear()
 
 
+# The only mode switch. Everything the console used to expose separately —
+# whether to touch the network, whether to fall back, whether to simulate a
+# patch, whether to label substitutions — follows from this one answer,
+# because the two useful configurations are the two ends:
+#
+#   demo   staged data throughout, no endpoint is contacted. Someone can show
+#          the whole flow without standing up Insights, the risk model, the
+#          RAG store or Ansible Orchestrator.
+#   live   real endpoints only. No step falls back; an unreachable service
+#          fails the run and says which one. A patch plan built partly from
+#          stored defaults is not something to approve a production change
+#          against, so the middle ground is gone deliberately.
+def demo_mode() -> bool:
+    return env('MODE', 'demo').strip().lower() != 'live'
+
+
 def offline() -> bool:
-    """OFFLINE=1 runs the whole console on stored defaults, touching nothing."""
-    return env('OFFLINE').lower() in {'1', 'true', 'yes'}
+    """Demo mode opens no sockets at all — see circuit()."""
+    return demo_mode()
 
 
 def label_sources() -> bool:
@@ -181,10 +197,10 @@ def label_sources() -> bool:
     below, and the agent trace in the left-hand panel names the service that
     did not answer while the run is still on screen.
 
-    Set LABEL_SOURCES=1 to put the marks back on the page. Anyone pointing
-    this at real infrastructure wants that: the patch plan is what a human
-    approves against, and with labelling off a fabricated risk score looks
-    exactly like a measured one.
+    Live mode never substitutes anything — it raises instead — so there is
+    nothing there to label, and demo mode says so once in the banner rather
+    than on every row. LABEL_SOURCES=1 still forces the marks back on for
+    anyone who wants them while demoing.
     """
     return env('LABEL_SOURCES').lower() in {'1', 'true', 'yes'}
 
@@ -2238,21 +2254,18 @@ class Setting:
 
 SETTINGS: tuple[Setting, ...] = (
     # --- mode -------------------------------------------------------------
-    Setting('OFFLINE', 'Mode', 'Offline', 'bool', '',
-            'Stored defaults only, no network at all. What ./demo.sh sets.'),
-    Setting('STRICT', 'Mode', 'Strict', 'bool', '',
-            'Disable every fallback and raise the real error instead.'),
-    Setting('LABEL_SOURCES', 'Mode', 'Label substituted values', 'bool', '',
-            'Mark on the page itself which values came from a fallback: the '
-            'offline banner, the degraded panel on the patch plan, SIMULATED '
-            'row chips, red boxes in the diagram. Off, the console presents '
-            'one face and the substitutions appear only in the agent trace '
-            'and the backend log. Turn it on for real infrastructure — the '
-            'patch plan is what a human approves against.'),
-    Setting('FALLBACK_PATCH', 'Mode', 'Patch fallback', 'choice', 'simulate',
-            'With AO unreachable: simulate a run locally, or report the host '
-            'as not dispatched. Nothing is patched either way.',
-            choices=('simulate', 'unavailable')),
+    # One switch, two ends. The middle ground — real endpoints with per-step
+    # fallback — was four settings deep and produced the one outcome nobody
+    # wants: a patch plan that looks measured but is partly stored defaults.
+    Setting('MODE', 'Mode', 'Mode', 'choice', 'demo',
+            'demo: every step runs on staged data and no endpoint is '
+            'contacted, so the whole flow can be shown without Insights, the '
+            'risk model, the RAG store or Ansible Orchestrator. '
+            'live: real endpoints only, with no fallback anywhere — if a '
+            'service cannot be reached the run fails and names it, because a '
+            'patch plan is what a human approves a production change '
+            'against.',
+            choices=('demo', 'live')),
 
     # --- triage -----------------------------------------------------------
     Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold (model)', 'float', '30',
@@ -2740,10 +2753,13 @@ class Handler(BaseHTTPRequestHandler):
             # flag decides is only whether the page draws it.
             self._send(200, {
                 'ok': True,
+                'mode': 'demo' if demo_mode() else 'live',
+                # Kept so an existing client does not break, and because they
+                # are still the truth about the run even though they are no
+                # longer separately settable.
                 'offline': offline(),
                 'strict': fallbacks.strict(),
                 'label_sources': label_sources(),
-                'simulate_patch': fallbacks.simulate_patch(),
                 'workflow': AO_WORKFLOW_NAME,
             })
         elif path == '/api/settings':
