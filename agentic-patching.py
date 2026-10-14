@@ -2288,6 +2288,67 @@ SETTINGS: tuple[Setting, ...] = (
             'Supervisor guard for the self-healing loop (agent 2, not wired up yet).',
             binds='Supervisor.MAX_FAILED_PER_PHASE'),
 
+    # --- ROI --------------------------------------------------------------
+    # The manual baseline is guesswork by construction, so every input to it
+    # is exposed. Someone who disagrees with the comparison can change the
+    # number they disagree with and press the button again, which is a more
+    # useful answer than arguing about the total.
+    Setting('ROI_TRIAGE_MIN', 'ROI baseline', 'Manual triage per CVE', 'float', '45',
+            'Read the advisory, pull the affected host list, judge the '
+            'exposure. Once per CVE, not per host.',
+            binds='fallbacks.ROI_TRIAGE_MIN'),
+    Setting('ROI_PREP_MIN', 'ROI baseline', 'Manual change prep per host', 'float', '15',
+            'Adapt the playbook, raise the change record, book the window.',
+            binds='fallbacks.ROI_PREP_MIN'),
+    Setting('ROI_EXEC_MIN', 'ROI baseline', 'Manual execute & verify per host',
+            'float', '10',
+            'Run it, watch it, confirm the service came back.',
+            binds='fallbacks.ROI_EXEC_MIN'),
+    Setting('ROI_APPROVAL_MIN', 'ROI baseline', 'Manual approval per gated host',
+            'float', '20',
+            'Assembling the request and chasing the approver. On top of prep, '
+            'and only for hosts that need sign-off.',
+            binds='fallbacks.ROI_APPROVAL_MIN'),
+    Setting('ROI_REVIEW_MIN', 'ROI baseline', 'Operator review per gated host',
+            'float', '2',
+            'What the automated path still costs a person: read the plan, '
+            'judge the score, press Approve. Counted against the automation.',
+            binds='fallbacks.ROI_REVIEW_MIN'),
+    Setting('ROI_HOURLY_RATE', 'ROI baseline', 'Fully-loaded hourly rate', 'float', '85',
+            'Fully loaded, not salary.', binds='fallbacks.ROI_HOURLY_RATE'),
+    Setting('ROI_CURRENCY', 'ROI baseline', 'Currency symbol', 'str', '$',
+            'Display only — no conversion is done.', binds='fallbacks.ROI_CURRENCY'),
+    Setting('ROI_LEAD_HOURS', 'ROI baseline', 'Manual time-to-remediation', 'float', '72',
+            'Elapsed hours from "this CVE is ours" to "this host is patched" '
+            'by hand. Wall clock, not effort — mostly queueing and waiting '
+            'for a window, which is why it dwarfs the labour figures.',
+            binds='fallbacks.ROI_LEAD_HOURS'),
+    Setting('ROI_REWORK_PCT', 'ROI baseline', 'Manual attempts needing a redo',
+            'float', '12',
+            'Share of hosts that have to be patched twice by hand — the patch '
+            'does not take, the window is lost, the booking repeats. Manual '
+            'side only: an automated run that fails never reaches patched, so '
+            'it is dropped from the lifetime total rather than estimated.',
+            binds='fallbacks.ROI_REWORK_PCT'),
+    Setting('ROI_BAND_PCT', 'ROI baseline', 'Uncertainty on the baseline',
+            'float', '30',
+            'How wrong the manual baseline might be, either way. The page '
+            'quotes a range beside the point figure, because an estimate '
+            'built from seven guesses should not be given to the cent.',
+            binds='fallbacks.ROI_BAND_PCT'),
+    Setting('ROI_SLA_HOURS', 'ROI baseline', 'Remediation deadline (policy)',
+            'float', '48',
+            'The deadline this organisation holds itself to. Policy, not '
+            'physics — set it to yours. Exposure is stated against this '
+            'rather than converted into money.',
+            binds='fallbacks.ROI_SLA_HOURS'),
+    Setting('ROI_PLATFORM_COST', 'ROI baseline', 'Platform build cost', 'float',
+            '25000',
+            'One off: the build, the integration work, the cluster. The '
+            'weakest assumption here, and the first question anyone with a '
+            'budget asks. Set it to 0 to hide the payback card.',
+            binds='fallbacks.ROI_PLATFORM_COST'),
+
     # --- timeouts ---------------------------------------------------------
     Setting('CONNECT_TIMEOUT', 'Timeouts', 'Connect (reachability)', 'float', '3',
             'TCP budget per service, separate from the read budgets. A stopped '
@@ -2361,67 +2422,6 @@ SETTINGS: tuple[Setting, ...] = (
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
     Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
-
-    # --- ROI --------------------------------------------------------------
-    # The manual baseline is guesswork by construction, so every input to it
-    # is exposed. Someone who disagrees with the comparison can change the
-    # number they disagree with and press the button again, which is a more
-    # useful answer than arguing about the total.
-    Setting('ROI_TRIAGE_MIN', 'ROI baseline', 'Manual triage per CVE', 'float', '45',
-            'Read the advisory, pull the affected host list, judge the '
-            'exposure. Once per CVE, not per host.',
-            binds='fallbacks.ROI_TRIAGE_MIN'),
-    Setting('ROI_PREP_MIN', 'ROI baseline', 'Manual change prep per host', 'float', '15',
-            'Adapt the playbook, raise the change record, book the window.',
-            binds='fallbacks.ROI_PREP_MIN'),
-    Setting('ROI_EXEC_MIN', 'ROI baseline', 'Manual execute & verify per host',
-            'float', '10',
-            'Run it, watch it, confirm the service came back.',
-            binds='fallbacks.ROI_EXEC_MIN'),
-    Setting('ROI_APPROVAL_MIN', 'ROI baseline', 'Manual approval per gated host',
-            'float', '20',
-            'Assembling the request and chasing the approver. On top of prep, '
-            'and only for hosts that need sign-off.',
-            binds='fallbacks.ROI_APPROVAL_MIN'),
-    Setting('ROI_REVIEW_MIN', 'ROI baseline', 'Operator review per gated host',
-            'float', '2',
-            'What the automated path still costs a person: read the plan, '
-            'judge the score, press Approve. Counted against the automation.',
-            binds='fallbacks.ROI_REVIEW_MIN'),
-    Setting('ROI_HOURLY_RATE', 'ROI baseline', 'Fully-loaded hourly rate', 'float', '85',
-            'Fully loaded, not salary.', binds='fallbacks.ROI_HOURLY_RATE'),
-    Setting('ROI_CURRENCY', 'ROI baseline', 'Currency symbol', 'str', '$',
-            'Display only — no conversion is done.', binds='fallbacks.ROI_CURRENCY'),
-    Setting('ROI_LEAD_HOURS', 'ROI baseline', 'Manual time-to-remediation', 'float', '72',
-            'Elapsed hours from "this CVE is ours" to "this host is patched" '
-            'by hand. Wall clock, not effort — mostly queueing and waiting '
-            'for a window, which is why it dwarfs the labour figures.',
-            binds='fallbacks.ROI_LEAD_HOURS'),
-    Setting('ROI_REWORK_PCT', 'ROI baseline', 'Manual attempts needing a redo',
-            'float', '12',
-            'Share of hosts that have to be patched twice by hand — the patch '
-            'does not take, the window is lost, the booking repeats. Manual '
-            'side only: an automated run that fails never reaches patched, so '
-            'it is dropped from the lifetime total rather than estimated.',
-            binds='fallbacks.ROI_REWORK_PCT'),
-    Setting('ROI_BAND_PCT', 'ROI baseline', 'Uncertainty on the baseline',
-            'float', '30',
-            'How wrong the manual baseline might be, either way. The page '
-            'quotes a range beside the point figure, because an estimate '
-            'built from seven guesses should not be given to the cent.',
-            binds='fallbacks.ROI_BAND_PCT'),
-    Setting('ROI_SLA_HOURS', 'ROI baseline', 'Remediation deadline (policy)',
-            'float', '48',
-            'The deadline this organisation holds itself to. Policy, not '
-            'physics — set it to yours. Exposure is stated against this '
-            'rather than converted into money.',
-            binds='fallbacks.ROI_SLA_HOURS'),
-    Setting('ROI_PLATFORM_COST', 'ROI baseline', 'Platform build cost', 'float',
-            '25000',
-            'One off: the build, the integration work, the cluster. The '
-            'weakest assumption here, and the first question anyone with a '
-            'budget asks. Set it to 0 to hide the payback card.',
-            binds='fallbacks.ROI_PLATFORM_COST'),
 
     # --- server -----------------------------------------------------------
     Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
