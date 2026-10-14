@@ -5,7 +5,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-agentic-patching}"
-ENV_FILE="${ENV_FILE:-${ROOT}/../../src/openshift/.env.openshift}"
+# The repo .env. This pointed at src/openshift/.env.openshift, a path from
+# a layout that no longer exists — so it silently fell through to the
+# placeholder branch and baked VLLM_URL=http://localhost:8000/v1 into the
+# secret, which inside the pod means the pod itself.
+ENV_FILE="${ENV_FILE:-${ROOT}/../.env}"
 
 step() { echo ""; echo "=== $* ==="; }
 info() { echo "  $*"; }

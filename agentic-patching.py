@@ -109,6 +109,10 @@ HTTP_TIMEOUT = int(env('HTTP_TIMEOUT', '120'))
 # it times out rather than refusing it outright — at the 120s default a
 # two-host plan spent over a minute waiting on services already known down.
 INSIGHTS_TIMEOUT = int(env('INSIGHTS_TIMEOUT', '15'))
+
+# One page of affected systems. Anything past this is not assessed, and the
+# plan says so rather than quietly planning for a subset.
+AFFECTED_PAGE = int(env('AFFECTED_PAGE', '100'))
 RISK_TIMEOUT = int(env('RISK_TIMEOUT', '8'))
 RAG_TIMEOUT = int(env('RAG_TIMEOUT', '20'))     # live RAG does LLM summarisation
 AO_TIMEOUT = int(env('AO_TIMEOUT', '10'))
@@ -434,7 +438,16 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
     """
     try:
         detail = insights_get(f'/cves/{cve_id}')
-        systems = insights_get(f'/cves/{cve_id}/affected_systems?limit=100&offset=0')
+        # advisory_available=true, to match the filter the CVE list counts
+        # with. Without it this endpoint returns every affected system while
+        # the list column shows only those with an advisory — 463 against 2
+        # for CVE-2026-88812 — so the console offered to patch hundreds of
+        # hosts it had just told the operator were two. It is also the right
+        # set on its own terms: a host with no advisory has nothing to apply.
+        # affecting_host_type is NOT accepted here; it 400s.
+        systems = insights_get(f'/cves/{cve_id}/affected_systems'
+                               f'?limit={AFFECTED_PAGE}&offset=0'
+                               f'&advisory_available=true')
     except BackendUnavailable as exc:
         degrade('C2 cve_detail', exc.service, exc.cause, exc.fix)
         fb = fallbacks.cve_detail(cve_id)
@@ -777,7 +790,14 @@ class InfoAgent:
                 if history_source != 'rag':
                     notes.append('Host history came from stored defaults, not the RAG '
                                  'store, so it may not reflect this estate.')
-            if window_source == 'default':
+            # Said plainly, because the difference between "we planned for every
+        # affected host" and "we planned for the first 100 of them" is not
+        # something to leave the operator to infer from two numbers.
+        total = detail.get('total_affected')
+        if total and total > len(hosts) and len(hosts) >= AFFECTED_PAGE:
+            notes.append(f'Only the first {len(hosts)} of {total} affected host(s) '
+                         f'were assessed — raise AFFECTED_PAGE to cover the rest.')
+        if window_source == 'default':
                 notes.append(f'No scheduler configured; using default window {window}.')
         # Not a source label: true of this CVE against this gate whether the
         # scores were measured or substituted, and the reviewer needs it in

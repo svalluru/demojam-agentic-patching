@@ -103,6 +103,20 @@ registered_resources:
     provider_id: sentence-transformers
     provider_model_id: nomic-ai/nomic-embed-text-v1.5
     model_type: embedding
+  # The vllm-inference provider above was configured but nothing was ever
+  # registered against it, so /v1/models listed only the embedding model and
+  # every summarisation call returned HTTP 500. Vector search worked, which
+  # made it look like RAG was up.
+  #
+  # Llama Stack exposes a model as provider_id/model_id — that is why the
+  # embedding one reads sentence-transformers/nomic-ai/... — so this entry is
+  # what makes DEFAULT_LLM_MODEL=vllm-inference/llama-scout-17b resolve.
+  # provider_model_id is the name vLLM itself serves, which is not
+  # necessarily the same string.
+  - model_id: ${env.LLM_MODEL_ID:=llama-scout-17b}
+    provider_id: vllm-inference
+    provider_model_id: ${env.LLM_PROVIDER_MODEL_ID:=llama-scout-17b}
+    model_type: llm
   vector_dbs: []
   tool_groups: []
 vector_stores:
