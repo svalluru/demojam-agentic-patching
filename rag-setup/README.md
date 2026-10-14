@@ -49,6 +49,7 @@ curl -sk https://$ROUTE/v1/models
 ## Ingest
 
 ```bash
+cd rag-setup      # the paths below are relative to this directory
 ./ingest.py --route https://$ROUTE --name patch_history --dir ./data --ensure
 ./ingest.py --route https://$ROUTE --name patch_history --file notes.md
 ./ingest.py --route https://$ROUTE --name patch_history --query "drain timeout"

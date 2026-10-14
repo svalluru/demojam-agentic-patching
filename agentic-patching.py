@@ -672,7 +672,8 @@ class InfoAgent:
             # restart dropping its vector-store registry — see rag-setup README.
             raise BackendUnavailable(
                 'RAG', f'vector store {VECTOR_DB_ID} returned no results',
-                'run: rag-setup/ingest.py --route <route> --dir ./data --ensure')
+                'run from the repo root: ./rag-setup/ingest.py --route <route> '
+                '--name patch_history --dir ./rag-setup/data --ensure')
 
         excerpt = '\n\n'.join(
             ' '.join(c.get('text', '') for c in (h.get('content') or [])
