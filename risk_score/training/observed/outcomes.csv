@@ -1,6 +1,0 @@
-cvss,age_days,affected_hosts,type,risk_score,cve_id,host,outcome,observed_at,simulated,predicted_score,decision,attempts,degraded_inputs
-10.0,47,5,security,40.0,CVE-2024-3094,pay-app-07.acme.internal,patched,2026-10-14T00:34:54Z,True,66.57,review,1,1 rag_history;3 risk_score;C2 cve_detail
-10.0,31,5,security,40.0,CVE-2024-3094,pay-app-03.acme.internal,patched,2026-10-14T00:34:54Z,True,66.03,review,1,1 rag_history;3 risk_score;C2 cve_detail
-10.0,12,5,security,30.0,CVE-2024-3094,pay-app-05.acme.internal,patched,2026-10-14T00:34:54Z,True,65.4,review,1,1 rag_history;3 risk_score;C2 cve_detail
-10.0,5,5,security,30.0,CVE-2024-3094,pay-app-09.acme.internal,patched,2026-10-14T00:34:54Z,True,65.17,review,1,1 rag_history;3 risk_score;C2 cve_detail
-10.0,63,5,security,30.0,CVE-2024-3094,pay-db-01.acme.internal,patched,2026-10-14T00:34:54Z,True,67.1,review,1,1 rag_history;3 risk_score;C2 cve_detail

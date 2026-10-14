@@ -29,3 +29,8 @@ rag-setup/data/runs/
 
 # Built by build_dataset.py from the synthetic baseline + observed outcomes
 risk_score/training/data.csv
+
+# Outcomes appended by agent 4, one row per settled host. Generated per run —
+# in offline mode every row is simulated, and committing those would put fake
+# observations in front of whoever next builds a training set.
+risk_score/training/observed/
