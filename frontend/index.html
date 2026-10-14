@@ -4636,6 +4636,11 @@ function settingField(s) {
         seg.querySelectorAll('button').forEach(
           x => x.setAttribute('aria-pressed', String(x === b)));
         markDirty(s.key, c, seg.closest('.set-row'));
+        // Re-gate on the value now showing, not the saved one. Gating on the
+        // saved value left the switch reading live while Endpoints stayed
+        // greyed and Advanced stayed open, until Save was pressed — the
+        // control looked broken for as long as the edit was pending.
+        setPanesEnabled(c === 'live');
       });
       seg.appendChild(b);
     }
