@@ -1204,9 +1204,12 @@
      grow and the two stages still read as peers of each other rather than
      as a continuation of Patch. */
   #demo-chip {
-    flex: none; padding: 3px 9px; border-radius: 999px;
-    font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: .9px;
-    color: #fff; background: #b45309;
+    flex: none; padding: 4px 12px; border-radius: 999px;
+    font-size: calc(12.5px * var(--ts)); font-weight: 800; letter-spacing: 1px;
+    /* Green, not the amber it started as: amber reads as a warning next to a
+       console whose every other accent is red, and demo mode is a safe
+       state, not a degraded one. #15803d keeps white text above 7:1. */
+    color: #fff; background: #15803d;
   }
   #demo-chip[hidden] { display: none; }
 
