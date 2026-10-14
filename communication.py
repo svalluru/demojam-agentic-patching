@@ -28,6 +28,10 @@ AMBER = '#ffe2b8'
 RED = '#ffd9d9'
 GREY = '#eceff3'
 
+# Matches the console: the workflow's branch name is implementation
+# vocabulary, and the report is read by the same operator.
+PATCH_TYPE = {'auto_patch': 'Auto', 'approved_patch': 'Approved'}
+
 OUTCOME_LABEL = {
     'patched': 'Patched',
     'awaiting_approval': 'Awaiting approval',
@@ -131,8 +135,9 @@ class CommunicationAgent:
             rows.append([r.get('host', '—'),
                          OUTCOME_LABEL.get(r.get('outcome'), r.get('outcome', '—')),
                          f'{risk:.1f}' if isinstance(risk, (int, float)) else '—',
-                         r.get('group', '—'), steps])
-        doc.table(['Host', 'Outcome', 'Risk', 'Route', 'Workflow steps completed'],
+                         PATCH_TYPE.get(r.get('group'), r.get('group') or '—'),
+                         steps])
+        doc.table(['Host', 'Outcome', 'Risk', 'Patch type', 'Workflow steps completed'],
                   rows or [['—', 'no hosts dispatched', '—', '—', '—']],
                   [136, 86, 36, 86, 155])
         doc.gap(10)

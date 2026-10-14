@@ -3534,6 +3534,13 @@ async function startPatch(from) {
 // Read live from Ansible Orchestrator, so a run that failed after the console
 // stopped polling shows its real status here rather than a stale one.
 
+// 'approved_patch' and 'auto_patch' are the AO workflow's routing input —
+// the name of a branch in a graph, which is the implementation's vocabulary,
+// not the operator's. What they want to know is whether a person had to say
+// yes.
+const PATCH_TYPE = { auto_patch: 'Auto', approved_patch: 'Approved' };
+const patchType = g => PATCH_TYPE[g] || g || '—';
+
 const RUN_OUTCOME = {
   patched:           { cls: 'ok',     label: 'Patched' },
   completed:         { cls: 'ok',     label: 'Completed' },
@@ -4306,10 +4313,14 @@ async function showRuns() {
   const n = o => runs.filter(r => r.outcome === o).length;
   const rows = runs.map((r, i) => {
     const o = RUN_OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
-    const act = r.approval_pending && r.outcome === 'awaiting_approval'
+    // Same merge as the Hosts table: what you can do, or what happened.
+    // Decision held the Approve/Reject buttons, which is an action and not a
+    // record of what was decided — and this is a history view, so it was
+    // empty on every terminal row, which is nearly all of them.
+    const status = r.approval_pending && r.outcome === 'awaiting_approval'
       ? `<button class="btn-approve" onclick="decideRun('${esc(r.execution_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decideRun('${esc(r.execution_id)}','rejected')">Reject</button>`
-      : '<span class="muted-sm">—</span>';
+      : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     // The list endpoint carries steps for simulated runs but not for real ones,
     // which AO reports per-execution. A row without them keeps the error text.
     const prog = stepProgress(r);
@@ -4317,9 +4328,8 @@ async function showRuns() {
       <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
       <td class="cve-id">${cveLabel(r.cve_id)}</td>
       <td class="cve-id">${esc(r.host)}</td>
-      <td>${esc(r.group)}</td>
-      <td><span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}</td>
-      <td class="decide-cell">${act}</td>
+      <td>${esc(patchType(r.group))}</td>
+      <td class="decide-cell">${status}</td>
       <td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${prog
         ? progressCell(r)
         : r.error ? `<span class="err-sm">${esc(String(r.error).slice(0, 200))}</span>` : '—'}</td>
@@ -4350,8 +4360,8 @@ async function showRuns() {
       <div class="stat"><div class="v">${n('running')}</div><div class="k">Running</div></div>
     </div>
     ${runs.length ? `<table style="margin-top:12px">
-      <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Branch</th><th>Outcome</th>
-      <th>Decision</th><th>Progress</th><th>Exec</th></tr></thead>
+      <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Patch type</th>
+      <th>Status</th><th>Progress</th><th>Exec</th></tr></thead>
       <tbody>${rows}</tbody></table>`
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
