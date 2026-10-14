@@ -33,6 +33,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
@@ -117,6 +118,11 @@ RISK_TIMEOUT = int(env('RISK_TIMEOUT', '8'))
 RAG_TIMEOUT = int(env('RAG_TIMEOUT', '20'))     # live RAG does LLM summarisation
 AO_TIMEOUT = int(env('AO_TIMEOUT', '10'))
 
+# How many history lookups are in flight at once. Every review host is still
+# looked up; this caps concurrency, not coverage. 8 keeps a 60-host CVE inside
+# the timeout without burying a single-replica model server.
+RAG_WORKERS = max(1, int(env('RAG_WORKERS', '8') or 8))
+
 # Reachability budget, distinct from the read budgets above.
 CONNECT_TIMEOUT = float(env('CONNECT_TIMEOUT', '3'))
 
@@ -148,6 +154,12 @@ import results as results_mod
 # this per run and copies it into the report, so a fabricated value can never
 # reach an operator without a label attached.
 DEGRADED: list[dict[str, str]] = []
+
+# Guards DEGRADED and _DOWN. History lookups run on a thread pool, so when one
+# backend is down every worker reaches degrade() with the same entry at the
+# same moment — and "append unless already present" is a check-then-act race.
+# Without this the page shows the same degraded step N times.
+_DEGRADED_LOCK = threading.Lock()
 
 
 # Services proven unreachable recently. Without this the cost of a dead
@@ -240,18 +252,20 @@ def circuit(service: str) -> None:
     if offline():
         raise BackendUnavailable(service, 'demo mode',
                                  'set MODE=live to use the real service')
-    entry = _DOWN.get(service)
-    if not entry:
-        return
-    exc, retry_after = entry
-    if time.time() >= retry_after:
-        del _DOWN[service]      # let the next call probe it again
-        return
+    with _DEGRADED_LOCK:
+        entry = _DOWN.get(service)
+        if not entry:
+            return
+        exc, retry_after = entry
+        if time.time() >= retry_after:
+            _DOWN.pop(service, None)   # let the next call probe it again
+            return
     raise exc
 
 
 def trip(service: str, exc: 'BackendUnavailable') -> None:
-    _DOWN[service] = (exc, time.time() + CIRCUIT_TTL)
+    with _DEGRADED_LOCK:
+        _DOWN[service] = (exc, time.time() + CIRCUIT_TTL)
 
 
 def degrade(step: str, service: str, cause: Any, fix: str) -> None:
@@ -260,14 +274,16 @@ def degrade(step: str, service: str, cause: Any, fix: str) -> None:
         raise BackendUnavailable(service, cause, fix)
     entry = {'step': step, 'service': service,
              'reason': str(cause)[:300], 'fix': fix}
-    if entry not in DEGRADED:
+    with _DEGRADED_LOCK:
+        if entry in DEGRADED:
+            return
         DEGRADED.append(entry)
-        # To the log every time, not only when the page is going to show it.
-        # With LABEL_SOURCES off the page says nothing, so this line and the
-        # agent trace are the whole record of what was substituted — and a
-        # record that depends on a display setting is not a record.
-        print(f'  DEGRADED {step}: {service} unavailable: '
-              f'{str(cause)[:200]}\n           FIX: {fix}', file=sys.stderr)
+    # To the log every time, not only when the page is going to show it.
+    # With LABEL_SOURCES off the page says nothing, so this line and the
+    # agent trace are the whole record of what was substituted — and a
+    # record that depends on a display setting is not a record.
+    print(f'  DEGRADED {step}: {service} unavailable: '
+          f'{str(cause)[:200]}\n           FIX: {fix}', file=sys.stderr)
 
 
 class BackendUnavailable(RuntimeError):
@@ -757,15 +773,45 @@ class InfoAgent:
 
         # step 1 — history, only for hosts a human will look at
         review = [a for a in assessed if a.decision == 'review']
-        self._trace('info', 'rag', f'history for {len(review)} review host(s)')
+        # Clamped here, not just at import: the settings panel rebinds
+        # RAG_WORKERS straight from operator input, and max_workers=0 is a
+        # ValueError out of ThreadPoolExecutor.
+        workers = max(1, min(RAG_WORKERS, len(review)))
+        self._trace('info', 'rag', f'history for {len(review)} review host(s)'
+                    + (f', {workers} at a time' if workers > 1 else ''))
         # Not 'rag' until a lookup actually succeeds. With nothing to review
-        # the loop below never runs, and starting at 'rag' would report a
-        # store that was never queried as the source of an answer.
+        # nothing below runs, and starting at 'rag' would report a store that
+        # was never queried as the source of an answer.
         history_source = 'rag' if review else 'skipped'
-        for a in review:
-            a.history, src = self.history(a.host)
-            if src != 'rag':
-                history_source = src
+
+        # One vector search plus one LLM summarisation per host, and the LLM
+        # call is seconds. Sequentially that is the whole assessment: 61 hosts
+        # timed out the run. Every review host still gets looked up — the pool
+        # only changes how many are in flight, never how many are asked about.
+        #
+        # Bounded because the far side is one model server; unbounded fan-out
+        # turns a slow assessment into a self-inflicted overload. Results are
+        # written back through the future map, not by workers racing on a
+        # shared list, so the plan is identical whatever order they land in.
+        if review:
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=workers, thread_name_prefix='rag') as pool:
+                futures = {pool.submit(self.history, a.host): a for a in review}
+                try:
+                    for fut in concurrent.futures.as_completed(futures):
+                        a = futures[fut]
+                        # Live mode is fail-closed: degrade() re-raises, so
+                        # this propagates and aborts the gather, exactly as it
+                        # did when the lookups were sequential.
+                        a.history, src = fut.result()
+                        if src != 'rag':
+                            history_source = src
+                except BaseException:
+                    # Don't let the remaining lookups run to completion while
+                    # the caller is already unwinding.
+                    for f in futures:
+                        f.cancel()
+                    raise
 
         # step 2 — window
         window, window_source = self.maintenance_window()
@@ -790,15 +836,17 @@ class InfoAgent:
                 if history_source != 'rag':
                     notes.append('Host history came from stored defaults, not the RAG '
                                  'store, so it may not reflect this estate.')
-            # Said plainly, because the difference between "we planned for every
-        # affected host" and "we planned for the first 100 of them" is not
-        # something to leave the operator to infer from two numbers.
+            if window_source == 'default':
+                notes.append(f'No scheduler configured; using default window {window}.')
+        # Not a source label either: how much of the estate this plan covers is
+        # true whatever answered. Said plainly, because the difference between
+        # "we planned for every affected host" and "we planned for the first
+        # 100 of them" is not something to leave the operator to infer from two
+        # numbers in a trace line.
         total = detail.get('total_affected')
         if total and total > len(hosts) and len(hosts) >= AFFECTED_PAGE:
             notes.append(f'Only the first {len(hosts)} of {total} affected host(s) '
                          f'were assessed — raise AFFECTED_PAGE to cover the rest.')
-        if window_source == 'default':
-                notes.append(f'No scheduler configured; using default window {window}.')
         # Not a source label: true of this CVE against this gate whether the
         # scores were measured or substituted, and the reviewer needs it in
         # either case. So it is outside the block above.
@@ -2413,6 +2461,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting('RAG_TIMEOUT', 'Timeouts', 'RAG read', 'int', '20',
             'Live RAG does LLM summarisation, so this one is generous.',
             binds='RAG_TIMEOUT'),
+    Setting('RAG_WORKERS', 'Timeouts', 'RAG lookups in parallel', 'int', '8',
+            'History lookups in flight at once. Every host that needs review '
+            'is still looked up — this caps concurrency, not coverage. Raise '
+            'it if assessments are slow and the model server has headroom; '
+            'lower it to 1 for one-at-a-time behaviour.',
+            binds='RAG_WORKERS'),
     Setting('AO_TIMEOUT', 'Timeouts', 'Ansible Orchestrator read', 'int', '10',
             '', binds='AO_TIMEOUT'),
     Setting('HTTP_TIMEOUT', 'Timeouts', 'Global HTTP ceiling', 'int', '120',
