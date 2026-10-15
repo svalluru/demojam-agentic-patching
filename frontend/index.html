@@ -3410,6 +3410,13 @@ let trackTimer = null;
 // when a person acts on it, and polling that every second is pure noise.
 const POLL_MOVING = 700, POLL_IDLE = 5000, POLL_MAX_TICKS = 900;
 
+// How often the assess and dispatch screens re-read /api/state while a step
+// is in flight. Both steps emit an event per host and finish in a couple of
+// seconds on staged data, so this has to be well under the gap between those
+// events or the screen skips most of them. /api/state is a cheap in-memory
+// read; the cost of this rate is nothing next to looking stuck.
+const STEP_TICK = 250;
+
 function trackPatchRuns() {
   clearTimeout(trackTimer);
   let ticks = 0;
@@ -3554,8 +3561,16 @@ async function startRemediation(cveId) {
       btn.disabled = false;
       return;
     }
-    for (let i = 0; i < 300; i++) {
-      await new Promise(x => setTimeout(x, 1000));
+    // Dispatch registers one host at a time, roughly three a second, and each
+    // announces itself on the way out. Sampling that once a second — after a
+    // full second of nothing — showed one of the five and then "done", so a
+    // step that is busy throughout looked frozen and then instant. The work
+    // was always visible; the poll was too coarse to catch it.
+    const deadline = Date.now() + 300000;
+    let firstTick = true;
+    while (Date.now() < deadline) {
+      if (!firstTick) await new Promise(x => setTimeout(x, STEP_TICK));
+      firstTick = false;
       let s;
       try { s = await (await fetch('/api/state')).json(); } catch { continue; }
       if (s.events && s.events.length) {
@@ -3594,8 +3609,15 @@ async function startRemediation(cveId) {
 }
 
 async function poll(cve) {
-  for (let i = 0; i < 180; i++) {
-    await new Promise(r => setTimeout(r, 1000));
+  // Same reasoning as the dispatch loop: assessment now finishes well inside
+  // a second on staged data, so a leading one-second sleep was most of what
+  // the operator waited for, and the stage bar jumped to done without ever
+  // being seen to move.
+  const deadline = Date.now() + 180000;
+  let firstTick = true;
+  while (Date.now() < deadline) {
+    if (!firstTick) await new Promise(r => setTimeout(r, STEP_TICK));
+    firstTick = false;
     let s;
     try { s = await (await fetch('/api/state')).json(); } catch { continue; }
     renderStages(s);
