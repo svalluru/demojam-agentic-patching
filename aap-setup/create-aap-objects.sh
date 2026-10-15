@@ -386,7 +386,14 @@ if ! $DRY_RUN; then
   # credential is accepted and changes nothing.
   for cid in "$GH_CRED_ID" "$LS_CRED_ID"; do
     code="$(api_code POST "/job_templates/$JT_ID/credentials/" "{\"id\": $cid}")"
-    info "credential $cid -> HTTP $code"
+    # 400 here is the controller refusing a duplicate of the same credential
+    # type, which is what a re-run looks like. The listing below is the real
+    # check; reporting the code alone made a no-op look like a failure.
+    case "$code" in
+      20*) info "credential $cid attached" ;;
+      400) info "credential $cid already attached" ;;
+      *)   info "credential $cid -> HTTP $code" ;;
+    esac
   done
   attached="$(api GET "/job_templates/$JT_ID/credentials/" | python3 -c "
 import json,sys
