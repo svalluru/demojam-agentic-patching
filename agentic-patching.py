@@ -37,6 +37,7 @@ import concurrent.futures
 import json
 import math
 import os
+import re
 import socket
 import ssl
 import sys
@@ -716,7 +717,8 @@ class InfoAgent:
             f'Summarise the patch history for host {host} in 2-3 sentences. '
             f'Focus only on what a reviewer needs: repeated failures, known '
             f'sensitivities, and remediations that worked. Do not mention '
-            f'retrieval or chunks.\n\n{excerpt}'
+            f'retrieval or chunks. Begin with the finding itself — no '
+            f'preamble, and do not restate the question.\n\n{excerpt}'
         )
         try:
             result = http_json(
@@ -732,7 +734,7 @@ class InfoAgent:
         for item in (result or {}).get('output', []):
             for content in item.get('content', []):
                 if content.get('text', '').strip():
-                    return content['text'].strip()
+                    return strip_preamble(content['text'].strip())
         raise BackendUnavailable('Llama Stack (LLM)', 'empty response',
                                  f'check model {LLM_MODEL!r} is served')
 
@@ -985,6 +987,40 @@ def is_sim(execution_id: str) -> bool:
 PATCHED_WITHIN_MINUTES = int(env('PATCHED_WITHIN_MINUTES', '10080'))
 
 
+def patched_window() -> int:
+    """The window actually in force. Always 0 — off — in demo mode.
+
+    A demo is the same CVE assessed over and over, and the guard is built to
+    stop exactly that: after the first run every host is recently patched, so
+    the second assessment finds nothing to do. Correct in an estate, useless
+    on stage. Rather than ask anyone to remember to zero it before presenting,
+    demo mode zeroes it, and the setting describes itself as live-only.
+    """
+    return 0 if demo_mode() else PATCHED_WITHIN_MINUTES
+
+
+# "Here is a 2-3 sentence summary of the patch history for host X:" — the
+# model restating the question before answering it. Harmless in a chat window,
+# but this lands in a table cell clamped to two lines, so the preamble is most
+# of what a reviewer sees and it is identical on every row. The prompt asks
+# for no preamble; this is for when the model does it anyway.
+#
+# Deliberately narrow: an opener that announces a summary and ends in a colon,
+# on one line, with no colon inside it. Anything else is left alone, because
+# discarding a real first sentence costs more than leaving a clumsy one.
+_PREAMBLE = re.compile(
+    r'^\s*(?:sure[,!.]?\s*)?'
+    r'here(?:\'s|’s| is| are)\b[^\n:]{0,200}'
+    r'\bsummar(?:y|ies|ising|izing)\b[^\n:]{0,200}:[ \t]*\n*',
+    re.IGNORECASE)
+
+
+def strip_preamble(text: str) -> str:
+    out = _PREAMBLE.sub('', text, count=1).strip()
+    # If the answer was nothing but preamble, the preamble is the answer.
+    return out or text
+
+
 def human_window(minutes: int) -> str:
     """The window as an operator would say it, whatever unit it was set in."""
     if minutes <= 0:
@@ -1007,14 +1043,15 @@ def already_patched(cve_id: str, agent: 'PatchingAgent') -> dict[str, dict]:
     Guessing the wrong way here would hide a host that was never patched,
     which is worse than patching one twice.
     """
-    if not cve_id or PATCHED_WITHIN_MINUTES <= 0:
+    window = patched_window()
+    if not cve_id or window <= 0:
         return {}                      # guard disabled: assess everything
     try:
         runs = agent.recent_runs(200)
     except BackendUnavailable:
         return {}                      # no history to go on; assess everything
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=PATCHED_WITHIN_MINUTES)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=window)
     out: dict[str, dict] = {}
     for r in runs:
         if r.get('cve_id') != cve_id or not r.get('host'):
@@ -1537,7 +1574,7 @@ class Supervisor:
             detail['count'] = len(detail['hosts'])
             self.trace('supervisor', 'console',
                        f'{len(skipped)} host(s) already patched for {cve_id} '
-                       f'within {human_window(PATCHED_WITHIN_MINUTES)} '
+                       f'within {human_window(patched_window())} '
                        f'— not re-assessed')
 
         # Everything already done. Agent 1 would raise "affects no registered
@@ -1555,7 +1592,7 @@ class Supervisor:
                     'risk_source': 'n/a', 'threshold': REVIEW_THRESHOLD,
                     'notes': [f'All {len(skipped)} affected host(s) were patched '
                               f'for {cve_id} within the last '
-                              f'{human_window(PATCHED_WITHIN_MINUTES)}. '
+                              f'{human_window(patched_window())}. '
                               f'Nothing to do.'],
                     'degraded': [dict(d) for d in DEGRADED],
                 },
@@ -2425,11 +2462,11 @@ SETTINGS: tuple[Setting, ...] = (
             binds='REVIEW_THRESHOLD'),
     Setting('PATCHED_WITHIN_MINUTES', 'Triage', 'Skip hosts patched within',
             'int', '10080',
-            'A host patched for this CVE inside this window is left out of a '
-            're-assessment, so the plan only lists outstanding work. 10080 is '
-            'seven days. Set 0 to turn the guard off and assess every host '
-            'every time — which is what you want to run the same demo CVE '
-            'twice in a row.',
+            'Live mode only. A host patched for this CVE inside this window '
+            'is left out of a re-assessment, so the plan only lists '
+            'outstanding work. 10080 is seven days. Demo mode ignores this '
+            'and always re-assesses every host, because a demo is the same '
+            'CVE run repeatedly and the guard would empty the second run.',
             binds='PATCHED_WITHIN_MINUTES'),
     Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
             'Restrict an assessment to hosts whose name contains this.'),
@@ -2973,7 +3010,7 @@ class Handler(BaseHTTPRequestHandler):
                               else 'No assessment available'),
                     'detail': (f'All {len(skipped)} affected host(s) were already '
                                f'patched for {snapshot.get("cve_id")} within the '
-                               f'last {human_window(PATCHED_WITHIN_MINUTES)}.' if skipped else
+                               f'last {human_window(patched_window())}.' if skipped else
                                'Run "Assess CVE Impact" first — the Patching Agent '
                                'needs each host\'s decision to pick a workflow branch.')})
                 return

@@ -3170,7 +3170,7 @@ function renderHostTable(s) {
       <th>Host</th><th>Risk vs gate</th><th>Plan</th>
       ${dispatched ? '<th>Status</th>' : ''}
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
-      <th>RAG history / reason</th>
+      <th title="For a host needing review: what the patch-history store holds about it, summarised by the LLM — past failures, known sensitivities, what worked. For a host cleared automatically: why its risk score stayed under the gate. Click a row to read the full text.">RAG history / reason</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 
   // Which cells the clamp actually bit can only be known after layout — a
