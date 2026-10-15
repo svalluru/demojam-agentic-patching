@@ -37,6 +37,21 @@ PLAYBOOK_PATH="${PLAYBOOK_PATH:-aap-setup/playbooks/cve_fetch_and_commit.yml}"
 
 PROJECT_NAME="${PROJECT_NAME:-DemoJam Agentic Patching}"
 JT_NAME="${JT_NAME:-CVE - Fetch and Commit}"
+
+# The branch the fetch step commits to, and the project that tracks it. The
+# deploy step points per-host templates at files inside this project.
+GEN_BRANCH="${GEN_BRANCH:-generated-playbooks}"
+GEN_PROJECT_NAME="${GEN_PROJECT_NAME:-Lightspeed-Playbooks}"
+DEPLOY_JT_NAME="${DEPLOY_JT_NAME:-CVE - Sync and Deploy Remediation}"
+
+# Credential the ansible.controller modules use to call the controller back.
+AAP_CRED_NAME="${AAP_CRED_NAME:-AAP Credential}"
+
+# Where a remediation would actually run. Both must already exist — this
+# script will not invent an inventory or an SSH credential. Override when the
+# real lab inventory exists.
+TARGET_INVENTORY="${TARGET_INVENTORY:-Demo Inventory}"
+MACHINE_CREDENTIAL="${MACHINE_CREDENTIAL:-Demo Credential}"
 GH_CRED_NAME="${GH_CRED_NAME:-github-token}"
 LS_CRED_NAME="${LS_CRED_NAME:-insights-lightspeed}"
 GH_TYPE_NAME="${GH_TYPE_NAME:-GitHub Token}"
@@ -130,7 +145,8 @@ info "reachable  : HTTP $code"
 
 if $DELETE; then
   step "Deleting"
-  for spec in "/job_templates/:$JT_NAME" "/projects/:$PROJECT_NAME" \
+  for spec in "/job_templates/:$JT_NAME" "/job_templates/:$DEPLOY_JT_NAME" \
+              "/projects/:$PROJECT_NAME" "/projects/:$GEN_PROJECT_NAME" \
               "/credentials/:$GH_CRED_NAME" "/credentials/:$LS_CRED_NAME" \
               "/credential_types/:$GH_TYPE_NAME" "/credential_types/:$LS_TYPE_NAME"; do
     ep="${spec%%:*}"; name="${spec#*:}"
@@ -290,6 +306,79 @@ print(json.dumps({
   'verbosity': 0,
 }))")"
 JT_ID="$(create_or_update /job_templates/ "$JT_NAME" "$JT_PAYLOAD")"
+
+# ------------------------------------------- generated-playbooks project
+
+step "Generated-playbooks project"
+
+# A second project, tracking the branch the fetch step commits to. The deploy
+# step syncs this and points the per-host template at a file inside it, so it
+# has to be a different project from the one holding the playbooks themselves
+# — they are on different branches.
+GEN_PROJECT_PAYLOAD="$(python3 -c "
+import json
+print(json.dumps({
+  'name': '''$GEN_PROJECT_NAME''',
+  'description': 'Remediation playbooks generated from Insights. Machine-written.',
+  'organization': int('''$ORG_ID'''),
+  'scm_type': 'git',
+  'scm_url': '''$GITHUB_REPO_URL''',
+  'scm_branch': '''$GEN_BRANCH''',
+  'scm_update_on_launch': True,
+  'scm_clean': True,
+}))")"
+GEN_PROJECT_ID="$(create_or_update /projects/ "$GEN_PROJECT_NAME" "$GEN_PROJECT_PAYLOAD")"
+
+if ! $DRY_RUN; then
+  api POST "/projects/$GEN_PROJECT_ID/update/" '{}' >/dev/null || true
+  for _ in $(seq 1 60); do
+    gstatus="$(api GET "/projects/$GEN_PROJECT_ID/" | jget status)"
+    [[ "$gstatus" =~ ^(successful|failed|error)$ ]] && break
+    sleep 2
+  done
+  info "sync status: ${gstatus:-unknown}"
+  [[ "$gstatus" == "successful" ]] || fail \
+    "could not sync $GEN_PROJECT_NAME — does branch '$GEN_BRANCH' exist?"
+fi
+
+# --------------------------------------------- sync-and-deploy template
+
+step "Sync and deploy job template"
+
+DEPLOY_JT_PAYLOAD="$(python3 -c "
+import json
+print(json.dumps({
+  'name': '''$DEPLOY_JT_NAME''',
+  'description': 'Sync the generated playbooks and create a per-host remediation template',
+  'job_type': 'run',
+  'organization': int('''$ORG_ID'''),
+  'inventory': int('''$INVENTORY_ID'''),
+  'project': int('''$PROJECT_ID''') if '''$PROJECT_ID'''.isdigit() else None,
+  'playbook': 'aap-setup/playbooks/cve_sync_and_deploy.yml',
+  'execution_environment': int('''$EE_ID'''),
+  'ask_variables_on_launch': True,
+  'extra_vars': json.dumps({
+    'lightspeed_project': '''$GEN_PROJECT_NAME''',
+    'playbooks_dir': 'generated_playbooks',
+    'target_inventory': '''$TARGET_INVENTORY''',
+    'machine_credential': '''$MACHINE_CREDENTIAL''',
+  }),
+  'verbosity': 0,
+}))")"
+DEPLOY_JT_ID="$(create_or_update /job_templates/ "$DEPLOY_JT_NAME" "$DEPLOY_JT_PAYLOAD")"
+
+if ! $DRY_RUN; then
+  # ansible.controller.* modules authenticate back to the controller through
+  # this credential; without it the deploy play cannot create anything.
+  AAP_CRED_ID="$(find_id /credentials/ "$AAP_CRED_NAME")"
+  if [[ -n "$AAP_CRED_ID" ]]; then
+    info "attaching $AAP_CRED_NAME ($AAP_CRED_ID) -> HTTP $(api_code POST \
+      "/job_templates/$DEPLOY_JT_ID/credentials/" "{\"id\": $AAP_CRED_ID}")"
+  else
+    info "WARNING: no credential named '$AAP_CRED_NAME' — the deploy step will"
+    info "         fail, because ansible.controller needs one to reach the API"
+  fi
+fi
 
 if ! $DRY_RUN; then
   step "Attaching credentials to the job template"
