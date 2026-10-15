@@ -200,8 +200,30 @@
         existing, status = http(f'{url}?ref={urllib.parse.quote(branch)}', headers=gh)
         sha = existing.get('sha') if status == 200 else None
 
+        encoded = base64.b64encode(content.encode()).decode()
+
+        # Insights regenerates the same playbook for the same CVE and host, so
+        # re-running usually produces byte-identical content. Committing it
+        # anyway is accepted by GitHub and creates a commit that changes no
+        # files — the branch fills with empty commits while the file list never
+        # moves, so a successful run looks like it did nothing. Say so instead.
+        if sha and (existing.get('content') or '').replace('\n', '') == encoded:
+            print(json.dumps({
+                'playbook_filename': filename,
+                'playbook_path': path,
+                'committed': True,      # the right content is on the branch
+                'changed': False,
+                'system_uuid': uuid,
+                'branch': branch,
+                'repo': repo,
+                'action': 'unchanged',
+                'commit_sha': '',
+                'bytes': len(content),
+            }))
+            raise SystemExit(0)
+
         commit = {'message': f'CVE remediation: {cve_id} on {host}',
-                  'content': base64.b64encode(content.encode()).decode(),
+                  'content': encoded,
                   'branch': branch}
         if sha:
             commit['sha'] = sha
@@ -214,6 +236,7 @@
             'playbook_filename': filename,
             'playbook_path': path,
             'committed': True,
+            'changed': True,
             'system_uuid': uuid,
             'branch': branch,
             'repo': repo,
@@ -250,9 +273,15 @@
     - name: Report what was committed
       ansible.builtin.debug:
         msg: >-
+          {%- if not (fetch_result.changed | default(true) | bool) -%}
+          unchanged — {{ fetch_result.playbook_path }} on
+          {{ fetch_result.branch }} already matches what Insights generated
+          ({{ fetch_result.bytes }} bytes), so no commit was made
+          {%- else -%}
           {{ fetch_result.action }} {{ fetch_result.playbook_path }}
           on {{ fetch_result.branch }} ({{ fetch_result.bytes }} bytes,
           commit {{ fetch_result.commit_sha }})
+          {%- endif -%}
 
     # The Ansible Orchestrator workflow reads these as
     # ${fetch_and_commit_prod.artifacts.<name>}.
@@ -265,3 +294,10 @@
           system_uuid: "{{ fetch_result.system_uuid }}"
           playbook_path: "{{ fetch_result.playbook_path }}"
           github_branch: "{{ fetch_result.branch }}"
+          # 'unchanged' when the branch already held identical content. The
+          # downstream deploy step only needs the file to be correct, which
+          # 'committed' already says; this is here so a run that did nothing
+          # can be told apart from one that did.
+          action: "{{ fetch_result.action }}"
+          changed_playbook: "{{ fetch_result.changed | default(true) }}"
+          commit_sha: "{{ fetch_result.commit_sha | default('') }}"
