@@ -1,0 +1,267 @@
+---
+# Fetch a remediation playbook from Red Hat Insights and commit it to GitHub.
+#
+# This is the GitHub/REST successor to ao-setup/playbooks/cve_fetch_and_commit.yml,
+# which committed to Gitea and reached Insights through an MCP server on the lab
+# bastion. Two things changed and both remove a dependency:
+#
+#   Insights   called over its REST API with the LIGHTSPEED_* service account the
+#              console already uses, rather than through MCP on bastion:8001. The
+#              execution environment only needs egress to console.redhat.com, not
+#              a route to a lab host.
+#
+#   GitHub     the Contents API instead of Gitea's. Near-identical, with one
+#              difference that matters: GitHub uses PUT for both create and
+#              update, and an update must carry the blob sha of what it replaces.
+#
+# Contract is unchanged — the same three set_stats artifacts — so the Ansible
+# Orchestrator workflow can chain this exactly as it chained the Gitea version.
+#
+# Credentials, both injected by custom credential types that setup-aap-objects.sh
+# creates. Nothing secret is passed as an extra var:
+#   GITHUB_TOKEN                                     <- 'GitHub Token'
+#   LIGHTSPEED_CLIENT_ID / LIGHTSPEED_CLIENT_SECRET  <- 'Insights Lightspeed'
+- name: Fetch CVE remediation from Insights and commit to GitHub
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    cve_id: "{{ cve_id }}"
+    target_host: "{{ target_host }}"
+    github_repo: "{{ github_repo | default('svalluru/demojam-agentic-patching') }}"
+    github_branch: "{{ github_branch | default('generated-playbooks') }}"
+    playbooks_dir: "{{ playbooks_dir | default('generated_playbooks') }}"
+
+  tasks:
+    - name: Fetch from Insights and commit to GitHub
+      ansible.builtin.shell: |
+        python3 << 'PYEOF'
+        import base64, json, os, re, ssl, sys, urllib.error, urllib.parse, urllib.request
+
+        def need(name):
+            v = os.environ.get(name, '').strip()
+            if not v:
+                fail(f'{name} is not set — check the job template has both '
+                     f'credentials attached')
+            return v
+
+        def fail(msg, **extra):
+            # Always valid JSON on stdout: the next task parses this either way,
+            # and a bare traceback would make the failure unreadable in AAP.
+            print(json.dumps({'error': msg, 'playbook_filename': '',
+                              'committed': False, **extra}))
+            sys.exit(1)
+
+        cve_id = need('CVE_ID')
+        host = need('TARGET_HOST')
+        repo = need('GITHUB_REPO')
+        branch = need('GITHUB_BRANCH')
+        folder = need('PLAYBOOKS_DIR').strip('/')
+        gh_token = need('GITHUB_TOKEN')
+        client_id = need('LIGHTSPEED_CLIENT_ID')
+        client_secret = need('LIGHTSPEED_CLIENT_SECRET')
+
+        SSO = ('https://sso.redhat.com/auth/realms/redhat-external'
+               '/protocol/openid-connect/token')
+        API = os.environ.get('INSIGHTS_REST_BASE_URL',
+                             'https://console.redhat.com/api').rstrip('/')
+        TIMEOUT = int(os.environ.get('HTTP_TIMEOUT', '60'))
+
+        # Both endpoints present publicly trusted certificates, so verification
+        # stays on unless someone deliberately turns it off for a proxy.
+        ctx = ssl.create_default_context()
+        if os.environ.get('VERIFY_TLS', 'true').lower() in ('0', 'false', 'no'):
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+        def http(url, method='GET', data=None, headers=None, raw=False):
+            """Returns (payload, status). An HTTP error code comes back as a
+            status for the caller to judge — 404 on the contents probe is how
+            we tell a create from an update. A transport failure is never
+            recoverable here, so it ends the run through fail() rather than
+            escaping as a traceback and breaking the JSON contract."""
+            req = urllib.request.Request(url, data=data, method=method)
+            for k, v in (headers or {}).items():
+                req.add_header(k, v)
+            try:
+                with urllib.request.urlopen(req, context=ctx, timeout=TIMEOUT) as r:
+                    body = r.read()
+                    return (body if raw else json.loads(body or b'{}')), r.status
+            except urllib.error.HTTPError as e:
+                body = e.read()
+                if raw:
+                    return body, e.code
+                try:
+                    return json.loads(body or b'{}'), e.code
+                except ValueError:
+                    return {'raw': body[:400].decode('utf-8', 'replace')}, e.code
+            except Exception as e:
+                where = urllib.parse.urlsplit(url).netloc or url
+                fail(f'cannot reach {where}: {e}',
+                     hint='the execution environment needs egress to '
+                          'console.redhat.com and api.github.com; set '
+                          'VERIFY_TLS=false only if a TLS-inspecting proxy '
+                          'is in the way')
+
+        # -- 1. service-account token ----------------------------------------
+        payload, status = http(
+            SSO, 'POST',
+            data=urllib.parse.urlencode({
+                'grant_type': 'client_credentials',
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'scope': 'api.console',
+            }).encode(),
+            headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        token = (payload or {}).get('access_token')
+        if not token:
+            fail(f'SSO returned no access_token (HTTP {status}) — check '
+                 f'LIGHTSPEED_CLIENT_ID / LIGHTSPEED_CLIENT_SECRET')
+        rh = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+
+        # -- 2. resolve the host to its inventory uuid ------------------------
+        # advisory_available=true matches what the console lists, so this agrees
+        # with the host count the operator was shown.
+        #
+        # Paged, because the endpoint caps limit at 100 and rejects more with a
+        # 400. Reading one page and stopping would report a host as "not
+        # affected" purely for sorting past position 100 — a wrong answer that
+        # looks like a real one.
+        PAGE = 100
+        uuid = ''
+        seen = []
+        offset = 0
+        total = None
+        while not uuid:
+            found, status = http(
+                f'{API}/vulnerability/v1/cves/{cve_id}/affected_systems'
+                f'?limit={PAGE}&offset={offset}&advisory_available=true',
+                headers=rh)
+            if status != 200:
+                fail(f'Insights affected_systems returned HTTP {status}',
+                     detail=str(found)[:300])
+            rows = (found or {}).get('data', [])
+            if total is None:
+                total = (((found or {}).get('meta') or {}).get('total_items')
+                         or ((found or {}).get('meta') or {}).get('total'))
+            for row in rows:
+                attrs = row.get('attributes') or {}
+                name = attrs.get('display_name') or ''
+                if len(seen) < 10:
+                    seen.append(name)
+                if (name == host or name.startswith(host + '.')
+                        or host.startswith(name + '.')):
+                    uuid = attrs.get('inventory_id') or row.get('id') or ''
+                    break
+            offset += PAGE
+            if len(rows) < PAGE or (total is not None and offset >= total):
+                break
+        if not uuid:
+            fail(f'{host} is not among the {total if total is not None else "?"} '
+                 f'systems Insights reports as affected by {cve_id}',
+                 candidates=seen)
+
+        # -- 3. generate the remediation playbook -----------------------------
+        body, status = http(
+            f'{API}/remediations/v1/playbook', 'POST',
+            data=json.dumps({'issues': [
+                {'id': f'vulnerabilities:{cve_id}', 'systems': [uuid]}]}).encode(),
+            headers={**rh, 'Content-Type': 'application/json',
+                     'Accept': 'text/vnd.yaml, text/yaml, application/json'},
+            raw=True)
+        if status != 200:
+            fail(f'Insights remediations returned HTTP {status}',
+                 detail=body[:300].decode('utf-8', 'replace'))
+        content = body.decode('utf-8')
+        if not content.strip():
+            fail(f'Insights generated an empty playbook for {cve_id} on {host}')
+
+        # Insights pins the play to the one host it generated for. Widening it to
+        # 'all' hands targeting back to the AAP job template's limit, which is
+        # what actually decides where this runs.
+        content = re.sub(r'hosts:\s*["\']?[\w.\-]+["\']?', 'hosts: all', content)
+
+        # -- 4. commit --------------------------------------------------------
+        # One file per CVE per host. The workflow dispatches a separate execution
+        # for every host, so a per-CVE name would have them overwrite each other's
+        # commits — and the losing host would deploy a playbook built for another.
+        short = re.sub(r'[^A-Za-z0-9._-]', '_', host.split('.')[0])[:60]
+        filename = f'remediation-{re.sub(r"[^A-Za-z0-9._-]", "_", cve_id)}-{short}.yml'
+        path = f'{folder}/{filename}'
+        gh = {'Authorization': f'Bearer {gh_token}',
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'Content-Type': 'application/json'}
+        url = f'https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path)}'
+
+        # An update must name the blob it replaces; a create must not send a sha
+        # at all. Asking first is the only way to know which this is.
+        existing, status = http(f'{url}?ref={urllib.parse.quote(branch)}', headers=gh)
+        sha = existing.get('sha') if status == 200 else None
+
+        commit = {'message': f'CVE remediation: {cve_id} on {host}',
+                  'content': base64.b64encode(content.encode()).decode(),
+                  'branch': branch}
+        if sha:
+            commit['sha'] = sha
+        result, status = http(url, 'PUT', data=json.dumps(commit).encode(), headers=gh)
+        if status not in (200, 201):
+            fail(f'GitHub commit returned HTTP {status}',
+                 detail=str(result.get('message') or result)[:300], path=path)
+
+        print(json.dumps({
+            'playbook_filename': filename,
+            'playbook_path': path,
+            'committed': True,
+            'system_uuid': uuid,
+            'branch': branch,
+            'repo': repo,
+            'action': 'updated' if sha else 'created',
+            'commit_sha': ((result.get('commit') or {}).get('sha') or '')[:10],
+            'bytes': len(content),
+        }))
+        PYEOF
+      environment:
+        CVE_ID: "{{ cve_id }}"
+        TARGET_HOST: "{{ target_host }}"
+        GITHUB_REPO: "{{ github_repo }}"
+        GITHUB_BRANCH: "{{ github_branch }}"
+        PLAYBOOKS_DIR: "{{ playbooks_dir }}"
+        # GITHUB_TOKEN, LIGHTSPEED_CLIENT_ID and LIGHTSPEED_CLIENT_SECRET are
+        # injected by the attached credentials and must not be listed here.
+      register: fetch_script
+      changed_when: false
+      failed_when: false
+
+    - name: Parse result
+      ansible.builtin.set_fact:
+        fetch_result: "{{ fetch_script.stdout | from_json }}"
+      failed_when: false
+
+    - name: Fail with the reason the script reported
+      ansible.builtin.fail:
+        msg: >-
+          {{ fetch_result.error | default('fetch/commit failed') }}
+          {{ ('(' ~ fetch_result.detail ~ ')') if fetch_result.detail is defined else '' }}
+      when: fetch_result is not defined
+            or not (fetch_result.committed | default(false) | bool)
+
+    - name: Report what was committed
+      ansible.builtin.debug:
+        msg: >-
+          {{ fetch_result.action }} {{ fetch_result.playbook_path }}
+          on {{ fetch_result.branch }} ({{ fetch_result.bytes }} bytes,
+          commit {{ fetch_result.commit_sha }})
+
+    # The Ansible Orchestrator workflow reads these as
+    # ${fetch_and_commit_prod.artifacts.<name>}.
+    - name: Publish artifacts for the orchestrator
+      ansible.builtin.set_stats:
+        data:
+          playbook_filename: "{{ fetch_result.playbook_filename }}"
+          gitea_committed: "{{ fetch_result.committed }}"
+          committed: "{{ fetch_result.committed }}"
+          system_uuid: "{{ fetch_result.system_uuid }}"
+          playbook_path: "{{ fetch_result.playbook_path }}"
+          github_branch: "{{ fetch_result.branch }}"
