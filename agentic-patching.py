@@ -316,6 +316,18 @@ def preflight(url: str, timeout: float | None = None) -> None:
     the two cases are separated: reachability gets seconds, answering gets
     the full allowance.
     """
+    # "Demo mode opens no sockets at all" is enforced here as well as in
+    # circuit(), because circuit() is a thing each caller has to remember and
+    # this is the one place every outbound request passes through. It was not
+    # remembered: ao_login() returned a cached token before reaching its
+    # circuit() call, so after a live session the operator could switch to
+    # demo and watch dispatch block on a real TLS handshake to Ansible
+    # Orchestrator. A guard that depends on eight call sites agreeing is not
+    # a guarantee; this one cannot be bypassed by forgetting it.
+    if offline():
+        host = urllib.parse.urlparse(url).hostname or url
+        raise BackendUnavailable(host, 'demo mode',
+                                 'set MODE=live to use the real service')
     # Resolved per call, not captured as a default argument: the settings
     # panel rebinds CONNECT_TIMEOUT, and a default binds once at import.
     if timeout is None:
@@ -353,12 +365,14 @@ _token: dict[str, Any] = {}
 
 def insights_token() -> str:
     """Client-credentials token for console.redhat.com, cached until expiry."""
-    if _token.get('value') and _token['expires'] > time.time() + 30:
-        return _token['value']
-
+    # Checked before the cache for the same reason as ao_login(): a cached
+    # token must not be a way past the demo-mode guard.
+    #
     # C1 and C2 each need a token, so without this a dead SSO is paid for
     # twice before the console has rendered anything.
     circuit('Red Hat SSO')
+    if _token.get('value') and _token['expires'] > time.time() + 30:
+        return _token['value']
     cid, secret = env('LIGHTSPEED_CLIENT_ID'), env('LIGHTSPEED_CLIENT_SECRET')
     if not cid or not secret:
         raise BackendUnavailable(
@@ -1101,9 +1115,12 @@ _ao_token: dict[str, Any] = {}
 
 def ao_login() -> str:
     """Bearer token for AO, cached until shortly before it expires."""
+    # Before the cache, not after. A token minted in live mode outlives the
+    # switch to demo, and returning it here skipped the guard entirely and
+    # let the caller open a real connection to AO.
+    circuit('Ansible Orchestrator')
     if _ao_token.get('value') and _ao_token['expires'] > time.time() + 30:
         return _ao_token['value']
-    circuit('Ansible Orchestrator')
     if not (AO_URL and AO_USERNAME and AO_PASSWORD):
         raise BackendUnavailable(
             'Ansible Orchestrator', 'AO_URL / AO_USERNAME / AO_PASSWORD not set',
@@ -2681,7 +2698,23 @@ def settings_update(changes: dict[str, Any]) -> list[str]:
             os.environ.pop(s.key, None)
         _rebind(s, raw)
         _OVERRIDDEN.add(s.key)
-    return [s.key for s, _ in staged]
+    changed = [s.key for s, _ in staged]
+    if any(k in ('MODE', 'AO_URL', 'INSIGHTS_API') for k in changed):
+        forget_credentials()
+    return changed
+
+
+def forget_credentials() -> None:
+    """Drop cached tokens and breaker state. Called when the target changes.
+
+    A bearer token is scoped to the endpoint that issued it and to the mode
+    the console was in when it asked, so it must not survive a switch of
+    either — and a breaker recording "AO is down" says nothing about the AO
+    that is now configured.
+    """
+    _token.clear()
+    _ao_token.clear()
+    degraded_reset()
 
 
 def settings_revert() -> list[str]:
@@ -2697,6 +2730,8 @@ def settings_revert() -> list[str]:
         _rebind(s, raw)
         reverted.append(key)
     _OVERRIDDEN.clear()
+    if reverted:
+        forget_credentials()
     return reverted
 
 
