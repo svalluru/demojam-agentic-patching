@@ -1,0 +1,69 @@
+{
+  "schema_version": "2.0.0",
+  "name": "CVE Fetch and Commit - TEST",
+  "description": "Standalone test of the Insights-to-GitHub step. Triggers the 'CVE - Fetch and Commit' AAP job template for one CVE and host and stops. No approval gate, no risk scoring, no remediation run - this exists to prove the fetch and commit path works on its own before it is wired into the main workflow. Import alongside the main workflow; it shares the AAP integration and credential but no state.",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "type": "manual_trigger",
+      "name": "CVE Alert (test)",
+      "parameters": {
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "cve_id": {
+              "type": "string"
+            },
+            "github_branch": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "host",
+            "cve_id"
+          ]
+        }
+      },
+      "position": {
+        "x": 100,
+        "y": 0
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fetch_and_commit_test",
+      "type": "aap_job_template",
+      "name": "Fetch from Insights & Commit to GitHub",
+      "parameters": {
+        "credential_id": "45f2404f-6cf5-405a-b676-1ee7a2f082f5",
+        "integration_id": "f6fa02e1-bd54-40ea-b506-33722f98d16c",
+        "organization_name": "Default",
+        "job_template_name": "CVE - Fetch and Commit",
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "github_branch": "generated-playbooks"
+        },
+        "diff_mode": false,
+        "use_input_variables": true
+      },
+      "settings": {},
+      "position": {
+        "x": 480,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "trigger_manual",
+      "to": "fetch_and_commit_test"
+    }
+  ]
+}
