@@ -565,8 +565,11 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
     except BackendUnavailable as exc:
         degrade('C2 cve_detail', exc.service, exc.cause, exc.fix)
         fb = fallbacks.cve_detail(cve_id)
+        before = len(fb['hosts'])
         fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit)
         fb['count'] = len(fb['hosts'])
+        fb['limited_from'] = (before if host_limit and len(fb['hosts']) < before
+                              else None)
         # Matched against the placeholder rather than applied to whatever is
         # there: a CVE in CVE_LIST carries its real advisory text, and that
         # must survive. Only the stand-in gets swapped, because it names
@@ -590,6 +593,7 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
             'age_days': _age_days(sa.get('first_reported')),
         })
 
+    before = len(hosts)
     hosts = _narrow(hosts, host_filter, host_limit)
 
     return {
@@ -600,6 +604,10 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
         'hosts': hosts,
         'count': len(hosts),
         'total_affected': (systems.get('meta') or {}).get('total_items'),
+        # Set only when HOSTS_LIMIT actually dropped hosts. The cap is a
+        # safety net, and a safety net that catches something silently is
+        # indistinguishable from one that was never needed.
+        'limited_from': before if host_limit and len(hosts) < before else None,
     }
 
 
@@ -974,6 +982,16 @@ class InfoAgent:
         if total and total > len(hosts) and len(hosts) >= AFFECTED_PAGE:
             notes.append(f'Only the first {len(hosts)} of {total} affected host(s) '
                          f'were assessed — raise AFFECTED_PAGE to cover the rest.')
+        # HOSTS_LIMIT is the backstop behind HOSTS_FILTER: if the filter ever
+        # widens unexpectedly again, this caps the blast radius. It has to say
+        # when it fired, because a plan silently cut from 100 hosts to 1 looks
+        # exactly like a plan that was always 1 — and the difference is that
+        # something went wrong upstream.
+        capped = detail.get('limited_from')
+        if capped:
+            notes.append(f'HOSTS_LIMIT capped this plan at {len(hosts)} of '
+                         f'{capped} host(s) that matched — check HOSTS_FILTER '
+                         f'is selecting what you expect.')
         # Not a source label: true of this CVE against this gate whether the
         # scores were measured or substituted, and the reviewer needs it in
         # either case. So it is outside the block above.
