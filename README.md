@@ -23,7 +23,7 @@ Both open <http://127.0.0.1:8788>.
 | [Demo mode](#demo-mode) | Run it with nothing installed. What is staged, what is not real |
 | [Live mode](#live-mode) | Prerequisites, one-command setup, running against real infrastructure |
 | [Using the console](#using-the-console) | The flow, the left panel, the settings panel, the CLI |
-| [Configuration](#configuration) | Every switch, and how the page marks substituted values |
+| [Configuration](#configuration) | Every switch, and where it is set |
 | [ROI report](#roi-report) | What is measured, what is assumed, and how the two are kept apart |
 | [The learning loop](#the-learning-loop) | Agent 4 — feeding outcomes back to RAG and the model |
 | [Design notes](#design-notes) | The decisions worth knowing before changing anything |
@@ -90,9 +90,12 @@ resolves to `patched` or `rejected` inside this process, so the approval path
 stays demonstrable — but no host is touched and the execution exists in no AO
 instance.
 
-By default the page does not say any of this; see
-[source labelling](#source-labelling) for why, and for the switch that puts the
-marks back on.
+**By default the page does not say any of this.** No banner, no `SIMULATED`
+chips, no `(heuristic)` beside a risk score — a banner reading *running on
+fallback data* is the thing a room fixates on. Nothing is suppressed, only
+moved: every substitution is logged to `/tmp/demo-backend.log`, named in the
+agent trace on screen, and carried on the API as `degraded` / `source` /
+`simulated`. Set `LABEL_SOURCES=1` to put the marks back on the page.
 
 Simulated runs persist to `runs/simulated.json` so **Patch runs** survives a
 restart. Delete that file to reset.
@@ -289,7 +292,7 @@ Every row below is also a row in the settings panel.
 | `AO_WORKFLOW_NAME` | `DemoJam Agentic Patching` | Workflow to trigger |
 | `AO_DECIDE_WAIT` | `90` | Seconds to wait for a run to settle after approve/reject |
 | `PATCHED_WITHIN_MINUTES` | `10080` | How recently a host must have been patched for this CVE to be left out of a re-assessment. 7 days; `0` turns the guard off |
-| `LABEL_SOURCES` | `0` | Mark substituted values on the page — see below |
+| `LABEL_SOURCES` | `0` | Mark substituted values on the page: the `degraded` panel, `SIMULATED` chips, red diagram nodes. Off by default — the record still goes to the log, the agent trace and the API |
 | `DEMO_LATENCY` | `0.35` | Demo-only pause per agent step; `0` disables |
 | `CONNECT_TIMEOUT` | `3` | Reachability budget per service |
 | `CIRCUIT_TTL` | `30` | How long a service stays tripped after failing |
@@ -298,30 +301,6 @@ Every row below is also a row in the settings panel.
 | `LAB_TAG` | — | Passed to the workflow as `lab_tag` |
 
 `ROI_*` has its own table under [ROI report](#roi-report).
-
-### Source labelling
-
-**By default the page says nothing about where a value came from.** No demo
-banner, no `degraded` panel, no `SIMULATED` chips, no red diagram nodes, no
-`(heuristic)` beside a risk score. A banner reading *running on fallback data*
-is the thing a room fixates on.
-
-**Nothing is suppressed, only moved.** Three channels carry it regardless:
-
-| Channel | Where |
-|---|---|
-| Backend log | `degrade()` prints every substitution to `/tmp/demo-backend.log` with step, service, reason and fix |
-| Agent trace | On screen while the run is — `risk-model : unreachable — heuristic for 2 host(s)` |
-| API | `degraded` on the plan, `source` / `risk_source` / `history_source` on the values, `simulated: true`, `illustrative` on the ROI report |
-
-**`LABEL_SOURCES=1` puts the marks back on the page**, and anyone pointing this
-at real infrastructure wants that — the patch plan is what a human approves
-against, and unlabelled, a fabricated risk score looks exactly like a measured
-one. It is also a toggle in the gear panel, taking effect on the next render.
-
-The risk gate number itself is always shown either way: the score and the
-threshold it was judged against are real properties of the run. Only the
-`(heuristic)` naming where the score came from is hidden.
 
 ---
 
