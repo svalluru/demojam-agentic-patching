@@ -34,25 +34,17 @@ Both open <http://127.0.0.1:8788>.
 
 ![architecture](multi-agent/architecture.jpg)
 
-```
-Common code (not an agent)      CVE list + affected hosts from Insights
-        │  for each CVE
-        ▼
-   Supervisor Agent             owns control flow + per-CVE state
-        │
-        ├─▶ 1 cve-gather-info-agent   RAG history · scheduler · risk · patch plan
-        ├─▶ 2 Patching Agent          triggers the AO workflow, per host
-        ├─▶ 3 Communication Agent     PDF status report (Slack/SNOW pending)
-        └─▶ 4 Results Agent           RAG record + risk-model training row
-```
+Common code pulls the CVE list and its affected hosts from Insights. For each
+CVE, the **Supervisor** owns the control flow and the per-CVE state, and calls
+four specialist agents in turn. The agents are stateless.
 
-| Component | State |
-|---|---|
-| Common code (CVE list / detail) | Done — Insights REST |
-| 1 cve-gather-info-agent | Done — RAG, risk model, patch plan |
-| 2 Patching Agent | Done — triggers the AO workflow per host, approve/reject |
-| 3 Communication Agent | Done as scoped — PDF status report (Slack/SNOW deferred) |
-| 4 Results Agent | Done — writes RAG records and risk-model training rows |
+| | Agent | Does | State |
+|---|---|---|---|
+| — | Common code *(not an agent)* | CVE list and affected hosts | Done — Insights REST |
+| 1 | cve-gather-info-agent | RAG history · scheduler · risk · patch plan | Done |
+| 2 | Patching Agent | Triggers the AO workflow per host, approve/reject | Done |
+| 3 | Communication Agent | PDF status report | Done as scoped — Slack/SNOW deferred |
+| 4 | Results Agent | RAG record + risk-model training row | Done |
 
 Steps 5–10 of the diagram (env gate, playbook, git, AAP sync, schedule,
 remediation) are **not** in this repo. They are the Ansible Orchestrator
