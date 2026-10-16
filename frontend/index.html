@@ -3202,6 +3202,10 @@ function dispatchAction(plan) {
 // function because both renderers need to refresh it without redrawing the
 // frame around it.
 let showCols = localStorage.getItem('showCols') === '1';
+// Same idea for the runs table, kept separate: the two tables are read in
+// different situations and an operator who wants exec ids in one does not
+// necessarily want them in the other.
+let showRunCols = false;
 
 // Dropped entirely once there is nothing left to do. While it is actionable
 // it is the only line on the page that says the run is waiting on a person
@@ -3835,6 +3839,23 @@ const ago = iso => {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+};
+
+// A history view is read against the clock on the wall, not against now.
+// "14h ago" cannot be matched to a change window, a ticket or a colleague's
+// "it broke around four" — and two runs 14h ago may be hours apart. Relative
+// time still earns its place while something is moving, so `ago` stays and
+// is used in the tooltip.
+const stamp = iso => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return '—';
+  const p = n => String(n).padStart(2, '0');
+  // Local time, because the operator is comparing against their own clock.
+  // Day and month without the year: these runs are hours old, and the year
+  // is four characters of noise in a column that has to stay narrow.
+  return `${p(d.getDate())} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}`
+       + ` ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
 
 // ======================================================================
@@ -4586,6 +4607,18 @@ async function showRuns() {
 
   const runs = d.runs || [];
   const n = o => runs.filter(r => r.outcome === o).length;
+
+  // Reports used to be a second table below this one, which meant finding the
+  // report for a run was a manual join on CVE and timestamp across two lists.
+  // Agent 3 writes one report per CVE run covering every host in it, so the
+  // report belongs on the row — the same file against each host of that run.
+  let reports = [];
+  try { reports = ((await (await fetch('/api/reports')).json()) || {}).reports || []; }
+  catch (e) { /* the run list is still worth showing without them */ }
+  // Newest report per CVE. /api/reports is newest-first, so the first win.
+  const reportFor = {};
+  for (const rep of reports) if (!(rep.cve_id in reportFor)) reportFor[rep.cve_id] = rep;
+
   const rows = runs.map((r, i) => {
     const o = RUN_OUTCOME[r.outcome] || { cls: 'review', label: r.outcome };
     // Same merge as the Hosts table: what you can do, or what happened.
@@ -4599,16 +4632,32 @@ async function showRuns() {
     // The list endpoint carries steps for simulated runs but not for real ones,
     // which AO reports per-execution. A row without them keeps the error text.
     const prog = stepProgress(r);
+    const rep = reportFor[r.cve_id];
+    // Anything still moving gets a way into the detail view. The runs list
+    // says "Running" and nothing else, which is the least useful moment to
+    // have the least information.
+    const live = ['running', 'awaiting_approval'].includes(r.outcome);
     return `<tr class="in" style="--i:${Math.min(i, 12)}" data-exec="${esc(r.execution_id)}">
-      <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
+      <td class="muted-sm" style="white-space:nowrap"
+          title="${esc(ago(r.created_at))}">${esc(stamp(r.created_at))}</td>
       <td class="cve-id">${cveLabel(r.cve_id)}</td>
       <td class="cve-id">${esc(r.host)}</td>
       <td>${esc(patchType(r.group))}</td>
       <td class="decide-cell">${status}</td>
-      <td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${prog
+      <td>${rep
+        ? `<a class="report-btn" style="padding:4px 10px;font-size:calc(11px * var(--ts))"
+              href="/api/report?file=${encodeURIComponent(rep.file)}"
+              target="_blank" rel="noopener" title="${esc(rep.file)}">Open</a>`
+        : '<span class="muted-sm">—</span>'}</td>
+      <td><button class="pill run-detail" data-exec="${esc(r.execution_id)}"
+                  style="padding:3px 10px;font-size:calc(11px * var(--ts))">${
+        live ? 'Watch' : 'Details'}</button></td>
+      ${showRunCols ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${prog
         ? progressCell(r)
         : r.error ? `<span class="err-sm">${esc(String(r.error).slice(0, 200))}</span>` : '—'}</td>
       <td class="mono">${esc((r.execution_id || '').slice(0, 8))}</td>
+      <td class="mono muted-sm">${rep ? esc(rep.file) : '—'}</td>
+      <td class="muted-sm">${rep ? Math.max(1, Math.round((rep.bytes || 0) / 1024)) + ' KB' : '—'}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -4634,48 +4683,124 @@ async function showRuns() {
       <div class="stat"><div class="v">${n('cancelled')}</div><div class="k">Cancelled</div></div>
       <div class="stat"><div class="v">${n('running')}</div><div class="k">Running</div></div>
     </div>
-    ${runs.length ? `<table style="margin-top:12px">
+    ${runs.length ? `
+    <div class="sev-title high" style="margin-top:18px">Runs<span class="c">${runs.length}</span>
+      <label class="morecols" title="Adds workflow progress, the execution id and the report file. The table scrolls sideways to fit them."><input type="checkbox" id="more-run-cols"${showRunCols ? ' checked' : ''}> Show more columns</label>
+    </div>
+    <div class="${showRunCols ? 'tscroll' : ''}">
+    <table class="${showRunCols ? 'wide' : ''}">
       <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Patch type</th>
-      <th>Status</th><th>Progress</th><th>Exec</th></tr></thead>
-      <tbody>${rows}</tbody></table>`
+      <th>Status</th><th>Report</th><th></th>
+      ${showRunCols ? '<th>Progress</th><th>Exec</th><th>File</th><th>Size</th>' : ''}</tr></thead>
+      <tbody>${rows}</tbody></table></div>`
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
     <div class="note">${(MODE.mode === 'demo' && showSrc())
       ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
-      : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}</div>
-    <div id="reports-section"></div>`;
-  renderReportList();
+      : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}
+      ${reports.length ? `Reports are written by the Communication Agent when a run pauses
+      for approval and again when it completes; one covers every host of that CVE's run.`
+      : 'No reports written yet.'}</div>
+    <div id="run-detail"></div>`;
+
+  document.getElementById('more-run-cols')?.addEventListener('change', e => {
+    showRunCols = e.target.checked;
+    showRuns();
+  });
+  el.querySelectorAll('.run-detail').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      showRunDetail(b.dataset.exec);
+    });
+  });
 }
 
-// Past reports, so a completed run can be retrieved after the console has
-// moved on. Loaded separately because the AO run list and the local report
-// directory can each be empty without the other being broken.
-async function renderReportList() {
-  const el = document.getElementById('reports-section');
-  if (!el) return;
-  let d;
-  try { d = await (await fetch('/api/reports')).json(); } catch (e) { return; }
-  const reps = (d && d.reports) || [];
-  if (!reps.length) {
-    el.innerHTML = `<div class="sev-title high" style="margin-top:20px">Reports<span class="c">0</span></div>
-      <div class="note">No reports yet — they are written when a patch run pauses and again when it completes.</div>`;
+// One execution, in detail. The runs list can only say "Running", which is
+// the least useful thing to know at the moment there is most to know — and
+// the Remediation view that does show per-node progress is gone as soon as
+// the operator navigates away or the console is reloaded. This is how a run
+// in flight is picked back up.
+let detailTimer = null;
+async function showRunDetail(execId) {
+  const host = document.getElementById('run-detail');
+  if (!host) return;
+  clearTimeout(detailTimer);
+  host.innerHTML = `<div class="sev-title high" style="margin-top:18px">Execution
+    <span class="c">${esc(execId.slice(0, 8))}</span></div>
+    <div class="empty"><div class="spinner"></div><span>Reading the execution…</span></div>`;
+  host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let run = null;
+  try {
+    const d = await (await fetch(
+      `/api/runs?execution_id=${encodeURIComponent(execId)}`)).json();
+    if (d.ok && d.run) run = d.run;
+  } catch (e) { /* fall through to the error state */ }
+  if (!document.getElementById('run-detail')) return;   // view changed meanwhile
+  if (!run) {
+    host.innerHTML = `<div class="sev-title high" style="margin-top:18px">Execution
+      <span class="c">${esc(execId.slice(0, 8))}</span></div>
+      ${emptyState('Could not read this execution',
+                   'Ansible Orchestrator did not return it. It may have been cancelled, '
+                   + 'or the orchestrator may be unreachable.')}`;
     return;
   }
-  const rows = reps.map(r => `<tr>
-      <td class="muted-sm" style="white-space:nowrap">${esc(ago(r.created_at))}</td>
-      <td class="cve-id">${esc(r.cve_id)}</td>
-      <td class="mono">${esc(r.file)}</td>
-      <td class="muted-sm">${Math.max(1, Math.round((r.bytes || 0) / 1024))} KB</td>
-      <td><a class="report-btn" style="padding:4px 10px;font-size:11px"
-             href="/api/report?file=${encodeURIComponent(r.file)}"
-             target="_blank" rel="noopener">Open</a></td>
-    </tr>`).join('');
-  el.innerHTML = `
-    <div class="sev-title high" style="margin-top:20px">Reports<span class="c">${reps.length}</span></div>
-    <table><thead><tr><th>When</th><th>CVE</th><th>File</th><th>Size</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>
-    <div class="note">Written by the Communication Agent when a run pauses for approval and
-      again when it completes. Newest first.</div>`;
+
+  const o = RUN_OUTCOME[run.outcome] || { cls: 'review', label: run.outcome };
+  const live = ['running', 'awaiting_approval'].includes(run.outcome);
+  const steps = run.steps || [];
+  const done = steps.filter(s => s.status === 'completed').length;
+  // The node actually in flight, which is the one question "Running" leaves
+  // unanswered.
+  const current = steps.find(s => ['running', 'waiting', 'pending'].includes(s.status));
+  const failed = steps.find(s => ['failed', 'error'].includes(s.status));
+
+  host.innerHTML = `
+    <div class="sev-title high" style="margin-top:18px">Execution
+      <span class="c">${esc(execId.slice(0, 8))}</span>
+      <label class="morecols"><button class="pill" id="detail-close"
+        style="padding:3px 10px;font-size:calc(11px * var(--ts))">Close</button></label>
+    </div>
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="v"><span class="badge ${o.cls}">${esc(o.label)}</span></div><div class="k">Status</div></div>
+      <div class="stat"><div class="v">${done}/${steps.length || '—'}</div><div class="k">Nodes completed</div></div>
+      <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${esc(stamp(run.created_at))}</div><div class="k">Started</div></div>
+      <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${
+        run.completed_at ? esc(stamp(run.completed_at)) : (live ? 'in flight' : '—')}</div><div class="k">Finished</div></div>
+    </div>
+    <table style="margin-top:12px"><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+      <tr><td>CVE</td><td class="cve-id">${cveLabel(run.cve_id)}</td></tr>
+      <tr><td>Host</td><td class="cve-id">${esc(run.host || '—')}</td></tr>
+      <tr><td>Patch type</td><td>${esc(patchType(run.group))}</td></tr>
+      ${run.decision ? `<tr><td>Decision</td><td>${esc(run.decision)}</td></tr>` : ''}
+      ${current ? `<tr><td>Now running</td><td><b>${esc(current.label || current.name)}</b></td></tr>` : ''}
+      ${failed ? `<tr><td>Failed at</td><td><span class="err-sm">${esc(failed.label || failed.name)}</span></td></tr>` : ''}
+      ${run.error ? `<tr><td>Error</td><td><span class="err-sm">${esc(String(run.error).slice(0, 400))}</span></td></tr>` : ''}
+      ${run.url ? `<tr><td>In AO</td><td><a class="report-btn" style="padding:3px 10px;font-size:calc(11px * var(--ts))"
+            href="${esc(run.url)}" target="_blank" rel="noopener">Open execution</a></td></tr>` : ''}
+    </tbody></table>
+    ${steps.length ? `<table style="margin-top:12px">
+      <thead><tr><th>Workflow node</th><th>Status</th></tr></thead>
+      <tbody>${steps.map(s => {
+        const cls = s.status === 'completed' ? 'ok'
+                  : ['failed', 'error'].includes(s.status) ? 'fail'
+                  : ['running', 'waiting'].includes(s.status) ? 'review' : '';
+        return `<tr><td>${esc(s.label || s.name)}</td>
+          <td>${cls ? `<span class="badge ${cls}">${esc(s.status)}</span>`
+                    : `<span class="muted-sm">${esc(s.status || 'pending')}</span>`}
+            ${s.error ? `<div class="err-sm">${esc(String(s.error).slice(0, 200))}</div>` : ''}</td></tr>`;
+      }).join('')}</tbody></table>` : ''}
+    <div class="note">${live
+      ? 'Refreshing every few seconds while this run is still moving.'
+      : 'This run has finished; the view is static.'}</div>`;
+
+  document.getElementById('detail-close')?.addEventListener('click', () => {
+    clearTimeout(detailTimer);
+    const h = document.getElementById('run-detail');
+    if (h) h.innerHTML = '';
+  });
+  // Only poll what can still change. A finished execution is a record.
+  if (live) detailTimer = setTimeout(() => showRunDetail(execId), 4000);
 }
 
 // Follows one row of the runs table while its execution works through the
