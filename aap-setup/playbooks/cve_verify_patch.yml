@@ -1,0 +1,74 @@
+---
+# Confirm a CVE is actually gone from the host, after remediation ran.
+#
+# The remediation job reporting "successful" means Ansible's tasks exited 0.
+# It does not mean the CVE is fixed: a dnf transaction can succeed and leave
+# the advisory outstanding, and during this project a job reported failed on a
+# host that was correctly patched (insights-client's registration check exited
+# 1 on the final play). So the answer is read from the machine itself rather
+# than inferred from the previous step's exit code.
+#
+# The check is `dnf updateinfo list --cve <id>`: empty output means no advisory
+# is still outstanding for that CVE on this host. It is local, so it needs no
+# Insights round trip and does not wait on an upload being re-evaluated.
+#
+# Never fails the run on an unpatched result. Whether "still vulnerable" should
+# stop a workflow is the orchestrator's decision, and it has `patched` in the
+# artifacts to make it. Failing here would make a true answer look like a
+# broken step.
+- name: Verify a CVE is no longer outstanding on the host
+  hosts: all
+  gather_facts: false
+
+  vars:
+    cve_id: "{{ cve_id }}"
+
+  tasks:
+    - name: Fail early if no CVE was named
+      ansible.builtin.fail:
+        msg: >-
+          cve_id was not supplied. This runs after the remediation step, which
+          receives it from the orchestrator — an empty value usually means the
+          extra var was not passed through.
+      when: cve_id | default('') | trim == ''
+      delegate_to: localhost
+      run_once: true
+
+    - name: Ask dnf whether the advisory is still outstanding
+      ansible.builtin.command:
+        cmd: "dnf updateinfo list --cve {{ cve_id }}"
+      register: updateinfo
+      changed_when: false
+      failed_when: false
+      become: true
+
+    # dnf prints repo chatter on stdout even when there is nothing to report,
+    # so presence of output is not the signal — presence of an advisory line
+    # is. Advisory ids look like RHSA-2026:12345 / RHBA- / RHEA-.
+    - name: Decide from the advisory lines only
+      ansible.builtin.set_fact:
+        outstanding: >-
+          {{ updateinfo.stdout_lines
+             | default([])
+             | select('search', '^(RHSA|RHBA|RHEA)-')
+             | list }}
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ cve_id }} on {{ inventory_hostname }}:
+          {{ 'PATCHED — no advisory outstanding'
+             if outstanding | length == 0
+             else 'STILL VULNERABLE — ' ~ (outstanding | join('; ')) }}
+
+    - name: Publish the verdict for the orchestrator
+      ansible.builtin.set_stats:
+        data:
+          patched: "{{ outstanding | length == 0 }}"
+          verified_cve: "{{ cve_id }}"
+          verified_host: "{{ inventory_hostname }}"
+          outstanding_advisories: "{{ outstanding | join(',') }}"
+          # Non-zero from dnf is worth keeping: rc=100 means updates are
+          # available, which is a real answer, while rc=1 is usually a broken
+          # repo and means the verdict should not be trusted.
+          dnf_rc: "{{ updateinfo.rc | default('') }}"
