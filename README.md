@@ -98,7 +98,16 @@ Deploy the backing services (each is independent):
 ./rag-setup/ingest.py --route https://$ROUTE --dir ./rag-setup/data --ensure
 ./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
+./aap-setup/create-aap-objects.sh              # AAP projects, credentials, job templates
 ```
+
+Live mode additionally needs a **target host**, and the requirement is
+stricter than it looks: one machine registered in the same Insights
+organisation as your `LIGHTSPEED_*` credentials *and* reachable over SSH from
+AAP. Most hosts satisfy one or the other — the console cannot assess what it
+cannot see, and cannot patch what AAP cannot reach. See
+[docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) for building one from
+scratch, including Insights registration and the AAP wiring.
 
 ## Run
 
