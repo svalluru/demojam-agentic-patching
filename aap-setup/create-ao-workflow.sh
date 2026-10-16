@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --run)    RUN=true; RUN_CVE="${2:-}"; RUN_HOST="${3:-}"; shift 3 ;;
     --delete) DELETE=true; shift ;;
-    -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done

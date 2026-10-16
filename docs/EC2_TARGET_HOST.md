@@ -195,6 +195,10 @@ there.
 
 ## 6. Point the console at it
 
+`./setup.sh` writes every line below except the first — `HOSTS_FILTER` is the
+one it cannot guess, because it is the name of your machine. Set that by hand
+either way; the rest is here so you know what the script did.
+
 In `.env`:
 
 ```bash
@@ -225,7 +229,13 @@ Say so if asked.
 
 ## 7. Check it end to end
 
+`./setup.sh --check` tests exactly the thing steps 1–6 were for: that this one
+host is visible to Insights **and** present in AAP inventory. It changes
+nothing, so run it before anything else.
+
 ```bash
+./setup.sh --check
+./setup.sh            # deploys the rest and writes the step 6 settings for you
 ./demo.sh --live
 ```
 

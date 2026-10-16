@@ -204,17 +204,29 @@ kill <pid>
 
 ## Connecting to the real thing
 
-Only once you have cluster credentials and the backing services are up:
+Live mode needs the backing services and a target host, which is a bigger job
+than this guide. `./setup.sh` does the deployable part:
 
 ```bash
+cp .env.example .env     # fill it in; quote any value containing a space
+./setup.sh --check       # preflight — says what is missing, changes nothing
+./setup.sh               # OpenShift, AAP, AO, console settings, smoke test
 ./demo.sh --live
 ```
 
-If `.env` does not exist it is created from `.env.example` and the console
-starts anyway, saying so in the terminal and naming the keys that matter. It
-is gitignored; never commit it. You do not need all of them — a key left
-blank falls back for that step alone. Fill in what you have and restart to use
-the real services.
+Start with `--check`. The one thing it cannot do for you is the target host:
+live mode needs a machine registered in the same Insights organisation as
+your credentials **and** reachable over SSH from AAP, and most hosts are only
+one of those. See `docs/EC2_TARGET_HOST.md`.
+
+If `.env` does not exist, `./demo.sh --live` creates one from `.env.example`
+and then **refuses to start**, naming the keys that matter. That is on
+purpose: live mode has no fallback, so a blank key is not a step that
+degrades, it is a run that cannot finish. Fill it in and start again.
+`.env` is gitignored; never commit it.
+
+This is the opposite of fallback mode, where a missing key costs you that one
+step and nothing else. Do not carry the habit across.
 
 **Turn source labelling on when you do this.** Either set `LABEL_SOURCES=1`
 before `./demo.sh --live`, or flip **Label substituted values** in the gear

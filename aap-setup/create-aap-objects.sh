@@ -66,7 +66,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
     --delete)  DELETE=true ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 1 ;;
   esac
 done

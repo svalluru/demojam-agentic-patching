@@ -39,7 +39,9 @@ for a in "$@"; do
     --skip-aap)       SKIP_AAP=true ;;
     --skip-ao)        SKIP_AO=true ;;
     --skip-smoke)     SKIP_SMOKE=true ;;
-    -h|--help)        sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Print the header comment and stop at the first line that is not one,
+    # rather than a hardcoded range that drifts every time the header grows.
+    -h|--help)        sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 1 ;;
   esac
 done
@@ -84,7 +86,14 @@ for v in LIGHTSPEED_CLIENT_ID LIGHTSPEED_CLIENT_SECRET GIT_HUB_TOKEN \
          AO_URL AO_USERNAME AO_PASSWORD AAP_BASE_URL AAP_TOKEN; do
   [[ -n "${!v:-}" ]] || note_fail "$v is empty in .env"
 done
-[[ $FAILED -eq 0 ]] && ok "required credentials present"
+# Stop here rather than carrying on: every check below dereferences these,
+# and under `set -u` the first missing one aborts the script with "unbound
+# variable" — losing the list of what was missing, which was the useful part.
+if [[ $FAILED -gt 0 ]]; then
+  echo
+  die "$FAILED credential(s) missing — fill them in and run --check again"
+fi
+ok "required credentials present"
 
 command -v python3 >/dev/null || die "python3 not found"
 command -v curl    >/dev/null || die "curl not found"

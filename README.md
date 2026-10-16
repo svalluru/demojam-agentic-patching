@@ -39,6 +39,7 @@ workflow `DemoJam Agentic Patching`. Agent 2 is a client of that workflow.
 ```
 QUICKSTART.md              clone-to-running guide for a new joiner
 demo.sh                    start the console — offline by default, --live for real
+setup.sh                   everything between a filled-in .env and working live mode
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, HTTP backend
 fallbacks.py               every stored default, in one editable file
@@ -87,16 +88,50 @@ instance. Ctrl-C to stop.
 
 ## Setup
 
-Fill in credentials in `.env`, which is gitignored. `./demo.sh --live` creates
-it from `.env.example` if it is missing and starts regardless — an empty one
-just means every step falls back, which the console labels. To make it
-yourself:
+Two things are yours to prepare, because both are judgement calls about real
+machines and credentials:
+
+**A target host.** The requirement is stricter than it looks: one machine
+registered in the same Insights organisation as your `LIGHTSPEED_*`
+credentials **and** reachable over SSH from AAP. Most hosts satisfy one or
+the other — the console cannot assess what it cannot see, and cannot patch
+what AAP cannot reach, and the two halves can each look perfectly healthy
+while never overlapping. [docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md)
+builds one from scratch, including the Insights registration traps and the
+AAP wiring.
+
+**Credentials in `.env`.** Quote any value containing a space — an unquoted
+one breaks every script that sources it, with an error naming the wrong
+thing.
 
 ```bash
 cp .env.example .env     # then edit
 ```
 
-Deploy the backing services (each is independent):
+Everything after that is one command:
+
+```bash
+./setup.sh --check       # preflight only — changes nothing
+./setup.sh --dry-run     # show every stage without running it
+./setup.sh               # do it
+```
+
+It runs the stages in dependency order — OpenShift (Milvus, Llama Stack, the
+risk model, the RAG ingest), the AAP objects, the AO objects and workflow,
+the live-mode settings — then smoke-tests one real assessment. Each stage is
+idempotent, so re-running after a failure resumes rather than duplicates, and
+`--skip-openshift` / `--skip-aap` / `--skip-ao` pick stages.
+
+It also writes `LLAMA_STACK_URL`, `RISK_URL` and `VECTOR_DB_ID` back into
+`.env`. That copy-paste is the step that silently goes stale: the vector
+store id changes on every rebuild, and a stale one returns no hits with no
+error.
+
+**Run `--check` first.** It answers in seconds the question that otherwise
+costs a day — whether the target host is visible to both Insights and AAP —
+and it names the `.env` line number when a value is unquoted.
+
+The individual scripts still work on their own if you prefer:
 
 ```bash
 ./rag-setup/deploy.sh                          # Milvus + Llama Stack
@@ -104,15 +139,8 @@ Deploy the backing services (each is independent):
 ./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
 ./aap-setup/create-aap-objects.sh              # AAP projects, credentials, job templates
+./aap-setup/create-ao-workflow.sh              # the AO workflow, published
 ```
-
-Live mode additionally needs a **target host**, and the requirement is
-stricter than it looks: one machine registered in the same Insights
-organisation as your `LIGHTSPEED_*` credentials *and* reachable over SSH from
-AAP. Most hosts satisfy one or the other — the console cannot assess what it
-cannot see, and cannot patch what AAP cannot reach. See
-[docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) for building one from
-scratch, including Insights registration and the AAP wiring.
 
 ## Run
 

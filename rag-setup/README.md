@@ -161,9 +161,9 @@ llamastack/            run.yaml → ConfigMap, Deployment, Service, Route, PVCs
 ## Notes
 
 - Milvus runs `COMMON_STORAGETYPE=local`, so no MinIO/S3 is needed.
-- `etcd` uses an `emptyDir` — it holds Milvus metadata that is rebuilt from the
-  Milvus PVC, but a restart will drop collection metadata. Switch it to a PVC if
-  you need the store to survive node moves.
+- `etcd` is on its own PVC (`etcd-pvc.yaml`). It holds Milvus's catalogue, and
+  it is not rebuilt from the Milvus PVC — see the section above for what
+  happened when it was on an `emptyDir`.
 - The Route carries `haproxy.router.openshift.io/timeout: 300s`; embedding a
   large batch can exceed the 30s default.
 - The pod needs egress to HuggingFace on first start. Air-gapped clusters should
