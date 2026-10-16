@@ -123,7 +123,11 @@ cd frontend && python3 server.py --env ../.env
 ```
 
 Open <http://127.0.0.1:8788>, hit **Assess** on a CVE row, review the patch
-plan, then dispatch it. The dispatch button is labelled from the plan's
+plan, then dispatch it. **Find a CVE…** in the list header searches by id or
+description — server-side, because a live estate runs to thousands of CVEs
+over hundreds of pages and filtering the twenty on screen would report
+"nothing found" for almost all of them. Results are cached per query, so
+clearing the box or going back to an earlier search costs nothing. The dispatch button is labelled from the plan's
 verdict — *Patch N hosts* in red when the press really does patch them
 unattended, *Send N for approval* in black when every host will halt at the
 gate instead. Hosts routed to the approval branch show Approve / Reject
@@ -583,13 +587,20 @@ Listed so they are not re-raised as bugs.
   in `results.py` maps one to the other, and those numbers want tuning against
   real runs before anyone retrains on them. The one thing it never does is
   write the model's own prediction back as the label.
-- The AAP job templates the AO workflow calls — `CVE - Fetch and Commit` and
-  `CVE - Sync and Deploy Remediation` — do not exist in AAP yet, so an approved
-  run fails at `fetch_and_commit_prod` against a live AO. See
-  `ao-setup/playbooks/`. The simulated path is unaffected.
 - The risk model scores every host of a given CVE almost identically, because
   three of its four inputs describe the CVE rather than the host. Threshold
   tuning or retraining is needed before the score is useful as triage.
+- **The model's observed output range is 36.6–100, and `REVIEW_THRESHOLD`
+  defaults to 30.** Nothing it emits falls below the gate, so every host
+  routes to approval and the auto-patch branch is unreachable. Set the
+  threshold to where this model's scores actually separate — 65 split a real
+  host cleanly, CVSS ≤4 scoring ~57 and CVSS 8+ scoring ~92. That is a
+  calibration against this distribution, not a measurement.
+- Live mode needs a host registered in the **same Insights organisation** as
+  the console's credentials *and* reachable over SSH from AAP. Most hosts
+  satisfy one or the other; see [docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md).
+- `CVE - Verify Patch` is created by hand rather than by
+  `aap-setup/create-aap-objects.sh`.
 - A Llama Stack restart silently empties the vector store registry — searches
   return no hits with no error. Run `ingest.py --ensure` after any restart; see
   `rag-setup/README.md`.

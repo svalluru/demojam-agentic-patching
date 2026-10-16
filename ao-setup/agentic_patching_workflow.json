@@ -35,6 +35,14 @@
     {
       "to": "route_switch",
       "from": "trigger_manual"
+    },
+    {
+      "to": "verify_patch",
+      "from": "run_cve_remediation"
+    },
+    {
+      "to": "verify_patch_prod",
+      "from": "run_cve_remediation_prod"
     }
   ],
   "nodes": [
@@ -195,6 +203,48 @@
         "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
         "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
         "job_template_name": "${deploy_script_prod.artifacts.template_name}",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "verify_patch",
+      "name": "Verify Patch",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1500.0,
+        "y": -120.0
+      },
+      "settings": {},
+      "parameters": {
+        "limit": "${trigger.host}",
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Verify Patch",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "verify_patch_prod",
+      "name": "Verify Patch",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1500.0,
+        "y": 120.0
+      },
+      "settings": {},
+      "parameters": {
+        "limit": "${trigger.host}",
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Verify Patch",
         "organization_name": "Default"
       }
     }
