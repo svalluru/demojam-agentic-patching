@@ -10,6 +10,8 @@
 #   Project                          Job template
 #   -------                          ------------
 #   DemoJam Agentic Patching         CVE - Fetch and Commit
+#   <- GITHUB_REPO_URL, main            CVE - Sync and Deploy Remediation
+#                                       CVE - Verify Patch
 #   <- GITHUB_REPO_URL, main            playbook: aap-setup/playbooks/
 #                                                 cve_fetch_and_commit.yml
 #
@@ -43,6 +45,7 @@ JT_NAME="${JT_NAME:-CVE - Fetch and Commit}"
 GEN_BRANCH="${GEN_BRANCH:-generated-playbooks}"
 GEN_PROJECT_NAME="${GEN_PROJECT_NAME:-Lightspeed-Playbooks}"
 DEPLOY_JT_NAME="${DEPLOY_JT_NAME:-CVE - Sync and Deploy Remediation}"
+VERIFY_JT_NAME="${VERIFY_JT_NAME:-CVE - Verify Patch}"
 
 # Credential the ansible.controller modules use to call the controller back.
 AAP_CRED_NAME="${AAP_CRED_NAME:-AAP Credential}"
@@ -146,6 +149,7 @@ info "reachable  : HTTP $code"
 if $DELETE; then
   step "Deleting"
   for spec in "/job_templates/:$JT_NAME" "/job_templates/:$DEPLOY_JT_NAME" \
+              "/job_templates/:$VERIFY_JT_NAME" \
               "/projects/:$PROJECT_NAME" "/projects/:$GEN_PROJECT_NAME" \
               "/credentials/:$GH_CRED_NAME" "/credentials/:$LS_CRED_NAME" \
               "/credential_types/:$GH_TYPE_NAME" "/credential_types/:$LS_TYPE_NAME"; do
@@ -377,6 +381,53 @@ if ! $DRY_RUN; then
   else
     info "WARNING: no credential named '$AAP_CRED_NAME' — the deploy step will"
     info "         fail, because ansible.controller needs one to reach the API"
+  fi
+fi
+
+# -------------------------------------------------- verify-patch template
+
+step "Verify patch job template"
+
+# Unlike the other two, this one runs against the host rather than localhost:
+# it asks dnf what is still outstanding. So it needs the machine credential,
+# and the limit comes per run from the orchestrator — the host the plan was
+# built for.
+VERIFY_JT_PAYLOAD="$(python3 -c "
+import json
+print(json.dumps({
+  'name': '''$VERIFY_JT_NAME''',
+  'description': 'Confirm a CVE is no longer outstanding on the host',
+  'job_type': 'run',
+  'organization': int('''$ORG_ID'''),
+  'inventory': int('''$INVENTORY_ID'''),
+  'project': int('''$PROJECT_ID''') if '''$PROJECT_ID'''.isdigit() else None,
+  'playbook': 'aap-setup/playbooks/cve_verify_patch.yml',
+  'execution_environment': int('''$EE_ID'''),
+  'ask_variables_on_launch': True,
+  'ask_limit_on_launch': True,
+  'verbosity': 0,
+}))")"
+VERIFY_JT_ID="$(create_or_update /job_templates/ "$VERIFY_JT_NAME" "$VERIFY_JT_PAYLOAD")"
+
+if ! $DRY_RUN; then
+  # Points at the inventory the remediation runs in, not the console default,
+  # because a verify that cannot reach the host answers nothing.
+  TARGET_INV_ID="$(find_id /inventories/ "$TARGET_INVENTORY")"
+  if [[ -n "$TARGET_INV_ID" ]]; then
+    api_code PATCH "/job_templates/$VERIFY_JT_ID/" \
+      "{\"inventory\": $TARGET_INV_ID}" >/dev/null
+    info "inventory -> $TARGET_INVENTORY ($TARGET_INV_ID)"
+  else
+    info "WARNING: inventory '$TARGET_INVENTORY' not found — verify will run"
+    info "         against the default inventory and match no hosts"
+  fi
+  MACHINE_CRED_ID="$(find_id /credentials/ "$MACHINE_CREDENTIAL")"
+  if [[ -n "$MACHINE_CRED_ID" ]]; then
+    info "attaching $MACHINE_CREDENTIAL ($MACHINE_CRED_ID) -> HTTP $(api_code POST \
+      "/job_templates/$VERIFY_JT_ID/credentials/" "{\"id\": $MACHINE_CRED_ID}")"
+  else
+    info "WARNING: no credential named '$MACHINE_CREDENTIAL' — verify cannot"
+    info "         log in to the host. Create it, then re-run."
   fi
 fi
 

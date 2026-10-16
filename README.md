@@ -50,7 +50,12 @@ frontend/
   server.py                dev server — serves the UI, proxies /api/* to :8787
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
-  playbooks/               AAP playbooks the AO workflow calls, and steps
+  agentic_patching_workflow.json  the AO workflow, exported from AO
+aap-setup/
+  create-aap-objects.sh    AAP projects, credentials and job templates
+  create-ao-workflow.sh    creates + publishes a one-node test workflow
+  run-test.sh              launch one job template and show its artifacts
+  playbooks/               fetch-and-commit · sync-and-deploy · verify
 rag-setup/
   deploy.sh                Milvus + Llama Stack as plain Pods (no RHOAI)
   ingest.py                load/verify the RAG vector store
@@ -568,7 +573,7 @@ Listed so they are not re-raised as bugs.
 
 | Diagram | Decision |
 |---|---|
-| 11 Slack · 12 ServiceNow | The PDF report **is** the implementation for now. Agent 3 renders the summary those channels would carry; nothing is sent. `ao-setup/playbooks/notify_mattermost_cve.yml` already exists if a real channel is wanted later. |
+| 11 Slack · 12 ServiceNow | The PDF report **is** the implementation for now. Agent 3 renders the summary those channels would carry; nothing is sent. When a channel is wanted, it should format *that* summary rather than build its own, so the three cannot drift apart. |
 | 14 Observability store | Skipped. Stays on the diagram for the architecture story; not planned as code. |
 | Self-healing loop | Later. The guards (`MAX_ATTEMPTS_PER_HOST`, `MAX_FAILED_PER_PHASE`, `tried_fixes`) are declared on the Supervisor but **not enforced** — see below. |
 | C2 via Insights MCP | Later. Currently the Insights REST API, which returns the same hosts. |

@@ -217,6 +217,7 @@ carries the address that actually resolves.
 ## Not done yet
 
 - `CVE - Verify Patch` is created by hand, not by `create-aap-objects.sh`.
-- `ao-setup/playbooks/` (the Gitea originals, reaching Insights through MCP)
-  are left untouched for reference. They query a different Insights
-  organisation and cannot see hosts registered in ours.
+- The lab controller's own `CVE - Fetch and Commit` and
+  `CVE - Sync and Deploy Remediation` are left untouched. They reach Insights
+  through an MCP server against a different organisation and cannot see hosts
+  registered in ours, which is why these are created under separate names.

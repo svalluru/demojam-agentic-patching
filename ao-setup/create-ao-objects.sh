@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the Ansible Orchestrator objects described in ao-setup/playbooks/steps
+# Create the Ansible Orchestrator objects the console needs
 # via the AO REST API.
 #
 #   Credentials                            Integrations
