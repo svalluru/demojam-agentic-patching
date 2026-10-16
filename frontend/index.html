@@ -3019,6 +3019,15 @@ function renderVerdict(plan, done) {
   </div>`;
 }
 
+// 'ok' and 'review' are the decision values the backend routes on —
+// GROUP_FOR_DECISION maps them to auto_patch and approved_patch — so they
+// stay as they are in the payload, the CSS class and the API. They are not
+// what this column is asking, though: it asks what happens to this host, and
+// the answer is that it gets patched automatically or waits for a person.
+// "ok" answers neither, and sits oddly next to a red "review" beside it.
+const PLAN_LABEL = { ok: 'Auto', review: 'Review' };
+const planLabel = d => PLAN_LABEL[d] || d;
+
 // A bare score cannot show how close a host came to the gate, which is the
 // only question the operator is being asked. The bar is the score, the notch
 // is the threshold it was compared against, and the bar turns red exactly
@@ -3151,7 +3160,7 @@ function renderHostTable(s) {
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
       <td class="cve-id">${esc(h.host)}</td>
       <td>${riskMeter(h, plan)}</td>
-      <td><span class="badge ${h.decision}">${esc(h.decision)}</span></td>
+      <td><span class="badge ${h.decision}">${esc(planLabel(h.decision))}</span></td>
       ${dispatched ? `<td class="decide-cell">${status}</td>` : ''}
       ${showCols && dispatched ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
       <td class="mono">${esc(((r || {}).execution_id || '').slice(0, 8))}</td>` : ''}
