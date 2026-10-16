@@ -401,6 +401,36 @@
   .result code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
 
   /* ---- frame 2: list ---- */
+  /* Same height and radius as a pill so the head reads as one control strip
+     rather than an input bolted onto a row of buttons. Grey at rest, red
+     once focused, which is the rule the pills and buttons already follow. */
+  .cve-search { position: relative; display: flex; align-items: center; }
+  .cve-search input {
+    width: 170px; padding: 5px 26px 5px 13px;
+    border: 1px solid var(--border); border-radius: 20px;
+    background: var(--panel); color: var(--text);
+    font: inherit; font-size: calc(12px * var(--ts)); font-weight: 600;
+    transition: border-color .14s var(--ease), width .18s var(--ease),
+                box-shadow .14s var(--ease);
+  }
+  .cve-search input::placeholder { color: var(--muted); font-weight: 600; }
+  .cve-search input:hover { border-color: var(--red); }
+  .cve-search input:focus {
+    outline: none; width: 220px;
+    border-color: var(--red); box-shadow: var(--sh-red);
+  }
+  /* The browser's own clear affordance is inconsistent across engines and
+     invisible in Safari, so the control is drawn here instead. */
+  .cve-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+  .q-clear {
+    position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+    background: var(--tint-n); color: var(--muted);
+    font-size: calc(13px * var(--ts)); line-height: 15px; cursor: pointer;
+  }
+  .q-clear:hover { background: var(--red); color: #ffffff; }
+  .q-clear[hidden] { display: none; }
+
   .pills { display: flex; gap: 6px; }
   .pill {
     padding: 5px 13px; border: 1px solid var(--border); border-radius: 20px;
@@ -2135,6 +2165,16 @@
       <h2 id="frame-title">CVEs</h2>
       <span class="frame-sub" id="frame-sub" hidden></span>
       <div class="head-actions">
+        <!-- Before the severity pills: narrowing to one CVE is the more
+             common move once the fleet runs to hundreds of them, and the
+             pills then filter what the search returned. -->
+        <div class="cve-search" id="cve-search">
+          <input type="search" id="cve-q" placeholder="Find a CVE…"
+                 autocomplete="off" spellcheck="false"
+                 aria-label="Search CVEs by id or description">
+          <button class="q-clear" id="cve-q-clear" hidden
+                  aria-label="Clear search" title="Clear search">&times;</button>
+        </div>
         <div class="pills" id="pills">
           <button class="pill active" data-sev="all">All</button>
           <button class="pill" data-sev="critical">Critical</button>
@@ -2168,6 +2208,9 @@
 <script>
 const SEVS = ['critical', 'high', 'medium', 'low'];
 let cves = [], filter = 'all', offset = 0, pageSize = 20, hasMore = false, total = 0;
+// The CVE id or text typed into the search box. Sent to the API, not applied
+// to `cves`, because `cves` is only the page currently on screen.
+let search = '';
 
 const esc = v => {
   if (v === null || v === undefined || v === '') return '—';
@@ -2240,7 +2283,11 @@ async function loadCves(next) {
   if (typeof next === 'number') offset = Math.max(0, next);
   document.getElementById('list').innerHTML = skeleton();
   try {
-    const r = await fetch(`/api/cves?limit=${pageSize}&offset=${offset}`);
+    // Searched server-side. The list is paged, so filtering the rows already
+    // on screen would report "no match" for a CVE three pages down.
+    const qs = `limit=${pageSize}&offset=${offset}`
+             + (search ? `&search=${encodeURIComponent(search)}` : '');
+    const r = await fetch(`/api/cves?${qs}`);
     const d = await r.json();
     if (d.ok === false) throw new Error(d.error || 'request failed');
     cves = d.cves || [];
@@ -2361,6 +2408,9 @@ function frameHead({ title, sub = '', pills = false, back = null,
   s.hidden = !sub;
   document.getElementById('pills').hidden = !pills;
   document.getElementById('head-sep').hidden = !pills;
+  // Follows the pills: both filter the CVE list, and neither means anything
+  // on the plan, runs or ROI views that reuse this head.
+  document.getElementById('cve-search').hidden = !pills;
   const b = document.getElementById('head-back');
   b.hidden = !back;
   if (back) {
@@ -2422,8 +2472,23 @@ function render() {
     </div>`;
   }).join('');
 
-  if (!html) html = emptyState('Nothing at this severity',
-                               'No CVEs of this severity on the current page.');
+  // Three different nothings, and saying the wrong one sends the operator
+  // looking in the wrong place: no match at all, a match the severity filter
+  // then hid, or an empty page.
+  if (!html) {
+    if (search && filter !== 'all') {
+      html = emptyState(`No ${filter} CVEs matching “${esc(search)}”`,
+                        'The search found CVEs, but none at this severity. '
+                        + 'Switch to All to see them.');
+    } else if (search) {
+      html = emptyState(`Nothing matching “${esc(search)}”`,
+                        'Searched by CVE id and description across every '
+                        + 'affected CVE, not just this page.');
+    } else {
+      html = emptyState('Nothing at this severity',
+                        'No CVEs of this severity on the current page.');
+    }
+  }
 
   const from = cves.length ? offset + 1 : 0;
   html += `<div class="pager">
@@ -4650,6 +4715,39 @@ document.getElementById('head-refresh').addEventListener('click', showRuns);
 document.getElementById('pills').addEventListener('click', e => {
   const p = e.target.closest('.pill');
   if (p) { filter = p.dataset.sev; render(); }
+});
+
+// Searching hits the API, so it is debounced — one request when typing stops,
+// not one per keystroke against an estate of hundreds of CVEs. Offset resets
+// because page 3 of the old query is meaningless under a new one.
+const qBox = document.getElementById('cve-q');
+const qClear = document.getElementById('cve-q-clear');
+let qTimer = null;
+function applySearch(v) {
+  const next = (v || '').trim();
+  if (next === search) return;
+  search = next;
+  qClear.hidden = !search;
+  loadCves(0);
+}
+qBox.addEventListener('input', () => {
+  qClear.hidden = !qBox.value.trim();
+  clearTimeout(qTimer);
+  qTimer = setTimeout(() => applySearch(qBox.value), 320);
+});
+// Enter searches now rather than waiting out the debounce — the operator has
+// finished typing and said so.
+qBox.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { clearTimeout(qTimer); applySearch(qBox.value); }
+  // Escape clears the box first; the page-level handler would otherwise back
+  // out of the whole view on the first press, losing the query and the place.
+  if (e.key === 'Escape' && qBox.value) {
+    e.stopPropagation();
+    qBox.value = ''; clearTimeout(qTimer); applySearch('');
+  }
+});
+qClear.addEventListener('click', () => {
+  qBox.value = ''; clearTimeout(qTimer); applySearch(''); qBox.focus();
 });
 // Escape backs out of whatever the right frame is showing. Either drawer gets
 // it first — see the handler next to closeSettings().

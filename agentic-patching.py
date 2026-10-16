@@ -470,21 +470,35 @@ def inventory_get(path: str) -> Any:
 # Supervisor exists. There is no decision-making here.
 # ==========================================================================
 
-def fetch_cve_list(limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    """C1 — a page of CVEs affecting registered systems."""
-    params = urllib.parse.urlencode({
-        'limit': limit, 'offset': offset, 'sort': '-public_date',
-        'affecting_host_type': 'rpmdnf', 'advisory_available': 'true',
-    })
+def fetch_cve_list(limit: int = 20, offset: int = 0,
+                   search: str = '') -> dict[str, Any]:
+    """C1 — a page of CVEs affecting registered systems.
+
+    search is passed to Insights rather than applied to the page, because the
+    list is paginated server-side: filtering what already arrived would answer
+    "not on this page" with "does not exist", and the fleet runs to hundreds
+    of CVEs. ?filter= is the parameter this endpoint accepts.
+    """
+    q = {'limit': limit, 'offset': offset, 'sort': '-public_date',
+         'affecting_host_type': 'rpmdnf', 'advisory_available': 'true'}
+    if search:
+        q['filter'] = search
+    params = urllib.parse.urlencode(q)
     try:
         payload = insights_get(f'/vulnerabilities/cves?{params}')
     except BackendUnavailable as exc:
         degrade('C1 cve_list', exc.service, exc.cause, exc.fix)
-        page = fallbacks.CVE_LIST[offset:offset + limit]
+        staged = fallbacks.CVE_LIST
+        if search:
+            needle = search.lower()
+            staged = [c for c in staged
+                      if needle in str(c.get('id', '')).lower()
+                      or needle in str(c.get('description', '')).lower()]
+        page = staged[offset:offset + limit]
         return {'cves': [dict(c) for c in page], 'count': len(page),
                 'limit': limit, 'offset': offset,
-                'total_items': len(fallbacks.CVE_LIST),
-                'has_more': offset + len(page) < len(fallbacks.CVE_LIST),
+                'total_items': len(staged),
+                'has_more': offset + len(page) < len(staged),
                 'degraded': True, 'source': 'fallback'}
     rows = payload.get('data', []) if isinstance(payload, dict) else []
     meta = payload.get('meta', {}) if isinstance(payload, dict) else {}
@@ -3133,7 +3147,8 @@ class Handler(BaseHTTPRequestHandler):
                 degraded_reset()
                 payload = fetch_cve_list(
                     limit=min(int((q.get('limit') or ['20'])[0]), 50),
-                    offset=max(0, int((q.get('offset') or ['0'])[0])))
+                    offset=max(0, int((q.get('offset') or ['0'])[0])),
+                    search=(q.get('search') or [''])[0].strip()[:64])
                 self._send(200, {'ok': True, **payload,
                                  'degraded_steps': [dict(d) for d in DEGRADED]})
             except BackendUnavailable as exc:
