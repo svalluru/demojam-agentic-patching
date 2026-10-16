@@ -169,6 +169,19 @@ def parse_cve_item(item: dict) -> dict:
     }
 
 
+# The backend decides how long its own work may take: AO_DECIDE_WAIT follows
+# an approval until the run settles, AO_POLL_TIMEOUT follows a dispatched
+# execution. This proxy has to outlast both, because it cannot tell a backend
+# that is working from one that is wedged — and guessing wrong turns a
+# successful approval into a 502 on screen.
+#
+# It did exactly that at 15s: the operator clicked Approve, got "Backend not
+# available (TimeoutError)", and the run went on to patch the host and report
+# patched=True. The ceiling is here only so a genuinely dead backend cannot
+# hang the page forever. It is not a budget for anything.
+PROXY_TIMEOUT = int(os.environ.get('PROXY_TIMEOUT', '960'))
+
+
 def proxy_to_backend(method: str, path: str, query: str, body: bytes | None) -> tuple[int, bytes]:
     url = f'{BACKEND_URL}{path}'
     if query:
@@ -178,7 +191,7 @@ def proxy_to_backend(method: str, path: str, query: str, body: bytes | None) -> 
     if body:
         req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=PROXY_TIMEOUT) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as exc:
         resp = b''

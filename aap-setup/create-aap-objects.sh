@@ -376,8 +376,16 @@ if ! $DRY_RUN; then
   # this credential; without it the deploy play cannot create anything.
   AAP_CRED_ID="$(find_id /credentials/ "$AAP_CRED_NAME")"
   if [[ -n "$AAP_CRED_ID" ]]; then
-    info "attaching $AAP_CRED_NAME ($AAP_CRED_ID) -> HTTP $(api_code POST \
-      "/job_templates/$DEPLOY_JT_ID/credentials/" "{\"id\": $AAP_CRED_ID}")"
+    code="$(api_code POST "/job_templates/$DEPLOY_JT_ID/credentials/" \
+            "{\"id\": $AAP_CRED_ID}")"
+    # 400 is the controller refusing a duplicate of the same credential type,
+    # which is what a re-run looks like. Reporting the bare code made a no-op
+    # read as a failure.
+    case "$code" in
+      20*) info "attached $AAP_CRED_NAME ($AAP_CRED_ID)" ;;
+      400) info "$AAP_CRED_NAME already attached" ;;
+      *)   info "attaching $AAP_CRED_NAME -> HTTP $code" ;;
+    esac
   else
     info "WARNING: no credential named '$AAP_CRED_NAME' — the deploy step will"
     info "         fail, because ansible.controller needs one to reach the API"
@@ -423,8 +431,13 @@ if ! $DRY_RUN; then
   fi
   MACHINE_CRED_ID="$(find_id /credentials/ "$MACHINE_CREDENTIAL")"
   if [[ -n "$MACHINE_CRED_ID" ]]; then
-    info "attaching $MACHINE_CREDENTIAL ($MACHINE_CRED_ID) -> HTTP $(api_code POST \
-      "/job_templates/$VERIFY_JT_ID/credentials/" "{\"id\": $MACHINE_CRED_ID}")"
+    code="$(api_code POST "/job_templates/$VERIFY_JT_ID/credentials/" \
+            "{\"id\": $MACHINE_CRED_ID}")"
+    case "$code" in
+      20*) info "attached $MACHINE_CREDENTIAL ($MACHINE_CRED_ID)" ;;
+      400) info "$MACHINE_CREDENTIAL already attached" ;;
+      *)   info "attaching $MACHINE_CREDENTIAL -> HTTP $code" ;;
+    esac
   else
     info "WARNING: no credential named '$MACHINE_CREDENTIAL' — verify cannot"
     info "         log in to the host. Create it, then re-run."
