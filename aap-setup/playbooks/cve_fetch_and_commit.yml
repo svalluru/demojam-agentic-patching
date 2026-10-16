@@ -121,46 +121,47 @@
         rh = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
 
         # -- 2. resolve the host to its inventory uuid ------------------------
-        # advisory_available=true matches what the console lists, so this agrees
-        # with the host count the operator was shown.
+        # Asked host-first, not CVE-first. Paging /cves/{id}/affected_systems
+        # looking for one host does not scale: in a fleet of ~98k systems a
+        # single CVE reported 13,538 affected hosts, which is 136 sequential
+        # pages, and the gateway answered 504 long before the host was found.
+        # Worse, it failed intermittently — small CVEs passed, large ones did
+        # not, so the flow looked fine until the one time it mattered.
         #
-        # Paged, because the endpoint caps limit at 100 and rejects more with a
-        # 400. Reading one page and stopping would report a host as "not
-        # affected" purely for sorting past position 100 — a wrong answer that
-        # looks like a real one.
-        PAGE = 100
-        uuid = ''
-        seen = []
-        offset = 0
-        total = None
-        while not uuid:
-            found, status = http(
-                f'{API}/vulnerability/v1/cves/{cve_id}/affected_systems'
-                f'?limit={PAGE}&offset={offset}&advisory_available=true',
-                headers=rh)
-            if status != 200:
-                fail(f'Insights affected_systems returned HTTP {status}',
-                     detail=str(found)[:300])
-            rows = (found or {}).get('data', [])
-            if total is None:
-                total = (((found or {}).get('meta') or {}).get('total_items')
-                         or ((found or {}).get('meta') or {}).get('total'))
-            for row in rows:
-                attrs = row.get('attributes') or {}
-                name = attrs.get('display_name') or ''
-                if len(seen) < 10:
-                    seen.append(name)
-                if (name == host or name.startswith(host + '.')
-                        or host.startswith(name + '.')):
-                    uuid = attrs.get('inventory_id') or row.get('id') or ''
-                    break
-            offset += PAGE
-            if len(rows) < PAGE or (total is not None and offset >= total):
-                break
-        if not uuid:
-            fail(f'{host} is not among the {total if total is not None else "?"} '
-                 f'systems Insights reports as affected by {cve_id}',
-                 candidates=seen)
+        # Both calls below are indexed by host and return in well under a
+        # second regardless of how many systems the CVE affects.
+        found, status = http(
+            f'{API}/inventory/v1/hosts'
+            f'?hostname_or_id={urllib.parse.quote(host)}', headers=rh)
+        if status != 200:
+            fail(f'Insights inventory returned HTTP {status}',
+                 detail=str(found)[:300])
+        matches = (found or {}).get('results') or []
+        exact = [m for m in matches
+                 if (m.get('display_name') or '') == host
+                 or (m.get('display_name') or '').startswith(host + '.')]
+        chosen = (exact or matches)
+        if not chosen:
+            fail(f'{host} is not registered in this Insights organisation',
+                 hint='check insights-client --register ran, and that the '
+                      'console credentials point at the same org as the host')
+        uuid = chosen[0].get('id') or ''
+        resolved = chosen[0].get('display_name') or host
+
+        # Confirm the CVE actually applies to this host. ?filter= is the only
+        # accepted form here — ?cve= and ?cve_id= are both rejected as "not in
+        # spec", which reads like a server fault rather than a bad parameter.
+        check, status = http(
+            f'{API}/vulnerability/v1/systems/{uuid}/cves'
+            f'?limit=1&filter={urllib.parse.quote(cve_id)}', headers=rh)
+        if status != 200:
+            fail(f'Insights per-system CVE lookup returned HTTP {status}',
+                 detail=str(check)[:300], system_uuid=uuid)
+        if not (((check or {}).get('meta') or {}).get('total_items')):
+            fail(f'Insights does not report {resolved} as affected by {cve_id}',
+                 system_uuid=uuid,
+                 hint='the host may already be patched, or the CVE may not '
+                      'apply to its package set')
 
         # -- 3. generate the remediation playbook -----------------------------
         body, status = http(
