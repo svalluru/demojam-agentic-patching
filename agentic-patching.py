@@ -418,6 +418,26 @@ def insights_get(path: str) -> Any:
         raise down from exc
 
 
+def inventory_get(path: str) -> Any:
+    """Insights inventory, which is a sibling service to vulnerability.
+
+    Separate from insights_get because VULN_API is baked into that one, and
+    resolving a hostname to a uuid is the one thing vulnerability cannot do.
+    """
+    try:
+        circuit('Insights')
+        return http_json(f'{INSIGHTS_API.rstrip("/")}/inventory/v1{path}',
+                         headers={'Authorization': f'Bearer {insights_token()}'},
+                         verify=INSIGHTS_VERIFY_TLS, timeout=INSIGHTS_TIMEOUT)
+    except BackendUnavailable:
+        raise
+    except Exception as exc:
+        down = BackendUnavailable(
+            'Insights', exc, f'GET inventory{path} failed — check credentials and egress')
+        trip('Insights', down)
+        raise down from exc
+
+
 # ==========================================================================
 # COMMON CODE  (C1 / C2)  — not an agent
 #
@@ -461,12 +481,75 @@ def fetch_cve_list(limit: int = 20, offset: int = 0) -> dict[str, Any]:
             'has_more': offset + len(cves) < (meta.get('total_items') or 0)}
 
 
+def _detail_host_first(cve_id: str, host_filter: str) -> dict[str, Any]:
+    """C2 for a single named host, asked host-first instead of CVE-first.
+
+    The CVE-first route cannot answer "is my host affected" in a large estate.
+    /cves/{id}/affected_systems returns one page of AFFECTED_PAGE out of tens
+    of thousands — for CVE-2026-73078 the host was genuinely affected and sat
+    nowhere in the first hundred of ~12,000. Filtering that page then finds
+    nothing, which used to mean "plan for all hundred" and now means "refuse":
+    safe, but a filter that can never match is no use either.
+
+    Asked this way both problems go away, and so does the slow endpoint: the
+    per-system record carries cvss, impact, description and first_reported,
+    and /cves/{id} — which takes ~30s cold and often 504s in a 98k-host org —
+    is never called at all.
+    """
+    found = inventory_get(f'/hosts?hostname_or_id={urllib.parse.quote(host_filter)}')
+    rows = (found or {}).get('results') or []
+    exact = [r for r in rows
+             if (r.get('display_name') or '') == host_filter
+             or (r.get('display_name') or '').startswith(host_filter + '.')]
+    chosen = (exact or rows)
+    if not chosen:
+        raise BackendUnavailable(
+            'Host filter', f'HOSTS_FILTER={host_filter!r} is not registered in '
+            f'this Insights organisation',
+            'check insights-client --register ran on it, and that the console '
+            'credentials point at the same org as the host')
+    uuid = chosen[0].get('id')
+    name = chosen[0].get('display_name') or host_filter
+
+    # ?filter= is the only accepted spelling here; ?cve= and ?cve_id= are
+    # rejected as "not in spec", which reads like a server fault.
+    hit = insights_get(f'/systems/{uuid}/cves'
+                       f'?limit=1&filter={urllib.parse.quote(cve_id)}')
+    data = (hit or {}).get('data') or []
+    if not data:
+        raise BackendUnavailable(
+            'Host filter', f'Insights does not report {name} as affected by {cve_id}',
+            'the host may already be patched, or the CVE may not apply to its '
+            'package set — pick a CVE from that host\'s own vulnerability list')
+
+    a = (data[0].get('attributes') or {})
+    cvss = a.get('cvss3_score') or a.get('cvss2_score')
+    return {
+        'cve_id': cve_id,
+        'cvss': float(cvss) if cvss is not None else 0.0,
+        'description': a.get('description', ''),
+        'impact': a.get('impact', ''),
+        'hosts': [{'host': name, 'system_uuid': uuid,
+                   'age_days': _age_days(a.get('first_reported'))}],
+        'count': 1,
+        # Deliberately absent: this route never asks how many systems the CVE
+        # affects org-wide, and guessing 1 would put a wrong number on the
+        # plan. gather() only notes truncation when it has a real total.
+        'total_affected': None,
+    }
+
+
 def fetch_cve_detail(cve_id: str, host_filter: str = '',
                      host_limit: int = 0) -> dict[str, Any]:
     """C1 + C2 — CVE metadata and the hosts it affects.
 
     host_filter / host_limit narrow the host set for demos and local testing.
     """
+    # With a filter set, live mode asks about that host directly. Demo mode
+    # keeps the list-then-filter path because its hosts are staged, not
+    # registered anywhere an inventory lookup could find them.
+    if host_filter and not offline():
+        return _detail_host_first(cve_id, host_filter)
     try:
         detail = insights_get(f'/cves/{cve_id}')
         # advisory_available=true, to match the filter the CVE list counts
@@ -521,14 +604,42 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
 
 
 def _narrow(hosts: list[dict], host_filter: str, host_limit: int) -> list[dict]:
-    """Shared by the live and fallback paths so both honour --host/--limit."""
+    """Shared by the live and fallback paths so both honour --host/--limit.
+
+    A filter that matches nothing raises. It used to keep every host and print
+    a note to stderr, on the reasoning that showing something beats showing
+    nothing — which is right for a display and wrong for a work queue. The
+    plan this returns is what gets dispatched.
+
+    What that cost: HOSTS_FILTER was set to a single lab host, the console was
+    pointed at an estate of ~98,000 systems, and the CVE affected 11,913 of
+    them. The host was not in the page that came back, the filter matched
+    nothing, and the console planned to patch 100 unrelated production
+    machines. Nothing was touched — the risk score sent them all to the
+    approval gate — but the gate is a governance control that happened to be
+    in the way, not a safety net, and it was the only thing in the way.
+
+    "I asked for one host and got a hundred" must never be a note on stderr.
+    """
     if host_filter:
         matched = [h for h in hosts if host_filter in (h.get('host') or '')]
-        if matched:
-            hosts = matched
-        else:
-            print(f'  note: --host {host_filter!r} matched nothing; keeping all '
-                  f'{len(hosts)} hosts', file=sys.stderr)
+        if not matched:
+            # Naming what was there turns two different mistakes into one
+            # readable message: a live filter left set while demo mode serves
+            # staged hosts, and a live CVE whose affected list simply does not
+            # include this host. Both look identical without the sample.
+            sample = ', '.join(str(h.get('host')) for h in hosts[:3])
+            more = f' (+{len(hosts) - 3} more)' if len(hosts) > 3 else ''
+            raise BackendUnavailable(
+                'Host filter',
+                f'HOSTS_FILTER={host_filter!r} matched none of the '
+                f'{len(hosts)} host(s) returned for this CVE — '
+                f'got: {sample}{more}',
+                'if those are staged demo hosts, clear HOSTS_FILTER or switch '
+                'to live; otherwise the host is not affected by this CVE or '
+                'sorts beyond the first page — pick a CVE from that host\'s '
+                'own list, or raise AFFECTED_PAGE')
+        hosts = matched
     if host_limit > 0:
         hosts = hosts[:host_limit]
     return hosts
