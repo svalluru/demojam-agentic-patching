@@ -591,10 +591,15 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
         degrade('C2 cve_detail', exc.service, exc.cause, exc.fix)
         fb = fallbacks.cve_detail(cve_id)
         before = len(fb['hosts'])
-        fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit)
+        # Staged hosts are not registered anywhere, so a filter naming a real
+        # machine can never match one. Lenient here — see _narrow's docstring.
+        ignored = bool(host_filter) and not any(
+            host_filter in (h.get('host') or '') for h in fb['hosts'])
+        fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit, strict=False)
         fb['count'] = len(fb['hosts'])
         fb['limited_from'] = (before if host_limit and len(fb['hosts']) < before
                               else None)
+        fb['filter_ignored'] = host_filter if ignored else None
         # Matched against the placeholder rather than applied to whatever is
         # there: a CVE in CVE_LIST carries its real advisory text, and that
         # must survive. Only the stand-in gets swapped, because it names
@@ -636,13 +641,14 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
     }
 
 
-def _narrow(hosts: list[dict], host_filter: str, host_limit: int) -> list[dict]:
+def _narrow(hosts: list[dict], host_filter: str, host_limit: int,
+            strict: bool = True) -> list[dict]:
     """Shared by the live and fallback paths so both honour --host/--limit.
 
-    A filter that matches nothing raises. It used to keep every host and print
-    a note to stderr, on the reasoning that showing something beats showing
-    nothing — which is right for a display and wrong for a work queue. The
-    plan this returns is what gets dispatched.
+    When strict, a filter that matches nothing raises. It used to keep every
+    host and print a note to stderr, on the reasoning that showing something
+    beats showing nothing — which is right for a display and wrong for a work
+    queue. The plan this returns is what gets dispatched.
 
     What that cost: HOSTS_FILTER was set to a single lab host, the console was
     pointed at an estate of ~98,000 systems, and the CVE affected 11,913 of
@@ -653,9 +659,18 @@ def _narrow(hosts: list[dict], host_filter: str, host_limit: int) -> list[dict]:
     in the way, not a safety net, and it was the only thing in the way.
 
     "I asked for one host and got a hundred" must never be a note on stderr.
+
+    strict=False is for staged data, and it is not a weaker rule — it is the
+    same rule. Failing closed matters because the plan becomes real work on
+    real machines; demo mode opens no sockets and patches nothing, so there is
+    no blast radius to bound. Refusing there only breaks the demo, which is
+    exactly what it did: a live HOSTS_FILTER left set made every staged
+    assessment fail with a message about hosts the operator never chose.
     """
     if host_filter:
         matched = [h for h in hosts if host_filter in (h.get('host') or '')]
+        if not matched and not strict:
+            return hosts[:host_limit] if host_limit > 0 else hosts
         if not matched:
             # Naming what was there turns two different mistakes into one
             # readable message: a live filter left set while demo mode serves
@@ -1017,6 +1032,14 @@ class InfoAgent:
             notes.append(f'HOSTS_LIMIT capped this plan at {len(hosts)} of '
                          f'{capped} host(s) that matched — check HOSTS_FILTER '
                          f'is selecting what you expect.')
+        # Quietly ignoring it would be its own trap: the operator set a filter
+        # and got every host, which is the same surprise in the other
+        # direction, even if nothing can be dispatched from here.
+        ignored = detail.get('filter_ignored')
+        if ignored:
+            notes.append(f'HOSTS_FILTER={ignored!r} matches no staged host, so '
+                         f'it was ignored — staged hosts are not the ones it '
+                         f'names. It still applies in live mode.')
         # Not a source label: true of this CVE against this gate whether the
         # scores were measured or substituted, and the reviewer needs it in
         # either case. So it is outside the block above.
