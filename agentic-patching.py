@@ -403,19 +403,54 @@ def insights_token() -> str:
     return _token['value']
 
 
+# Gateway errors are the API saying "I gave up", not "this is wrong". They are
+# worth one more try; a 401 or a 404 never is.
+GATEWAY_CODES = (502, 503, 504)
+INSIGHTS_RETRIES = max(0, int(env('INSIGHTS_RETRIES', '2') or 0))
+INSIGHTS_RETRY_WAIT = float(env('INSIGHTS_RETRY_WAIT', '3') or 3)
+
+
+def _insights_call(url: str, label: str) -> Any:
+    """GET with a retry on gateway errors, then trip the breaker.
+
+    console.redhat.com computes some CVE responses on demand and caches the
+    result. In a large estate the first request for a CVE takes ~30s, which is
+    where its gateway gives up — so the first call 504s and the second returns
+    in well under a second. Failing the whole assessment on that first answer
+    meant a CVE was unusable until something else happened to warm it, and the
+    breaker then blocked the retry that would have worked for CIRCUIT_TTL.
+
+    Only gateway codes are retried. Everything else fails immediately, because
+    retrying a rejected credential just rejects it again more slowly.
+    """
+    circuit('Insights')
+    last: Exception | None = None
+    for attempt in range(INSIGHTS_RETRIES + 1):
+        try:
+            return http_json(url,
+                             headers={'Authorization': f'Bearer {insights_token()}'},
+                             verify=INSIGHTS_VERIFY_TLS, timeout=INSIGHTS_TIMEOUT)
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code not in GATEWAY_CODES or attempt == INSIGHTS_RETRIES:
+                break
+            print(f'  Insights {exc.code} on {label} — retrying '
+                  f'({attempt + 1}/{INSIGHTS_RETRIES})', file=sys.stderr)
+            time.sleep(INSIGHTS_RETRY_WAIT)
+        except Exception as exc:
+            last = exc
+            break
+    down = BackendUnavailable(
+        'Insights', last, f'GET {label} failed — check credentials and egress')
+    trip('Insights', down)
+    raise down from last
+
+
 def insights_get(path: str) -> Any:
     try:
-        circuit('Insights')
-        return http_json(f'{VULN_API}{path}',
-                         headers={'Authorization': f'Bearer {insights_token()}'},
-                         verify=INSIGHTS_VERIFY_TLS, timeout=INSIGHTS_TIMEOUT)
+        return _insights_call(f'{VULN_API}{path}', path)
     except BackendUnavailable:
         raise
-    except Exception as exc:
-        down = BackendUnavailable(
-            'Insights', exc, f'GET {path} failed — check credentials and egress')
-        trip('Insights', down)
-        raise down from exc
 
 
 def inventory_get(path: str) -> Any:
@@ -424,18 +459,8 @@ def inventory_get(path: str) -> Any:
     Separate from insights_get because VULN_API is baked into that one, and
     resolving a hostname to a uuid is the one thing vulnerability cannot do.
     """
-    try:
-        circuit('Insights')
-        return http_json(f'{INSIGHTS_API.rstrip("/")}/inventory/v1{path}',
-                         headers={'Authorization': f'Bearer {insights_token()}'},
-                         verify=INSIGHTS_VERIFY_TLS, timeout=INSIGHTS_TIMEOUT)
-    except BackendUnavailable:
-        raise
-    except Exception as exc:
-        down = BackendUnavailable(
-            'Insights', exc, f'GET inventory{path} failed — check credentials and egress')
-        trip('Insights', down)
-        raise down from exc
+    return _insights_call(f'{INSIGHTS_API.rstrip("/")}/inventory/v1{path}',
+                          f'inventory{path}')
 
 
 # ==========================================================================
