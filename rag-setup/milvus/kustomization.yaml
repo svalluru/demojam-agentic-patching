@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - milvus-pvc.yaml
+  - etcd-pvc.yaml
   - etcd-deployment.yaml
   - etcd-service.yaml
   - milvus-deployment.yaml

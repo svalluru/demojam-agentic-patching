@@ -1,0 +1,23 @@
+# etcd holds Milvus's catalogue: which collections exist, their schemas and
+# where their segments live. Milvus keeps the vectors themselves on its own
+# PVC, so with etcd on an emptyDir a pod restart left 20Gi of vectors that
+# nothing knew about — the vector store still listed its files and every
+# search returned zero hits, with no error anywhere.
+#
+# That happened three times in one day across twelve etcd/Milvus restarts,
+# and each time the only recovery was a full re-ingest.
+#
+# Small because it stores metadata, not data: a few hundred collections is
+# megabytes. 5Gi is already far more than needed and leaves room for etcd's
+# own compaction history.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: etcd-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeMode: Filesystem

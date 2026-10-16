@@ -35,10 +35,32 @@ spec:
               value: "4294967296"
             - name: ETCD_SNAPSHOT_COUNT
               value: "50000"
+          # Without these etcd is a best-effort pod: no requests means the
+          # kubelet evicts it first under node pressure, and every eviction
+          # used to take Milvus's catalogue with it. Small, because this
+          # stores metadata rather than vectors.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          # Restarting etcd with an empty data dir is indistinguishable from
+          # a fresh install, and Milvus reports it as a collection that does
+          # not exist rather than as a fault. A probe here means the pod is
+          # only considered ready once it can actually answer.
+          readinessProbe:
+            exec:
+              command: ["etcdctl", "endpoint", "health"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: etcd-data
               mountPath: /etcd
       volumes:
         - name: etcd-data
-          emptyDir: {}
+          # Was emptyDir. See etcd-pvc.yaml for what that cost.
+          persistentVolumeClaim:
+            claimName: etcd-pvc
       restartPolicy: Always

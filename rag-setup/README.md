@@ -61,7 +61,27 @@ cd rag-setup      # the paths below are relative to this directory
 `/v1/vector_stores/{id}/search`. The embedding model is discovered from
 `/v1/models` rather than hardcoded. Standard library only.
 
+## etcd holds the catalogue, and it used to be on an emptyDir
+
+Milvus keeps vectors on `milvus-pvc`, but its *metadata* — which collections
+exist, their schemas, where their segments live — lives in etcd. etcd was
+deployed on an `emptyDir`, so every restart threw the catalogue away and left
+20Gi of vectors that nothing knew about.
+
+The symptom is the same silent one described below, which is why it took so
+long to find: the store lists with its files and search returns nothing. It
+cost three full re-ingests in one day across twelve restarts before anyone
+checked where etcd kept its data.
+
+`etcd-pvc.yaml` fixes it, and etcd now carries resource requests so the
+kubelet stops evicting it first under node pressure. Verified by restarting
+etcd and Milvus together — the sequence that used to wipe it — and getting
+the same three hits before and after.
+
 ## After a Llama Stack restart — run `--ensure`
+
+Separate problem from the etcd one above, and not fixed by it: here it is
+Llama Stack's own registry that goes stale, not Milvus's catalogue.
 
 **A restart silently breaks search.** Llama Stack 0.7.1 does not rehydrate its
 vector-store registry on startup: the store keeps appearing in
