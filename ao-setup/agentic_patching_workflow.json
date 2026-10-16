@@ -1,0 +1,241 @@
+{
+  "name": "Agentic Patching",
+  "edges": [
+    {
+      "to": "fetch_and_commit",
+      "from": "route_switch",
+      "from_port": "case_0"
+    },
+    {
+      "to": "deploy_script",
+      "from": "fetch_and_commit"
+    },
+    {
+      "to": "approval_prod",
+      "from": "route_switch",
+      "from_port": "case_1"
+    },
+    {
+      "to": "fetch_and_commit_prod",
+      "from": "approval_prod",
+      "from_port": "approved"
+    },
+    {
+      "to": "deploy_script_prod",
+      "from": "fetch_and_commit_prod"
+    },
+    {
+      "to": "run_cve_remediation",
+      "from": "deploy_script"
+    },
+    {
+      "to": "run_cve_remediation_prod",
+      "from": "deploy_script_prod"
+    },
+    {
+      "to": "route_switch",
+      "from": "trigger_manual"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "route_switch",
+      "name": "Route Decision",
+      "type": "switch",
+      "position": {
+        "x": 720.0,
+        "y": 300.0
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Auto-Patch (Dev)",
+            "condition": "${trigger.group} == 'auto_patch'"
+          },
+          {
+            "port": "case_1",
+            "label": "Approval Required (Prod)",
+            "condition": "${trigger.group} == 'approved_patch'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "fetch_and_commit",
+      "name": "Fetch from Lightspeed & Commit to Gitea",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1076.0869565217392,
+        "y": -69.99999999999999
+      },
+      "settings": {},
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "lab_tag": "${trigger.lab_tag}",
+          "gitea_repo": "lab-user/lightspeed_playbooks",
+          "target_host": "${trigger.host}",
+          "mcp_server_host": "bastion",
+          "mcp_server_port": "8001"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Fetch and Commit",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "deploy_script",
+      "name": "Sync & Deploy via AAP",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1442.0648489314663,
+        "y": -68.56153279292558
+      },
+      "settings": {},
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "playbook_filename": "${fetch_and_commit.artifacts.playbook_filename}"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Sync and Deploy",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "approval_prod",
+      "name": "Approve Production Patch",
+      "type": "approval",
+      "position": {
+        "x": 1080.0,
+        "y": 300.0
+      },
+      "parameters": {}
+    },
+    {
+      "id": "fetch_and_commit_prod",
+      "name": "Fetch from Lightspeed & Commit to Gitea",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1410.3861459100956,
+        "y": 312.45836403831976
+      },
+      "settings": {},
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "lab_tag": "${trigger.lab_tag}",
+          "gitea_repo": "lab-user/lightspeed_playbooks",
+          "target_host": "${trigger.host}",
+          "mcp_server_host": "bastion",
+          "mcp_server_port": "8001"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Fetch and Commit",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "deploy_script_prod",
+      "name": "Sync & Deploy via AAP",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1702.3728813559323,
+        "y": 313.42372881355936
+      },
+      "settings": {},
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "playbook_filename": "${fetch_and_commit_prod.artifacts.playbook_filename}"
+        },
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "DJ - CVE Sync and Deploy",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "run_cve_remediation",
+      "name": "Run CVE Remediation",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1769.4915254237287,
+        "y": -69.15254237288136
+      },
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "${deploy_script.artifacts.template_name}",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "run_cve_remediation_prod",
+      "name": "Run CVE Remediation",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1994.915254237288,
+        "y": 313.4237288135593
+      },
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "job_template_name": "${deploy_script_prod.artifacts.template_name}",
+        "organization_name": "Default"
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "name": "CVE Alert",
+      "type": "manual_trigger",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "parameters": {
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "host",
+            "cve_id"
+          ],
+          "properties": {
+            "host": {
+              "type": "string",
+              "default": "node1",
+              "description": "Target hostname in AAP inventory (e.g. node1, node2, node3)"
+            },
+            "cve_id": {
+              "type": "string",
+              "default": "",
+              "description": "CVE identifier from Red Hat Lightspeed (e.g. CVE-2026-4631). Leave empty to let Lightspeed pick the most critical CVE."
+            },
+            "lab_tag": {
+              "type": "string",
+              "default": "group=xfd48",
+              "description": "Insights group tag (e.g. group=xfd48)"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "description": "CVE remediation driven by the console. The route comes from ${trigger.group}, which the console sets from its own risk score and the operator approval, rather than from an LLM.",
+  "schema_version": "2.0.0"
+}
