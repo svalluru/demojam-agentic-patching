@@ -2212,6 +2212,36 @@ let cves = [], filter = 'all', offset = 0, pageSize = 20, hasMore = false, total
 // to `cves`, because `cves` is only the page currently on screen.
 let search = '';
 
+// Pages already fetched, keyed by the query that produced them. Caching the
+// *results* rather than the corpus: the live list is ~9,900 CVEs over 199
+// pages at the maximum page size, so holding it all to filter locally would
+// cost minutes of requests up front, and holding only the current page would
+// be the "not on this page" answer the server-side search exists to avoid.
+//
+// What repeats is the querying — type, look, clear, type again, page back —
+// and each of those is a ~1.3s round trip served from here instead.
+const pageCache = new Map();
+const CACHE_MAX = 60;
+const cacheKey = (q, off) => `${q}\u0000${off}`;
+
+function cachePut(q, off, data) {
+  // Oldest out first. Map preserves insertion order, so the first key is the
+  // least recently added; re-reads refresh their entry in cacheGet.
+  if (pageCache.size >= CACHE_MAX) pageCache.delete(pageCache.keys().next().value);
+  pageCache.set(cacheKey(q, off), data);
+}
+function cacheGet(q, off) {
+  const k = cacheKey(q, off);
+  if (!pageCache.has(k)) return null;
+  const v = pageCache.get(k);
+  pageCache.delete(k); pageCache.set(k, v);   // mark as recently used
+  return v;
+}
+// Anything that changes what the list would return invalidates all of it:
+// switching mode swaps staged data for live, and the triage settings change
+// which hosts a CVE is reported against.
+function cacheClear() { pageCache.clear(); }
+
 const esc = v => {
   if (v === null || v === undefined || v === '') return '—';
   const d = document.createElement('span'); d.textContent = String(v); return d.innerHTML;
@@ -2279,8 +2309,22 @@ function show(msg, kind) {
   el.innerHTML = msg;
 }
 
+function applyPage(d) {
+  cves = d.cves || [];
+  hasMore = !!d.has_more;
+  total = d.total_items || 0;
+  offset = d.offset ?? offset;
+  setStatus(`${total.toLocaleString()} CVEs`, true);
+}
+
 async function loadCves(next) {
   if (typeof next === 'number') offset = Math.max(0, next);
+
+  // Straight from the cache, with no skeleton: a flash of placeholder rows
+  // for something already in hand reads as slower than it is.
+  const hit = cacheGet(search, offset);
+  if (hit) { applyPage(hit); render(); return; }
+
   document.getElementById('list').innerHTML = skeleton();
   try {
     // Searched server-side. The list is paged, so filtering the rows already
@@ -2290,11 +2334,10 @@ async function loadCves(next) {
     const r = await fetch(`/api/cves?${qs}`);
     const d = await r.json();
     if (d.ok === false) throw new Error(d.error || 'request failed');
-    cves = d.cves || [];
-    hasMore = !!d.has_more;
-    total = d.total_items || 0;
-    offset = d.offset ?? offset;
-    setStatus(`${total.toLocaleString()} CVEs`, true);
+    // Only successful pages are cached; a degraded one is a snapshot of a
+    // backend being down, and serving it later would hide the recovery.
+    if (!d.degraded) cachePut(search, offset, d);
+    applyPage(d);
   } catch (e) {
     cves = [];
     setStatus('Insights unavailable', false);
@@ -5002,6 +5045,10 @@ async function postSettings(payload) {
   // itself, and the CVE list comes from a backend whose reachability may
   // have just changed.
   await renderMode();
+  // Every cached page was produced under the old settings. Switching mode
+  // swaps staged data for live, and serving a cached page across that would
+  // show the wrong estate entirely.
+  cacheClear();
   loadCves(0);
   return d.changed || [];
 }
