@@ -590,16 +590,23 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
     except BackendUnavailable as exc:
         degrade('C2 cve_detail', exc.service, exc.cause, exc.fix)
         fb = fallbacks.cve_detail(cve_id)
-        before = len(fb['hosts'])
-        # Staged hosts are not registered anywhere, so a filter naming a real
-        # machine can never match one. Lenient here — see _narrow's docstring.
-        ignored = bool(host_filter) and not any(
-            host_filter in (h.get('host') or '') for h in fb['hosts'])
-        fb['hosts'] = _narrow(fb['hosts'], host_filter, host_limit, strict=False)
+        # HOSTS_FILTER and HOSTS_LIMIT narrow a real estate: one names a
+        # registered machine, the other bounds how many real machines a plan
+        # can dispatch to. Neither means anything against a fixed set of
+        # staged hosts, and both only subtract from the flow the demo exists
+        # to show — a filter naming a live host matched nothing and failed the
+        # run; a limit of 1 turned the five-host CVE into one.
+        #
+        # Demo mode is a toggle, not a toggle plus two settings to remember,
+        # so it ignores them. Same reasoning as patched_window(): a live-only
+        # control should not have to be unset to get out of the way.
+        fb['hosts'] = list(fb['hosts'])
         fb['count'] = len(fb['hosts'])
-        fb['limited_from'] = (before if host_limit and len(fb['hosts']) < before
-                              else None)
-        fb['filter_ignored'] = host_filter if ignored else None
+        fb['limited_from'] = None
+        fb['triage_ignored'] = [
+            f'{k}={v!r}' for k, v in (('HOSTS_FILTER', host_filter),
+                                      ('HOSTS_LIMIT', host_limit)) if v
+        ] or None
         # Matched against the placeholder rather than applied to whatever is
         # there: a CVE in CVE_LIST carries its real advisory text, and that
         # must survive. Only the stand-in gets swapped, because it names
@@ -1032,14 +1039,13 @@ class InfoAgent:
             notes.append(f'HOSTS_LIMIT capped this plan at {len(hosts)} of '
                          f'{capped} host(s) that matched — check HOSTS_FILTER '
                          f'is selecting what you expect.')
-        # Quietly ignoring it would be its own trap: the operator set a filter
-        # and got every host, which is the same surprise in the other
-        # direction, even if nothing can be dispatched from here.
-        ignored = detail.get('filter_ignored')
+        # Quietly ignoring them would be its own trap: settings that appear
+        # to be in force and are not. Said once, as a note, not as a failure.
+        ignored = detail.get('triage_ignored')
         if ignored:
-            notes.append(f'HOSTS_FILTER={ignored!r} matches no staged host, so '
-                         f'it was ignored — staged hosts are not the ones it '
-                         f'names. It still applies in live mode.')
+            notes.append(f'Demo mode ignores {" and ".join(ignored)} — those '
+                         f'narrow a real estate and this run uses staged '
+                         f'hosts. Both still apply in live mode.')
         # Not a source label: true of this CVE against this gate whether the
         # scores were measured or substituted, and the reviewer needs it in
         # either case. So it is outside the block above.
@@ -2663,9 +2669,15 @@ SETTINGS: tuple[Setting, ...] = (
             'CVE run repeatedly and the guard would empty the second run.',
             binds='PATCHED_WITHIN_MINUTES'),
     Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
-            'Restrict an assessment to hosts whose name contains this.'),
+            'Live mode only. Restrict an assessment to hosts whose name '
+            'contains this. A filter that matches nothing fails the run '
+            'rather than planning for every affected host. Demo mode ignores '
+            'it — staged hosts are not the ones it names.'),
     Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
-            'Cap the number of hosts assessed. 0 means no cap.'),
+            'Live mode only. Cap the number of hosts a plan can dispatch to, '
+            'whatever the filter does; 0 means no cap. The plan says when the '
+            'cap fired. Demo mode ignores it, so the staged flow always shows '
+            'every host.'),
     Setting('MAINTENANCE_WINDOW', 'Triage', 'Maintenance window', 'str', '',
             f'Reported in the patch plan. Empty uses {DEFAULT_WINDOW!r}.',
             binds='MAINTENANCE_WINDOW'),
