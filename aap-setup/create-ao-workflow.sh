@@ -83,20 +83,74 @@ for p in d.get('resources', d if isinstance(d,list) else []):
     if p.get('name') == 'default': print(p['id']); break")}"
 [[ -n "$PROJECT_ID" ]] || fail "could not find the AO 'default' project"
 
-PAYLOAD="$(DEF_FILE="$DEF_FILE" PROJECT_ID="$PROJECT_ID" WF_NAME="$WF_NAME" python3 -c "
+# An exported workflow carries the credential and integration UUIDs of the
+# instance it came from, and those are meaningless anywhere else — AO rejects
+# the import with "One or more credential references are invalid or belong to
+# a different project", which does not obviously mean "these ids are from a
+# different AO". So they are resolved by name here and substituted in.
+#
+# This is what makes the definition portable: it can be committed, imported
+# into a fresh AO, and still point at that instance's own objects.
+AO_CRED_NAME="${AO_CRED_NAME:-aap-credential}"
+AO_INTEGRATION_NAME="${AO_INTEGRATION_NAME:-aap}"
+# The job template the node calls, for the same reason: a controller that
+# already has a template of that name — the lab's, reaching a different
+# Insights organisation through MCP — will answer to it and fail on a host
+# it cannot see. Keep this equal to JT_NAME in create-aap-objects.sh.
+JT_NAME="${JT_NAME:-CVE - Fetch and Commit}"
+
+find_by_name() {  # $1 = endpoint, $2 = name
+  api GET "$1" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for r in d.get('resources', d if isinstance(d,list) else []):
+    if r.get('name') == '''$2''': print(r['id']); break"
+}
+CRED_ID="$(find_by_name "/api/v1/projects/$PROJECT_ID/credentials" "$AO_CRED_NAME")"
+INT_ID="$(find_by_name /api/v1/integrations "$AO_INTEGRATION_NAME")"
+[[ -n "$CRED_ID" ]] || fail "no AO credential named '$AO_CRED_NAME' — run ./ao-setup/create-ao-objects.sh first"
+[[ -n "$INT_ID"  ]] || fail "no AO integration named '$AO_INTEGRATION_NAME' — run ./ao-setup/create-ao-objects.sh first"
+info "credential  : $AO_CRED_NAME ($CRED_ID)"
+info "integration : $AO_INTEGRATION_NAME ($INT_ID)"
+
+PAYLOAD="$(DEF_FILE="$DEF_FILE" PROJECT_ID="$PROJECT_ID" WF_NAME="$WF_NAME" \
+           CRED_ID="$CRED_ID" INT_ID="$INT_ID" JT_NAME="$JT_NAME" python3 -c "
 import json, os
 wd = json.load(open(os.environ['DEF_FILE']))
+swapped = 0
+for n in wd.get('nodes', []):
+    p = n.get('parameters') or {}
+    if 'credential_id' in p:
+        p['credential_id'] = os.environ['CRED_ID']; swapped += 1
+    if 'integration_id' in p:
+        p['integration_id'] = os.environ['INT_ID']; swapped += 1
+    # A job_template_id from another controller is worse than no id: AO
+    # prefers it over the name and launches whatever happens to hold that
+    # number here. The name is the portable reference.
+    p.pop('job_template_id', None)
+    if p.get('job_template_name'):
+        p['job_template_name'] = os.environ['JT_NAME']
 print(json.dumps({
     'name': os.environ['WF_NAME'],
     'description': wd.get('description', ''),
     'project_id': os.environ['PROJECT_ID'],
     'workflow_definition': wd,
-}))")"
+}))
+import sys
+sys.stderr.write(f'  rewrote {swapped} credential/integration reference(s)\n')
+")"
 
 if [[ -n "$WF_ID" ]]; then
   step "Updating $WF_NAME ($WF_ID)"
-  # A new version is created rather than the published one edited in place.
-  out="$(api PUT "/api/v1/workflows/$WF_ID" "$PAYLOAD")"
+  # PATCH, not PUT: PUT is 405 on this API, and the script used to ignore the
+  # body it got back — so an update silently did nothing and then republished
+  # the version that was already there. A changed definition appeared to
+  # deploy and the old one kept running.
+  out="$(api PATCH "/api/v1/workflows/$WF_ID" "$PAYLOAD")"
+  [[ -n "$(printf '%s' "$out" | python3 -c "import json,sys
+try: print(json.load(sys.stdin).get('id',''))
+except Exception: print('')")" ]] \
+    || fail "updating $WF_NAME failed: $(printf '%s' "$out" | head -c 300)"
 else
   step "Creating $WF_NAME"
   out="$(api POST /api/v1/workflows "$PAYLOAD")"
