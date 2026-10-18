@@ -143,6 +143,35 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        d = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _elapsed(started: str | None, completed: str | None = None) -> str:
+    """How long a step took, or has been running when it has not finished.
+
+    Returns '' rather than '0s' when there is no start time — a node that was
+    skipped never ran, and printing a duration for it would imply it did.
+    """
+    s = _parse_ts(started)
+    if s is None:
+        return ''
+    e = _parse_ts(completed) or datetime.now(timezone.utc)
+    secs = int((e - s).total_seconds())
+    if secs < 0:
+        return ''
+    if secs < 60:
+        return f'{secs}s'
+    m, rest = divmod(secs, 60)
+    return f'{m}m{rest:02d}s' if m < 60 else f'{m // 60}h{m % 60:02d}m'
+
+
 # --------------------------------------------------------------------------
 # errors + http
 # --------------------------------------------------------------------------
@@ -1494,9 +1523,16 @@ class PatchingAgent:
         """Poll until the execution settles. A pause for approval counts as settled."""
         deadline = time.time() + AO_POLL_TIMEOUT
         state: dict[str, Any] = {}
+        # Which node was last reported in which state, so the trace records
+        # transitions rather than one line per poll.
+        seen: dict[str, str] = {}
         while time.time() < deadline:
             state = ao_call(f'/api/v1/executions/{exec_id}') or {}
             status = state.get('status')
+            # Before the break checks: the poll that sees the run finish is
+            # also the one carrying the last node's completion, and breaking
+            # first would drop it from the trace every single time.
+            self._trace_nodes(exec_id, host, seen)
             if status in ('completed', 'succeeded', 'failed', 'error',
                           'cancelled', 'canceled'):
                 break
@@ -1533,6 +1569,52 @@ class PatchingAgent:
             'url': f'{AO_URL}/executions/{exec_id}',
         }
 
+    def _trace_nodes(self, exec_id: str, host: str, seen: dict[str, str]) -> None:
+        """Report each workflow node to the trace as AO moves through it.
+
+        Without this the trace goes quiet for the whole execution — one line
+        dispatching to AO, then nothing for three or four minutes, then the
+        outcome. The progress bar moves, but it cannot say which node is slow,
+        and 'run_cve_remediation' taking 3m11s while 'fetch_and_commit' takes
+        13s is the difference between a patch running and a step hanging.
+
+        Only transitions are emitted, because this is called on every poll.
+        Skipped nodes are left out: a one-branch run skips five of eleven and
+        they all resolve in the same instant, which would bury the four that
+        actually did something.
+        """
+        try:
+            steps, _port, _approval = self._activities(exec_id)
+        except BackendUnavailable:
+            return                      # the next poll will catch up
+        # AO lists activities newest-first, and one poll can pick up several
+        # transitions at once — three fast nodes finish inside a 3s window.
+        # Emitted in that order the trace reads backwards, so sort by when
+        # each node actually started.
+        for s in sorted(steps, key=lambda x: str(x.get('started_at') or '')):
+            name, status = s.get('name'), s.get('status')
+            if not name or status in (None, 'skipped') or seen.get(name) == status:
+                continue
+            # 'waiting' on an ordinary node means the run has not got there
+            # yet, not that anything is holding it. Reporting those announced
+            # all ten nodes on the first poll, every one of them claiming to
+            # be waiting for an approval that only one of them can ever want.
+            if status in ('waiting', 'pending') and s.get('node_type') != 'approval':
+                continue
+            seen[name] = status
+            took = _elapsed(s.get('started_at'), s.get('completed_at'))
+            if status in ('completed', 'succeeded'):
+                detail = f'{name} done' + (f' in {took}' if took else '')
+            elif status in ('failed', 'error'):
+                detail = f'{name} FAILED' + (f' after {took}' if took else '')
+                if s.get('error'):
+                    detail += f' — {str(s["error"])[:90]}'
+            elif status in ('waiting', 'pending'):
+                detail = f'{name} waiting for approval'
+            else:
+                detail = f'{name} {status}'
+            self._trace('ao', 'patching', f'{host.split(".")[0]}: {detail}')
+
     @staticmethod
     def _activities(exec_id: str) -> tuple[list[dict], str, str]:
         """Per-node outcome, the switch port taken, and any waiting approval.
@@ -1553,7 +1635,16 @@ class PatchingAgent:
                 approval = a.get('temporal_activity_id') or a.get('activity_name') or ''
             steps.append({'name': a.get('activity_name'),
                           'status': a.get('status'),
-                          'error': a.get('error_details')})
+                          'error': a.get('error_details'),
+                          # 'waiting' means two different things depending on
+                          # this: a gate holding the run, or a node the run
+                          # has simply not reached yet.
+                          'node_type': a.get('node_type'),
+                          # AO's own clock per node. There is no duration
+                          # field, so elapsed is computed from the pair; a
+                          # skipped node has no started_at at all.
+                          'started_at': a.get('started_at'),
+                          'completed_at': a.get('completed_at')})
         return steps, port, approval
 
     def recent_runs(self, limit: int = 40) -> list[dict]:
