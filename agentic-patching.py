@@ -687,11 +687,39 @@ def _narrow(hosts: list[dict], host_filter: str, host_limit: int,
     no blast radius to bound. Refusing there only breaks the demo, which is
     exactly what it did: a live HOSTS_FILTER left set made every staged
     assessment fail with a message about hosts the operator never chose.
+
+    The filter also matches system_uuid, and in a shared estate that is the
+    only form worth using. Display names are not unique: the lab organisation
+    this runs against holds 496 hosts matching 'node1', several of them
+    checking in today and belonging to different people. A uuid is unique by
+    construction, so it names one machine or none.
+
+    Over-matching raises too, which is the other half of the incident above.
+    Guarding only the zero case left HOSTS_FILTER='node1' + HOSTS_LIMIT=1
+    passing straight through to hosts[:1] — one arbitrary host, chosen by
+    whatever order the API returned, with nothing printed. A limit is a cap on
+    a set the operator chose, not a way to pick for them.
     """
     if host_filter:
-        matched = [h for h in hosts if host_filter in (h.get('host') or '')]
+        matched = [h for h in hosts
+                   if host_filter in (h.get('host') or '')
+                   or host_filter == (h.get('system_uuid') or '')]
         if not matched and not strict:
             return hosts[:host_limit] if host_limit > 0 else hosts
+        if len(matched) > 1 and 0 < host_limit < len(matched) and strict:
+            sample = ', '.join(
+                f"{h.get('host')} ({str(h.get('system_uuid'))[:8]}…)"
+                for h in matched[:3])
+            raise BackendUnavailable(
+                'Host filter',
+                f'HOSTS_FILTER={host_filter!r} matched {len(matched)} hosts '
+                f'but HOSTS_LIMIT={host_limit} would keep only '
+                f'{host_limit} — got: {sample}'
+                f"{f' (+{len(matched) - 3} more)' if len(matched) > 3 else ''}",
+                'the filter is a substring and display names are not unique in '
+                'a shared organisation. Set HOSTS_FILTER to the system uuid of '
+                'the host you mean, or raise HOSTS_LIMIT if you really do want '
+                'all of them')
         if not matched:
             # Naming what was there turns two different mistakes into one
             # readable message: a live filter left set while demo mode serves
