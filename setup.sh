@@ -82,10 +82,14 @@ fi
 set -a; . "$ENV_FILE"; set +a
 ok ".env sources cleanly"
 
-for v in LIGHTSPEED_CLIENT_ID LIGHTSPEED_CLIENT_SECRET GIT_HUB_TOKEN \
+for v in LIGHTSPEED_CLIENT_ID LIGHTSPEED_CLIENT_SECRET \
          AO_URL AO_USERNAME AO_PASSWORD AAP_BASE_URL AAP_TOKEN; do
   [[ -n "${!v:-}" ]] || note_fail "$v is empty in .env"
 done
+# GIT_HUB_TOKEN is no longer required. It fed the REST fetch step, which the
+# lab workflow replaces with a Gitea commit through AAP's own credential, so
+# a run needs nothing from GitHub. Still checked below when it is set,
+# because aap-setup/create-aap-objects.sh does use it.
 # Stop here rather than carrying on: every check below dereferences these,
 # and under `set -u` the first missing one aborts the script with "unbound
 # variable" — losing the list of what was missing, which was the useful part.
@@ -209,10 +213,12 @@ if [[ -n "${HOSTS_FILTER:-}" && "$code" == "200" ]]; then
   fi
 fi
 
-gh="$(curl -s -o /dev/null -m 20 -w '%{http_code}' \
-      -H "Authorization: Bearer $GIT_HUB_TOKEN" https://api.github.com/user || echo 000)"
-[[ "$gh" == "200" ]] && ok "GitHub token works" \
-                     || note_fail "GitHub token returned $gh (401 = expired or revoked)"
+if [[ -n "${GIT_HUB_TOKEN:-}" ]]; then
+  gh="$(curl -s -o /dev/null -m 20 -w '%{http_code}' \
+        -H "Authorization: Bearer $GIT_HUB_TOKEN" https://api.github.com/user || echo 000)"
+  [[ "$gh" == "200" ]] && ok "GitHub token works" \
+                       || note_fail "GitHub token returned $gh (401 = expired or revoked)"
+fi
 
 if [[ $FAILED -gt 0 ]]; then
   echo

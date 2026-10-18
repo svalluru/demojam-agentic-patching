@@ -1136,6 +1136,33 @@ AO_WORKFLOW_NAME = env('AO_WORKFLOW_NAME', 'DemoJam Agentic Patching')
 AO_TRIGGER_NODE = env('AO_TRIGGER_NODE', 'trigger_manual')
 AO_POLL_TIMEOUT = int(env('AO_POLL_TIMEOUT', '900'))
 LAB_TAG = env('LAB_TAG')
+AO_HOST_SHORTNAME = env_bool('AO_HOST_SHORTNAME', True)
+
+
+def ao_host_name(display_name: str) -> str:
+    """The name AAP knows this host by, which is not always the one Insights
+    shows.
+
+    Insights reports whatever the host called itself at its last check-in, and
+    that changes under you: patching node1 rebooted it, insights-client re-ran,
+    and the display name went from 'node1' to
+    'node1.sandbox-h77wc-ocp4-cluster.svc.cluster.local'. AAP's inventory still
+    held 'node1', so the next dispatch would have addressed a host that matches
+    nothing and patched no machine — the first successful patch breaking the
+    one after it.
+
+    It is not only a patching side effect. node2 was already an FQDN before
+    anything ran against it and node3 was still short, so the same estate
+    carries both forms at once and renaming hosts by hand is a losing race.
+
+    Taking the first label gives the inventory name in both forms and is a
+    no-op on a host that was already short, which is why this is safe to leave
+    on. Set AO_HOST_SHORTNAME=false for an inventory whose host names really
+    are fully qualified.
+    """
+    if not AO_HOST_SHORTNAME:
+        return display_name
+    return (display_name or '').split('.')[0] or display_name
 
 
 class SimStore:
@@ -1425,12 +1452,15 @@ class PatchingAgent:
         # the run at that node with 'Property "lab_tag" not found'. Always send
         # it, even empty. scheduler_date_time is referenced by no node, so it
         # is genuinely optional.
-        inputs = {'host': host['host'], 'group': group, 'cve_id': cve_id,
+        target = ao_host_name(host['host'])
+        inputs = {'host': target, 'group': group, 'cve_id': cve_id,
                   'lab_tag': LAB_TAG}
         if scheduler_date_time:
             inputs['scheduler_date_time'] = scheduler_date_time
 
-        self._trace('supervisor', 'patching', f'{host["host"]} -> AO ({group})')
+        note = f' (as {target})' if target != host['host'] else ''
+        self._trace('supervisor', 'patching',
+                    f'{host["host"]}{note} -> AO ({group})')
         try:
             created = ao_call('/api/v1/executions', 'POST', {
                 'workflow_id': self.workflow_id(),
@@ -2809,6 +2839,12 @@ SETTINGS: tuple[Setting, ...] = (
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
     Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
+    Setting('AO_HOST_SHORTNAME', 'Ansible Orchestrator',
+            'Send short hostname', 'bool', 'true',
+            'Send the first label of the Insights display name to the '
+            'workflow, so an FQDN still matches an AAP inventory host named '
+            'short. Turn off only if your inventory host names are fully '
+            'qualified.', binds='AO_HOST_SHORTNAME'),
 
     # --- server -----------------------------------------------------------
     Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
