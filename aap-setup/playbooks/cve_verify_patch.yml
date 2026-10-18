@@ -16,8 +16,15 @@
 # stop a workflow is the orchestrator's decision, and it has `patched` in the
 # artifacts to make it. Failing here would make a true answer look like a
 # broken step.
+# Scope to the host the orchestrator named. This was 'all', which on a
+# one-host inventory looks identical and on a three-host one is not: the play
+# fanned out to node1, node2 and node3, and set_stats aggregated the three
+# verdicts into one artifact — verified_host came back "node1node2node3" and
+# `patched` was true+false+false summed to 1, truthy for the wrong reason. A
+# verdict about three machines is not a verdict about the one that was asked
+# about.
 - name: Verify a CVE is no longer outstanding on the host
-  hosts: all
+  hosts: "{{ target_host | default('all') }}"
   gather_facts: false
 
   vars:
@@ -61,8 +68,14 @@
              if outstanding | length == 0
              else 'STILL VULNERABLE — ' ~ (outstanding | join('; ')) }}
 
+    # aggregate: false — the default combines values across hosts, which is
+    # how three verdicts became one unreadable artifact. Belt as well as
+    # braces: the play is scoped to one host above, but if a pattern ever
+    # matches more than one, a replaced value is wrong in an obvious way and
+    # a concatenated one is wrong in a way that still looks like an answer.
     - name: Publish the verdict for the orchestrator
       ansible.builtin.set_stats:
+        aggregate: false
         data:
           patched: "{{ outstanding | length == 0 }}"
           verified_cve: "{{ cve_id }}"
