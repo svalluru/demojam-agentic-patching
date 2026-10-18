@@ -294,7 +294,13 @@ import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 want = {
     'MODE': 'live',
-    'AO_WORKFLOW_NAME': '"Agentic Patching"',
+    # The workflow derived from the lab's own, which reaches node1 through
+    # the lab job templates. Not 'Agentic Patching' — that one calls the DJ-
+    # templates, which are bound to ec2-inventory and cannot reach the lab
+    # hosts. Writing the wrong name here is silent: .env looks configured,
+    # the console resolves a real workflow, and the run fails several nodes
+    # in on a host the templates cannot see.
+    'AO_WORKFLOW_NAME': '"RHEL CVE Remediation - Intelligent Patching - Demo Jam"',
     # The risk model emits 36.6-100, so the stock threshold of 30 is below
     # everything it can produce and the auto-patch branch never fires.
     'REVIEW_THRESHOLD': '65',
