@@ -1452,8 +1452,13 @@ def ao_call(path: str, method: str = 'GET', body: Any = None,
 class PatchingAgent:
     name = 'patching-agent'
 
-    def __init__(self, trace=None):
+    def __init__(self, trace=None, progress=None):
         self._trace = trace or (lambda *a, **k: None)
+        # Called with (execution_id, partial result) while a decision is
+        # still settling. decide() blocks for up to AO_DECIDE_WAIT, and
+        # without this the row an operator has just approved shows its
+        # pre-approval state for the whole run.
+        self._progress = progress or (lambda *a, **k: None)
         self._workflow_id: str | None = None
         # Set by recent_runs() when AO could not be read, so the Patch runs
         # page can say the list is simulated-only rather than looking complete.
@@ -1844,7 +1849,8 @@ class PatchingAgent:
             'completed_at': state.get('completed_at'),
         }
 
-    def decide(self, execution_id: str, activity_id: str, decision: str) -> dict:
+    def decide(self, execution_id: str, activity_id: str, decision: str,
+               host: str = '') -> dict:
         """Approve or reject a paused approval gate, then report the new state.
 
         AO does not validate the decision value — it forwards whatever it is
@@ -1873,9 +1879,25 @@ class PatchingAgent:
         # it. Bounded so the button does not hang.
         state: dict[str, Any] = {}
         deadline = time.time() + int(env('AO_DECIDE_WAIT', '90'))
+        # An approved run does its real work here — fetch, deploy, remediate,
+        # verify, two to three minutes of it. Reporting none of that was the
+        # complaint: the gate cleared, and then the trace said nothing and the
+        # row kept its pre-approval state until the whole thing finished. The
+        # longest phase of the flow was the one with no feedback.
+        label = (host or execution_id[:8]).split('.')[0]
+        seen: dict[str, str] = {}
         while time.time() < deadline:
             time.sleep(2)
-            state = ao_call(f'/api/v1/executions/{execution_id}') or {}
+            try:
+                state = ao_call(f'/api/v1/executions/{execution_id}') or {}
+            except BackendUnavailable:
+                continue          # same reasoning as _await: a poll is not the run
+            self._trace_nodes(execution_id, label, seen)
+            live, live_port, _ = self._activities(execution_id)
+            self._progress(execution_id, {
+                'status': state.get('status'), 'outcome': 'running',
+                'approval_pending': bool(state.get('approval_pending')),
+                'steps': live, 'matched_port': live_port or None})
             if state.get('status') in ('completed', 'succeeded', 'failed', 'error',
                                        'cancelled', 'canceled'):
                 break
@@ -3503,8 +3525,26 @@ class Handler(BaseHTTPRequestHandler):
                         {'time': now_iso(), 'from': src, 'to': dst,
                          'message': message})
 
+            # The row the operator just approved, updated while the run is
+            # still going rather than only when it ends. /api/decide blocks
+            # for the duration, so without this the page polls /api/state for
+            # three minutes and is handed the pre-approval snapshot each time.
+            def progress(execution_id: str, partial: dict) -> None:
+                with _RUN_LOCK:
+                    for r in ((_RUN.get('patch') or {}).get('results') or []):
+                        if r.get('execution_id') == execution_id:
+                            r.update({k: v for k, v in partial.items()
+                                      if v is not None})
+
+            # The host is only needed to label trace lines; the decision is
+            # addressed by execution and activity id.
+            with _RUN_LOCK:
+                host_label = next(
+                    (r.get('host') for r in ((_RUN.get('patch') or {}).get('results') or [])
+                     if r.get('execution_id') == exec_id), '')
             try:
-                result = PatchingAgent(trace=trace).decide(exec_id, act_id, decision)
+                result = PatchingAgent(trace=trace, progress=progress).decide(
+                    exec_id, act_id, decision, host=host_label or '')
                 with _RUN_LOCK:
                     # Keep the stored run in step with the new outcome. A null
                     # in the newer read does not overwrite a value we already
