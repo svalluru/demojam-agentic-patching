@@ -1,16 +1,24 @@
 # Setting up a target host for live mode
 
+> **Not the path this branch uses.** It now patches the lab's own `node1`
+> through the lab Lightspeed service account, which turned out to satisfy both
+> requirements below — see `./discover-hosts.py`. Keep this guide for the case
+> where no lab is available; the `demojam-rhel-01` examples throughout are
+> illustrative, not a host that still exists.
+
 Live mode needs one RHEL machine that satisfies **both** of these at once:
 
 1. it is registered in the **same Insights organisation** as the console's
    `LIGHTSPEED_*` credentials — otherwise assessment cannot see it
 2. AAP can reach it over **SSH** — otherwise remediation cannot run
 
-Neither alone is enough, and most hosts you already have satisfy only one.
-That is the whole reason this document exists: the lab's `node1` is in the
-lab's Insights org and behind the lab's controller, so the console could never
-assess it, and the corporate fleet of ~98,000 systems is fully visible to the
-console and reachable by nothing.
+Neither alone is enough, and most hosts you already have satisfy only one. A
+corporate fleet of ~98,000 systems is fully visible to the console and
+reachable by nothing; a machine behind a controller is reachable and invisible.
+
+**Check before building.** The two halves can each look healthy while never
+overlapping, and `./discover-hosts.py` answers it in seconds against hosts you
+already have. This document is for when the answer is no.
 
 An EC2 instance is the cheapest way to get one host that is both.
 

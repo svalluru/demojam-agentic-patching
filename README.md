@@ -128,10 +128,12 @@ registered in the same Insights organisation as your `LIGHTSPEED_*` credentials
 **and** reachable over SSH from AAP. Most hosts satisfy one or the other, and
 the two halves can each look perfectly healthy while never overlapping.
 
-If a lab already gives you hosts, `./discover-hosts.py` answers whether they
-qualify — it reads the AAP inventory, finds each host in Insights, and prints
-the uuid and group tag to put in `.env`. Starting from nothing instead,
-[docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) builds one from scratch.
+Two ways to get there:
+
+| | |
+|---|---|
+| **A lab already gives you hosts** — what this branch runs against | `./discover-hosts.py` says whether they qualify. It reads the AAP inventory, finds each host in Insights, and prints the uuid and group tag to put in `.env`. It also tells you when a host is in AAP but *not* registered in your Insights organisation, which is the failure that otherwise surfaces as a confusing empty assessment |
+| **Starting from nothing** | [docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) builds and registers one from scratch, including the registration traps and the AAP wiring. Keep it in mind if you have no lab — it is not the path this branch uses, so treat its `demojam-rhel-01` examples as illustrative rather than current |
 
 Set `HOSTS_FILTER` to a **uuid**, not a name. Insights reports whatever a host
 last called itself, which changes — patching one rebooted it and its display
@@ -580,7 +582,8 @@ risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
 docs/
-  EC2_TARGET_HOST.md       build and register a real patch target
+  EC2_TARGET_HOST.md       build a target from scratch — the alternative to
+                           a lab-provided host, not the path in use here
 multi-agent/
   architecture.jpg/.html   architecture diagram (editable source)
 ```
