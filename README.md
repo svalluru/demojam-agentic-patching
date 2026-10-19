@@ -567,8 +567,7 @@ frontend/
   server.py                dev server — serves the UI, proxies /api/* to :8787
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
-  agentic_patching_workflow.json  the AO workflow, exported from AO
-  demojam_lab_workflow.json       the lab-derived workflow now in use
+  demojam_lab_workflow.json  the AO workflow, exported — the only one
 aap-setup/
   create-aap-objects.sh    AAP projects, credentials and job templates
   create-ao-workflow.sh    creates + publishes a one-node test workflow

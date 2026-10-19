@@ -110,26 +110,30 @@ It creates these in organization `Default`:
 Two projects because they track different branches: the playbooks live on
 `main`, the playbooks they *generate* land on `generated-playbooks`.
 
+**This branch does not use these objects.** The competition path runs the
+lab's own `CVE - Fetch and Commit` and `CVE - Sync and Deploy Remediation`
+against `lab-inventory`, reaching Insights through the lab MCP server rather
+than the REST API this script's playbook uses. What remains here is the
+GitHub/REST variant, kept because it is the answer when no lab is available.
+
 Every name is overridable, which matters when the controller already has
-objects of the same name that belong to someone else. The lab controller we
-used had its own `CVE - Fetch and Commit` pointing at a different Insights
-org through an MCP server, so ours were created alongside it:
+objects of the same name. That is how these were created alongside the lab's:
 
 ```bash
 JT_NAME="DJ - CVE Fetch and Commit" \
 DEPLOY_JT_NAME="DJ - CVE Sync and Deploy" \
 GEN_PROJECT_NAME="DJ - Generated Playbooks" \
 PROJECT_NAME="DJ - Agentic Patching" \
-TARGET_INVENTORY="ec2-inventory" MACHINE_CREDENTIAL="ec2-demojam" \
+TARGET_INVENTORY="your-inventory" MACHINE_CREDENTIAL="your-ssh-credential" \
 AAP_CRED_NAME="AAP" \
   ./aap-setup/create-aap-objects.sh --dry-run
 ```
 
 `TARGET_INVENTORY` and `MACHINE_CREDENTIAL` name where a remediation will
 actually run. Both must already exist — this script will not invent an
-inventory or an SSH credential. See
-[../docs/EC2_TARGET_HOST.md](../docs/EC2_TARGET_HOST.md) for building a host
-that live mode can use.
+inventory or an SSH credential. `./discover-hosts.py` reports what an
+inventory holds and whether Insights can see it; failing that,
+[../docs/EC2_TARGET_HOST.md](../docs/EC2_TARGET_HOST.md) builds one.
 
 `CVE - Verify Patch` is not created by the script yet; add it as a job
 template running `aap-setup/playbooks/cve_verify_patch.yml` with the machine

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One command for everything between "I have an EC2 host and a .env" and
+# One command for everything between "I have a target host and a .env" and
 # "live mode works".
 #
 #   ./setup.sh --check         preflight only — changes nothing
@@ -21,9 +21,10 @@
 # Every stage is idempotent, because each underlying script is. Re-running
 # after a failure resumes rather than duplicating.
 #
-# What it will not do: create the EC2 host, register it with Insights, or
+# What it will not do: produce a target host, register it with Insights, or
 # invent an AAP inventory and SSH credential. Those are judgement calls about
-# real machines — see docs/EC2_TARGET_HOST.md.
+# real machines. ./discover-hosts.py reports whether hosts you already have
+# qualify; docs/EC2_TARGET_HOST.md builds one when they do not.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -302,7 +303,7 @@ want = {
     'MODE': 'live',
     # The workflow derived from the lab's own, which reaches node1 through
     # the lab job templates. Not 'Agentic Patching' — that one calls the DJ-
-    # templates, which are bound to ec2-inventory and cannot reach the lab
+    # templates, which are bound to a retired inventory and cannot reach the lab
     # hosts. Writing the wrong name here is silent: .env looks configured,
     # the console resolves a real workflow, and the run fails several nodes
     # in on a host the templates cannot see.
