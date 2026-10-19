@@ -217,7 +217,8 @@ cp .env.example .env     # fill it in; quote any value containing a space
 Start with `--check`. The one thing it cannot do for you is the target host:
 live mode needs a machine registered in the same Insights organisation as
 your credentials **and** reachable over SSH from AAP, and most hosts are only
-one of those. See `docs/EC2_TARGET_HOST.md`.
+one of those. `./discover-hosts.py` says whether the lab's hosts qualify and
+prints the uuid to put in `HOSTS_FILTER`.
 
 If `.env` does not exist, `./demo.sh --live` creates one from `.env.example`
 and then **refuses to start**, naming the keys that matter. That is on

@@ -132,8 +132,7 @@ AAP_CRED_NAME="AAP" \
 `TARGET_INVENTORY` and `MACHINE_CREDENTIAL` name where a remediation will
 actually run. Both must already exist — this script will not invent an
 inventory or an SSH credential. `./discover-hosts.py` reports what an
-inventory holds and whether Insights can see it; failing that,
-[../docs/EC2_TARGET_HOST.md](../docs/EC2_TARGET_HOST.md) builds one.
+inventory holds and whether Insights can see it.
 
 `CVE - Verify Patch` is not created by the script yet; add it as a job
 template running `aap-setup/playbooks/cve_verify_patch.yml` with the machine
@@ -229,29 +228,3 @@ carries the address that actually resolves.
   not see our hosts turned out to be wrong: with the lab Lightspeed service
   account they reach the same organisation the console does, which is why
   the separately-named copies below are now redundant.
-
-## Pending cleanup — the retired EC2 path
-
-Nothing on this branch uses these; they are left in place to be removed by
-hand. Dependencies were checked: no AO workflow except `Agentic Patching`
-references them, and that workflow is itself retired.
-
-Delete job templates first — the project, inventory and credential below are
-still referenced until they are gone.
-
-| Kind | Name | Id |
-|---|---|---|
-| AO workflow | `Agentic Patching` | `c9a6c24b` |
-| Job template | `DJ - CVE Fetch and Commit` | 60 |
-| Job template | `DJ - CVE Sync and Deploy` | 62 |
-| Job template | `DJ - CVE Verify Patch` | 67 |
-| Job template | 13 × `CVE Remediation - … - demojam-rhel-01` | 63–66, 68–76 |
-| Project | `DJ - Generated Playbooks` | 61 |
-| Inventory | `ec2-inventory` | 9 |
-| Credential | `ec2-demojam` | 11 |
-
-**Keep**, despite the matching names: project `DJ - Agentic Patching` (59),
-which holds the verify playbook and tracks `dj-comp`; the three
-`CVE - *` templates on `lab-inventory`; and every
-`CVE Remediation - … - node1` template, which the live path regenerates one
-per CVE and which therefore keep accumulating.

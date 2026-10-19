@@ -123,17 +123,19 @@ patch plan that looks measured but is partly fabricated.
 Two things are yours to prepare, because both are judgement calls about real
 machines and credentials.
 
-**A target host.** The requirement is stricter than it looks: one machine
-registered in the same Insights organisation as your `LIGHTSPEED_*` credentials
-**and** reachable over SSH from AAP. Most hosts satisfy one or the other, and
-the two halves can each look perfectly healthy while never overlapping.
+**A target host, from the lab.** The requirement is stricter than it looks:
+one machine registered in the same Insights organisation as your
+`LIGHTSPEED_*` credentials **and** reachable over SSH from AAP. Most hosts
+satisfy one or the other, and the two halves can each look perfectly healthy
+while never overlapping.
 
-Two ways to get there:
+`./discover-hosts.py` answers it. It reads the AAP inventory, finds each host
+in Insights, and prints the uuid and group tag to put in `.env` — and it says
+plainly when a host is in AAP but *not* registered in your Insights
+organisation, which otherwise surfaces as a confusing empty assessment.
 
-| | |
-|---|---|
-| **A lab already gives you hosts** — what this branch runs against | `./discover-hosts.py` says whether they qualify. It reads the AAP inventory, finds each host in Insights, and prints the uuid and group tag to put in `.env`. It also tells you when a host is in AAP but *not* registered in your Insights organisation, which is the failure that otherwise surfaces as a confusing empty assessment |
-| **Starting from nothing** | [docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) builds and registers one from scratch, including the registration traps and the AAP wiring. Keep it in mind if you have no lab — it is not the path this branch uses, so treat its `demojam-rhel-01` examples as illustrative rather than current |
+This branch assumes the lab provides the hosts. Building one from scratch is
+a different exercise and is not covered here.
 
 Set `HOSTS_FILTER` to a **uuid**, not a name. Insights reports whatever a host
 last called itself, which changes — patching one rebooted it and its display
@@ -580,9 +582,6 @@ rag-setup/
 risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
-docs/
-  EC2_TARGET_HOST.md       build a target from scratch — the alternative to
-                           a lab-provided host, not the path in use here
 multi-agent/
   architecture.jpg/.html   architecture diagram (editable source)
 ```

@@ -23,8 +23,8 @@
 #
 # What it will not do: produce a target host, register it with Insights, or
 # invent an AAP inventory and SSH credential. Those are judgement calls about
-# real machines. ./discover-hosts.py reports whether hosts you already have
-# qualify; docs/EC2_TARGET_HOST.md builds one when they do not.
+# real machines. ./discover-hosts.py reports whether the hosts you have
+# qualify, which is the check worth doing before anything else.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -188,7 +188,8 @@ rows = (d or {}).get('results') or []
 if c != 200 or not rows:
     fail(f'{host} is not registered in Insights org {org}',
          'this is the trap: the console cannot assess a host it cannot see. '
-         'Register it into THIS org — see docs/EC2_TARGET_HOST.md')
+         'register it into THIS org, or point HOSTS_FILTER at a host that '
+         'already is — ./discover-hosts.py lists them')
 uuid = rows[0]['id']
 print(f'  \033[32m✓\033[0m {host} is in Insights ({uuid[:8]}…)')
 
@@ -399,6 +400,6 @@ step "Done"
 echo "  Console: http://127.0.0.1:8788   (./demo.sh --live)"
 echo
 echo "  Not covered by this script, because they are decisions about real machines:"
-echo "    - the target host itself          docs/EC2_TARGET_HOST.md"
+echo "    - the target host itself          ./discover-hosts.py checks it"
 echo "    - its AAP inventory + SSH credential"
 echo "    - an Elastic IP, so the address stops moving on every stop"
