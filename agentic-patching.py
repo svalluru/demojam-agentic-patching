@@ -1520,14 +1520,36 @@ class PatchingAgent:
         return self._await(exec_id, host['host'], group)
 
     def _await(self, exec_id: str, host: str, group: str) -> dict:
-        """Poll until the execution settles. A pause for approval counts as settled."""
+        """Poll until the execution settles. A pause for approval counts as settled.
+
+        Never raises. By the time this is called AO has accepted the run and
+        is executing it, so an exception here loses the one thing that cannot
+        be recovered — the execution id. That happened: a poll timed out, the
+        error propagated to the caller, and the console reported 'launch
+        failed' for a run AO had already paused at the approval gate. A real
+        patch sat there approvable, and nothing in the UI knew it existed.
+
+        So a failed poll is treated as a failed poll. The loop keeps trying,
+        and if it never gets a clean read the run is reported as still
+        running, carrying its id — which is what lets the row keep polling and
+        reach its gate.
+        """
         deadline = time.time() + AO_POLL_TIMEOUT
         state: dict[str, Any] = {}
+        unreadable: BackendUnavailable | None = None
         # Which node was last reported in which state, so the trace records
         # transitions rather than one line per poll.
         seen: dict[str, str] = {}
         while time.time() < deadline:
-            state = ao_call(f'/api/v1/executions/{exec_id}') or {}
+            try:
+                state = ao_call(f'/api/v1/executions/{exec_id}') or {}
+                unreadable = None
+            except BackendUnavailable as exc:
+                # The circuit breaker already paces retries, so this does not
+                # hammer a service that is down.
+                unreadable = exc
+                time.sleep(3)
+                continue
             status = state.get('status')
             # Before the break checks: the poll that sees the run finish is
             # also the one carrying the last node's completion, and breaking
@@ -1542,14 +1564,29 @@ class PatchingAgent:
 
         status = state.get('status', 'unknown')
         pending = bool(state.get('approval_pending'))
-        outcome = ('awaiting_approval' if pending
-                   else 'patched' if status in ('completed', 'succeeded')
-                   else 'timeout' if time.time() >= deadline
-                   else 'failed')
+        if unreadable is not None:
+            # Last read failed, so this says what is actually known: AO has
+            # the run, we cannot see its state. 'running' is not optimism —
+            # it is the only answer that keeps the row polling, and a row
+            # that keeps polling corrects itself. Calling it failed would be
+            # a guess, and the wrong one often enough to matter.
+            degrade('5-10 patching', unreadable.service,
+                    f'{exec_id[:8]}: {unreadable.cause}', unreadable.fix)
+            outcome, status = 'running', state.get('status') or 'unknown'
+            self._trace('patching', 'supervisor',
+                        f'{host}: dispatched, status unreadable — '
+                        f'{unreadable.cause}')
+        else:
+            outcome = ('awaiting_approval' if pending
+                       else 'patched' if status in ('completed', 'succeeded')
+                       else 'timeout' if time.time() >= deadline
+                       else 'failed')
 
         steps, matched_port, approval_activity = self._activities(exec_id)
-        self._trace('patching', 'supervisor',
-                    f'{host}: {outcome}' + (f' (port {matched_port})' if matched_port else ''))
+        if unreadable is None:
+            self._trace('patching', 'supervisor',
+                        f'{host}: {outcome}'
+                        + (f' (port {matched_port})' if matched_port else ''))
         return {
             'host': host, 'group': group, 'execution_id': exec_id,
             'status': status, 'outcome': outcome,
@@ -2018,6 +2055,11 @@ class Supervisor:
                 r = self.patching.patch_host(cve_id, h)
             except BackendUnavailable as exc:
                 # One host failing to launch must not abandon the rest.
+                #
+                # This is now reachable only before AO accepts the run —
+                # _await() no longer raises, because once an execution
+                # exists, discarding its id is the one unrecoverable
+                # mistake. So 'launch failed' is true when it is printed.
                 r = {'host': h['host'], 'outcome': 'failed', 'status': 'launch_error',
                      'error': str(exc.cause), 'fix': exc.fix, 'steps': []}
                 self.trace('patching', 'supervisor', f'{h["host"]}: launch failed — {exc.cause}')
