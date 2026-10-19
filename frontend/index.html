@@ -4692,7 +4692,7 @@ async function showRuns() {
     <div class="${showRunCols ? 'tscroll' : ''}">
     <table class="${showRunCols ? 'wide' : ''}">
       <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Patch type</th>
-      <th>Status</th><th>Report</th><th title="Wall clock for the whole execution, including any wait at the approval gate">Elapsed</th><th></th>
+      <th>Status</th><th>Report</th><th title="Time the workflow spent executing. Any wait at the approval gate is excluded.">Elapsed</th><th></th>
       ${showRunCols ? '<th>Progress</th><th>Exec</th><th>File</th><th>Size</th>' : ''}</tr></thead>
       <tbody>${rows}</tbody></table></div>`
     : emptyState('No patch runs yet',
@@ -4750,7 +4750,12 @@ async function showRunDetail(execId) {
 
   const o = RUN_OUTCOME[run.outcome] || { cls: 'review', label: run.outcome };
   const live = ['running', 'awaiting_approval'].includes(run.outcome);
-  const steps = run.steps || [];
+  // Skipped nodes are the branch this run did not take, not work left
+  // undone. Counting them made a complete approved run read "7/11", which
+  // looks like four steps failed to finish — the opposite of what happened.
+  // The progress cell in the runs table has always filtered them; this view
+  // was the one place that did not.
+  const steps = (run.steps || []).filter(s => s.status && s.status !== 'skipped');
   const done = steps.filter(s => s.status === 'completed').length;
   // The node actually in flight, which is the one question "Running" leaves
   // unanswered.
@@ -4766,8 +4771,8 @@ async function showRunDetail(execId) {
     <div class="stats" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat"><div class="v"><span class="badge ${o.cls}">${esc(o.label)}</span></div><div class="k">Status</div></div>
       <div class="stat"><div class="v">${done}/${steps.length || '—'}</div><div class="k">Nodes completed</div></div>
-      <div class="stat"><div class="v">${esc(run.elapsed || '—')}</div><div class="k">${
-        live ? 'Elapsed so far' : 'Total elapsed'}</div></div>
+      <div class="stat" title="Time the workflow spent executing. Any wait at the approval gate is excluded — that measures the operator, not the automation."><div class="v">${esc(run.elapsed || '—')}</div><div class="k">${
+        live ? 'Running for' : 'Workflow time'}</div></div>
       <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${esc(stamp(run.created_at))}</div><div class="k">Started</div></div>
       <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${
         run.completed_at ? esc(stamp(run.completed_at)) : (live ? 'in flight' : '—')}</div><div class="k">Finished</div></div>
@@ -4777,6 +4782,8 @@ async function showRunDetail(execId) {
       <tr><td>Host</td><td class="cve-id">${esc(run.host || '—')}</td></tr>
       <tr><td>Patch type</td><td>${esc(patchType(run.group))}</td></tr>
       ${run.decision ? `<tr><td>Decision</td><td>${esc(run.decision)}</td></tr>` : ''}
+      ${run.gate_wait ? `<tr><td>Waited at gate</td><td>${esc(run.gate_wait)}
+        <span class="muted-sm">— not counted in workflow time</span></td></tr>` : ''}
       ${current ? `<tr><td>Now running</td><td><b>${esc(current.label || current.name)}</b></td></tr>` : ''}
       ${failed ? `<tr><td>Failed at</td><td><span class="err-sm">${esc(failed.label || failed.name)}</span></td></tr>` : ''}
       ${run.error ? `<tr><td>Error</td><td><span class="err-sm">${esc(String(run.error).slice(0, 400))}</span></td></tr>` : ''}

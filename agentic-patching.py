@@ -153,18 +153,51 @@ def _parse_ts(value: str | None) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-def _elapsed(started: str | None, completed: str | None = None) -> str:
+def _elapsed(started: str | None, completed: str | None = None,
+             minus: int = 0) -> str:
     """How long a step took, or has been running when it has not finished.
 
     Returns '' rather than '0s' when there is no start time — a node that was
     skipped never ran, and printing a duration for it would imply it did.
+
+    `minus` takes seconds back out of the span, and exists for the approval
+    gate. A run that sat twenty minutes waiting for a person is not a
+    twenty-minute workflow; quoting it as one measures how long the operator
+    took to look at it.
     """
     s = _parse_ts(started)
     if s is None:
         return ''
     e = _parse_ts(completed) or datetime.now(timezone.utc)
-    secs = int((e - s).total_seconds())
+    secs = int((e - s).total_seconds()) - max(0, minus)
     if secs < 0:
+        return ''
+    if secs < 60:
+        return f'{secs}s'
+    m, rest = divmod(secs, 60)
+    return f'{m}m{rest:02d}s' if m < 60 else f'{m // 60}h{m % 60:02d}m'
+
+
+def _gate_seconds(steps: list[dict]) -> int:
+    """Seconds this execution spent parked at approval gates.
+
+    Summed rather than taken from one node, because a workflow may hold more
+    than one gate and a retry can revisit the same one.
+    """
+    total = 0
+    for s in steps or []:
+        if s.get('node_type') != 'approval':
+            continue
+        a, b = _parse_ts(s.get('started_at')), _parse_ts(s.get('completed_at'))
+        if a and b:
+            total += max(0, int((b - a).total_seconds()))
+    return total
+
+
+def _elapsed_secs(secs: int) -> str:
+    """Format a duration already counted in seconds. Empty for nothing at
+    all, so a run that never waited reports no wait rather than '0s'."""
+    if secs <= 0:
         return ''
     if secs < 60:
         return f'{secs}s'
@@ -1609,7 +1642,9 @@ class PatchingAgent:
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
             'elapsed': _elapsed(state.get('created_at'),
-                                state.get('completed_at')),
+                                state.get('completed_at'),
+                                minus=_gate_seconds(steps)),
+            'gate_wait': _elapsed_secs(_gate_seconds(steps)),
             'url': f'{AO_URL}/executions/{exec_id}',
         }
 
@@ -1764,13 +1799,37 @@ class PatchingAgent:
                 'error': e.get('error_details'),
                 'created_at': e.get('created_at'),
                 'completed_at': e.get('completed_at'),
-                # Grows while the run is live, because _elapsed() measures
-                # against now when there is no completion — so a row that is
-                # still going shows how long it has been going.
-                'elapsed': _elapsed(e.get('created_at'), e.get('completed_at')),
+                # Workflow time, gate wait removed — the same figure the
+                # detail view and the PDF quote. Grows while a run is live,
+                # because _elapsed() measures against now when there is no
+                # completion, so a row still going shows how long so far.
+                'elapsed': _elapsed(e.get('created_at'), e.get('completed_at'),
+                                    minus=self._gate_wait(e, terminal)),
                 'url': f'{AO_URL}/executions/{e.get("id")}',
             })
         return runs
+
+    # Gate waits per execution. The list endpoint returns activities as null,
+    # so the only way to know what a run spent at its gate is to ask for them
+    # — forty extra calls on a page that polls. Terminal runs never change,
+    # so each is asked once and remembered; unattended runs have no gate and
+    # are not asked at all.
+    _gate_cache: dict[str, int] = {}
+
+    def _gate_wait(self, execution: dict, terminal: bool) -> int:
+        exec_id = execution.get('id') or ''
+        if (execution.get('input_data') or {}).get('group') == 'auto_patch':
+            return 0
+        if exec_id in self._gate_cache:
+            return self._gate_cache[exec_id]
+        try:
+            steps, _port, _approval = self._activities(exec_id)
+        except BackendUnavailable:
+            return 0           # quote wall clock rather than fail the page
+        secs = _gate_seconds(steps)
+        if terminal:
+            self._gate_cache[exec_id] = secs
+        return secs
 
     # Everything the workflow still has to do once the gate clears. route_switch
     # and the gate itself are already behind an approved run.
@@ -1859,12 +1918,15 @@ class PatchingAgent:
             'error': state.get('error_details'),
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
-            # Wall clock for the whole execution, which for an approved run
-            # includes however long it waited at the gate. That wait is not
-            # automation working, but the host is exploitable throughout it,
-            # so it belongs in the total rather than discounted from it.
+            # Workflow execution time: wall clock less whatever the run spent
+            # parked at an approval gate. The gate measures how long a person
+            # took to look at it, which says nothing about the automation.
+            # The wait is not hidden — the approval node keeps its own
+            # duration in the per-node table, and gate_wait carries it here.
             'elapsed': _elapsed(state.get('created_at'),
-                                state.get('completed_at')),
+                                state.get('completed_at'),
+                                minus=_gate_seconds(steps)),
+            'gate_wait': _elapsed_secs(_gate_seconds(steps)),
         }
 
     def decide(self, execution_id: str, activity_id: str, decision: str,
@@ -1950,7 +2012,9 @@ class PatchingAgent:
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
             'elapsed': _elapsed(state.get('created_at'),
-                                state.get('completed_at')),
+                                state.get('completed_at'),
+                                minus=_gate_seconds(steps)),
+            'gate_wait': _elapsed_secs(_gate_seconds(steps)),
         }
 
 

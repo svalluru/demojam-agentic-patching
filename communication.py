@@ -149,6 +149,12 @@ class CommunicationAgent:
                    'Workflow steps completed'],
                   rows or [['—', 'no hosts dispatched', '—', '—', '—', '—']],
                   [118, 74, 32, 72, 48, 155])
+        if any(r.get('gate_wait') for r in results):
+            doc.gap(3)
+            doc.text('Elapsed is the time the workflow spent executing. Where a host '
+                     'waited at the approval gate that wait is excluded, and shown '
+                     'against the approval step itself — it measures how long the '
+                     'operator took, not the automation.', size=8.6, color=MUTED)
         doc.gap(10)
 
         if dry.get('notes'):
