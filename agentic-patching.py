@@ -1608,6 +1608,8 @@ class PatchingAgent:
             # live, which is the worst of the two failure modes.
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
+            'elapsed': _elapsed(state.get('created_at'),
+                                state.get('completed_at')),
             'url': f'{AO_URL}/executions/{exec_id}',
         }
 
@@ -1686,7 +1688,13 @@ class PatchingAgent:
                           # field, so elapsed is computed from the pair; a
                           # skipped node has no started_at at all.
                           'started_at': a.get('started_at'),
-                          'completed_at': a.get('completed_at')})
+                          'completed_at': a.get('completed_at'),
+                          # Formatted once, here, so the trace, the runs
+                          # table, the execution view and the PDF all quote
+                          # the same figure rather than each rounding it
+                          # their own way.
+                          'elapsed': _elapsed(a.get('started_at'),
+                                              a.get('completed_at'))})
         return steps, port, approval
 
     def recent_runs(self, limit: int = 40) -> list[dict]:
@@ -1756,6 +1764,10 @@ class PatchingAgent:
                 'error': e.get('error_details'),
                 'created_at': e.get('created_at'),
                 'completed_at': e.get('completed_at'),
+                # Grows while the run is live, because _elapsed() measures
+                # against now when there is no completion — so a row that is
+                # still going shows how long it has been going.
+                'elapsed': _elapsed(e.get('created_at'), e.get('completed_at')),
                 'url': f'{AO_URL}/executions/{e.get("id")}',
             })
         return runs
@@ -1847,6 +1859,12 @@ class PatchingAgent:
             'error': state.get('error_details'),
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
+            # Wall clock for the whole execution, which for an approved run
+            # includes however long it waited at the gate. That wait is not
+            # automation working, but the host is exploitable throughout it,
+            # so it belongs in the total rather than discounted from it.
+            'elapsed': _elapsed(state.get('created_at'),
+                                state.get('completed_at')),
         }
 
     def decide(self, execution_id: str, activity_id: str, decision: str,
@@ -1931,6 +1949,8 @@ class PatchingAgent:
             # once the approved run finishes.
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
+            'elapsed': _elapsed(state.get('created_at'),
+                                state.get('completed_at')),
         }
 
 

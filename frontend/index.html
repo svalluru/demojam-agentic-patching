@@ -4649,6 +4649,8 @@ async function showRuns() {
               href="/api/report?file=${encodeURIComponent(rep.file)}"
               target="_blank" rel="noopener" title="${esc(rep.file)}">Open</a>`
         : '<span class="muted-sm">—</span>'}</td>
+      <td${live ? ' title="Still running — this is how long so far"' : ''}>${
+        r.elapsed ? esc(r.elapsed) : '<span class="muted-sm">—</span>'}</td>
       <td><button class="pill run-detail" data-exec="${esc(r.execution_id)}"
                   style="padding:3px 10px;font-size:calc(11px * var(--ts))">${
         live ? 'Watch' : 'Details'}</button></td>
@@ -4690,7 +4692,7 @@ async function showRuns() {
     <div class="${showRunCols ? 'tscroll' : ''}">
     <table class="${showRunCols ? 'wide' : ''}">
       <thead><tr><th>When</th><th>CVE</th><th>Host</th><th>Patch type</th>
-      <th>Status</th><th>Report</th><th></th>
+      <th>Status</th><th>Report</th><th title="Wall clock for the whole execution, including any wait at the approval gate">Elapsed</th><th></th>
       ${showRunCols ? '<th>Progress</th><th>Exec</th><th>File</th><th>Size</th>' : ''}</tr></thead>
       <tbody>${rows}</tbody></table></div>`
     : emptyState('No patch runs yet',
@@ -4761,9 +4763,11 @@ async function showRunDetail(execId) {
       <label class="morecols"><button class="pill" id="detail-close"
         style="padding:3px 10px;font-size:calc(11px * var(--ts))">Close</button></label>
     </div>
-    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+    <div class="stats" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat"><div class="v"><span class="badge ${o.cls}">${esc(o.label)}</span></div><div class="k">Status</div></div>
       <div class="stat"><div class="v">${done}/${steps.length || '—'}</div><div class="k">Nodes completed</div></div>
+      <div class="stat"><div class="v">${esc(run.elapsed || '—')}</div><div class="k">${
+        live ? 'Elapsed so far' : 'Total elapsed'}</div></div>
       <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${esc(stamp(run.created_at))}</div><div class="k">Started</div></div>
       <div class="stat"><div class="v" style="font-size:calc(13px * var(--ts))">${
         run.completed_at ? esc(stamp(run.completed_at)) : (live ? 'in flight' : '—')}</div><div class="k">Finished</div></div>
@@ -4780,7 +4784,7 @@ async function showRunDetail(execId) {
             href="${esc(run.url)}" target="_blank" rel="noopener">Open execution</a></td></tr>` : ''}
     </tbody></table>
     ${steps.length ? `<table style="margin-top:12px">
-      <thead><tr><th>Workflow node</th><th>Status</th></tr></thead>
+      <thead><tr><th>Workflow node</th><th>Status</th><th>Elapsed</th></tr></thead>
       <tbody>${steps.map(s => {
         const cls = s.status === 'completed' ? 'ok'
                   : ['failed', 'error'].includes(s.status) ? 'fail'
@@ -4788,7 +4792,8 @@ async function showRunDetail(execId) {
         return `<tr><td>${esc(s.label || s.name)}</td>
           <td>${cls ? `<span class="badge ${cls}">${esc(s.status)}</span>`
                     : `<span class="muted-sm">${esc(s.status || 'pending')}</span>`}
-            ${s.error ? `<div class="err-sm">${esc(String(s.error).slice(0, 200))}</div>` : ''}</td></tr>`;
+            ${s.error ? `<div class="err-sm">${esc(String(s.error).slice(0, 200))}</div>` : ''}</td>
+          <td>${s.elapsed ? esc(s.elapsed) : '<span class="muted-sm">—</span>'}</td></tr>`;
       }).join('')}</tbody></table>` : ''}
     <div class="note">${live
       ? 'Refreshing every few seconds while this run is still moving.'

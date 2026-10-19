@@ -129,17 +129,26 @@ class CommunicationAgent:
         for r in results:
             h = by_host.get(r.get('host'), {})
             risk = h.get('risk') or h.get('risk_score') or ''
+            # Each step carries what it cost. 'how long did patching take' was
+            # unanswerable from this report, which is the first thing anyone
+            # asks of it — and a per-step breakdown answers the more useful
+            # second question of where the time actually went.
             steps = ' · '.join(
-                f'{s.get("name")}:{s.get("status")}' for s in (r.get('steps') or [])
-                if s.get('status') and s.get('status') != 'pending') or '—'
+                f'{s.get("name")}:{s.get("status")}'
+                + (f' ({s["elapsed"]})' if s.get('elapsed') else '')
+                for s in (r.get('steps') or [])
+                if s.get('status') and s.get('status') not in ('pending', 'skipped')
+            ) or '—'
             rows.append([r.get('host', '—'),
                          OUTCOME_LABEL.get(r.get('outcome'), r.get('outcome', '—')),
                          f'{risk:.1f}' if isinstance(risk, (int, float)) else '—',
                          PATCH_TYPE.get(r.get('group'), r.get('group') or '—'),
+                         r.get('elapsed') or '—',
                          steps])
-        doc.table(['Host', 'Outcome', 'Risk', 'Patch type', 'Workflow steps completed'],
-                  rows or [['—', 'no hosts dispatched', '—', '—', '—']],
-                  [136, 86, 36, 86, 155])
+        doc.table(['Host', 'Outcome', 'Risk', 'Patch type', 'Elapsed',
+                   'Workflow steps completed'],
+                  rows or [['—', 'no hosts dispatched', '—', '—', '—', '—']],
+                  [118, 74, 32, 72, 48, 155])
         doc.gap(10)
 
         if dry.get('notes'):
