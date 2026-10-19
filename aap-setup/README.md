@@ -221,7 +221,37 @@ carries the address that actually resolves.
 ## Not done yet
 
 - `CVE - Verify Patch` is created by hand, not by `create-aap-objects.sh`.
+  The live one runs `playbooks/cve_verify_patch.yml` from the
+  `DJ - Agentic Patching` project against `lab-inventory`.
 - The lab controller's own `CVE - Fetch and Commit` and
-  `CVE - Sync and Deploy Remediation` are left untouched. They reach Insights
-  through an MCP server against a different organisation and cannot see hosts
-  registered in ours, which is why these are created under separate names.
+  `CVE - Sync and Deploy Remediation` are left untouched — and are what the
+  competition path actually calls. The earlier assumption that they could
+  not see our hosts turned out to be wrong: with the lab Lightspeed service
+  account they reach the same organisation the console does, which is why
+  the separately-named copies below are now redundant.
+
+## Pending cleanup — the retired EC2 path
+
+Nothing on this branch uses these; they are left in place to be removed by
+hand. Dependencies were checked: no AO workflow except `Agentic Patching`
+references them, and that workflow is itself retired.
+
+Delete job templates first — the project, inventory and credential below are
+still referenced until they are gone.
+
+| Kind | Name | Id |
+|---|---|---|
+| AO workflow | `Agentic Patching` | `c9a6c24b` |
+| Job template | `DJ - CVE Fetch and Commit` | 60 |
+| Job template | `DJ - CVE Sync and Deploy` | 62 |
+| Job template | `DJ - CVE Verify Patch` | 67 |
+| Job template | 13 × `CVE Remediation - … - demojam-rhel-01` | 63–66, 68–76 |
+| Project | `DJ - Generated Playbooks` | 61 |
+| Inventory | `ec2-inventory` | 9 |
+| Credential | `ec2-demojam` | 11 |
+
+**Keep**, despite the matching names: project `DJ - Agentic Patching` (59),
+which holds the verify playbook and tracks `dj-comp`; the three
+`CVE - *` templates on `lab-inventory`; and every
+`CVE Remediation - … - node1` template, which the live path regenerates one
+per CVE and which therefore keep accumulating.
