@@ -47,8 +47,15 @@ four specialist agents in turn. The agents are stateless.
 | 4 | Results Agent | RAG record + risk-model training row | Done |
 
 Steps 5–10 of the diagram (env gate, playbook, git, AAP sync, schedule,
-remediation) are **not** in this repo. They are the Ansible Orchestrator
-workflow `DemoJam Agentic Patching`; agent 2 is a client of it.
+remediation) are **not** in this repo. They are an Ansible Orchestrator
+workflow; agent 2 is a client of it, resolved by name from
+`AO_WORKFLOW_NAME`.
+
+The workflow in use is `RHEL CVE Remediation - Intelligent Patching - Demo
+Jam`, derived from the lab's own: the AI triage agent is removed, because
+the console's risk score already decides the route, and a verification step
+is added after each remediation. A copy is committed at
+[`ao-setup/demojam_lab_workflow.json`](ao-setup/demojam_lab_workflow.json).
 
 ---
 
@@ -120,7 +127,15 @@ machines and credentials.
 registered in the same Insights organisation as your `LIGHTSPEED_*` credentials
 **and** reachable over SSH from AAP. Most hosts satisfy one or the other, and
 the two halves can each look perfectly healthy while never overlapping.
+
+If a lab already gives you hosts, `./discover-hosts.py` answers whether they
+qualify — it reads the AAP inventory, finds each host in Insights, and prints
+the uuid and group tag to put in `.env`. Starting from nothing instead,
 [docs/EC2_TARGET_HOST.md](docs/EC2_TARGET_HOST.md) builds one from scratch.
+
+Set `HOSTS_FILTER` to a **uuid**, not a name. Insights reports whatever a host
+last called itself, which changes — patching one rebooted it and its display
+name went from `node1` to the full FQDN. A uuid names one machine or none.
 
 **Credentials in `.env`.** Quote any value containing a space — an unquoted one
 breaks every script that sources it, with an error naming the wrong thing.
@@ -199,7 +214,21 @@ branch show Approve / Reject, and once approved the row tracks its execution
 through the remaining workflow nodes to *Patched*.
 
 **Calculate ROI** costs that run out against doing the same work by hand.
-**Patch runs** lists past executions, read live from AO.
+**Patch runs** lists past executions, read live from AO. **Details** on any
+row opens that execution: its nodes, their status, and how long each took.
+
+**Elapsed is workflow time, not wall clock.** Any wait at the approval gate
+is subtracted, because that measures how long an operator took to look at
+the screen rather than anything the automation did — the same patch would
+otherwise read 4m or 40m depending on when someone glanced at it. The wait
+is still shown, against the approval node and as *Waited at gate*. Nodes on
+the branch a run did not take are left out of the count, so a complete
+approved run reads 7/7 rather than 7/11.
+
+The Agent trace reports each workflow node as AO moves through it, with its
+elapsed time, for both the dispatch and the post-approval run. A run sitting
+at four minutes is normal or stuck depending on which node it is in, and a
+progress bar cannot tell you which.
 
 ### The left panel
 
@@ -286,10 +315,11 @@ Every row below is also a row in the settings panel.
 | Variable | Default | Effect |
 |---|---|---|
 | `MODE` | `demo` | `demo` = staged data, no endpoint contacted. `live` = real endpoints, no fallback |
-| `HOSTS_FILTER` | — | Restrict to matching hosts. Live mode only |
-| `HOSTS_LIMIT` | — | Cap host count. Live mode only |
+| `HOSTS_FILTER` | — | The host to assess: a substring of the display name, or a system uuid. Prefer the uuid — display names are not unique in a shared organisation, and they change. Live mode only |
+| `HOSTS_LIMIT` | — | Cap host count. A filter matching more hosts than this **refuses** rather than silently keeping an arbitrary one. Live mode only |
 | `REVIEW_THRESHOLD` | `30` | Risk score above which a host needs approval — model scores only. See [known gaps](#known-gaps) |
-| `AO_WORKFLOW_NAME` | `DemoJam Agentic Patching` | Workflow to trigger |
+| `AO_WORKFLOW_NAME` | `DemoJam Agentic Patching` | Workflow to trigger, resolved by name so the id can differ per cluster. `setup.sh` writes the Demo Jam one |
+| `AO_HOST_SHORTNAME` | `true` | Send the first label of the Insights display name to the workflow, so an FQDN still matches an AAP inventory host named short. Turn off only if your inventory host names are fully qualified |
 | `AO_DECIDE_WAIT` | `90` | Seconds to wait for a run to settle after approve/reject |
 | `PATCHED_WITHIN_MINUTES` | `10080` | How recently a host must have been patched for this CVE to be left out of a re-assessment. 7 days; `0` turns the guard off |
 | `LABEL_SOURCES` | `0` | Mark substituted values on the page: the `degraded` panel, `SIMULATED` chips, red diagram nodes. Off by default — the record still goes to the log, the agent trace and the API |
@@ -523,6 +553,7 @@ Listed so they are not re-raised as bugs.
 QUICKSTART.md              clone-to-running guide for a new joiner
 demo.sh                    start the console — demo by default, --live for real
 setup.sh                   everything between a filled-in .env and working live mode
+discover-hosts.py          what AAP can patch, found in Insights — uuids and tags
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, HTTP backend
 fallbacks.py               every stored default, in one editable file
@@ -535,6 +566,7 @@ frontend/
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
   agentic_patching_workflow.json  the AO workflow, exported from AO
+  demojam_lab_workflow.json       the lab-derived workflow now in use
 aap-setup/
   create-aap-objects.sh    AAP projects, credentials and job templates
   create-ao-workflow.sh    creates + publishes a one-node test workflow
