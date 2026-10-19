@@ -17,9 +17,12 @@ Two things do survive a rebuild, so discovery starts from them:
 So: ask AAP which hosts it can reach, find each one in Insights, and read
 the identities back off the answer rather than carrying them forward.
 
-  ./discover-hosts.py                 report what is there
-  ./discover-hosts.py --write         update LAB_TAG / HOSTS_TAG in .env
-  ./discover-hosts.py --inventory X   a different AAP inventory
+  ./discover-hosts.py                       report what is there
+  ./discover-hosts.py --host node1 --write  point .env at that host
+  ./discover-hosts.py --inventory X         a different AAP inventory
+
+Run it after any cluster rebuild. Every identifier it writes is one that
+the rebuild changed, which is the whole reason not to type them by hand.
 
 Standard library only, like the rest of the repo. Honours
 INSIGHTS_VERIFY_TLS / AAP_VERIFY_TLS from .env.
@@ -78,8 +81,11 @@ def main():
     ap.add_argument('--inventory', default=os.environ.get('TARGET_INVENTORY',
                                                           'lab-inventory'))
     ap.add_argument('--env-file', default=str(ROOT / '.env'))
+    ap.add_argument('--host', default='',
+                    help='the host to target; with --write, pins HOSTS_FILTER '
+                         'to its uuid')
     ap.add_argument('--write', action='store_true',
-                    help='write LAB_TAG and HOSTS_TAG back to .env')
+                    help='write the values back to .env')
     args = ap.parse_args()
 
     env_path = pathlib.Path(args.env_file)
@@ -136,19 +142,47 @@ def main():
         sys.exit(f'error: Insights SSO rejected the service account: {str(e)[:90]}')
     ih = {'Authorization': f'Bearer {tok}'}
 
-    found, missing, tags_seen = [], [], {}
+    # Narrow Insights to this lab before matching anything by name.
+    #
+    # Everyone running this lab gets hosts called node1, node2 and node3, and
+    # they all land in the same Insights organisation: 566 records match
+    # 'node1', a hundred of them with exactly that first label, several
+    # checking in within the same minute. Picking the most recent is picking
+    # whoever rebooted last, and that is somebody else's machine.
+    #
+    # The lab id in AAP_BASE_URL is the one thing on hand that is certainly
+    # yours — controller-h77wc… — and the hosts carry it as an
+    # insights-client/group tag. That turns a search of hundreds into a set
+    # of three.
+    lab = re.search(r'//[a-z-]*?-([a-z0-9]{4,})\.', base)
+    scoped, scope_tag = {}, ''
+    if lab:
+        scope_tag = f'insights-client/group={lab.group(1)}'
+        j, _ = get_json(f'{INSIGHTS}/inventory/v1/hosts?per_page=100&tags='
+                        f'{urllib.parse.quote(scope_tag)}', ih, ictx)
+        for h in ((j or {}).get('results') or []):
+            scoped.setdefault((h.get('display_name') or '').split('.')[0], h)
+        print(f'scoped to {scope_tag} -> {len(scoped)} host(s)\n'
+              if scoped else
+              f'warning: {scope_tag} matched nothing; falling back to names\n')
+
+    found, missing, ambiguous, tags_seen = [], [], [], {}
     for name in aap_names:
-        j, _ = get_json(f'{INSIGHTS}/inventory/v1/hosts'
-                        f'?hostname_or_id={urllib.parse.quote(name)}', ih, ictx)
-        # A short AAP name matches both 'node1' and 'node1.sandbox-…'; the
-        # display name drifts to the FQDN after a reboot, so accept either and
-        # treat the first label as the join key.
-        cand = [h for h in ((j or {}).get('results') or [])
-                if (h.get('display_name') or '').split('.')[0] == name]
-        if not cand:
-            missing.append(name)
-            continue
-        h = sorted(cand, key=lambda x: x.get('updated') or '', reverse=True)[0]
+        h = scoped.get(name)
+        if h is None:
+            j, _ = get_json(f'{INSIGHTS}/inventory/v1/hosts'
+                            f'?hostname_or_id={urllib.parse.quote(name)}', ih, ictx)
+            cand = [x for x in ((j or {}).get('results') or [])
+                    if (x.get('display_name') or '').split('.')[0] == name]
+            if not cand:
+                missing.append(name)
+                continue
+            if len(cand) > 1:
+                # Refuse rather than guess. The uuid written here decides
+                # which machine gets patched.
+                ambiguous.append((name, cand))
+                continue
+            h = cand[0]
         t, _ = get_json(f"{INSIGHTS}/inventory/v1/hosts/{h['id']}/tags", ih, ictx)
         tl = ((t or {}).get('results') or {}).get(h['id']) or []
         grp = next((f"{x['namespace']}/{x['key']}={x['value']}" for x in tl
@@ -167,6 +201,23 @@ def main():
     for name in missing:
         print(f'{name:<{a}} {"NOT IN INSIGHTS":<{w}} '
               f'{"—":<38} register it, or it cannot be assessed')
+    for name, cand in ambiguous:
+        print(f'{name:<{a}} {"AMBIGUOUS":<{w}} {"—":<38} '
+              f'{len(cand)} hosts share this name')
+
+    if ambiguous:
+        print('\nRefusing to choose between these. Everyone running this lab has a\n'
+              'host of the same name in the same organisation, so the wrong pick\n'
+              'patches a stranger\'s machine. Identify yours by its machine-id:\n'
+              '\n    ssh <host> cat /etc/insights-client/machine-id\n'
+              '\nthen find it with ?insights_id=<that>, or set HOSTS_FILTER to the\n'
+              'uuid directly. Candidates:')
+        for name, cand in ambiguous:
+            for h in sorted(cand, key=lambda x: x.get('updated') or '',
+                            reverse=True)[:5]:
+                print(f"   {name}  {h['id']}  {h.get('display_name')}  "
+                      f"insights_id={str(h.get('insights_id'))[:8]}…")
+        return 1
 
     if not tags_seen:
         print('\nNo insights-client/group tag on these hosts. Select by uuid '
@@ -187,19 +238,37 @@ def main():
                             'does NOT match this set exactly; check before using it'))
 
     lab_tag = tag.split('/', 1)[1] if '/' in tag else tag
+    write = {'LAB_TAG': lab_tag}
+
+    # --host pins HOSTS_FILTER to that machine's uuid. The uuid rather than
+    # the name because a display name is whatever the host last called
+    # itself: these three have already flipped between 'node1' and
+    # 'node1.sandbox-h77wc-ocp4-cluster.svc.cluster.local' and back within a
+    # day, and the console resolves the filter against Insights, where a
+    # partial name matches hundreds of other people's machines.
+    if args.host:
+        match = next((f for f in found if f[0] == args.host), None)
+        if not match:
+            print(f'\nerror: {args.host!r} is not in {args.inventory} — '
+                  f'one of {", ".join(f[0] for f in found)}')
+            return 1
+        write['HOSTS_FILTER'] = match[2]
+
     print('\n.env:')
-    print(f'  LAB_TAG={lab_tag}')
-    print(f'  HOSTS_TAG={tag}')
-    print('  HOSTS_FILTER=            # leave empty to assess all of them, or '
-          'set one uuid above')
+    for k, v in write.items():
+        print(f'  {k}={v}')
+    if not args.host:
+        print('  HOSTS_FILTER=            # pass --host <name> to set this')
 
     if args.write:
         s = env_path.read_text()
-        for k, v in (('LAB_TAG', lab_tag), ('HOSTS_TAG', tag)):
+        for k, v in write.items():
             pat = re.compile(rf'^{k}=.*$', re.M)
             s = pat.sub(f'{k}={v}', s) if pat.search(s) else s + f'\n{k}={v}\n'
         env_path.write_text(s)
-        print(f'\nwrote LAB_TAG and HOSTS_TAG to {env_path}')
+        print(f'\nwrote {", ".join(write)} to {env_path}')
+        if not args.host:
+            print('HOSTS_FILTER left alone — pass --host to repoint it.')
     return 1 if missing else 0
 
 

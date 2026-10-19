@@ -132,7 +132,7 @@ AO_TOKEN="$(curl -sk -m 25 -X POST "${AO_URL%/}/api/v1/auth/login" \
 # script: seconds here against hours of building on sand.
 
 python3 - <<'PY' || FAILED=$((FAILED+1))
-import json, os, ssl, sys, urllib.parse, urllib.request, urllib.error
+import json, os, pathlib, ssl, sys, urllib.parse, urllib.request, urllib.error
 
 ctx = ssl.create_default_context()
 if os.environ.get('INSIGHTS_VERIFY_TLS', 'true').lower() in ('0', 'false', 'no'):
@@ -193,6 +193,13 @@ if c != 200 or not rows:
 uuid = rows[0]['id']
 print(f'  \033[32m✓\033[0m {host} is in Insights ({uuid[:8]}…)')
 
+# AAP addresses hosts by inventory name, and HOSTS_FILTER is a uuid, so the
+# check below needs the name this uuid resolves to. Hand it out rather than
+# have the shell guess: checking AAP for a uuid finds nothing and reports a
+# host that is sitting right there as missing.
+pathlib.Path('/tmp/.setup-aap-name').write_text(
+    (rows[0].get('display_name') or '').split('.')[0])
+
 d, c = get(f'https://console.redhat.com/api/vulnerability/v1/systems/{uuid}/cves'
            '?limit=1&advisory_available=true')
 n = ((d or {}).get('meta') or {}).get('total_items')
@@ -203,15 +210,19 @@ else:
     print(f'  \033[32m✓\033[0m {n} CVE(s) with advisories available on it')
 PY
 
-# The other half of the same question.
-if [[ -n "${HOSTS_FILTER:-}" && "$code" == "200" ]]; then
+# The other half of the same question. Looked up by the name the uuid
+# resolves to, written out by the block above — AAP has never heard of an
+# Insights uuid, so asking it for one reports a present host as missing.
+AAP_NAME="$(cat /tmp/.setup-aap-name 2>/dev/null || true)"
+rm -f /tmp/.setup-aap-name
+if [[ -n "$AAP_NAME" && "$code" == "200" ]]; then
   n="$(curl -sk -m 25 -H "Authorization: Bearer $AAP_TOKEN" --get \
-       --data-urlencode "name=$HOSTS_FILTER" "${AAP_BASE_URL%/}/hosts/" 2>/dev/null \
+       --data-urlencode "name=$AAP_NAME" "${AAP_BASE_URL%/}/hosts/" 2>/dev/null \
        | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0)"
   if [[ "$n" == "0" ]]; then
-    note_fail "$HOSTS_FILTER is not in AAP inventory — the console could assess it but nothing could patch it"
+    note_fail "$AAP_NAME is not in AAP inventory — the console could assess it but nothing could patch it"
   else
-    ok "$HOSTS_FILTER is in AAP inventory"
+    ok "$AAP_NAME is in AAP inventory"
   fi
 fi
 
