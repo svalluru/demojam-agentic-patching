@@ -115,6 +115,19 @@ INSIGHTS_TIMEOUT = int(env('INSIGHTS_TIMEOUT', '15'))
 # One page of affected systems. Anything past this is not assessed, and the
 # plan says so rather than quietly planning for a subset.
 AFFECTED_PAGE = int(env('AFFECTED_PAGE', '100'))
+
+# An Insights tag naming the hosts this console is responsible for, e.g.
+# insights-client/group=h77wc. Everything it asks Insights is scoped to it.
+#
+# Without it the console reads a whole organisation. Ours holds 3,601 hosts
+# belonging to everyone running the same lab, so the CVE list reported 3,304
+# CVEs affecting up to 1,840 systems — true of the organisation and useless
+# to the operator, who has three machines. Scoped, the same list is 1,521
+# CVEs affecting two or three, which is the number they can act on.
+#
+# This is the lab's own idea: its setup guide has you pass lab_tag=group=<guid>
+# for exactly this reason. ./discover-hosts.py derives the value.
+HOSTS_TAG = env('HOSTS_TAG')
 RISK_TIMEOUT = int(env('RISK_TIMEOUT', '8'))
 RAG_TIMEOUT = int(env('RAG_TIMEOUT', '20'))     # live RAG does LLM summarisation
 AO_TIMEOUT = int(env('AO_TIMEOUT', '10'))
@@ -545,6 +558,11 @@ def fetch_cve_list(limit: int = 20, offset: int = 0,
          'affecting_host_type': 'rpmdnf', 'advisory_available': 'true'}
     if search:
         q['filter'] = search
+    # Scoping also fixes the systems_affected column, which otherwise counts
+    # the whole organisation: the operator was told a CVE affects 1,840
+    # systems when three of them were theirs.
+    if HOSTS_TAG and not offline():
+        q['tags'] = HOSTS_TAG
     params = urllib.parse.urlencode(q)
     try:
         payload = insights_get(f'/vulnerabilities/cves?{params}')
@@ -580,6 +598,67 @@ def fetch_cve_list(limit: int = 20, offset: int = 0,
     return {'cves': cves, 'count': len(cves), 'limit': limit, 'offset': offset,
             'total_items': meta.get('total_items'),
             'has_more': offset + len(cves) < (meta.get('total_items') or 0)}
+
+
+def _detail_by_tag(cve_id: str, host_limit: int) -> dict[str, Any]:
+    """C2 for every host carrying HOSTS_TAG, asked one host at a time.
+
+    Same shape as _detail_host_first and for the same reason — the CVE-first
+    endpoint cannot answer "is this host affected" in a shared estate — but
+    across a set rather than one named machine. The set is small by
+    construction: the tag is what separates one lab's hosts from everybody
+    else's in the same organisation.
+
+    Hosts the CVE does not affect are dropped rather than reported as
+    unaffected, so the plan lists work to do and nothing else.
+    """
+    found = inventory_get(f'/hosts?per_page=100&tags={urllib.parse.quote(HOSTS_TAG)}')
+    rows = (found or {}).get('results') or []
+    if not rows:
+        raise BackendUnavailable(
+            'Host tag', f'HOSTS_TAG={HOSTS_TAG!r} matches no host in this '
+            f'Insights organisation',
+            'run ./discover-hosts.py — it derives the tag from AAP_BASE_URL '
+            'and checks it selects exactly your hosts')
+
+    hosts, cvss, desc, impact = [], None, '', ''
+    for r in rows:
+        uuid, name = r.get('id'), r.get('display_name') or r.get('id')
+        hit = insights_get(f'/systems/{uuid}/cves'
+                           f'?limit=1&filter={urllib.parse.quote(cve_id)}')
+        data = (hit or {}).get('data') or []
+        if not data:
+            continue
+        a = data[0].get('attributes') or {}
+        # The CVE's own attributes are the same whichever host reports them;
+        # take them from the first that does rather than calling /cves/{id},
+        # which is the slow endpoint this route exists to avoid.
+        if cvss is None:
+            cvss = a.get('cvss3_score') or a.get('cvss2_score')
+            desc, impact = a.get('description', ''), a.get('impact', '')
+        hosts.append({'host': name, 'system_uuid': uuid,
+                      'age_days': _age_days(a.get('first_reported'))})
+
+    if not hosts:
+        raise BackendUnavailable(
+            'Host tag',
+            f'none of the {len(rows)} host(s) tagged {HOSTS_TAG} are reported '
+            f'as affected by {cve_id}',
+            'they may already be patched, or the CVE may not apply to their '
+            'package set — pick one from a host\'s own vulnerability list')
+
+    total = len(hosts)
+    if host_limit > 0:
+        hosts = hosts[:host_limit]
+    return {
+        'cve_id': cve_id,
+        'cvss': float(cvss) if cvss is not None else 0.0,
+        'description': desc, 'impact': impact,
+        'hosts': hosts, 'count': len(hosts),
+        # The honest total for this tag, not for the organisation. gather()
+        # notes truncation from it, so a limit that drops hosts says so.
+        'total_affected': total,
+    }
 
 
 def _detail_host_first(cve_id: str, host_filter: str) -> dict[str, Any]:
@@ -646,11 +725,19 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
 
     host_filter / host_limit narrow the host set for demos and local testing.
     """
-    # With a filter set, live mode asks about that host directly. Demo mode
-    # keeps the list-then-filter path because its hosts are staged, not
-    # registered anywhere an inventory lookup could find them.
-    if host_filter and not offline():
-        return _detail_host_first(cve_id, host_filter)
+    # Three routes, most specific first. Demo mode takes none of them: its
+    # hosts are staged, not registered anywhere an inventory lookup could
+    # find them, so it keeps the list-then-filter path.
+    #
+    # HOSTS_FILTER wins over HOSTS_TAG deliberately. Naming one machine is
+    # the narrower instruction, and it stays the way to pin a demo to a
+    # single host — or to get back to known behaviour if the tag route
+    # misbehaves, without restarting.
+    if not offline():
+        if host_filter:
+            return _detail_host_first(cve_id, host_filter)
+        if HOSTS_TAG:
+            return _detail_by_tag(cve_id, host_limit)
     try:
         detail = insights_get(f'/cves/{cve_id}')
         # advisory_available=true, to match the filter the CVE list counts
@@ -2979,10 +3066,18 @@ SETTINGS: tuple[Setting, ...] = (
             'and always re-assesses every host, because a demo is the same '
             'CVE run repeatedly and the guard would empty the second run.',
             binds='PATCHED_WITHIN_MINUTES'),
+    Setting('HOSTS_TAG', 'Triage', 'Host tag', 'str', '',
+            'Live mode only. An Insights tag naming the hosts this console '
+            'is responsible for, e.g. insights-client/group=h77wc. Scopes '
+            'the CVE list and the affected-host lookup to them, so the '
+            'counts are yours rather than the whole organisation\'s. '
+            './discover-hosts.py derives it.', binds='HOSTS_TAG'),
     Setting('HOSTS_FILTER', 'Triage', 'Host filter', 'str', '',
-            'Live mode only. Restrict an assessment to hosts whose name '
-            'contains this. A filter that matches nothing fails the run '
-            'rather than planning for every affected host. Demo mode ignores '
+            'Live mode only. Restrict an assessment to one host, by name or '
+            'by system uuid — prefer the uuid, names are not unique in a '
+            'shared organisation. Takes precedence over the host tag. A '
+            'filter that matches nothing, or more hosts than the limit '
+            'keeps, fails the run rather than guessing. Demo mode ignores '
             'it — staged hosts are not the ones it names.'),
     Setting('HOSTS_LIMIT', 'Triage', 'Host limit', 'int', '0',
             'Live mode only. Cap the number of hosts a plan can dispatch to, '
