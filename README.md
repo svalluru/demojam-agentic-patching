@@ -287,6 +287,53 @@ elapsed time, for both the dispatch and the post-approval run. A run sitting
 at four minutes is normal or stuck depending on which node it is in, and a
 progress bar cannot tell you which.
 
+### Checking on the host itself
+
+The console reports what Ansible Orchestrator reports. Worth confirming on
+the machine at least once, and worth doing in front of an audience, because
+it is the only step nothing in this repo can fake.
+
+**Before** — the advisory is listed, so the host is vulnerable:
+
+```bash
+sudo dnf updateinfo list --cve CVE-2026-64753
+# RHSA-2026:39317 Low/Sec.  libxml2-2.9.13-14.el9_8.2.x86_64
+```
+
+**After** — empty output means no advisory is outstanding:
+
+```bash
+sudo dnf updateinfo list --cve CVE-2026-64753   # silence is the pass
+rpm -q --last libxml2 | head -1                 # installed just now
+uptime                                          # rebooted, if the kernel moved
+```
+
+Two things about that check. **Empty output is the success case**, which
+reads oddly the first time — there is no cheerful message, the advisory
+simply stops being listed. And it is local, so it answers immediately
+rather than waiting on an upload being re-evaluated by Insights, which lags
+by ten to thirty minutes.
+
+This is exactly what the workflow's own Verify Patch step runs, so the
+console's verdict and your terminal are answering the same question the
+same way.
+
+**A second host makes it conclusive.** Run it on one you did not patch:
+
+```bash
+# node2, patched            → silence
+# node3, same CVE, untouched → RHSA-2026:39317 still listed
+```
+
+Same advisory, same inventory, and only the host you targeted changed.
+
+To check what Insights thinks, rather than the host:
+
+```bash
+sudo insights-client --status      # registered, and when it last reported
+sudo insights-client               # force an upload if you do not want to wait
+```
+
 ### The left panel
 
 The right frame moves between the plan, the run history and the ROI report. The
