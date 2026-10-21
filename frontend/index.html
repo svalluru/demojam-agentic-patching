@@ -3297,6 +3297,22 @@ function renderHostTable(s) {
   // offers a choice that no longer exists.
   const pick = !dispatched && (s.hosts || []).length > 1;
   if (hostSelCve !== (s.cve_id || '')) { hostSel = null; hostSelCve = s.cve_id || ''; }
+
+  // Resetting on a change of CVE is not enough, because the host set moves
+  // under a CVE that has not changed: assess, patch one host, re-assess, and
+  // that host is gone from the affected list. The uuid stayed in the
+  // selection, invisible because its row no longer rendered, and went out
+  // with the next dispatch — which the backend rejected, naming a uuid that
+  // appears nowhere on screen.
+  //
+  // Anything not in this assessment is dropped. An emptied selection is left
+  // empty rather than treated as "all": the operator unticking everything
+  // means none, and guessing the opposite would dispatch the lot.
+  if (hostSel) {
+    const live = new Set((s.hosts || []).map(h => h.system_uuid));
+    const kept = new Set([...hostSel].filter(u => live.has(u)));
+    if (kept.size !== hostSel.size) hostSel = kept;
+  }
   const sel = hostSel || new Set((s.hosts || []).map(h => h.system_uuid));
 
   const rows = (s.hosts || []).map((h, i) => {
