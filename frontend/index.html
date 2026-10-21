@@ -3557,6 +3557,12 @@ const STEP_AT   = ['running', 'waiting'];
 // animation: this one stalls when the run stalls, which is the thing an
 // operator needs to see.
 function stepProgress(r) {
+  // A host can be on the plan without having been dispatched, since the
+  // checkboxes let an operator send a subset. Those rows have no result at
+  // all, and reading r.steps off undefined threw — taking the whole table
+  // render with it, so ticking "Show more columns" appeared to do nothing
+  // while the console had in fact stopped redrawing the table.
+  if (!r) return null;
   const steps = (r.steps || []).filter(s => s.status && s.status !== 'skipped');
   if (!steps.length) return null;
   const done = steps.filter(s => STEP_DONE.includes(s.status)).length;
@@ -3581,7 +3587,7 @@ const progCls = r => r.outcome === 'running'
 
 function progressCell(r) {
   const p = stepProgress(r);
-  if (!p) return `<span class="desc">${esc(r.error || '—')}</span>`;
+  if (!p) return `<span class="desc">${esc((r || {}).error || '—')}</span>`;
   return `<span class="prog ${progCls(r)}" style="--p:${p.pct}%">`
        + `<span class="prog-fill"></span></span>`
        + `<span class="prog-meta"><span class="prog-step">${esc(p.label)}</span>`
