@@ -4,10 +4,10 @@ Builds the image and deploys both halves of the console as one pod, with
 `.env` as the only source of configuration.
 
 ```bash
-./ocp-setup/deploy.sh                 # build, configure, deploy
-./ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
-./ocp-setup/deploy.sh --external      # keep .env's Route URLs for RAG/risk
-./ocp-setup/deploy.sh --delete        # remove everything it creates
+./console-app-ocp-setup/deploy.sh                 # build, configure, deploy
+./console-app-ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
+./console-app-ocp-setup/deploy.sh --external      # keep .env's Route URLs for RAG/risk
+./console-app-ocp-setup/deploy.sh --delete        # remove everything it creates
 ```
 
 It prints the Route when it finishes. Requires `oc login` and a namespace
@@ -66,7 +66,7 @@ which is the point above.
 ## After changing .env
 
 ```bash
-./ocp-setup/deploy.sh --config-only
+./console-app-ocp-setup/deploy.sh --config-only
 ```
 
 Applies the ConfigMap and Secret and restarts the pod. A restart is the

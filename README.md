@@ -212,7 +212,7 @@ that cannot finish.
 
 ```bash
 oc login <api-url>
-./ocp-setup/deploy.sh          # build, configure, deploy; prints the Route
+./console-app-ocp-setup/deploy.sh          # build, configure, deploy; prints the Route
 ```
 
 No second copy of the configuration: it splits `.env` into a ConfigMap and a
@@ -222,8 +222,8 @@ checks Llama Stack and the risk model are up before it starts, and deploys
 neither — those are `rag-setup/` and `risk_score/openshift/`.
 
 ```bash
-./ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
-./ocp-setup/deploy.sh --delete
+./console-app-ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
+./console-app-ocp-setup/deploy.sh --delete
 ```
 
 Two things to know before a demo.
@@ -239,7 +239,7 @@ button. Do not redeploy mid-run.
 the URL and it can patch real machines. Acceptable in a lab; drop the Route
 and use `oc port-forward` if it is not.
 
-[ocp-setup/README.md](ocp-setup/README.md) covers the pod layout, the
+[console-app-ocp-setup/README.md](console-app-ocp-setup/README.md) covers the pod layout, the
 timeout chain and what it does not deploy.
 
 ---
@@ -638,7 +638,7 @@ rag-setup/
 risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
-ocp-setup/
+console-app-ocp-setup/
   deploy.sh                run the console itself on OpenShift, from .env
   Containerfile            UBI9 + the source; no dependencies to install
   manifests/               Deployment, Service, Route, PVC

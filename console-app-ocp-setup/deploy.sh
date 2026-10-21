@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deploy the console to OpenShift, with .env as the single source of config.
 #
-#   ./ocp-setup/deploy.sh                 build, configure, deploy
-#   ./ocp-setup/deploy.sh --config-only   update config and restart, no build
-#   ./ocp-setup/deploy.sh --external      keep .env's Route URLs for RAG/risk
-#   ./ocp-setup/deploy.sh --delete        remove everything this creates
+#   ./console-app-ocp-setup/deploy.sh                 build, configure, deploy
+#   ./console-app-ocp-setup/deploy.sh --config-only   update config and restart, no build
+#   ./console-app-ocp-setup/deploy.sh --external      keep .env's Route URLs for RAG/risk
+#   ./console-app-ocp-setup/deploy.sh --delete        remove everything this creates
 #
 # Config comes from .env rather than a second copy kept in step by hand.
 # Four keys go into a Secret and the rest into a ConfigMap, by an explicit
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HERE="$ROOT/ocp-setup"
+HERE="$ROOT/console-app-ocp-setup"
 ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 APP=cve-console
 
@@ -142,10 +142,15 @@ if ! $CONFIG_ONLY; then
     # fails with "no such file or directory" naming a path that was never
     # going to exist.
     oc new-build --name="$APP" --binary --strategy=docker -n "$NS" >/dev/null
-    oc patch bc "$APP" -n "$NS" --type=merge -p \
-      '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ocp-setup/Containerfile"}}}}' >/dev/null
     ok "created buildconfig"
   fi
+  # Patched every run, not only on creation. A BuildConfig outlives the
+  # checkout that made it: this directory was renamed and the one in the
+  # cluster went on pointing at the old path, so the next build would have
+  # failed on a file that had moved. Asserting the path each time costs one
+  # call and removes a class of drift.
+  oc patch bc "$APP" -n "$NS" --type=merge -p \
+    '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"console-app-ocp-setup/Containerfile"}}}}' >/dev/null
   # No output suppression and no fallback: a build that fails here produced
   # no image, and the deployment that follows would sit in ImagePullBackOff
   # pulling a tag that does not exist. Better to stop at the real error.
@@ -173,4 +178,4 @@ step "Done"
 echo "  $URL"
 echo
 echo "  logs:    oc logs -f deployment/$APP -c backend -n $NS"
-echo "  config:  ./ocp-setup/deploy.sh --config-only   (after editing .env)"
+echo "  config:  ./console-app-ocp-setup/deploy.sh --config-only   (after editing .env)"
