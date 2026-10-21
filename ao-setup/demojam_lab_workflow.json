@@ -78,7 +78,13 @@
         "x": 1076.0869565217392,
         "y": -69.99999999999999
       },
-      "settings": {},
+      "settings": {
+        "retry_policy": {
+          "max_retries": 3,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      },
       "parameters": {
         "diff_mode": false,
         "extra_vars": {
@@ -135,7 +141,13 @@
         "x": 1410.3861459100956,
         "y": 312.45836403831976
       },
-      "settings": {},
+      "settings": {
+        "retry_policy": {
+          "max_retries": 3,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      },
       "parameters": {
         "diff_mode": false,
         "extra_vars": {
@@ -212,7 +224,7 @@
       "type": "aap_job_template",
       "position": {
         "x": 2109.4915254237285,
-        "y": -70
+        "y": -70.0
       },
       "parameters": {
         "diff_mode": false,
@@ -232,7 +244,7 @@
       "type": "aap_job_template",
       "position": {
         "x": 2109.4915254237285,
-        "y": 312
+        "y": 312.0
       },
       "parameters": {
         "diff_mode": false,
