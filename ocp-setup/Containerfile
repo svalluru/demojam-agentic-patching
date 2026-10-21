@@ -1,0 +1,30 @@
+# The console, as one image running either half of it.
+#
+# No pip install and no requirements.txt, because there are no dependencies:
+# the whole application is Python standard library, verified by walking its
+# imports against sys.stdlib_module_names. A base image with an interpreter
+# is the entire build.
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+USER 0
+WORKDIR /opt/app-root/src
+
+COPY agentic-patching.py communication.py results.py fallbacks.py pdf.py ./
+COPY frontend/ ./frontend/
+
+# OpenShift runs the container as an arbitrary uid in group 0, not as the
+# user named here, so anything written at runtime has to be group-writable.
+# runs/ holds simulated executions and reports/ the generated PDFs; both are
+# mount points for the PVC and both would otherwise be read-only to the
+# process that needs them.
+RUN mkdir -p runs reports \
+ && chgrp -R 0 /opt/app-root/src \
+ && chmod -R g=u /opt/app-root/src \
+ && chmod -R g+w runs reports
+
+USER 1001
+EXPOSE 8787 8788
+
+# Overridden per container in the Deployment: one runs the backend, the
+# other the frontend. Named here so `podman run` does something sensible.
+CMD ["./agentic-patching.py", "serve"]

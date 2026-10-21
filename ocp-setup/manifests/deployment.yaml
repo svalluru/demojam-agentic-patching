@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cve-console
+  labels:
+    app: cve-console
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: both containers write to one RWO volume,
+  # and a rolling update would hold two pods needing it at once — the new
+  # one stays Pending and the rollout never finishes.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cve-console
+  template:
+    metadata:
+      labels:
+        app: cve-console
+    spec:
+      containers:
+        # The backend binds 127.0.0.1, so it is reachable only from the
+        # other container in this pod. That is deliberate rather than
+        # incidental: it has no authentication, and it can patch real
+        # machines. A Service in front of it would let anything in the
+        # namespace do that.
+        - name: backend
+          image: cve-console:latest
+          command: ["./agentic-patching.py", "serve"]
+          envFrom:
+            - configMapRef:
+                name: cve-console-config
+            - secretRef:
+                name: cve-console-secrets
+          ports:
+            - containerPort: 8787
+              name: backend
+          volumeMounts:
+            - name: state
+              mountPath: /opt/app-root/src/runs
+              subPath: runs
+            - name: state
+              mountPath: /opt/app-root/src/reports
+              subPath: reports
+          # exec, not httpGet. An httpGet probe is performed by the kubelet
+          # against the pod IP, and this process binds 127.0.0.1 on purpose
+          # — so every probe failed, and the liveness one restarted a
+          # backend that was serving its sibling perfectly well. Run the
+          # check inside the container, where that address means something.
+          readinessProbe:
+            exec:
+              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/mode', timeout=5)"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/mode', timeout=10)"]
+            # Slack on purpose. /api/mode shares the interpreter with
+            # assessment work, and a live run holds it for minutes; a tight
+            # probe would restart the pod mid-patch.
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
+
+        - name: frontend
+          image: cve-console:latest
+          command: ["python3", "server.py"]
+          workingDir: /opt/app-root/src/frontend
+          env:
+            - name: CVE_CONSOLE_BACKEND
+              value: http://127.0.0.1:8787
+          envFrom:
+            - configMapRef:
+                name: cve-console-config
+            - secretRef:
+                name: cve-console-secrets
+          ports:
+            - containerPort: 8788
+              name: frontend
+          readinessProbe:
+            httpGet: { path: /, port: 8788 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m,  memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: cve-console-state
