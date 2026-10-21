@@ -3414,11 +3414,48 @@ function renderHostTable(s) {
   });
 }
 
+// The run lives in the backend's memory, so a restarted pod — a redeploy,
+// an OOM kill, a drained node — comes back with nothing while this page
+// carries on showing a complete assessment. Everything looks fine until
+// the first button, which fails with "No assessment available" over a
+// screenful of assessment and reads as a broken console rather than a
+// restarted one.
+//
+// Nothing polls /api/state once a plan is on screen: the assess and
+// dispatch loops both exit when their step finishes. So this is a slow
+// heartbeat that exists only to notice the floor disappearing.
+let restartWatch = null;
+function watchForRestart() {
+  clearTimeout(restartWatch);
+  const tick = async () => {
+    if (!parked) return;
+    let s;
+    try { s = await (await fetch('/api/state')).json(); } catch { restartWatch = setTimeout(tick, 10000); return; }
+    // Idle with no plan, while we are displaying one, can only mean the
+    // backend lost it. A run in any other state is just a run in progress.
+    if (s && s.status === 'idle' && !s.plan && !s.cve_id) {
+      const el = document.getElementById('result');
+      if (el) {
+        el.className = 'result show err';
+        el.innerHTML = '<strong>The console restarted and lost this assessment.</strong>'
+          + '<br>What is on screen is from before the restart. Press '
+          + '<strong>Assess</strong> again to rebuild it — nothing was dispatched.';
+      }
+      const pb = document.getElementById('head-patch');
+      if (pb) { pb.disabled = true; pb.title = 'The backend no longer holds this assessment.'; }
+      return;                       // stop; the page needs a human now
+    }
+    restartWatch = setTimeout(tick, 10000);
+  };
+  restartWatch = setTimeout(tick, 10000);
+}
+
 function renderPlan(s) {
   // Parked here so leaving this view can offer a way back to it. Only
   // promoted to 'patch' by renderPatch, which runs after dispatch.
   parked = s;
   if (parkedPhase !== 'patch') parkedPhase = 'plan';
+  watchForRestart();
   const plan = s.plan || {};
   const done = runFinished(s);
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
@@ -3699,6 +3736,9 @@ function renderPatch(s) {
   patchState = s;
   // Dispatched: resuming now has to rebuild this half too, not just the plan.
   parked = s;
+  // Keep watching after dispatch too. A restart here is worse, not better:
+  // the runs exist in AO and the console has forgotten it started them.
+  watchForRestart();
   parkedPhase = 'patch';
   if (runFinished(s)) {
     const rs = (s.patch || {}).results || [];
