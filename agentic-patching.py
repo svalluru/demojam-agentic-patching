@@ -719,6 +719,46 @@ def _detail_host_first(cve_id: str, host_filter: str) -> dict[str, Any]:
     }
 
 
+_warmed: set[str] = set()
+WARM_AFFECTED = env_bool('WARM_AFFECTED', True)
+
+
+def warm_affected_systems(cve_id: str) -> None:
+    """Ask Insights for a CVE's affected systems so the next caller gets it warm.
+
+    Nothing here needs the answer. The workflow's fetch step reaches Insights
+    through the lab MCP server, which calls /cves/{id}/affected_systems — and
+    measured from the bastion that takes 20.2 seconds cold against 0.2 warm.
+    The MCP client gives up at about twenty, so a cold CVE fails the step and
+    a warm one sails through. That is the whole of the intermittency: the same
+    CVE failed at 17:22, succeeded at 18:53 and failed again at 19:40, tracking
+    nothing but whether the upstream cache still held it.
+
+    Doing it here buys the twenty seconds for free. The operator reads the
+    patch plan, thinks, and presses dispatch; the warm-up runs in that gap and
+    is long finished. Warming at dispatch instead would just move the delay in
+    front of the button.
+
+    Deliberately silent and deliberately unawaited. A warm-up that fails has
+    cost nothing — the step behaves exactly as it does today — and one that
+    raised or blocked would turn an optimisation into a dependency. It is not
+    a fix either: the real fault is a client timeout shorter than the call it
+    makes, and that is the lab's to raise.
+    """
+    if not (WARM_AFFECTED and cve_id) or offline() or cve_id in _warmed:
+        return
+    _warmed.add(cve_id)
+
+    def go():
+        try:
+            insights_get(f'/cves/{urllib.parse.quote(cve_id)}'
+                         f'/affected_systems?limit=1')
+        except Exception:
+            _warmed.discard(cve_id)      # let a later assessment try again
+
+    threading.Thread(target=go, daemon=True, name=f'warm-{cve_id}').start()
+
+
 def fetch_cve_detail(cve_id: str, host_filter: str = '',
                      host_limit: int = 0) -> dict[str, Any]:
     """C1 + C2 — CVE metadata and the hosts it affects.
@@ -1257,6 +1297,7 @@ class InfoAgent:
         )
         self._trace('info', 'supervisor',
                     f'{len(review)}/{len(assessed)} need review — {plan.verdict}')
+        warm_affected_systems(detail.get('cve_id') or '')
         return {'hosts': [asdict(a) for a in assessed], 'plan': asdict(plan)}
 
 
@@ -3213,6 +3254,14 @@ SETTINGS: tuple[Setting, ...] = (
             'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
     Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
+    Setting('WARM_AFFECTED', 'Ansible Orchestrator', 'Warm the CVE cache',
+            'bool', 'true',
+            'After an assessment, quietly ask Insights for the CVE\'s '
+            'affected systems. Nothing here needs the answer: the lab MCP '
+            'server calls that endpoint during the fetch step, and it takes '
+            '20s cold against 0.2s warm — longer than the MCP client waits. '
+            'Warming it during the assessment spends that time while the '
+            'operator is reading the plan.', binds='WARM_AFFECTED'),
     Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
     Setting('AO_HOST_SHORTNAME', 'Ansible Orchestrator',
