@@ -21,7 +21,7 @@ Both open <http://127.0.0.1:8788>.
 |---|---|
 | [Architecture](#architecture) | The agents, what is built, what lives in Ansible Orchestrator |
 | [Demo mode](#demo-mode) | Run it with nothing installed. What is staged, what is not real |
-| [Live mode](#live-mode) | Prerequisites, one-command setup, running against real infrastructure |
+| [Live mode](#live-mode) | Prerequisites, one-command setup, and running it on your laptop or on the cluster |
 | [Using the console](#using-the-console) | The flow, the left panel, the settings panel, the CLI |
 | [Configuration](#configuration) | Every switch, and where it is set |
 | [ROI report](#roi-report) | What is measured, what is assumed, and how the two are kept apart |
@@ -184,20 +184,63 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 
 </details>
 
-### 3. Run
+### 3. Run it — two ways, same `.env`
+
+| | |
+|---|---|
+| **Locally** | fastest to start and to restart, and nothing to rebuild between changes. Only you can reach it |
+| **On OpenShift** | reachable by anyone with the URL, and the console sits beside the services it calls instead of crossing the internet to reach them |
+
+Either way live mode behaves identically: real endpoints, no fallback at any
+step, and a banner that stays on screen. That banner is not a source label —
+it means the opposite, that nothing will be substituted and an unreachable
+service fails the run outright, which someone needs to know before they
+start.
+
+#### Locally
 
 ```bash
 ./demo.sh --live
 ```
 
-If `.env` is missing it is created from `.env.example` and the console
-**refuses to start**, naming the keys that matter. A blank key in live mode is
-not a step that degrades; it is a run that cannot finish.
+Opens <http://127.0.0.1:8788>. If `.env` is missing it is created from
+`.env.example` and the console **refuses to start**, naming the keys that
+matter. A blank key in live mode is not a step that degrades; it is a run
+that cannot finish.
 
-Live mode keeps its banner on screen at all times. That is not a source label —
-it means the opposite, that nothing will be substituted and an unreachable
-service will fail the run outright, which someone needs to know before they
-start.
+#### On OpenShift
+
+```bash
+oc login <api-url>
+./ocp-setup/deploy.sh          # build, configure, deploy; prints the Route
+```
+
+No second copy of the configuration: it splits `.env` into a ConfigMap and a
+Secret, and rewrites `LLAMA_STACK_URL` and `RISK_URL` to in-cluster Services
+so the console stops going out to the router to reach a pod beside it. It
+checks Llama Stack and the risk model are up before it starts, and deploys
+neither — those are `rag-setup/` and `risk_score/openshift/`.
+
+```bash
+./ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
+./ocp-setup/deploy.sh --delete
+```
+
+Two things to know before a demo.
+
+**`--config-only` restarts the pod**, which is the point — a running process
+does not pick up a changed ConfigMap, and one holding last week's
+`VECTOR_DB_ID` looks healthy while returning no RAG hits. But the run state
+lives in memory, so **a restart clears any assessment open in a browser**.
+The page says so and asks for a fresh Assess rather than failing at the next
+button. Do not redeploy mid-run.
+
+**The console has no authentication.** The Route is reachable by anyone with
+the URL and it can patch real machines. Acceptable in a lab; drop the Route
+and use `oc port-forward` if it is not.
+
+[ocp-setup/README.md](ocp-setup/README.md) covers the pod layout, the
+timeout chain and what it does not deploy.
 
 ---
 
