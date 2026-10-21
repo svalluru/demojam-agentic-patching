@@ -2045,7 +2045,7 @@ class PatchingAgent:
         # 'running' for a run that fails a second later, and nothing revisits
         # it. Bounded so the button does not hang.
         state: dict[str, Any] = {}
-        deadline = time.time() + int(env('AO_DECIDE_WAIT', '90'))
+        deadline = time.time() + int(env('AO_DECIDE_WAIT', '900'))
         # An approved run does its real work here — fetch, deploy, remediate,
         # verify, two to three minutes of it. Reporting none of that was the
         # complaint: the gate cleared, and then the trace said nothing and the
@@ -3123,9 +3123,13 @@ SETTINGS: tuple[Setting, ...] = (
             binds='HTTP_TIMEOUT'),
     Setting('AO_POLL_TIMEOUT', 'Timeouts', 'AO poll', 'int', '900',
             'How long to follow a dispatched execution.', binds='AO_POLL_TIMEOUT'),
-    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '90',
+    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '900',
             'Seconds to wait for a run to reach a terminal status after '
-            'approve or reject.'),
+            'approve or reject. An approved chain on the lab workflow runs '
+            'six to seven minutes, so the old 90 and the 300 setup.sh wrote '
+            'both expired mid-remediation and left the row saying "running". '
+            'Must stay under the frontend PROXY_TIMEOUT and the Route '
+            'timeout, which the request is held open against.'),
     Setting('DEMO_LATENCY', 'Timeouts', 'Demo pause per step', 'float', '0.35',
             'Offline only. Answering instantly renders as "complete in 0s" and '
             'reads as broken. 0 disables.', binds='DEMO_LATENCY'),

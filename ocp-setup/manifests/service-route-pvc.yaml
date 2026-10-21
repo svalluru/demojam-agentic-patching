@@ -33,10 +33,12 @@ metadata:
   labels:
     app: cve-console
   annotations:
-    # An assessment against a cold CVE takes tens of seconds, and a
-    # dispatch holds the connection while AO works through the workflow.
-    # The 30s default cuts those off mid-request.
-    haproxy.router.openshift.io/timeout: 900s
+    # The browser holds this connection for the whole of a decision:
+    # /api/decide blocks for up to AO_DECIDE_WAIT while the approved chain
+    # runs. At 900s that budget exactly equalled this timeout, so the
+    # router would have cut the request at the moment the backend stopped
+    # waiting. Each hop outward gets more room, not less.
+    haproxy.router.openshift.io/timeout: 1200s
 spec:
   to:
     kind: Service

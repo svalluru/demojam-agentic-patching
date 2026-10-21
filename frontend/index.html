@@ -5270,15 +5270,26 @@ function renderSettings() {
     key.className = 'set-key';
     key.textContent = s.key;
     name.appendChild(key);
-    if (s.source !== 'default') {
+    // Only 'changed' gets a chip. '.env' was on almost every row — once the
+    // console is configured at all, that is simply where its settings come
+    // from — so it marked the ordinary case and left the panel looking
+    // busier than it is. 'changed' is the one worth seeing: it says this
+    // value is process-local and will not survive a restart.
+    //
+    // The .env origin is still there, on hover over the key.
+    if (s.source === 'override') {
       const src = document.createElement('span');
       src.className = `set-src ${s.source}`;
       src.textContent = SRC_LABEL[s.source];
-      src.title = s.source === 'env'
-        ? `Set before startup. Built-in default: ${s.default || '(empty)'}`
-        : `Changed in this panel. Built-in default: ${s.default || '(empty)'}`;
+      src.title = `Changed in this panel, in memory only — lost on restart. `
+                + `Built-in default: ${s.default || '(empty)'}`;
       name.appendChild(src);
     }
+    key.title = s.source === 'env'
+      ? `${s.key} — set in .env before startup. Built-in default: ${s.default || '(empty)'}`
+      : s.source === 'override'
+        ? `${s.key} — changed in this panel. Built-in default: ${s.default || '(empty)'}`
+        : `${s.key} — built-in default (${s.default || 'empty'}); nothing has overridden it`;
     if (s.help) {
       // Sits with the label rather than with the field, because it explains
       // the setting and not the box you type in. Closed on every render: the

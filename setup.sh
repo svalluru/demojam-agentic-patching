@@ -306,7 +306,7 @@ step "Console — live-mode settings"
 # below say which.
 if $DRY; then
   echo "  [dry-run] would set MODE=live, AO_WORKFLOW_NAME, REVIEW_THRESHOLD=65,"
-  echo "            HOSTS_LIMIT=1, INSIGHTS_TIMEOUT=60, AO_TIMEOUT=60, AO_DECIDE_WAIT=300"
+  echo "            HOSTS_LIMIT=1, INSIGHTS_TIMEOUT=60, AO_TIMEOUT=60, AO_DECIDE_WAIT=900"
 else
 python3 - "$ENV_FILE" <<'PY'
 import pathlib, re, sys
@@ -329,8 +329,9 @@ want = {
     'INSIGHTS_TIMEOUT': '60',
     # AO's signal call exceeds the 10s default.
     'AO_TIMEOUT': '60',
-    # An approved chain runs 2-3 minutes before it settles.
-    'AO_DECIDE_WAIT': '300',
+    # An approved chain runs six to seven minutes on the lab workflow;
+    # 300 expired mid-remediation and reported it as still running.
+    'AO_DECIDE_WAIT': '900',
 }
 changed = []
 for k, v in want.items():

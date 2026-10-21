@@ -264,8 +264,10 @@ animates identically whether the call was answered or substituted.
 ### Settings panel
 
 The gear in the top right opens every switch below, grouped, with its built-in
-default shown until something overrides it. A row is chipped `.env` when it was
-set before startup and `changed` when this panel set it.
+default shown until something overrides it. A row is chipped `changed` when
+this panel set it — the one state worth seeing, because it is process-local
+and will not survive a restart. Where a value came from otherwise, `.env` or
+the built-in default, is on hover over the setting's key.
 
 Changes take effect on the next assessment and are **in-memory only** — they are
 lost on restart, and `.env` stays the durable place. The two passwords are
