@@ -211,11 +211,21 @@ the twenty on screen would report "nothing found" for almost all of them.
 Results are cached per query, so clearing the box or returning to an earlier
 search costs nothing.
 
-**The dispatch button is labelled from the plan's verdict** — *Patch N hosts* in
+**Tick the hosts to send.** With more than one host the table gains a
+checkbox per row, all selected to begin with. Dispatch goes only to the ones
+ticked, which is how you patch one machine and watch it before committing the
+rest. Hosts left unticked stay on the table with no status, rather than
+disappearing.
+
+**The dispatch button is labelled from the selection** — *Patch N hosts* in
 red when the press really does patch them unattended, *Send N for approval* in
-black when every host will halt at the gate instead. Hosts on the approval
-branch show Approve / Reject, and once approved the row tracks its execution
-through the remaining workflow nodes to *Patched*.
+black when every selected host will halt at the gate instead. Deselecting
+every gated host turns it red; deselecting every ungated one turns it black.
+The colour is the page's one safety signal, so it tracks what this press will
+actually do rather than what the plan as a whole says.
+
+Hosts on the approval branch show Approve / Reject, and once approved the row
+tracks its execution through the remaining workflow nodes to *Patched*.
 
 **Calculate ROI** costs that run out against doing the same work by hand.
 **Patch runs** lists past executions, read live from AO. **Details** on any
@@ -335,6 +345,7 @@ Every row below is also a row in the settings panel.
 | `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | 15 / 8 / 20 / 10 | Per-service read budgets, seconds |
 | `INSIGHTS_VERIFY_TLS` / `RISK_VERIFY_TLS` | `true` | Set `false` if this machine cannot verify the chain |
 | `LAB_TAG` | — | Passed to the workflow as `lab_tag` |
+| `WARM_AFFECTED` | `true` | After an assessment, quietly ask Insights for the CVE's affected systems. Nothing here needs the answer — the lab MCP server calls that endpoint during the fetch step, where it takes 20s cold against 0.2s warm, longer than the MCP client waits. Warming it while the operator reads the plan spends that time harmlessly |
 
 `ROI_*` has its own table under [ROI report](#roi-report).
 
@@ -584,6 +595,10 @@ rag-setup/
 risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
+ocp-setup/
+  deploy.sh                run the console itself on OpenShift, from .env
+  Containerfile            UBI9 + the source; no dependencies to install
+  manifests/               Deployment, Service, Route, PVC
 multi-agent/
   architecture.jpg/.html   architecture diagram (editable source)
 ```
