@@ -3417,6 +3417,53 @@ def _patch_async(assessment: dict) -> None:
                         error={'service': 'patching', 'detail': str(exc), 'fix': ''})
 
 
+def _absorb_run_detail(detail: dict) -> None:
+    """Fold a freshly-read execution back into the stored run.
+
+    decide() waits AO_DECIDE_WAIT for an approved chain to settle and then
+    returns whatever it last saw. A chain that outlives the wait — six and a
+    half minutes against a five minute budget, on a workflow whose
+    remediation step alone takes three — leaves its result saying 'running'
+    with nothing server-side ever revisiting it. AO had the run finished and
+    verified; the console went on reporting it in flight, and said so again
+    after a reload, because the browser was healing only its own copy.
+
+    This is the read that already asks AO about exactly those rows, so the
+    answer is free. Terminal states only: a row mid-flight is already being
+    polled and overwriting it with another in-flight snapshot gains nothing.
+    """
+    exec_id = detail.get('execution_id')
+    if not exec_id or detail.get('outcome') in (None, 'running', 'awaiting_approval'):
+        return
+    with _RUN_LOCK:
+        patch = _RUN.get('patch') or {}
+        results = patch.get('results') or []
+        row = next((r for r in results if r.get('execution_id') == exec_id), None)
+        if row is None or row.get('outcome') == detail.get('outcome'):
+            return
+        row.update({k: v for k, v in detail.items() if v is not None})
+        _RUN['patch'] = {**patch, 'results': results,
+                         'summary': _summarise(results)}
+        _RUN['next'] = next_step(_RUN['patch']['summary'])
+
+
+def _summarise(results: list[dict]) -> dict:
+    """One definition of the counts, because there were two and they
+    disagreed: the decision path's omitted 'running', so a host still being
+    patched was counted nowhere and the console showed five zeroes over a
+    dispatched host."""
+    def n(*outcomes):
+        return sum(1 for r in results if r.get('outcome') in outcomes)
+    return {
+        'patched': n('patched'),
+        'awaiting_approval': n('awaiting_approval'),
+        'running': n('running'),
+        'rejected': n('rejected'),
+        'failed': n('failed', 'timeout'),
+        'unavailable': n('unavailable'),
+    }
+
+
 def _rereport(state: dict) -> dict | None:
     """Re-run agent 3 once a decision has changed the picture.
 
@@ -3428,15 +3475,7 @@ def _rereport(state: dict) -> dict | None:
     results = (state.get('patch') or {}).get('results') or []
     if not results:
         return None
-    summary = {
-        'patched': sum(1 for r in results if r.get('outcome') == 'patched'),
-        'awaiting_approval': sum(1 for r in results
-                                 if r.get('outcome') == 'awaiting_approval'),
-        'rejected': sum(1 for r in results if r.get('outcome') == 'rejected'),
-        'failed': sum(1 for r in results
-                      if r.get('outcome') in ('failed', 'timeout')),
-        'unavailable': sum(1 for r in results if r.get('outcome') == 'unavailable'),
-    }
+    summary = _summarise(results)
     state['patch'] = {**state['patch'], 'summary': summary}
     nxt = next_step(summary)
     with _RUN_LOCK:
@@ -3569,8 +3608,9 @@ class Handler(BaseHTTPRequestHandler):
             agent = PatchingAgent()
             try:
                 if q.get('execution_id'):
-                    self._send(200, {'ok': True,
-                                     'run': agent.run_detail(q['execution_id'][0])})
+                    detail = agent.run_detail(q['execution_id'][0])
+                    _absorb_run_detail(detail)
+                    self._send(200, {'ok': True, 'run': detail})
                 else:
                     limit = int((q.get('limit') or ['40'])[0])
                     runs = agent.recent_runs(limit)

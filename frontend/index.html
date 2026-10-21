@@ -3790,10 +3790,17 @@ async function startRemediation(cveId) {
       }
       if (s.status === 'complete' && s.patch) {
         const sm = s.patch.summary || {};
+        const n = (s.patch.results || []).length;
+        // No counts here. This line is written once and never revisited, so
+        // whatever numbers it carried froze at the moment of dispatch — it
+        // went on reading "1 awaiting approval" long after that host had
+        // been approved, patched and verified, directly above stat boxes
+        // saying otherwise. Those are live and own the counts; this says
+        // only the part that stays true: what was sent, and to how many.
         el.className = 'result show ' + (sm.failed ? 'err' : 'ok');
-        el.innerHTML = `Dispatched <strong>${esc(cveId)}</strong> — `
-          + `${esc(sm.patched)} patched, ${esc(sm.awaiting_approval)} awaiting approval, `
-          + `${esc(sm.failed)} failed.`;
+        el.innerHTML = `Dispatched <strong>${esc(cveId)}</strong> to `
+          + `${esc(n)} host${n === 1 ? '' : 's'}. Status below updates as the `
+          + `workflow runs.`;
         dispatched = true;
         renderPatch(s);
         return;
