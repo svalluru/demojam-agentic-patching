@@ -179,7 +179,7 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 ./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
 ./aap-setup/create-aap-objects.sh              # AAP projects, credentials, job templates
-./aap-setup/create-ao-workflow.sh              # the AO workflow, published
+./ao-setup/create-ao-workflow.sh               # the AO workflow, published
 ```
 
 </details>
@@ -625,10 +625,10 @@ frontend/
   server.py                dev server — serves the UI, proxies /api/* to :8787
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
-  demojam_lab_workflow.json  the AO workflow, exported — the only one
+  create-ao-workflow.sh    imports the workflow below and publishes it
+  demojam_lab_workflow.json  the workflow the console dispatches to
 aap-setup/
   create-aap-objects.sh    AAP projects, credentials and job templates
-  create-ao-workflow.sh    creates + publishes a one-node test workflow
   run-test.sh              launch one job template and show its artifacts
   playbooks/               fetch-and-commit · sync-and-deploy · verify
 rag-setup/

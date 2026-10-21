@@ -295,7 +295,12 @@ fi
 if ! $SKIP_AO; then
   step "Ansible Orchestrator — credentials, integrations, workflow"
   run "'$ROOT/ao-setup/create-ao-objects.sh'"
-  run "'$ROOT/aap-setup/create-ao-workflow.sh'"
+  # The workflow the console actually dispatches to. This used to create a
+  # one-node test workflow instead, so setup.sh finished successfully and
+  # left AO_WORKFLOW_NAME pointing at something that had never been created
+  # — a console that started, assessed, scored, planned, and then failed at
+  # the first dispatch with "workflow not found".
+  run "'$ROOT/ao-setup/create-ao-workflow.sh'"
 fi
 
 # ----------------------------------------------------------------- console

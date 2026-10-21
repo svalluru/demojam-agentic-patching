@@ -10,14 +10,11 @@ the live flow.
 ```
 aap-setup/
   create-aap-objects.sh                      create / update the AAP objects
-  create-ao-workflow.sh                      create / publish the AO workflow
   run-test.sh                                launch one job and show the result
   playbooks/
     cve_fetch_and_commit.yml                 Insights -> GitHub
     cve_sync_and_deploy.yml                  sync, then build a per-host template
     cve_verify_patch.yml                     ask the host whether the CVE is gone
-  test-workflow/
-    cve_fetch_and_commit_workflow.json       minimal AO workflow for testing
 ```
 
 ## The three steps
@@ -154,11 +151,6 @@ Exits non-zero if the job failed. Set `JT_NAME` if you renamed the template.
 
 For an end-to-end test through Ansible Orchestrator:
 
-```bash
-./aap-setup/create-ao-workflow.sh                            # create + publish
-./aap-setup/create-ao-workflow.sh --run CVE-2026-88812 demojam-rhel-01
-./aap-setup/create-ao-workflow.sh --delete
-```
 
 One node — trigger, fetch and commit, stop. It reuses the main workflow's AAP
 integration and credential ids, so importing it needs no further wiring.
