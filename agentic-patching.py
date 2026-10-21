@@ -1672,6 +1672,25 @@ class PatchingAgent:
         PatchingAgent._labels = out
         return out
 
+    def relabel(self, text: str | None) -> str | None:
+        """Swap node ids for their names inside a message meant for a person.
+
+        AO phrases failures as 'fetch_and_commit_prod: AAP job 262 failed',
+        and that string is what the Patch runs table prints in full. Every
+        other node reference on the page reads 'Fetch from Lightspeed &
+        Commit to Gitea'; this one did not, so the one place an operator
+        looks when something breaks was the one still speaking in ids.
+
+        Longest id first, so fetch_and_commit_prod is not half-replaced by
+        the rule for fetch_and_commit.
+        """
+        if not text:
+            return text
+        labels = self.node_labels()
+        for node_id in sorted(labels, key=len, reverse=True):
+            text = text.replace(node_id, labels[node_id])
+        return text
+
     def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '') -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
@@ -1793,7 +1812,7 @@ class PatchingAgent:
             # Needed to signal the approval gate; see decide().
             'approval_activity_id': approval_activity,
             'matched_port': matched_port,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             'steps': steps,
             # AO's own clock, carried through rather than left for a later
             # read. The simulated path gets these from SimStore.put(), so
@@ -1962,7 +1981,7 @@ class PatchingAgent:
                             if status in ('completed', 'succeeded')
                             else 'running'),
                 'approval_pending': pending,
-                'error': e.get('error_details'),
+                'error': self.relabel(e.get('error_details')),
                 'created_at': e.get('created_at'),
                 'completed_at': e.get('completed_at'),
                 # Workflow time, gate wait removed — the same figure the
@@ -2081,7 +2100,7 @@ class PatchingAgent:
             'approval_pending': pending,
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
             # Workflow execution time: wall clock less whatever the run spent
@@ -2171,7 +2190,7 @@ class PatchingAgent:
             'approval_pending': bool(state.get('approval_pending')),
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             # The gate is where most of the exposure window is spent, so this
             # is the read that matters for timing: completed_at only exists
             # once the approved run finishes.
