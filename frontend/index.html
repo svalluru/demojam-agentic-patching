@@ -3167,10 +3167,23 @@ function riskMeter(h, plan) {
 // queues it for someone to approve. Calling both "Start Patch" overstates one
 // and understates the other, and with live model scores a single CVE can split
 // across both branches at once.
-function dispatchAction(plan) {
-  const review = Number(plan.hosts_review) || 0;
-  const auto   = Number(plan.hosts_auto) || 0;
+// review/auto come from the selection, not the plan, so the button
+// describes what this press will actually do. The red/black distinction is
+// the page's one safety signal — red means hosts get patched unattended —
+// and deselecting every gated host has to turn it red, just as deselecting
+// every ungated one has to turn it black.
+function dispatchAction(plan, hosts, sel) {
+  const live = (hosts || []).filter(h => !sel || sel.has(h.system_uuid));
+  const review = live.length ? live.filter(h => h.decision === 'review').length
+                             : Number(plan.hosts_review) || 0;
+  const auto   = live.length ? live.filter(h => h.decision !== 'review').length
+                             : Number(plan.hosts_auto) || 0;
   const n = (c, w) => `${c} ${w}${c === 1 ? '' : 's'}`;
+  if (sel && sel.size === 0) {
+    return { label: 'Select a host', calm: true, disabled: true,
+             title: 'Tick the hosts to dispatch. Nothing is sent until at '
+                  + 'least one is selected.' };
+  }
   if (!review && !auto) {
     return { label: 'Nothing to patch', title: 'No affected hosts in this plan.',
              calm: true, disabled: true };
@@ -3201,6 +3214,14 @@ function dispatchAction(plan) {
 // in one, the Approve/Reject buttons in the other. Rendered by its own
 // function because both renderers need to refresh it without redrawing the
 // frame around it.
+// Which hosts a dispatch will go to. null means "all of them", which is
+// both the default and what the backend assumes when no list is sent, so
+// the common case puts nothing in the request and behaves as it always did.
+// Reset whenever a new assessment arrives — uuids from the last CVE would
+// silently exclude hosts from this one.
+let hostSel = null;
+let hostSelCve = '';
+
 let showCols = localStorage.getItem('showCols') === '1';
 // Same idea for the runs table, kept separate: the two tables are read in
 // different situations and an operator who wants exec ids in one does not
@@ -3247,6 +3268,13 @@ function renderHostTable(s) {
   const fresh = sig !== patchRowSig;
   patchRowSig = sig;
 
+  // Checkboxes only before dispatch. Afterwards the same columns carry
+  // status and progress, and a tickbox beside a host already being patched
+  // offers a choice that no longer exists.
+  const pick = !dispatched && (s.hosts || []).length > 1;
+  if (hostSelCve !== (s.cve_id || '')) { hostSel = null; hostSelCve = s.cve_id || ''; }
+  const sel = hostSel || new Set((s.hosts || []).map(h => h.system_uuid));
+
   const rows = (s.hosts || []).map((h, i) => {
     const r = byHost[h.host];
     const o = r ? (OUTCOME[r.outcome] || { cls: 'review', label: r.outcome }) : null;
@@ -3270,6 +3298,9 @@ function renderHostTable(s) {
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     const prog = r ? stepProgress(r) : null;
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
+      ${pick ? `<td><input type="checkbox" class="host-pick"
+          value="${esc(h.system_uuid)}"${sel.has(h.system_uuid) ? ' checked' : ''}
+          title="Dispatch to this host"></td>` : ''}
       <td class="cve-id">${esc(h.host)}</td>
       <td>${riskMeter(h, plan)}</td>
       <td><span class="badge ${h.decision}">${esc(planLabel(h.decision))}</span></td>
@@ -3288,6 +3319,8 @@ function renderHostTable(s) {
     </div>
     <div class="${showCols && dispatched ? 'tscroll' : ''}">
     <table class="${showCols && dispatched ? 'wide' : ''}"><thead><tr>
+      ${pick ? `<th><input type="checkbox" id="host-pick-all"
+          title="Select every host"${sel.size === (s.hosts || []).length ? ' checked' : ''}></th>` : ''}
       <th>Host</th><th>Risk vs gate</th><th>Plan</th>
       ${dispatched ? '<th>Status</th>' : ''}
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
@@ -3312,6 +3345,26 @@ function renderHostTable(s) {
       if (cell) cell.classList.toggle('open');
     });
   }
+
+  // Bound per render, because the inputs are replaced each time. Changing a
+  // tick re-renders rather than mutating in place, so the header checkbox,
+  // the row ticks and the dispatch button cannot disagree about what is
+  // selected — and the button is the one that matters.
+  el.querySelectorAll('.host-pick').forEach(box => {
+    box.addEventListener('change', () => {
+      const next = new Set(sel);
+      box.checked ? next.add(box.value) : next.delete(box.value);
+      hostSel = next;
+      renderHostTable(s);
+      refreshDispatchButton(s);
+    });
+  });
+  const all = document.getElementById('host-pick-all');
+  if (all) all.addEventListener('change', () => {
+    hostSel = all.checked ? null : new Set();
+    renderHostTable(s);
+    refreshDispatchButton(s);
+  });
 
   const cb = document.getElementById('more-cols');
   if (cb) cb.addEventListener('change', e => {
@@ -3360,8 +3413,15 @@ function renderPlan(s) {
     back: BACK_CVES, patch: true,
   });
   renderStages(s);
+  refreshDispatchButton(s);
+}
+
+// Split out so a checkbox can call it without re-running the whole view.
+function refreshDispatchButton(s) {
   const pb = document.getElementById('head-patch');
-  const act = dispatchAction(plan);
+  if (!pb) return;
+  const plan = s.plan || {};
+  const act = dispatchAction(plan, s.hosts, hostSel);
   pb.textContent = act.label;
   pb.title = act.title;
   pb.classList.toggle('calm', act.calm);
@@ -3670,9 +3730,13 @@ async function startRemediation(cveId) {
   el.className = 'result show info';
   el.innerHTML = `Handing <strong>${esc(cveId)}</strong> to the Patching Agent…`;
   try {
+    // Only send a list when one was actually chosen. Omitting it means
+    // "every assessed host", so the untouched case sends what it always
+    // sent and cannot be changed by a stale selection.
     const r = await fetch('/api/patch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cve: cveId }),
+      body: JSON.stringify(hostSel ? { cve: cveId, hosts: [...hostSel] }
+                                   : { cve: cveId }),
     });
     const d = await r.json().catch(() => ({}));
     if (!(r.ok && d.ok)) {

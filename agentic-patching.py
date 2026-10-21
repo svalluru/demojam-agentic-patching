@@ -3397,7 +3397,15 @@ def _patch_async(assessment: dict) -> None:
     try:
         state = sup.patch(assessment)
         with _RUN_LOCK:
+            # Keep every assessed host on screen, not just the dispatched
+            # ones. Patching a subset used to delete the rest from the
+            # table — tick two of five, press the button, and three hosts
+            # disappear with nothing saying they were skipped rather than
+            # lost. They stay, with no status, which reads as "not sent".
+            assessed = _RUN.get('hosts') or []
             _RUN.update(state, status='complete', phase='patching', error=None)
+            if len(assessed) > len(state.get('hosts') or []):
+                _RUN['hosts'] = assessed
     except BackendUnavailable as exc:
         with _RUN_LOCK:
             _RUN.update(status='failed', phase='patching', events=list(sup.events),
@@ -3651,12 +3659,51 @@ class Handler(BaseHTTPRequestHandler):
                                'Run "Assess CVE Impact" first — the Patching Agent '
                                'needs each host\'s decision to pick a workflow branch.')})
                 return
+
+            # An optional subset, by system uuid. Absent means every
+            # assessed host, which is what the console did before the
+            # checkboxes existed and what the CLI still does.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                body = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                body = {}
+            chosen = body.get('hosts')
+            if chosen is not None:
+                if not isinstance(chosen, list):
+                    self._send(400, {'ok': False,
+                                     'error': 'hosts must be a list of system uuids'})
+                    return
+                known = {h.get('system_uuid'): h for h in snapshot['hosts']}
+                # Unknown uuids are rejected rather than skipped. This
+                # endpoint patches real machines, and "I selected three and
+                # two were patched" is a discrepancy nobody notices until
+                # the host they cared about is still vulnerable.
+                unknown = [u for u in chosen if u not in known]
+                if unknown:
+                    self._send(400, {
+                        'ok': False, 'error': 'unknown host in selection',
+                        'detail': f'not in this assessment: {", ".join(map(str, unknown[:3]))}'})
+                    return
+                if not chosen:
+                    self._send(400, {
+                        'ok': False, 'error': 'No hosts selected',
+                        'detail': 'Tick at least one host, or clear the '
+                                  'selection to dispatch all of them.'})
+                    return
+                # Preserve assessment order rather than selection order, so
+                # the plan, the report and the runs list agree.
+                snapshot = dict(snapshot,
+                                hosts=[h for h in snapshot['hosts']
+                                       if h.get('system_uuid') in set(chosen)])
+
             with _RUN_LOCK:
                 _RUN.update(status='running', phase='patching', error=None)
             threading.Thread(target=_patch_async, args=(snapshot,),
                              daemon=True, name='patching').start()
             self._send(200, {'ok': True, 'cve': snapshot.get('cve_id'),
-                             'status': 'running'})
+                             'status': 'running',
+                             'dispatching': len(snapshot['hosts'])})
             return
 
         if path == '/api/settings':
