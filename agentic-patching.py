@@ -1598,6 +1598,39 @@ class PatchingAgent:
             'Ansible Orchestrator', f'workflow {AO_WORKFLOW_NAME!r} not found',
             f'set AO_WORKFLOW_NAME to one of: {", ".join(filter(None, names))}')
 
+    # Node id -> the name the workflow gives it. Class-level because it
+    # describes the workflow, not any one agent instance.
+    _labels: dict[str, str] = {}
+
+    def node_labels(self) -> dict[str, str]:
+        """What each workflow node is called, for anything a person reads.
+
+        AO reports activities by node id — approval_prod, fetch_and_commit —
+        which is right in a definition and poor on screen: the console was
+        asking an operator to approve something called 'approval_prod' and
+        reporting 'run_cve_remediation_prod done in 1m39s'.
+
+        The workflow already names every node: 'Approve Production Patch',
+        'Run CVE Remediation', 'Verify Patch'. So there is nothing to invent
+        and no second list to keep in step — rename a node in AO and this
+        follows it.
+
+        Cached, because the definition only changes when the workflow is
+        republished and this is wanted on every activity poll.
+        """
+        if self._labels:
+            return self._labels
+        try:
+            wf = ao_call(f'/api/v1/workflows/{self.workflow_id()}') or {}
+        except BackendUnavailable:
+            return {}              # an id is a poor label, but better than none
+        wd = (wf.get('version') or {}).get('workflow_definition') or {}
+        out = {n['id']: n['name']
+               for n in list(wd.get('nodes') or []) + list(wd.get('triggers') or [])
+               if n.get('id') and n.get('name')}
+        PatchingAgent._labels = out
+        return out
+
     def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '') -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
@@ -1768,21 +1801,21 @@ class PatchingAgent:
             if status in ('waiting', 'pending') and s.get('node_type') != 'approval':
                 continue
             seen[name] = status
+            shown = s.get('label') or name
             took = _elapsed(s.get('started_at'), s.get('completed_at'))
             if status in ('completed', 'succeeded'):
-                detail = f'{name} done' + (f' in {took}' if took else '')
+                detail = f'{shown} done' + (f' in {took}' if took else '')
             elif status in ('failed', 'error'):
-                detail = f'{name} FAILED' + (f' after {took}' if took else '')
+                detail = f'{shown} FAILED' + (f' after {took}' if took else '')
                 if s.get('error'):
                     detail += f' — {str(s["error"])[:90]}'
             elif status in ('waiting', 'pending'):
-                detail = f'{name} waiting for approval'
+                detail = f'{shown} waiting for approval'
             else:
-                detail = f'{name} {status}'
+                detail = f'{shown} {status}'
             self._trace('ao', 'patching', f'{host.split(".")[0]}: {detail}')
 
-    @staticmethod
-    def _activities(exec_id: str) -> tuple[list[dict], str, str]:
+    def _activities(self, exec_id: str) -> tuple[list[dict], str, str]:
         """Per-node outcome, the switch port taken, and any waiting approval.
 
         The signal endpoint addresses an activity by temporal_activity_id (the
@@ -1793,6 +1826,7 @@ class PatchingAgent:
         except BackendUnavailable:
             return [], '', ''
         steps, port, approval = [], '', ''
+        labels = self.node_labels()
         for a in (found or {}).get('resources', []):
             out = a.get('output_data') or {}
             if a.get('activity_name') == 'route_switch':
@@ -1800,6 +1834,10 @@ class PatchingAgent:
             if a.get('node_type') == 'approval' and a.get('status') in ('waiting', 'pending'):
                 approval = a.get('temporal_activity_id') or a.get('activity_name') or ''
             steps.append({'name': a.get('activity_name'),
+                          # What a person reads. The id stays in 'name' so
+                          # anything joining on it keeps working.
+                          'label': labels.get(a.get('activity_name') or '',
+                                              a.get('activity_name')),
                           'status': a.get('status'),
                           'error': a.get('error_details'),
                           # 'waiting' means two different things depending on

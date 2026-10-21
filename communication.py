@@ -134,7 +134,7 @@ class CommunicationAgent:
             # asks of it — and a per-step breakdown answers the more useful
             # second question of where the time actually went.
             steps = ' · '.join(
-                f'{s.get("name")}:{s.get("status")}'
+                f'{s.get("label") or s.get("name")}:{s.get("status")}'
                 + (f' ({s["elapsed"]})' if s.get('elapsed') else '')
                 for s in (r.get('steps') or [])
                 if s.get('status') and s.get('status') not in ('pending', 'skipped')
