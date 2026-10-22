@@ -177,8 +177,8 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 ./rag-setup/deploy.sh                          # Milvus + Llama Stack
 ./rag-setup/ingest.py --route https://$ROUTE --dir ./rag-setup/data --ensure
 ./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
+./aap-setup/create-verify-template.sh          # our one AAP template
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
-./aap-setup/create-aap-objects.sh              # AAP projects, credentials, job templates
 ./ao-setup/create-ao-workflow.sh               # the AO workflow, published
 ```
 
@@ -648,8 +648,6 @@ Listed so they are not re-raised as bugs.
 - **A Llama Stack restart silently empties the vector store registry** —
   searches return no hits with no error. Run `ingest.py --ensure` after any
   restart; see [rag-setup/README.md](rag-setup/README.md).
-- `CVE - Verify Patch` is created by hand rather than by
-  `aap-setup/create-aap-objects.sh`.
 - No scheduler service exists; the maintenance window is configuration.
 
 ---
@@ -675,9 +673,8 @@ ao-setup/
   create-ao-workflow.sh    imports the workflow below and publishes it
   demojam_lab_workflow.json  the workflow the console dispatches to
 aap-setup/
-  create-aap-objects.sh    AAP projects, credentials and job templates
-  run-test.sh              launch one job template and show its artifacts
-  playbooks/               fetch-and-commit · sync-and-deploy · verify
+  create-verify-template.sh  CVE - Verify Patch — the one AAP object that is ours
+  playbooks/                 cve_verify_patch.yml
 rag-setup/
   deploy.sh                Milvus + Llama Stack as plain Pods (no RHOAI)
   ingest.py                load/verify the RAG vector store

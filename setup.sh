@@ -13,7 +13,7 @@
 #               whether any of this can work: is the target host visible to
 #               BOTH Insights and AAP
 #   openshift   Milvus + etcd + Llama Stack, the risk model, the RAG ingest
-#   aap         projects, credential types, credentials, job templates
+#   aap         the verify job template — the rest belongs to the lab
 #   ao          credentials, integrations, the Agentic Patching workflow
 #   console     writes the live-mode settings into .env
 #   smoke       one live assessment, end to end
@@ -87,10 +87,6 @@ for v in LIGHTSPEED_CLIENT_ID LIGHTSPEED_CLIENT_SECRET \
          AO_URL AO_USERNAME AO_PASSWORD AAP_BASE_URL AAP_TOKEN; do
   [[ -n "${!v:-}" ]] || note_fail "$v is empty in .env"
 done
-# GIT_HUB_TOKEN is no longer required. It fed the REST fetch step, which the
-# lab workflow replaces with a Gitea commit through AAP's own credential, so
-# a run needs nothing from GitHub. Still checked below when it is set,
-# because aap-setup/create-aap-objects.sh does use it.
 # Stop here rather than carrying on: every check below dereferences these,
 # and under `set -u` the first missing one aborts the script with "unbound
 # variable" — losing the list of what was missing, which was the useful part.
@@ -178,8 +174,14 @@ print('  \033[32m✓\033[0m service account can read vulnerability data')
 
 host = os.environ.get('HOSTS_FILTER', '').strip()
 if not host:
-    print('  \033[33m!\033[0m HOSTS_FILTER is not set — live mode will plan for every '
-          'affected host of a CVE')
+    # Unset is fine when HOSTS_TAG scopes the lookup instead — that is the
+    # usual way to cover several hosts. Only both unset means the whole
+    # organisation, which in a shared lab is other people's machines.
+    if os.environ.get('HOSTS_TAG', '').strip():
+        print(f"  \033[32m✓\033[0m hosts scoped by HOSTS_TAG={os.environ['HOSTS_TAG']}")
+    else:
+        print('  \033[33m!\033[0m neither HOSTS_FILTER nor HOSTS_TAG is set — live mode '
+              'will plan for every affected host in the organisation')
     sys.exit(0)
 
 d, c = get('https://console.redhat.com/api/inventory/v1/hosts'
@@ -226,12 +228,6 @@ if [[ -n "$AAP_NAME" && "$code" == "200" ]]; then
   fi
 fi
 
-if [[ -n "${GIT_HUB_TOKEN:-}" ]]; then
-  gh="$(curl -s -o /dev/null -m 20 -w '%{http_code}' \
-        -H "Authorization: Bearer $GIT_HUB_TOKEN" https://api.github.com/user || echo 000)"
-  [[ "$gh" == "200" ]] && ok "GitHub token works" \
-                       || note_fail "GitHub token returned $gh (401 = expired or revoked)"
-fi
 
 if [[ $FAILED -gt 0 ]]; then
   echo
@@ -282,12 +278,14 @@ fi
 # --------------------------------------------------------------------- aap
 
 if ! $SKIP_AAP; then
-  step "AAP — projects, credentials, job templates"
-  if [[ -z "${TARGET_INVENTORY:-}" || -z "${MACHINE_CREDENTIAL:-}" ]]; then
-    warn "TARGET_INVENTORY / MACHINE_CREDENTIAL not set; using the script defaults."
-    warn "Set them to the inventory and SSH credential that can reach your host."
-  fi
-  run "'$ROOT/aap-setup/create-aap-objects.sh'"
+  step "AAP — the verify job template"
+  # Only the one object that is ours. The fetch and deploy templates, and the
+  # Lightspeed-Playbooks project behind them, belong to the lab. This stage
+  # used to run a script whose default names were the lab's own and which
+  # updated whatever it matched by name — so setup.sh would have repointed
+  # the lab's Gitea project at GitHub and swapped its fetch playbook,
+  # breaking the workflow it was meant to be setting up.
+  run "'$ROOT/aap-setup/create-verify-template.sh'"
 fi
 
 # ---------------------------------------------------------------------- ao
