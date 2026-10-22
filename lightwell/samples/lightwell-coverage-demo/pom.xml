@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Constructed demo application. It is not a real project.
+  Every version below is pinned to one that the Lightwell Network patches (checked October 2026), plus one that it
+  does not, so a scan shows each coverage outcome. Do not build or deploy this.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo.lightwell</groupId>
+  <artifactId>coverage-demo</artifactId>
+  <version>1.0.0</version>
+
+  <dependencies>
+    <!-- Lightwell builds exist and address all or most of the known advisories -->
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.3.3</version></dependency>
+    <dependency><groupId>org.apache.kafka</groupId><artifactId>kafka-clients</artifactId><version>3.6.2</version></dependency>
+    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.24.3</version></dependency>
+    <dependency><groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.8.6</version></dependency>
+
+    <!-- Lightwell builds exist but address only some of the advisories -->
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.13.4</version></dependency>
+    <dependency><groupId>com.thoughtworks.xstream</groupId><artifactId>xstream</artifactId><version>1.4.18</version></dependency>
+
+    <!-- Lightwell builds exist, but Lightwell lists no advisory for them, or names a build not yet published -->
+    <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId><version>1.30</version></dependency>
+    <dependency><groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.9</version></dependency>
+    <dependency><groupId>org.springframework</groupId><artifactId>spring-core</artifactId><version>5.3.18</version></dependency>
+
+    <!-- No Lightwell build of this version -->
+    <dependency><groupId>org.apache.struts</groupId><artifactId>struts2-core</artifactId><version>2.3.30</version></dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,8 @@
+{
+ "ref": "master",
+ "commit": "5249cc8b05a1c37f6b2f757b1cf16a509c327122",
+ "notes": [],
+ "manifests": {
+  "requirements.txt": "click\ncryptography\nFlask\ngeoip2\njsonschema\nPyJWT\npyotp\nqrcode\nrequests\n"
+ }
+}

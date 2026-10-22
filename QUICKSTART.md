@@ -29,7 +29,10 @@ cd demojam-agentic-patching
 ./demo.sh
 ```
 
-Then open <http://127.0.0.1:8788>.
+Then open <http://127.0.0.1:8788>. The **Application Patching** button in the header
+opens the application-library scanner (Lightwell), served from the same
+address at `/lightwell/`. It is part of the console's own server, so it needs no
+port of its own.
 
 That is the whole setup. Do **not** create a `.env` — fallback mode does not
 read one, and it is not needed unless you are connecting to the real cluster.

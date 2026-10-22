@@ -1,0 +1,10 @@
+{
+ "ref": "main",
+ "commit": "fc589a63778fdee136db4bd2a76f0d661117ad37",
+ "notes": [
+  "Hand-reconstructed demo data: this repository has no dependency manifest. The requirements.txt scanned here was written from the pip install commands in its README, so only transformers (the one version the README pins) can be checked."
+ ],
+ "manifests": {
+  "requirements.txt": "# Reconstructed from the README install commands. The repository has no requirements file.\nPySide6\npiexif\ntransformers==4.49.0\nPillow\npywin32\nhuggingface_hub\nkeyring\ntimm\neinops\ntorch\ntorchvision\ntorchaudio\n"
+ }
+}

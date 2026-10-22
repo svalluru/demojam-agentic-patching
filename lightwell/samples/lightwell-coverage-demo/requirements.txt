@@ -1,0 +1,5 @@
+# Constructed demo application, not a real project. See pom.xml.
+# Pinned to versions the Lightwell Network patches (checked October 2026), plus one it does not.
+sqlparse==0.5.5
+pypdf2==3.0.1
+django==3.2.18
