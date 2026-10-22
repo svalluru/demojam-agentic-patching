@@ -7,9 +7,10 @@
 #   aap-credential  Ansible Automation     aap   Ansible Automation Platform
 #                   Platform / OAuth2            base_url  <- AAP_BASE_URL
 #                   token <- AAP_TOKEN           cred      <- aap-credential
-#   llm-token       LLM Provider /         maas  LLM Provider
-#                   API key <- VLLM_API_TOKEN    base_url  <- VLLM_URL
-#                                                cred      <- llm-token
+#
+# No LLM credential or integration. Those served the lab workflow's AI triage
+# agent, which the console's own risk score replaced — nothing this repo
+# dispatches calls an LLM through AO, so creating them was setup for nobody.
 #
 # Idempotent: existing objects are reused and their secrets refreshed, so this
 # is safe to re-run in a pipeline.
@@ -17,15 +18,11 @@
 # Usage:
 #   ./create-ao-objects.sh              # create / update
 #   ./create-ao-objects.sh --dry-run    # show what would happen
-#   ./create-ao-objects.sh --delete     # remove the four objects
+#   ./create-ao-objects.sh --delete     # remove the two objects
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ENV_FILE:-$(cd "$SCRIPT_DIR/.." && pwd)/.env}"
-
-# Which LLM family the maas endpoint belongs to. AO accepts:
-#   red_hat_ai | openai | anthropic | gemini | custom
-PROVIDER_HINT="${PROVIDER_HINT:-red_hat_ai}"
 
 DRY_RUN=false
 DELETE=false
@@ -51,7 +48,7 @@ command -v python3 >/dev/null || fail "python3 not found"
 # shellcheck disable=SC1090
 set -a; source "$ENV_FILE"; set +a
 
-for v in AO_URL AO_USERNAME AO_PASSWORD AAP_TOKEN AAP_BASE_URL VLLM_URL VLLM_API_TOKEN; do
+for v in AO_URL AO_USERNAME AO_PASSWORD AAP_TOKEN AAP_BASE_URL; do
   [[ -n "${!v:-}" ]] || fail "$v is empty in $ENV_FILE"
 done
 
@@ -138,9 +135,7 @@ type_id() {  # credential type id by display name
   api GET /api/v1/credential_types | jfind "$1"
 }
 AAP_TYPE_ID="$(type_id 'Ansible Automation Platform')"
-LLM_TYPE_ID="$(type_id 'LLM Provider')"
 [[ -n "$AAP_TYPE_ID" ]] || fail "credential type 'Ansible Automation Platform' not found"
-[[ -n "$LLM_TYPE_ID" ]] || fail "credential type 'LLM Provider' not found"
 
 CRED_PATH="/api/v1/projects/$PROJECT_ID/credentials"
 
@@ -148,7 +143,7 @@ CRED_PATH="/api/v1/projects/$PROJECT_ID/credentials"
 
 if [[ "$DELETE" == true ]]; then
   step "Delete"
-  for n in aap maas; do
+  for n in aap; do
     id="$(api GET /api/v1/integrations | jfind "$n")"
     if [[ -n "$id" ]]; then
       info "integration $n ($id) -> HTTP $(api_code DELETE "/api/v1/integrations/$id")"
@@ -156,7 +151,7 @@ if [[ "$DELETE" == true ]]; then
       info "integration $n: not present"
     fi
   done
-  for n in aap-credential llm-token; do
+  for n in aap-credential; do
     id="$(api GET "$CRED_PATH" | jfind "$n")"
     if [[ -n "$id" ]]; then
       info "credential $n ($id) -> HTTP $(api_code DELETE "$CRED_PATH/$id")"
@@ -200,8 +195,6 @@ ensure_credential() {  # name type_id inputs_json out_var
 
 ensure_credential 'aap-credential' "$AAP_TYPE_ID" \
   "{\"oauth_token\":$(json_str "$AAP_TOKEN")}" AAP_CRED_ID
-ensure_credential 'llm-token' "$LLM_TYPE_ID" \
-  "{\"api_key\":$(json_str "$VLLM_API_TOKEN")}" LLM_CRED_ID
 
 # ------------------------------------------------------------ integrations
 
@@ -249,11 +242,6 @@ else:
 ensure_integration 'aap' 'ansible_automation_platform' \
   "{\"integration_type\":\"ansible_automation_platform\",\"base_url\":$(json_str "$AAP_BASE")}" \
   "$AAP_CRED_ID"
-
-ensure_integration 'maas' 'llm_provider' \
-  "{\"integration_type\":\"llm_provider\",\"provider_hint\":\"$PROVIDER_HINT\",\
-\"base_url\":$(json_str "$VLLM_URL")}" \
-  "$LLM_CRED_ID"
 
 # ------------------------------------------------------------------ report
 

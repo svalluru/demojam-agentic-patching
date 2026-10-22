@@ -1322,7 +1322,7 @@ class InfoAgent:
 AO_URL = env('AO_URL').rstrip('/')
 AO_USERNAME = env('AO_USERNAME')
 AO_PASSWORD = env('AO_PASSWORD')
-AO_WORKFLOW_NAME = env('AO_WORKFLOW_NAME', 'DemoJam Agentic Patching')
+AO_WORKFLOW_NAME = env('AO_WORKFLOW_NAME', 'RHEL CVE Remediation - Intelligent Patching - Demo Jam')
 AO_TRIGGER_NODE = env('AO_TRIGGER_NODE', 'trigger_manual')
 AO_POLL_TIMEOUT = int(env('AO_POLL_TIMEOUT', '900'))
 LAB_TAG = env('LAB_TAG')
@@ -2018,8 +2018,8 @@ class PatchingAgent:
 
     # Everything the workflow still has to do once the gate clears. route_switch
     # and the gate itself are already behind an approved run.
-    _AFTER_GATE = tuple(n for n, _ in fallbacks.SIM_STEPS
-                        if n not in ('route_switch', 'approval_gate'))
+    _PROD_NODES = [n for n, _ in fallbacks.SIM_STEPS_PROD]
+    _AFTER_GATE = tuple(_PROD_NODES[_PROD_NODES.index(fallbacks.SIM_GATE) + 1:])
 
     def _decide_sim(self, execution_id: str, decision: str) -> dict:
         """Resolve a simulated approval gate. No signal is sent anywhere."""
@@ -2037,7 +2037,7 @@ class PatchingAgent:
                 'status': 'completed', 'outcome': 'rejected',
                 'approval_pending': False, 'approval_activity_id': '',
                 'decision': decision,
-                'steps': fallbacks.sim_steps('approval_gate', status='rejected'),
+                'steps': fallbacks.sim_steps(fallbacks.SIM_GATE, status='rejected'),
             })
             SIM.put(run)
             self._trace('patching', 'console',
@@ -2059,7 +2059,7 @@ class PatchingAgent:
             demo_pause(3)
 
         run.update({'status': 'completed', 'outcome': 'patched',
-                    'steps': fallbacks.sim_steps('run_cve_remediation')})
+                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD)})
         SIM.put(run)
         self._trace('patching', 'console',
                     f'{execution_id[:12]} -> SIMULATED patched')
@@ -3044,7 +3044,7 @@ def roi_report(state: dict, overrides: dict | None = None,
 # SETTINGS — one registry describing every tunable this process reads
 #
 # Scope is deliberately "what this process reads", not "everything in
-# .env.example". NAMESPACE, GIT_HUB_TOKEN, the AAP_* and VLLM_* keys belong to
+# .env.example". NAMESPACE, the AAP_* and VLLM_* keys belong to
 # ao-setup/ and rag-setup/, which are separate shell scripts; offering them
 # here would imply changing them does something, and it would not.
 #
@@ -3269,7 +3269,7 @@ SETTINGS: tuple[Setting, ...] = (
             'Write-only. Leave blank to keep the current value.',
             secret=True, binds='AO_PASSWORD'),
     Setting('AO_WORKFLOW_NAME', 'Ansible Orchestrator', 'Workflow name', 'str',
-            'DemoJam Agentic Patching',
+            'RHEL CVE Remediation - Intelligent Patching - Demo Jam',
             'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
     Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),

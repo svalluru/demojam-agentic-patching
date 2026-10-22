@@ -424,7 +424,7 @@ Every row below is also a row in the settings panel.
 | `HOSTS_FILTER` | — | The host to assess: a substring of the display name, or a system uuid. Prefer the uuid — display names are not unique in a shared organisation, and they change. Live mode only |
 | `HOSTS_LIMIT` | — | Cap host count. A filter matching more hosts than this **refuses** rather than silently keeping an arbitrary one. Live mode only |
 | `REVIEW_THRESHOLD` | `30` | Risk score above which a host needs approval — model scores only. See [known gaps](#known-gaps) |
-| `AO_WORKFLOW_NAME` | `DemoJam Agentic Patching` | Workflow to trigger, resolved by name so the id can differ per cluster. `setup.sh` writes the Demo Jam one |
+| `AO_WORKFLOW_NAME` | `RHEL CVE Remediation - Intelligent Patching - Demo Jam` | Workflow to trigger, resolved by name so the id can differ per cluster. `ao-setup/create-ao-workflow.sh` creates it under this name |
 | `AO_HOST_SHORTNAME` | `true` | Send the first label of the Insights display name to the workflow, so an FQDN still matches an AAP inventory host named short. Turn off only if your inventory host names are fully qualified |
 | `AO_DECIDE_WAIT` | `90` | Seconds to wait for a run to settle after approve/reject |
 | `PATCHED_WITHIN_MINUTES` | `10080` | How recently a host must have been patched for this CVE to be left out of a re-assessment. 7 days; `0` turns the guard off |
