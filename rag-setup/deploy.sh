@@ -16,9 +16,8 @@ info() { echo "  $*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 step "Preflight"
-command -v oc >/dev/null 2>&1 || fail "oc not found on PATH"
-oc whoami >/dev/null 2>&1 || fail "not logged in — run: oc login <api-url>"
-info "cluster:   $(oc whoami --show-server)"
+. "$ROOT/../lib/ocp-check.sh"
+ocp_check_cluster "$ENV_FILE" || fail "refusing to deploy — see above"
 # Created if missing, skipped if present. Checked with 'oc get project'
 # rather than 'oc get namespace': a user without cluster-scoped read can see
 # their own projects but may not be allowed to read the namespace object,

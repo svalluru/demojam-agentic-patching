@@ -102,11 +102,11 @@ command -v curl    >/dev/null || die "curl not found"
 # -- reachability -----------------------------------------------------------
 
 if ! $SKIP_OPENSHIFT; then
-  if command -v oc >/dev/null && oc whoami >/dev/null 2>&1; then
-    ok "oc logged in as $(oc whoami) at $(oc whoami --show-server 2>/dev/null | sed 's#https://api\.##;s#:6443##')"
-  else
-    note_fail "oc not logged in — run 'oc login', or pass --skip-openshift"
-  fi
+  # The right cluster, not just a cluster. OCP_API_URL is mandatory for
+  # the OpenShift stage: that stage creates namespaces, volumes and builds,
+  # and oc acts on whichever cluster was logged in to last.
+  . "$ROOT/lib/ocp-check.sh"
+  ocp_check_cluster "$ENV_FILE" || FAILED=$((FAILED+1))
 fi
 
 code="$(curl -sk -o /dev/null -m 20 -w '%{http_code}' \

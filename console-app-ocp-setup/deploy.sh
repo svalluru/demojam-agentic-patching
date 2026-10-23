@@ -37,8 +37,8 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
 
-command -v oc >/dev/null || die "oc not found"
-oc whoami >/dev/null 2>&1 || die "not logged in — run 'oc login' first"
+. "$ROOT/lib/ocp-check.sh"
+ocp_check_cluster "$ENV_FILE" || die "refusing to deploy — see above"
 # NAMESPACE from .env, as the RAG and risk-model scripts use, so all three
 # land in the same place. Falling back to the current oc project kept the
 # old behaviour, but it meant the console went wherever oc happened to be

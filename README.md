@@ -155,6 +155,23 @@ breaks every script that sources it, with an error naming the wrong thing.
 cp .env.example .env     # then edit
 ```
 
+**`OCP_API_URL` is mandatory.** Every script that creates OpenShift objects
+first checks that `oc` is logged in to exactly that cluster, and refuses —
+before creating anything — if it is a different one, or if the value is
+unset. `oc` acts on whichever cluster you last logged in to, from any
+terminal, and with more than one lab that is easy to get wrong.
+
+```
+✗ oc is logged in to the wrong cluster
+    logged in : https://api.cluster-kqn6x…:6443
+    .env says : https://api.cluster-jrvvt…:6443
+    run: oc login https://api.cluster-jrvvt…:6443   — nothing has been created
+```
+
+Set `NAMESPACE` to the one that already holds Milvus, Llama Stack and the risk
+model. The scripts create it if it is missing, so a typo there does not fail —
+it builds a second, empty stack.
+
 ### 2. Setup
 
 ```bash

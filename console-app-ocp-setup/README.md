@@ -10,8 +10,9 @@ Builds the image and deploys both halves of the console as one pod, with
 ./console-app-ocp-setup/deploy.sh --delete        # remove everything it creates
 ```
 
-It prints the Route when it finishes. Requires `oc login` and a namespace
-that already has Milvus, Llama Stack and the risk model — `rag-setup/` and
+It prints the Route when it finishes. Requires `oc login` to the cluster named
+by `OCP_API_URL` — it refuses to deploy anywhere else — and a namespace
+(`NAMESPACE`) that already has Milvus, Llama Stack and the risk model — `rag-setup/` and
 `risk_score/openshift/` deploy those, and this checks for them.
 
 ## Shape

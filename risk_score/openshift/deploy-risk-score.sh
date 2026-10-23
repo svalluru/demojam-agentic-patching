@@ -61,11 +61,8 @@ step "Preflight"
 
 command -v oc >/dev/null 2>&1 || fail "oc not found on PATH"
 
-if ! oc whoami >/dev/null 2>&1; then
-  fail "Not logged in to a cluster. Run: oc login <api-url>"
-fi
-info "Cluster: $(oc whoami --show-server)"
-info "User:    $(oc whoami)"
+. "${REPO_ROOT}/lib/ocp-check.sh"
+ocp_check_cluster "${REPO_ROOT}/.env" || fail "refusing to deploy — see above"
 
 # Created if missing, skipped if present. Checked with 'oc get project'
 # rather than 'oc get namespace': a user without cluster-scoped read can see
