@@ -681,7 +681,9 @@ Listed so they are not re-raised as bugs.
 
 ```
 QUICKSTART.md              clone-to-running guide for a new joiner
-demo.sh                    start the console — demo by default, --live for real
+demo.sh                    start the console — demo by default, --live for real.
+                           The console also serves the dependency scanner
+                           (lightwell/) at /lightwell/, on the same port
 setup.sh                   everything between a filled-in .env and working live mode
 discover-hosts.py          what AAP can patch, found in Insights — uuids and tags
 agentic-patching.py        everything server-side: common code, Supervisor,

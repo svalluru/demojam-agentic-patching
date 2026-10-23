@@ -1617,7 +1617,11 @@
     font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer;
     transition: background .14s var(--ease), color .14s var(--ease);
   }
-  .ghost-btn:hover { background: var(--red); color: #ffffff; }
+  .ghost-btn:hover, .ghost-btn[aria-pressed="true"] { background: var(--red); color: #ffffff; }
+  #scanner-pane { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg); }
+  #scanner-pane[hidden] { display: none; }
+  @media (max-width: 700px) { .wide-only, header .tagline { display: none; } }
+  a.ghost-btn { display: inline-flex; align-items: center; height: 34px; padding-top: 0; padding-bottom: 0; text-decoration: none; white-space: nowrap; }
   button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: calc(12px * var(--ts)); }
   .set-group {
     margin-top: 18px; margin-bottom: 7px;
@@ -1756,6 +1760,7 @@
   <span id="demo-chip" hidden>DEMO</span>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
   <div class="head-tools">
+  <a class="ghost-btn" id="open-scanner" href="/lightwell/" title="Scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here." aria-pressed="false">Application<span class="wide-only">&nbsp;Patching</span></a>
   <button class="icon-btn" id="open-guide" title="Demo guide" aria-label="Demo guide">
     <!-- open book, drawn here like every other icon: no network offline -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -2121,6 +2126,8 @@
     </div>
   </aside>
 </div>
+
+<iframe id="scanner-pane" title="Lightwell Scanner" hidden></iframe>
 
 <div class="frames" id="frames">
 
@@ -5552,6 +5559,26 @@ renderStages({});
   };
   apply(localStorage.getItem('sideOff') === '1');
   btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
+})();
+
+// The scanner lives in an iframe that is created on first use and then only
+// hidden, so a scan in progress and its results survive going back and forth.
+(() => {
+  const btn = document.getElementById('open-scanner');
+  const pane = document.getElementById('scanner-pane');
+  const frames = document.getElementById('frames');
+  btn.dataset.title = btn.title;
+  const show = on => {
+    if (on && !pane.src) pane.src = btn.getAttribute('href');
+    pane.hidden = !on;
+    frames.hidden = on;
+    btn.setAttribute('aria-pressed', String(on));
+    btn.innerHTML = (on ? 'Infrastructure' : 'Application') + '<span class="wide-only">&nbsp;Patching</span>';
+    btn.title = on ? 'Back to infrastructure patching' : btn.dataset.title;
+    history.replaceState(null, '', on ? '#scanner' : location.pathname + location.search);
+  };
+  btn.addEventListener('click', e => { e.preventDefault(); show(pane.hidden); });
+  if (location.hash === '#scanner') show(true);
 })();
 
 renderMode().finally(() => loadCves(0));

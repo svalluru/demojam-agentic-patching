@@ -1,0 +1,8 @@
+{
+ "ref": "master",
+ "commit": "b6a4f97afd466e83e1f60781494252dec1c37039",
+ "notes": [],
+ "manifests": {
+  "app/requirements.txt": "backports-abc==0.5\ncertifi==2017.4.17\nchardet==3.0.4\nclick==6.7\nFaker==0.7.17\nFlask==0.12.2\nFlask-SQLAlchemy==2.2\ngevent==1.2.2\ngreenlet==0.4.12\ngrequests==0.3.0\nidna==2.5\nipaddress==1.0.18\nitsdangerous==0.24\nJinja2==2.9.6\nlxml==4.2.1\nMarkupSafe==1.0\nMySQL-python==1.2.5\nPyJWT==1.5.2\npython-dateutil==2.6.0\npython-docx==0.8.5\nPyYAML==3.12\nrequests==2.18.1\nsingledispatch==3.4.0.3\nsix==1.10.0\nSQLAlchemy==1.1.11\ntornado==4.5.1\nurllib3==1.21.1\nWerkzeug==0.14.1\n"
+ }
+}

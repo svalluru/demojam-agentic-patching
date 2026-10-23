@@ -16,6 +16,7 @@ import logging
 import os
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -35,6 +36,10 @@ FRONTEND_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get('FRONTEND_HOST', '127.0.0.1')
 PORT = int(os.environ.get('FRONTEND_PORT', '8788'))
 BACKEND_URL = os.environ.get('CVE_CONSOLE_BACKEND', 'http://127.0.0.1:8787')
+LIGHTWELL_DIR = FRONTEND_DIR.parent / 'lightwell'
+LIGHTWELL_PREFIX = '/lightwell'
+_lightwell: dict = {}
+_lightwell_lock = threading.Lock()
 
 RHSSO_TOKEN_URL = 'https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token'
 INSIGHTS_BASE = 'https://console.redhat.com/api'
@@ -204,11 +209,32 @@ def proxy_to_backend(method: str, path: str, query: str, body: bytes | None) -> 
         return 502, json.dumps({'ok': False, 'error': f'Backend not available ({type(exc).__name__})'}).encode()
 
 
+def lightwell_handler():
+    """The scanner's request handler class, loaded on first use. A string is returned instead when it cannot be
+    loaded, so a problem in lightwell/ shows on its own page and never stops the console."""
+    with _lightwell_lock:
+        if 'handler' not in _lightwell:
+            try:
+                import importlib.util
+                sys.path.insert(0, str(LIGHTWELL_DIR))
+                os.environ.setdefault('LIGHTWELL_MODE', os.environ.get('MODE', 'demo'))
+                spec = importlib.util.spec_from_file_location('lightwell_server', LIGHTWELL_DIR / 'server.py')
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                _lightwell['handler'] = module.Handler
+            except BaseException as exc:
+                LOG.exception('dependency scanner could not be loaded')
+                _lightwell['handler'] = f'The dependency scanner could not be loaded: {exc}'
+        return _lightwell['handler']
+
+
 class Handler(BaseHTTPRequestHandler):
-    def respond(self, status: int, content_type: str, body: bytes) -> None:
+    def respond(self, status: int, content_type: str, body: bytes, headers: dict | None = None) -> None:
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -242,7 +268,31 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(status, 'application/json', resp_body)
         return True
 
+    def _handle_lightwell(self, method: str) -> bool:
+        """The dependency scanner (lightwell/) runs inside this server, under /lightwell/, so the console stays
+        the one process and the one port. Its own handler does the work; only the path prefix is stripped."""
+        parsed = urlparse(self.path)
+        if parsed.path != LIGHTWELL_PREFIX and not parsed.path.startswith(LIGHTWELL_PREFIX + '/'):
+            return False
+        if parsed.path == LIGHTWELL_PREFIX:
+            self.respond(301, 'text/plain', b'', {'Location': LIGHTWELL_PREFIX + '/' + (f'?{parsed.query}' if parsed.query else '')})
+            return True
+        handler = lightwell_handler()
+        if isinstance(handler, str):
+            if parsed.path == LIGHTWELL_PREFIX + '/':
+                self.respond(503, 'text/html; charset=utf-8', f'<!doctype html><meta charset="utf-8"><title>Lightwell Scanner</title><p>{handler}</p><p><a href="/">Back to the console</a></p>'.encode())
+            else:
+                self.respond(503, 'application/json', json.dumps({'ok': False, 'error': handler}).encode())
+            return True
+        h = handler.__new__(handler)
+        h.__dict__.update(self.__dict__)
+        h.path = parsed.path[len(LIGHTWELL_PREFIX):] + (f'?{parsed.query}' if parsed.query else '')
+        getattr(h, 'do_' + method)()
+        return True
+
     def do_GET(self):
+        if self._handle_lightwell('GET'):
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/') or '/'
 
@@ -296,7 +346,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        if self._handle_proxy('POST'):
+        if self._handle_lightwell('POST') or self._handle_proxy('POST'):
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_PUT(self):
+        if self._handle_lightwell('PUT'):
             return
         self.send_response(404)
         self.end_headers()

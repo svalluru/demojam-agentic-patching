@@ -68,7 +68,9 @@ def load_dotenv(path: Path) -> None:
         if not line or line.startswith('#') or '=' not in line:
             continue
         key, value = line.split('=', 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        value = value.strip().strip('"').strip("'")
+        if value:       # a blank KEY= means "use the default", as in .env.example
+            os.environ.setdefault(key.strip(), value)
 
 
 load_dotenv(ROOT / '.env')

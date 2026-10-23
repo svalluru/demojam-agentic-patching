@@ -1,0 +1,1775 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>Lightwell - Dependency Issues</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#ffffff; --panel:#ffffff; --surface:#f6f6f7; --text:#0b0b0c;
+    --muted:#70707a; --accent:#0b0b0c; --border:#e7e7ea;
+    --red:#cc0000;
+    --sc-critical:#8a0f1c; --sc-high:#d4501a; --sc-moderate:#9a6b00; --sc-low:#2c6fa3; --sc-unknown:#70707a;
+    --red-lo:#980000;
+    --red-hi:#ff2f2f;
+    --tint-n:rgba(0,0,0,.05);
+    --tint-r:rgba(204,0,0,.07);
+    --green:#15803d;
+    --stripe:#f0f0f2; --stripe-hi:#ffd9d2; --stripe-hi-text:#44444c; --line:rgba(11,11,12,.16);
+
+    --sh-1:0 1px 2px rgba(11,11,12,.05);
+    --sh-2:0 1px 2px rgba(11,11,12,.05), 0 10px 26px -14px rgba(11,11,12,.22);
+    --sh-3:0 2px 8px rgba(11,11,12,.06), 0 28px 64px -24px rgba(11,11,12,.34);
+    --sh-red:0 5px 16px -7px rgba(204,0,0,.55);
+    --ring:0 0 0 3px rgba(11,11,12,.11);
+
+    /* Every font-size is calc(Npx * var(--ts)), so one number moves the whole type scale. Padding and borders do not scale. */
+    --ts: 1.1;
+
+    --r-xs:6px; --r-sm:9px; --r:12px; --r-lg:16px;
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --spring:cubic-bezier(.34,1.26,.64,1);
+    --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-ts="s"] { --ts: 1; }
+  html[data-ts="m"] { --ts: 1.1; }
+  html[data-ts="l"] { --ts: 1.24; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    font-size: calc(13px * var(--ts)); line-height: 1.45;
+  }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  td, th, .mono, .stat .v, .tm { font-variant-numeric: tabular-nums; }
+  ::selection { background: var(--red); color: #ffffff; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .mono { font-family: var(--mono); font-size: calc(11px * var(--ts)); }
+  .muted { color: var(--muted); }
+  a { color: var(--text); }
+
+  /* ---- header ---- */
+  header {
+    position: relative; z-index: 5; flex-shrink: 0;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px 13px;
+    padding: 12px 22px; padding-left: max(22px, env(safe-area-inset-left)); padding-right: max(22px, env(safe-area-inset-right));
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .logo {
+    width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
+    background: linear-gradient(145deg, var(--red), var(--red-lo));
+    box-shadow: var(--sh-red);
+    display: grid; place-items: center;
+    font-weight: 800; font-size: calc(12.5px * var(--ts)); letter-spacing: .4px; color: #ffffff;
+  }
+  header h1:not(.page-title) { font-size: calc(16px * var(--ts)); font-weight: 700; letter-spacing: -0.34px; line-height: 1.25; }
+  header .tagline { font-size: calc(11px * var(--ts)); color: var(--muted); margin-top: 1px; }
+  .head-right { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  #demo-chip {
+    flex: none; padding: 4px 12px; border-radius: 999px;
+    font-size: calc(12.5px * var(--ts)); font-weight: 800; letter-spacing: 1px;
+    color: #fff; background: var(--green);
+  }
+  .cov-chip {
+    flex: none; padding: 4px 11px; border-radius: 999px; white-space: nowrap;
+    font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .3px;
+    border: 1px solid var(--border); background: var(--tint-n); color: var(--text);
+  }
+  .cov-chip.sample { background: transparent; color: var(--red); border-color: var(--red); }
+  .cov-chip.none { background: transparent; color: var(--muted); border-style: dashed; }
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 10px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--panel); box-shadow: var(--sh-1);
+    font-size: calc(11.5px * var(--ts)); font-weight: 600; color: var(--muted);
+  }
+  .dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--text); flex-shrink: 0; }
+  .dot.off { background: var(--red); }
+  .dot::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 50%; background: inherit; opacity: 0; }
+  body.busy .dot::after { animation: halo 1.6s var(--ease) infinite; }
+  @keyframes halo { from { opacity: .5; transform: scale(1); } to { opacity: 0; transform: scale(3.4); } }
+  .head-tools { display: flex; align-items: center; gap: 7px; }
+  .icon-btn {
+    display: grid; place-items: center; min-width: 34px; height: 34px; padding: 0 6px;
+    background: var(--panel); color: var(--red);
+    border: 1px solid var(--red); border-radius: 11px;
+    font-size: calc(13px * var(--ts)); font-weight: 800; cursor: pointer; flex-shrink: 0; box-shadow: var(--sh-1);
+    text-decoration: none;
+    transition: color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease), transform .25s var(--spring), box-shadow .15s var(--ease);
+  }
+  .icon-btn:hover { background: var(--red); color: #ffffff; box-shadow: var(--sh-red); }
+  .ghost-btn {
+    display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
+    padding: 8px 14px; background: transparent; color: var(--red);
+    border: 1px solid var(--red); border-radius: 8px;
+    font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer; white-space: nowrap;
+    transition: background .14s var(--ease), color .14s var(--ease);
+  }
+  .ghost-btn:hover { background: var(--red); color: #ffffff; }
+
+  /* Sweep under the header while a scan is running. */
+  .scan { position: relative; height: 2px; flex-shrink: 0; overflow: hidden; opacity: 0; transition: opacity .18s var(--ease); }
+  body.busy .scan { opacity: 1; }
+  .scan::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 28%;
+    background: linear-gradient(90deg, transparent, var(--red), transparent);
+    animation: sweep 1.25s var(--ease) infinite;
+  }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(357%); } }
+
+  /* ---- frames ---- */
+  .frames {
+    flex: 1; display: grid; grid-template-columns: minmax(300px, 392px) minmax(0, 1fr);
+    gap: 18px; padding: 18px 20px 20px; min-height: 0;
+    padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    background: radial-gradient(circle at 1px 1px, rgba(11,11,12,.055) 1px, transparent 0) 0 0 / 22px 22px;
+  }
+  .frame {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r-lg); display: flex; flex-direction: column;
+    overflow: hidden; min-height: 0; min-width: 0; box-shadow: var(--sh-2);
+  }
+  .frame-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 9px;
+    padding: 13px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    background: linear-gradient(var(--panel), var(--surface));
+  }
+  .frame-head h2 { font-size: calc(14px * var(--ts)); font-weight: 700; letter-spacing: -.2px; white-space: nowrap; }
+  .frame-sub { display: flex; align-items: center; gap: 8px; font-size: calc(12px * var(--ts)); color: var(--muted); min-width: 0; }
+  .frame-sub::before { content: ''; width: 1px; height: 15px; background: var(--border); flex: none; }
+  .frame-sub span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head-actions { margin-left: auto; display: flex; align-items: center; gap: 7px; flex: none; }
+  .frame-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+  .frame-body::-webkit-scrollbar { width: 9px; }
+  .frame-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9px; border: 3px solid var(--panel); }
+
+  label.f, .grp {
+    display: block; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 7px;
+  }
+  .grp { margin-top: 20px; display: flex; align-items: center; gap: 9px; font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px; }
+  .grp::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+  textarea, input[type=text], select {
+    width: 100%; padding: 12px 13px; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    font-family: var(--mono); font-size: calc(12px * var(--ts)); letter-spacing: .2px; line-height: 1.6;
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+  }
+  textarea { min-height: 150px; resize: vertical; }
+  select { font-family: inherit; line-height: 1.3; padding: 10px 12px; }
+  textarea:hover, input[type=text]:hover, select:hover { border-color: #d5d5da; }
+  textarea:focus, input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); background: var(--panel); box-shadow: var(--ring); }
+  .hint { font-size: calc(11px * var(--ts)); line-height: 1.6; color: var(--muted); margin-top: 7px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+
+  button.primary {
+    position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 22px; background: linear-gradient(180deg, var(--red), var(--red-lo));
+    color: #ffffff; border: none; border-radius: var(--r-sm);
+    font-size: calc(13px * var(--ts)); font-weight: 700; letter-spacing: -.1px; cursor: pointer;
+    box-shadow: var(--sh-red);
+    transition: transform .14s var(--spring), box-shadow .14s var(--ease), opacity .14s var(--ease);
+  }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-3); }
+  button.primary:active:not(:disabled) { transform: translateY(0) scale(.994); }
+  button.primary::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,.17), transparent);
+    transform: skewX(-18deg); transition: left .55s var(--ease);
+  }
+  button.primary:hover:not(:disabled)::after { left: 125%; }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+  button.primary svg { width: 16px; height: 16px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    padding: 5px 13px; border: 1px solid var(--border); border-radius: 20px;
+    background: var(--panel); color: var(--muted); font-family: inherit;
+    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: color .14s var(--ease), border-color .14s var(--ease), transform .14s var(--spring), box-shadow .14s var(--ease);
+  }
+  .chip:hover { border-color: var(--red); color: var(--red); transform: translateY(-1px); box-shadow: var(--sh-1); }
+  .chip-label { margin-top: 14px; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+  .chip-label + .chips { margin-top: 6px; }
+
+  .result {
+    margin-bottom: 14px; padding: 12px 14px; border-radius: 9px;
+    font-size: calc(12px * var(--ts)); line-height: 1.55; display: none; border-left: 3px solid;
+  }
+  .result.show { display: block; }
+  .result.err { background: var(--tint-r); border-color: var(--red); color: var(--red); }
+  .result.info { background: var(--tint-n); border-color: var(--muted); color: var(--text); }
+  .note {
+    margin-top: 10px; padding: 10px 13px; border-radius: 9px; border-left: 3px solid var(--muted);
+    background: var(--tint-n); color: var(--muted); font-size: calc(11.5px * var(--ts)); line-height: 1.55;
+  }
+  .err { color: var(--red); }
+
+  /* ---- gears and step icons ---- */
+  .ic { position: relative; width: 20px; height: 20px; flex: none; display: inline-grid; place-items: center; color: var(--muted); }
+  .ic svg { display: none; width: 100%; height: 100%; }
+  .ic.waiting .rg, .ic.skipped .sk { display: block; }
+  .ic.running { color: var(--red); }
+  .ic.running .gr { display: block; animation: spin 2.4s linear infinite; }
+  .ic.done { color: var(--text); }
+  .ic.done .ck { display: block; }
+  .ic.failed { color: var(--red); }
+  .ic.failed .xx { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spinr { to { transform: rotate(-360deg); } }
+
+  .gears { position: relative; width: 38px; height: 30px; flex: none; color: var(--muted); }
+  .gears svg { position: absolute; display: none; }
+  .gears .gb { width: 26px; height: 26px; left: 0; top: 0; }
+  .gears .gs { width: 17px; height: 17px; left: 20px; top: 13px; }
+  .gears.running { color: var(--red); }
+  .gears.running .gb, .gears.running .gs { display: block; }
+  .gears.running .gb { animation: spin 3.2s linear infinite; }
+  .gears.running .gs { animation: spinr 2.1s linear infinite; }
+  .gears .gk, .gears .gx { width: 24px; height: 24px; left: 3px; top: 3px; }
+  .gears.waiting .gb { display: block; width: 24px; height: 24px; left: 3px; top: 3px; opacity: .4; }
+  .gears.done { color: var(--text); }
+  .gears.done .gk { display: block; }
+  .gears.failed { color: var(--red); }
+  .gears.failed .gx { display: block; }
+
+  /* ---- run panel ---- */
+  .run { margin-bottom: 18px; }
+  .run-top { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+  .run-text { min-width: 0; flex: 1; }
+  .run-title { font-size: calc(13.5px * var(--ts)); font-weight: 700; letter-spacing: -.1px; }
+  .run-sub { font-size: calc(11.5px * var(--ts)); color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .tm { font-family: var(--mono); font-size: calc(11.5px * var(--ts)); color: var(--muted); white-space: nowrap; }
+  .prog { position: relative; height: 4px; margin: 10px 0 12px; border-radius: 4px; background: var(--tint-n); overflow: hidden; }
+  .prog-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: 4px; background: var(--text); transition: width .6s var(--ease), background .3s var(--ease); overflow: hidden; }
+  .prog.fail .prog-fill { background: var(--red); }
+  .prog.live .prog-fill::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+    animation: sheen 1.2s linear infinite;
+  }
+  @keyframes sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .rs { border: 1px solid var(--border); border-radius: var(--r); margin-bottom: 10px; overflow: hidden; background: var(--panel); box-shadow: var(--sh-1); }
+  .rs.running { border-color: var(--text); }
+  .rs.failed { border-color: var(--red); }
+  .rs-head { display: flex; align-items: center; gap: 11px; padding: 10px 14px; }
+  .rs-name { font-family: var(--mono); font-size: calc(12.5px * var(--ts)); font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+  .rs-state { font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+  .rs.running .rs-state { color: var(--text); }
+  .rs.failed .rs-state { color: var(--red); }
+  .rs-head .tm { margin-left: auto; }
+  .rs-sum { padding: 0 14px 10px 63px; font-size: calc(11.5px * var(--ts)); color: var(--muted); }
+  .rs-err { padding: 0 14px 10px 63px; font-size: calc(12px * var(--ts)); color: var(--red); overflow-wrap: anywhere; }
+  .steps { list-style: none; padding: 2px 14px 10px; border-top: 1px solid var(--border); }
+  .st { display: grid; grid-template-columns: 20px minmax(110px, 170px) minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,.05); }
+  .st:last-child { border-bottom: 0; }
+  .st-name { font-size: calc(12px * var(--ts)); font-weight: 600; }
+  .st.waiting .st-name, .st.skipped .st-name { color: var(--muted); font-weight: 500; }
+  .st.running .st-name { font-weight: 700; }
+  .st-detail { font-size: calc(11px * var(--ts)); color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .st.failed .st-detail { color: var(--red); white-space: normal; }
+  .st-count { font-size: calc(11px * var(--ts)); font-weight: 700; font-family: var(--mono); white-space: nowrap; }
+  .st-bar { grid-column: 2 / -1; height: 3px; border-radius: 3px; background: var(--tint-n); overflow: hidden; margin-top: -2px; }
+  .st-bar i { display: block; height: 100%; width: 0; background: var(--red); transition: width .4s var(--ease); }
+  .rs-log summary { cursor: pointer; padding: 8px 14px; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--border); }
+  .rs-log summary:hover { color: var(--red); }
+  .log { max-height: 190px; overflow-y: auto; padding: 8px 14px 10px; background: var(--surface); border-top: 1px solid var(--border); font-family: var(--mono); font-size: calc(11px * var(--ts)); line-height: 1.65; -webkit-overflow-scrolling: touch; }
+  .log div { display: grid; grid-template-columns: 52px 74px minmax(0, 1fr); gap: 8px; animation: rowin .25s var(--ease) both; }
+  .log .lt { color: var(--muted); }
+  .log .ls { font-weight: 700; }
+  .log .lx { overflow-wrap: anywhere; }
+  .log .failed .lx, .log .failed .ls { color: var(--red); }
+  @keyframes rowin { from { opacity: 0; transform: translateY(4px); } }
+
+  /* ---- results ---- */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 9px; margin-bottom: 9px; }
+  .stat {
+    position: relative; overflow: hidden; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 11px 10px; text-align: center; box-shadow: var(--sh-1);
+    transition: transform .16s var(--spring), box-shadow .16s var(--ease);
+  }
+  .stat:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
+  .stat::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: currentColor; opacity: .18; }
+  .stat.alert { color: var(--red); }
+  .stat.alert::before { opacity: 1; }
+  .stat .v { font-size: calc(22px * var(--ts)); font-weight: 800; line-height: 1.18; letter-spacing: -.8px; color: var(--text); }
+  .stat.alert .v { color: var(--red); }
+  .stat.sevtile { color: var(--sc); }
+  .stat.sevtile::before { opacity: 1; height: 3px; }
+  .stat.sevtile .v { color: var(--sc); }
+  .stat .k { font-size: calc(9px * var(--ts)); font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+  .stat.low .v { color: var(--muted); }
+  .sect { border: 1px solid var(--border); border-radius: var(--r); margin-bottom: 16px; overflow: hidden; box-shadow: var(--sh-1); min-width: 0; }
+  .obar { display: flex; height: 14px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-xs); background: var(--surface); margin-bottom: 8px; }
+  .obar span { display: block; min-width: 2px; }
+  .o-lw { background: var(--green); } .o-up { background: var(--muted); } .o-none { background: var(--red); }
+  .olegend { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  .olegend span { display: inline-flex; align-items: center; gap: 6px; }
+  .osw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .sect-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 11px 14px; border-bottom: 1px solid var(--border); background: linear-gradient(var(--panel), var(--surface)); }
+  .sect-head h3 { font-size: calc(13px * var(--ts)); font-weight: 700; letter-spacing: -.1px; overflow-wrap: anywhere; min-width: 0; }
+  .tag { padding: 2px 9px; border-radius: 6px; font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: .8px; text-transform: uppercase; background: var(--tint-r); color: var(--red); }
+  .sect-head .right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; }
+  .sect-body { padding: 14px; }
+  .sect.repo { border-left: 6px solid var(--text); border-top: 3px solid var(--text); border-radius: var(--r-sm); margin-bottom: 34px; }
+  .sect.repo > .sect-head { padding: 14px; }
+  .sect.repo > .sect-head h3 { font-size: calc(16px * var(--ts)); font-weight: 800; }
+  .sect.repo > .sect-head .tag { background: var(--text); color: var(--panel); border-radius: 2px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filters input, .filters select { width: auto; min-width: 0; padding: 7px 11px; font-size: calc(12px * var(--ts)); font-family: inherit; }
+  .filters input { flex: 1 1 130px; }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: calc(11px * var(--ts)); font-weight: 700; text-transform: capitalize; border: 1px solid var(--border); white-space: nowrap; }
+  .sev-critical { background: var(--sc-critical); border-color: var(--sc-critical); color: #ffffff; }
+  .sev-high { background: var(--sc-high); border-color: var(--sc-high); color: #ffffff; }
+  .sev-moderate { background: var(--sc-moderate); border-color: var(--sc-moderate); color: #ffffff; }
+  .sev-low { background: var(--sc-low); border-color: var(--sc-low); color: #ffffff; }
+  .sev-unknown { background: var(--panel); color: var(--muted); border-style: dashed; }
+  .lwchip { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: calc(11px * var(--ts)); font-weight: 700; border: 1px solid transparent; }
+  .lw-remediated { background: var(--text); color: #ffffff; }
+  .lw-predisclosure { background: var(--panel); border-color: var(--text); color: var(--text); }
+  .lw-other_version { background: var(--panel); border-color: var(--text); border-style: dashed; color: var(--text); }
+  .lw-not_covered { background: var(--tint-n); color: var(--muted); border-color: var(--border); }
+  .lw-not_checked { background: var(--panel); color: var(--muted); border: 1px dashed var(--border); }
+
+  .tscroll { container-type: inline-size; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tscroll::-webkit-scrollbar { height: 9px; }
+  .tscroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .tscroll > table { min-width: 650px; }
+  th { text-align: left; padding: 7px 9px; font-size: calc(10px * var(--ts)); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border); }
+  td { padding: 9px; font-size: calc(12px * var(--ts)); border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.pkg { cursor: pointer; }
+  th.chev, td.chev { width: 30px; padding-left: 10px; padding-right: 0; }
+  .chev-btn { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; margin-top: -1px; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
+  .chev-btn svg { width: 15px; height: 15px; transition: transform .18s var(--ease), color .15s var(--ease); }
+  tr.pkg:hover .chev-btn { color: var(--red); }
+  tr.pkg:hover .chev-btn svg { transform: translateX(2px); }
+  tr.pkg.open .chev-btn { color: var(--red); }
+  tr.pkg.open .chev-btn svg { transform: rotate(90deg); }
+  tr.pkg td:first-child { position: relative; }
+  tr.pkg td:first-child::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--red); transform: scaleY(0); transition: transform .16s var(--ease); }
+  tr.pkg:nth-of-type(4n+3) td { background: var(--stripe); }
+  tr.pkg:hover td { background: var(--stripe-hi); }
+  tr.pkg:hover .muted, tr.pkg:hover .hint { color: var(--stripe-hi-text); }
+  tr.pkg:hover td:first-child::before, tr.pkg.open td:first-child::before { transform: scaleY(1); }
+  tr.pkg.open td { background: var(--tint-n); border-bottom: 1px solid var(--red); }
+  tr.detail td { padding: 0; border-bottom: 0; background: var(--panel); }
+  .vc a { color: var(--red); font-weight: 700; text-decoration: none; }
+  .vc a:hover { text-decoration: underline; }
+
+  /* The expanded area: a red rail down the left, a header that names the package, and a closing line. */
+  .xp { --xi: 32px; position: sticky; left: 0; width: calc(100cqw - var(--xi)); margin: 0 0 18px var(--xi); padding: 0 14px 14px; background: var(--surface); border-left: 5px solid var(--red); border-bottom: 2px solid var(--red); min-width: 0; }
+  .xp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+  .xp-head b { font-size: calc(12.5px * var(--ts)); overflow-wrap: anywhere; }
+  .xp-n { margin-left: auto; font-size: calc(11px * var(--ts)); font-weight: 700; color: var(--muted); }
+  .xp-block { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); overflow: hidden; box-shadow: var(--sh-1); min-width: 0; }
+  .xp-block-h { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 9px 14px; background: linear-gradient(var(--panel), var(--surface)); border-bottom: 1px solid var(--border); font-size: calc(11px * var(--ts)); font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
+  .xp-block-h .muted { font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .xp-block-b { padding: 12px 14px 14px; min-width: 0; }
+  .flist { border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; background: var(--panel); }
+  .frow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 11px; border-bottom: 1px solid var(--line); font-size: calc(11.5px * var(--ts)); }
+  .frow:last-child { border-bottom: 0; }
+  .frow:nth-child(even) { background: var(--stripe); }
+  .frow .fname { font-family: var(--mono); font-weight: 700; overflow-wrap: anywhere; }
+  .frow .fnote { grid-column: 1 / -1; color: var(--muted); font-size: calc(11px * var(--ts)); line-height: 1.5; overflow-wrap: anywhere; }
+  .rtag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 20px; border: 1px dashed var(--red); color: var(--red); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: calc(9.5px * var(--ts)); font-weight: 800; letter-spacing: .4px; text-transform: uppercase; vertical-align: 1px; cursor: help; }
+  .ftag { padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); font-size: calc(10px * var(--ts)); font-weight: 700; white-space: nowrap; color: var(--muted); align-self: start; }
+  .ftag.lw { background: var(--text); border-color: var(--text); color: #ffffff; }
+  .ftag.bad { background: var(--tint-r); border-color: var(--red); color: var(--red); }
+  details.frepo { margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel); overflow: hidden; }
+  details.frepo > summary { margin: 0; padding: 9px 11px; background: linear-gradient(var(--panel), var(--surface)); color: var(--text); font-family: var(--mono); font-size: calc(11.5px * var(--ts)); overflow-wrap: anywhere; list-style-position: inside; }
+  details.frepo[open] > summary { border-bottom: 1px solid var(--border); }
+  details.frepo > summary .muted { font-family: inherit; font-weight: 500; }
+  details.frepo .frow:nth-child(odd) { background: var(--stripe); }
+  details.frepo .frow:nth-child(even) { background: var(--panel); }
+  .rem-opts { display: grid; gap: 10px; margin: 12px 0; }
+  .rem-opt { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; cursor: pointer; font-size: calc(12px * var(--ts)); }
+  .rem-opt input { margin-top: 3px; accent-color: var(--accent); }
+  .rem-opt .hint { margin-top: 2px; }
+  .rem-java { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 6px 0 12px; }
+  .rem-java select { padding: 6px 10px; }
+  .rem-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  .rem-stages { display: grid; gap: 7px; margin: 12px 0; }
+  .rem-stage { display: flex; align-items: center; gap: 9px; font-size: calc(12px * var(--ts)); }
+  .rem-stage .g { width: 12px; height: 12px; border-radius: 3px; border: 2px solid var(--line); flex: none; }
+  .rem-stage.running .g { border-color: var(--accent); animation: halo 1s ease-in-out infinite alternate; }
+  .rem-stage.done .g { background: var(--green); border-color: var(--green); }
+  .rem-stage.failed .g { background: var(--red); border-color: var(--red); }
+  .rem-stage.pending { color: var(--muted); }
+  .rem-acts { display: grid; gap: 4px; margin: -2px 0 4px 21px; }
+  .rem-act { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: calc(11px * var(--ts)); color: var(--muted); }
+  .rem-act .g { width: 8px; height: 8px; border-radius: 2px; border: 2px solid var(--line); flex: none; }
+  .rem-act.running { color: var(--text); }
+  .rem-act.running .g { border-color: var(--accent); animation: halo 1s ease-in-out infinite alternate; }
+  .rem-act.ok .g { background: var(--green); border-color: var(--green); }
+  .rem-act.failed { color: var(--red); }
+  .rem-act.failed .g { background: var(--red); border-color: var(--red); }
+  .rem-act.skipped { padding-left: 16px; font-style: italic; }
+  .rem-act .d { flex-basis: 100%; padding-left: 16px; color: var(--red); overflow-wrap: anywhere; }
+  .rem-sub { margin: 16px 0 6px; font-size: calc(11px * var(--ts)); font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
+  pre.code.diff { max-height: 420px; overflow: auto; }
+  pre.code.diff .add { color: var(--green); }
+  pre.code.diff .del { color: var(--red); }
+  .snip-group { margin-bottom: 18px; }
+  .snip-title { font-weight: 700; margin-bottom: 8px; overflow-wrap: anywhere; }
+  .snip { margin-bottom: 14px; }
+  .snip:last-child { margin-bottom: 0; }
+  .snip-h { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px; font-size: calc(12px * var(--ts)); }
+  .snip-h > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .ghost-btn.sm { padding: 4px 11px; font-size: calc(11px * var(--ts)); flex: none; }
+  pre.code { margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); font-family: var(--mono); font-size: calc(11.5px * var(--ts)); line-height: 1.6; overflow-x: auto; white-space: pre; tab-size: 2; -webkit-overflow-scrolling: touch; }
+  .xp-end { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--muted); font-size: calc(10px * var(--ts)); font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+  .vc { margin-bottom: 12px; border: 1px solid var(--border); border-left: 5px solid var(--muted); border-radius: var(--r-sm); background: var(--panel); overflow: hidden; }
+  .vc:last-child { margin-bottom: 0; }
+  .vc-critical { border-left-color: var(--sc-critical); }
+  .vc-high { border-left-color: var(--sc-high); }
+  .vc-moderate { border-left-color: var(--sc-moderate); }
+  .vc-low { border-left-color: var(--sc-low); }
+  .score { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 58px; padding: 4px 8px 3px; border-radius: 5px; background: var(--sc); color: #ffffff; line-height: 1; }
+  .score b { font-size: calc(24px * var(--ts)); font-weight: 800; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+  .score span { margin-top: 3px; font-size: calc(8.5px * var(--ts)); font-weight: 700; letter-spacing: .6px; text-transform: uppercase; opacity: .92; }
+  .sc-critical { --sc: var(--sc-critical); } .sc-high { --sc: var(--sc-high); } .sc-moderate { --sc: var(--sc-moderate); } .sc-low { --sc: var(--sc-low); } .sc-unknown { --sc: var(--sc-unknown); }
+  .vc-h { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; padding: 9px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .vc-n { margin-left: auto; font-size: calc(10.5px * var(--ts)); font-weight: 700; color: var(--muted); }
+  .vc-b { padding: 10px 12px; font-size: calc(12px * var(--ts)); line-height: 1.55; overflow-wrap: anywhere; }
+  .vc-f { padding: 8px 12px; border-top: 1px solid var(--border); background: var(--surface); font-size: calc(11px * var(--ts)); color: var(--muted); overflow-wrap: anywhere; }
+  details summary { cursor: pointer; font-size: calc(11.5px * var(--ts)); font-weight: 700; color: var(--muted); margin-top: 8px; }
+  details summary:hover { color: var(--red); }
+
+  .lwd-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: calc(12px * var(--ts)); }
+  .lwd-grid dt { color: var(--muted); font-weight: 700; }
+  .lwd-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .lwd-sub { margin: 18px -14px 10px; padding: 6px 14px; background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: calc(10.5px * var(--ts)); font-weight: 800; letter-spacing: .9px; text-transform: uppercase; color: var(--text); }
+  .lwd-grid + .lwd-sub { margin-top: 14px; }
+  .xp-block-b > .lwd-sub:first-child { margin-top: -12px; border-top: 0; }
+  .lwdetail table { margin-bottom: 4px; }
+  .tscroll tbody tr:not(.pkg):not(.detail):nth-child(even) td { background: var(--stripe); }
+  .lwdetail .tscroll > table { min-width: 640px; }
+  .xp-block .tscroll > table { min-width: 460px; }
+  .lwd-flag { color: var(--red); font-weight: 700; }
+
+  .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: calc(13px * var(--ts)); text-align: center; padding: 40px 20px; }
+  .empty strong { color: var(--text); font-size: calc(13.5px * var(--ts)); font-weight: 700; }
+  .empty svg { width: 34px; height: 34px; opacity: .22; }
+
+  /* ---- display drawer ---- */
+  .drawer-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 40; background: rgba(11,11,12,.34); display: flex; justify-content: flex-end; animation: fade .22s var(--ease) both; }
+  @keyframes fade { from { opacity: 0; } }
+  .drawer { width: min(420px, 100%); height: 100%; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; box-shadow: var(--sh-3); animation: slidein .34s var(--ease) both; }
+  @keyframes slidein { from { transform: translateX(26px); opacity: .4; } }
+  .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .drawer-head h2 { font-size: calc(15px * var(--ts)); font-weight: 700; }
+  .drawer-head .icon-btn { margin-left: auto; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 4px 18px 18px; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); padding: 2px; gap: 2px; }
+  .seg button { flex: 1; padding: 8px 4px; border: none; border-radius: 7px; cursor: pointer; background: transparent; color: var(--muted); font-family: inherit; font-weight: 700; transition: background .15s var(--ease), color .15s var(--ease); }
+  .seg button:hover { color: var(--red); }
+  .seg button[aria-pressed="true"] { background: var(--red); color: #ffffff; box-shadow: var(--sh-1); }
+  .seg button[data-ts="s"] { font-size: calc(11.5px * 1); }
+  .seg button[data-ts="m"] { font-size: calc(11.5px * 1.1); }
+  .seg button[data-ts="l"] { font-size: calc(11.5px * 1.24); }
+
+  /* ---- layout by width ---- */
+  @media (min-width: 861px) {
+    body { height: 100vh; height: 100dvh; }
+  }
+  @media (max-width: 1100px) {
+    .frames { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 14px; padding: 14px; }
+  }
+  @media (max-width: 860px) {
+    .frames { grid-template-columns: minmax(0, 1fr); align-content: start; padding: 12px; gap: 12px; }
+    .frame { overflow: visible; }
+    .frame-body { overflow: visible; }
+    .frame-head { border-radius: var(--r-lg) var(--r-lg) 0 0; }
+  }
+  @media (max-width: 700px) {
+    .xp { --xi: 12px; }
+    header { padding-top: 10px; padding-bottom: 10px; }
+    header .tagline { display: none; }
+    .head-right { gap: 6px; }
+    .st { grid-template-columns: 20px minmax(0, 1fr) auto auto; row-gap: 2px; }
+    .st-detail { grid-column: 2 / -1; grid-row: 2; white-space: normal; }
+    .st-bar { grid-column: 2 / -1; }
+    .rs-sum, .rs-err { padding-left: 14px; }
+    .log div { grid-template-columns: 44px minmax(0, 1fr); }
+    .log .ls { display: none; }
+    .lwd-grid { grid-template-columns: minmax(0, 1fr); }
+    .lwd-grid dt { margin-top: 5px; }
+  }
+  html.embedded header .logo, html.embedded header h1:not(.page-title), html.embedded header .tagline { display: none; }
+  html.embedded header { justify-content: flex-end; }
+  html.embedded header .head-right { margin-left: 0; order: 1; }
+  html.embedded #console, html.embedded #demo-chip { display: none; }
+  .page-title { display: none; }
+  html.embedded .page-title {
+    display: block; flex-shrink: 0; order: 2; margin-left: 6px; padding: 7px 16px 7px 14px;
+    background: #1d2026; color: #ffffff; border-left: 4px solid var(--red); border-radius: 2px 9px 2px 9px;
+    font-size: calc(15px * var(--ts)); font-weight: 700; letter-spacing: -0.2px; line-height: 1.25; user-select: none;
+  }
+  @media (max-width: 560px) {
+    #console { display: none; }
+    .frame-head { padding: 11px 12px; }
+    .frame-body { padding: 12px; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sect-body { padding: 10px; }
+    .sect-head { padding: 10px; }
+  }
+  @media (pointer: coarse), (max-width: 860px) {
+    textarea, input[type=text], select { font-size: max(16px, calc(12px * var(--ts))); }
+    .chip, .ghost-btn, .icon-btn, .seg button, button.primary { min-height: 40px; }
+    .icon-btn { min-width: 40px; height: 40px; }
+    .rs-log summary, details summary { padding-top: 10px; padding-bottom: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+<script>
+  try {
+    var t = localStorage.getItem('lw-text-size');
+    if (t === 's' || t === 'm' || t === 'l') document.documentElement.setAttribute('data-ts', t);
+  } catch (e) {}
+</script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></g></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l3 3 5-6"></path></g></symbol>
+    <symbol id="i-cross" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 9l6 6M15 9l-6 6"></path></g></symbol>
+    <symbol id="i-ring" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3"><circle cx="12" cy="12" r="8"></circle></g></symbol>
+    <symbol id="i-skip" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M8 12h8"></path></g></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"></path></g></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v4h4M9 12h6M9 16h6"></path></g></symbol>
+  </defs>
+</svg>
+
+<header>
+  <h1 class="page-title">Application Patching</h1>
+  <div class="logo">LW</div>
+  <div>
+    <h1>Lightwell Dependency Scanner</h1>
+    <div class="tagline">Open-source vulnerabilities in your repositories, and where Lightwell has a fix</div>
+  </div>
+  <div class="head-right">
+    <span id="demo-chip" hidden>DEMO</span>
+    <span class="cov-chip none" id="lwbadge" hidden></span>
+    <div class="status" role="status" aria-live="polite"><span class="dot" id="dot"></span><span id="status">Loading...</span></div>
+    <div class="head-tools">
+      <a class="ghost-btn" id="console" href="#">Infrastructure Patching</a>
+      <button class="icon-btn" id="open-display" type="button" title="Text size" aria-label="Text size">Aa</button>
+    </div>
+  </div>
+</header>
+<div class="scan"></div>
+
+<div class="frames">
+  <section class="frame" id="side-frame" aria-label="Repositories">
+    <div class="frame-head"><h2>Repositories</h2><div class="frame-sub"><span>GitHub and GitLab</span></div></div>
+    <div class="frame-body">
+      <label class="f" for="repos">Repositories, one per line</label>
+      <textarea id="repos" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="owner/repo (GitHub)&#10;https://github.com/owner/repo&#10;https://gitlab.com/group/project&#10;https://github.com/owner/repo/tree/main/service-a"></textarea>
+      <p class="hint">A <span class="mono">/tree/branch/folder</span> URL scans just that folder. The files it reads are listed below.</p>
+      <div class="chip-label">Try these: Lightwell has builds for some of their dependencies</div>
+      <div class="chips" id="tryChips"></div>
+      <div class="chips" id="demoChips"></div>
+      <div class="row">
+        <button class="primary" id="scan" type="button"><svg aria-hidden="true"><use href="#i-gear" xlink:href="#i-gear"></use></svg><span id="scanLabel">Scan</span></button>
+        <button class="ghost-btn" id="rescan" type="button" title="Scan every repository in the list again, including the ones that already have a result">Rescan all</button>
+        <button class="ghost-btn" id="save" type="button">Save list</button>
+      </div>
+      <p class="hint" id="tokenNote"></p>
+      <div class="grp">Files checked</div>
+      <div class="flist" id="filesStatic"></div>
+      <div id="filesScanWrap" hidden>
+        <div class="grp">Files read in this scan</div>
+        <div id="filesScan"></div>
+      </div>
+      <div class="grp">Earlier scans</div>
+      <select id="history" aria-label="Earlier scans"></select>
+    </div>
+  </section>
+
+  <section class="frame" id="main-frame" aria-label="Findings">
+    <div class="frame-head">
+      <h2>Findings</h2>
+      <div class="frame-sub" id="scanSub" hidden><span id="scanSubText"></span></div>
+      <div class="head-actions"><a class="ghost-btn" id="csv" href="#" hidden>Download CSV</a></div>
+    </div>
+    <div class="frame-body">
+      <div class="result" id="banner" role="status"></div>
+      <div class="run" id="run" hidden></div>
+      <div id="results"><div class="empty"><svg aria-hidden="true"><use href="#i-doc" xlink:href="#i-doc"></use></svg><strong>No scan yet</strong><span>Add repositories and press Scan.</span></div></div>
+    </div>
+  </section>
+</div>
+
+<div class="drawer-scrim" id="display-scrim" hidden>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="display-title">
+    <div class="drawer-head">
+      <h2 id="display-title">Display</h2>
+      <button class="icon-btn" id="close-display" type="button" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <div class="grp">Text size</div>
+      <div class="seg" id="text-size" role="group" aria-label="Text size">
+        <button type="button" data-ts="s">Small</button>
+        <button type="button" data-ts="m">Medium</button>
+        <button type="button" data-ts="l">Large</button>
+      </div>
+      <p class="hint">Applies as soon as you pick it and is remembered in this browser. Nothing is sent to the server.</p>
+    </div>
+  </aside>
+</div>
+
+<script>
+var $ = function (id) { return document.getElementById(id); };
+var SEV = ['critical', 'high', 'moderate', 'low', 'unknown'];
+var SUGGESTED = [{text: 'JoyChou93/java-sec-code'}, {text: 'snyk-labs/java-goof'}, {text: 'https://gitlab.com/pdftk-java/pdftk', slug: 'gitlab.com/pdftk-java/pdftk'}, {text: 'https://github.com/mitreid-connect/simple-web-app.git', slug: 'mitreid-connect/simple-web-app', tip: 'Add to the list. Lightwell coverage has not been checked for this repository.'}];
+var STEPS = [['fetch', 'Fetch repository', 0.15], ['parse', 'Read manifests', 0.05], ['osv', 'Query OSV.dev', 0.3], ['coverage', 'Check Lightwell coverage', 0.5]];
+var STEP_STATE = {waiting: 'Waiting', running: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped'};
+var current = null, poll = null, failures = 0, filter = {sev: 'all', text: '', lw: 'all'};
+var RUN = {id: null, secs: [], top: null, fetchedAt: 0, skew: 0};
+var RES = {key: ''};
+
+function el(tag, attrs, kids) {
+  var e = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === 'text') e.textContent = attrs[k]; else if (k === 'class') e.className = attrs[k]; else e.setAttribute(k, attrs[k]);
+  });
+  (kids || []).forEach(function (c) { e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return e;
+}
+function sym(id) { return '<svg class="' + id.cls + '" aria-hidden="true"><use href="#i-' + id.name + '" xlink:href="#i-' + id.name + '"></use></svg>'; }
+function stepIcon() {
+  var ic = el('span', {class: 'ic waiting'});
+  ic.innerHTML = [{cls: 'rg', name: 'ring'}, {cls: 'gr', name: 'gear'}, {cls: 'ck', name: 'check'}, {cls: 'xx', name: 'cross'}, {cls: 'sk', name: 'skip'}].map(sym).join('');
+  return ic;
+}
+function gearPair() {
+  var g = el('span', {class: 'gears waiting'});
+  g.innerHTML = [{cls: 'gb', name: 'gear'}, {cls: 'gs', name: 'gear'}, {cls: 'gk', name: 'check'}, {cls: 'gx', name: 'cross'}].map(sym).join('');
+  return g;
+}
+function setState(node, state) {
+  var base = node.className.replace(/\b(waiting|running|done|failed|skipped)\b/g, '').replace(/\s+/g, ' ').replace(/\s$/, '');
+  node.className = base + ' ' + state;
+}
+function pill(sev, score) { return el('span', {class: 'pill sev-' + (SEV.indexOf(sev) < 0 ? 'unknown' : sev), text: (score != null ? Number(score).toFixed(1) + ' ' : '') + sev}); }
+function safeUrl(u) { return typeof u === 'string' && /^https:\/\/osv\.dev\//.test(u) ? u : null; }
+function banner(msg, info) { var b = $('banner'); b.textContent = msg || ''; b.classList.toggle('show', !!msg); b.classList.toggle('err', !!msg && !info); b.classList.toggle('info', !!msg && !!info); }
+function fmtSecs(s) { s = Math.max(0, Math.round(s)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60 < 10 ? '0' : '') + (s % 60) + 's'; }
+
+async function api(method, path, body) {
+  var r = await fetch(path, {method: method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  var d = await r.json().catch(function () { return {}; });
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+function repoList() { return $('repos').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean); }
+
+function chip(text, title) {
+  var c = el('button', {class: 'chip', type: 'button', text: text, title: title});
+  c.onclick = function () { var l = repoList(); if (l.indexOf(text) < 0) { l.push(text); $('repos').value = l.join('\n'); } };
+  return c;
+}
+
+function setStatus(text, busy) {
+  $('status').textContent = text;
+  document.body.classList.toggle('busy', !!busy);
+}
+
+async function init() {
+  $('console').href = location.pathname.indexOf('/lightwell/') === 0 ? '/' : location.protocol + '//' + location.hostname + ':8788';
+  if (window.parent !== window) {
+    document.documentElement.classList.add('embedded');
+  }
+  setStatus('Connecting...', false);
+  try {
+    var m = await api('GET', 'v1/mode');
+    $('demo-chip').hidden = m.mode !== 'demo';
+    RANGES_ON = !!m.ranges; POMS = m.pom_resolution || 'off'; renderFileTypes();
+    REM_READY = m.remediation || REM_READY;
+    var lb = $('lwbadge'), li = m.lightwell || {};
+    lb.hidden = false; lb.title = li.note || '';
+    lb.textContent = li.source === 'sample' ? 'Lightwell: sample data' : li.source === 'api' ? 'Lightwell: live API' + (li.demo_repositories ? ' (demo repositories)' : '') : 'Lightwell: not checked';
+    lb.className = 'cov-chip' + (li.source === 'api' ? '' : li.source === 'sample' ? ' sample' : ' none');
+    $('tokenNote').textContent = m.mode === 'live'
+      ? (m.github_token ? 'GitHub token set. ' : 'No GitHub token: 60 API calls an hour. ') + (m.gitlab_token ? 'GitLab token set.' : 'No GitLab token: public projects only.')
+      : 'Demo mode opens no network connection.';
+    $('tryChips').innerHTML = ''; $('demoChips').innerHTML = '';
+    SUGGESTED.forEach(function (s) { $('tryChips').appendChild(chip(s.text, s.tip || 'Add to the list. Had Lightwell-covered versions when checked on 2026-10-19; the live catalog changes.')); });
+    var suggested = SUGGESTED.map(function (s) { return s.slug || s.text; });
+    if (m.mode === 'demo') (m.demo_repos || []).forEach(function (r) {
+      if (suggested.indexOf(r) < 0) $('demoChips').appendChild(chip(r, 'Add to the list'));
+    });
+    var saved = await api('GET', 'v1/repos');
+    if (saved.repos.length) $('repos').value = saved.repos.join('\n');
+    await loadHistory();
+    setStatus(m.mode === 'live' ? 'Live. Ready' : 'Demo. Ready', false);
+  } catch (e) { $('dot').className = 'dot off'; setStatus('Offline', false); banner('Could not reach the scanner: ' + e.message); }
+}
+
+async function loadHistory() {
+  var d = await api('GET', 'v1/scans'), h = $('history');
+  h.innerHTML = '';
+  h.appendChild(el('option', {value: '', text: d.scans.length ? 'Choose a scan...' : 'No scans yet'}));
+  d.scans.forEach(function (s) {
+    h.appendChild(el('option', {value: s.id, text: s.created.replace('T', ' ').replace('Z', '') + '  ' + s.repos + ' repos, ' + s.issues + ' issues (' + s.mode + ')'}));
+  });
+}
+$('history').onchange = function () { if (this.value) { failures = 0; show(this.value); } };
+
+$('save').onclick = async function () {
+  try { await api('PUT', 'v1/repos', {repos: repoList()}); banner(''); } catch (e) { banner(e.message); }
+};
+function scanning(on) {
+  $('scan').disabled = on; $('rescan').disabled = on;
+  $('scanLabel').textContent = on ? 'Scanning...' : 'Scan';
+  $('scan').querySelector('svg').style.animation = on ? 'spin 2.4s linear infinite' : '';
+}
+async function startScan(reuse) {
+  banner('');
+  scanning(true);
+  setStatus('Starting the scan...', true);
+  try {
+    var r = await api('POST', 'v1/scans', {repos: repoList(), reuse: reuse || undefined});
+    await api('PUT', 'v1/repos', {repos: repoList()});
+    if (!r.id) { banner('Nothing new to scan: every repository in the list already has a result. Use Rescan all to run them again.', true); scanning(false); setStatus('Ready', false); return; }
+    failures = 0;
+    RUN.id = null; RES.key = '';
+    show(r.id);
+  } catch (e) { banner(e.message); scanning(false); setStatus('Ready', false); }
+}
+$('scan').onclick = function () { startScan(current && current.id); };
+$('rescan').onclick = function () { startScan(null); };
+
+async function show(id) {
+  clearTimeout(poll);
+  try {
+    var d = await api('GET', 'v1/scans/' + id);
+    failures = 0; banner('');
+    current = d.scan;
+    RUN.fetchedAt = Date.now();
+    syncRun(current); syncResults(current); syncHead(current);
+    var running = current.status !== 'done';
+    scanning(running && $('scan').disabled);
+    if (running) poll = setTimeout(function () { show(id); }, 800); else { loadHistory().catch(function () {}); }
+  } catch (e) {
+    failures++;
+    if (failures <= 5) { banner('Lost contact with the scanner (' + e.message + '). Retrying, attempt ' + failures + ' of 5...'); poll = setTimeout(function () { show(id); }, 1500); }
+    else { banner('Could not reach the scanner: ' + e.message); scanning(false); setStatus('Offline', false); }
+  }
+}
+
+function syncHead(scan) {
+  var n = scan.repos.length, running = scan.status !== 'done';
+  var k = 0;
+  scan.repos.forEach(function (r, i) { if (r.status === 'running' && !k) k = i + 1; });
+  $('scanSub').hidden = false;
+  $('scanSubText').textContent = scan.id + '  ' + scan.created.replace('T', ' ').replace('Z', '') + '  ' + scan.mode;
+  var csv = $('csv'); csv.hidden = false; csv.href = 'v1/scans/' + scan.id + '/findings.csv';
+  setStatus(running ? (k ? 'Scanning ' + k + ' of ' + n : 'Queued') : 'Scan finished', running);
+}
+
+/* ---- run panel: built once per scan, then updated in place so the gears keep turning ---- */
+
+function buildSection(i, r) {
+  var s = {i: i, gears: gearPair(), state: 'waiting', steps: {}, logged: 0, seen: false, summary: null};
+  s.name = el('div', {class: 'rs-name', text: r.slug || r.url});
+  s.stateEl = el('div', {class: 'rs-state', text: 'Queued'});
+  s.time = el('div', {class: 'tm'});
+  s.head = el('div', {class: 'rs-head'}, [s.gears, el('div', {}, [s.name, s.stateEl]), s.time]);
+  s.list = el('ul', {class: 'steps'});
+  STEPS.forEach(function (d) {
+    var st = {key: d[0], ic: stepIcon(), detail: el('div', {class: 'st-detail'}), count: el('div', {class: 'st-count'}), time: el('div', {class: 'tm'}), state: 'waiting', start: 0, took: null};
+    st.bar = el('div', {class: 'st-bar', hidden: 'hidden'}, [el('i')]);
+    st.row = el('li', {class: 'st waiting'}, [st.ic, el('div', {class: 'st-name', text: d[1]}), st.detail, st.count, st.time, st.bar]);
+    s.steps[d[0]] = st; s.list.appendChild(st.row);
+  });
+  s.log = el('div', {class: 'log'});
+  s.logSum = el('summary', {text: 'Activity'});
+  s.logBox = el('details', {class: 'rs-log', hidden: 'hidden'}, [s.logSum, s.log]);
+  s.extra = el('div');
+  s.root = el('div', {class: 'rs waiting'}, [s.head, s.list, s.logBox, s.extra]);
+  return s;
+}
+
+function paintStep(st, state, detail, done, total, startedAgoSecs) {
+  if (st.state !== state) {
+    if (state === 'running') st.start = Date.now() - (startedAgoSecs || 0) * 1000;
+    if (st.state === 'running') st.took = (Date.now() - st.start) / 1000;
+    st.state = state;
+    setState(st.row, state); setState(st.ic, state);
+  }
+  if (detail != null && st.detail.textContent !== detail) { st.detail.textContent = detail; st.detail.title = detail; }
+  if (total != null && total > 0) {
+    st.count.textContent = (done || 0) + ' of ' + total;
+    st.bar.hidden = state !== 'running' && state !== 'done';
+    st.bar.firstChild.style.width = Math.min(100, Math.round(((state === 'done' ? total : (done || 0)) / total) * 100)) + '%';
+  } else if (state === 'waiting') { st.count.textContent = ''; }
+}
+
+function fraction(s) {
+  if (s.state === 'done' || s.state === 'failed') return 1;
+  if (s.state === 'waiting') return 0;
+  var f = 0;
+  STEPS.forEach(function (d) {
+    var st = s.steps[d[0]];
+    if (st.state === 'done') f += d[2];
+    else if (st.state === 'running' && st.key === 'coverage' && st.total) f += d[2] * (st.done || 0) / st.total;
+  });
+  return f;
+}
+
+function syncRun(scan) {
+  var box = $('run'), n = scan.repos.length;
+  if (RUN.id !== scan.id) {
+    RUN.id = scan.id; RUN.secs = []; box.innerHTML = '';
+    var top = {gears: gearPair(), title: el('div', {class: 'run-title'}), sub: el('div', {class: 'run-sub'}), time: el('div', {class: 'tm'})};
+    top.root = el('div', {class: 'run-top'}, [top.gears, el('div', {class: 'run-text'}, [top.title, top.sub]), top.time]);
+    top.fill = el('div', {class: 'prog-fill'});
+    top.bar = el('div', {class: 'prog live'}, [top.fill]);
+    RUN.top = top;
+    box.appendChild(top.root); box.appendChild(top.bar);
+    scan.repos.forEach(function (r, i) { var s = buildSection(i, r); RUN.secs.push(s); box.appendChild(s.root); });
+    box.hidden = false;
+  }
+  var running = null, finished = 0, failed = 0, frac = 0;
+  scan.repos.forEach(function (r, i) {
+    var s = RUN.secs[i], p = r.progress, st = r.status || 'queued';
+    if (p) {
+      RUN.skew = p.now * 1000 - RUN.fetchedAt;
+      s.seen = true;
+      s.t0 = RUN.fetchedAt - (p.now - p.started) * 1000;
+      STEPS.forEach(function (d) {
+        var x = p.steps[d[0]], q = s.steps[d[0]];
+        if (x) { q.done = x.done; q.total = x.total; paintStep(q, x.state, x.detail, x.done, x.total, p.now - x.at); }
+      });
+      for (var j = s.logged; j < p.log.length; j++) addLog(s, p.log[j]);
+      s.logged = p.log.length;
+    }
+    if (st === 'running') running = running || s;
+    if (st === 'done' || st === 'error') {
+      if (s.state !== 'done' && s.state !== 'failed') finalise(s, r);
+      if (st === 'done') finished++; else failed++;
+    }
+    var repoState = st === 'done' ? 'done' : st === 'error' ? 'failed' : st === 'running' ? 'running' : 'waiting';
+    if (repoState === 'running' || repoState === 'waiting') {
+      if (s.state !== repoState) { s.state = repoState; setState(s.root, repoState); setState(s.gears, repoState); s.stateEl.textContent = repoState === 'running' ? 'Scanning' : 'Queued'; }
+      if (repoState === 'running') s.list.hidden = false;
+    }
+    if (st === 'queued') s.list.hidden = true;
+    frac += fraction(s);
+  });
+  var T = RUN.top, pct = Math.round(frac / n * 100), allDone = scan.status === 'done';
+  T.fill.style.width = (allDone ? 100 : Math.max(pct, 2)) + '%';
+  T.bar.className = 'prog' + (allDone ? (failed ? ' fail' : '') : ' live');
+  setState(T.gears, allDone ? (failed && !finished ? 'failed' : 'done') : 'running');
+  if (allDone) {
+    var carried = scan.repos.filter(function (r) { return r.reused; }).length;
+    T.title.textContent = carried
+      ? 'Scan finished: ' + n + ' repositories, ' + (finished - carried) + ' scanned, ' + carried + ' carried over' + (failed ? ', ' + failed + ' failed' : '')
+      : 'Scan finished: ' + finished + ' of ' + n + ' repositories scanned' + (failed ? ', ' + failed + ' failed' : '');
+    T.sub.textContent = 'Results are below.';
+  } else if (running) {
+    var cur = null;
+    STEPS.forEach(function (d) { if (running.steps[d[0]].state === 'running') cur = running.steps[d[0]]; });
+    T.title.textContent = 'Scanning repository ' + (running.i + 1) + ' of ' + n + ': ' + running.name.textContent;
+    T.sub.textContent = cur ? cur.detail.textContent || 'Working...' : 'Starting...';
+  } else {
+    T.title.textContent = 'Waiting to start'; T.sub.textContent = 'The scan is queued.';
+  }
+  tick();
+}
+
+function addLog(s, e) {
+  if (s.logBox.hidden) { s.logBox.hidden = false; s.logBox.open = true; }
+  var near = s.log.scrollHeight - s.log.scrollTop - s.log.clientHeight < 30;
+  var label = ({fetch: 'Fetch', parse: 'Manifests', osv: 'OSV.dev', coverage: 'Lightwell'})[e.step] || e.step;
+  s.log.appendChild(el('div', {class: e.state}, [el('span', {class: 'lt', text: '+' + e.t.toFixed(1) + 's'}), el('span', {class: 'ls', text: label}), el('span', {class: 'lx', text: (e.state === 'done' ? 'done: ' : e.state === 'failed' ? 'failed: ' : '') + e.text})]));
+  s.logN = (s.logN || 0) + 1;
+  s.logSum.textContent = 'Activity (' + s.logN + (s.logN === 1 ? ' line)' : ' lines)');
+  if (near) s.log.scrollTop = s.log.scrollHeight;
+}
+
+function finalise(s, r) {
+  var ok = r.status === 'done';
+  s.state = ok ? 'done' : 'failed';
+  setState(s.root, s.state); setState(s.gears, s.state);
+  s.stateEl.textContent = r.reused ? 'Reused' : ok ? 'Done' : 'Failed';
+  s.t1 = Date.now();
+  STEPS.forEach(function (d) {
+    var q = s.steps[d[0]];
+    if (q.state === 'done' || q.state === 'skipped') return;
+    if (ok) paintStep(q, 'done', q.state === 'waiting' ? '' : null, q.total, q.total);
+    else if (q.state === 'running') paintStep(q, 'failed', r.error || 'failed');
+    else paintStep(q, 'skipped', '');
+  });
+  if (!s.seen) s.list.hidden = true;
+  s.extra.innerHTML = '';
+  if (r.reused) s.extra.appendChild(el('div', {class: 'rs-sum', text: 'Carried over from the earlier scan (scanned ' + String(r.scanned_at || '').replace('T', ' ').replace('Z', '') + '). Not run again.'}));
+  if (ok) s.extra.appendChild(el('div', {class: 'rs-sum', text: r.components + ' components checked in ' + r.manifests.length + ' manifests, ' + r.summary.issues + ' issues in ' + r.summary.vulnerable_components + ' components'}));
+  else s.extra.appendChild(el('div', {class: 'rs-err', text: r.error || 'failed'}));
+}
+
+function tick() {
+  if (!current) return;
+  var now = Date.now();
+  RUN.secs.forEach(function (s) {
+    if (s.state === 'running') {
+      s.time.textContent = fmtSecs((now - s.t0) / 1000);
+      STEPS.forEach(function (d) { var q = s.steps[d[0]]; if (q.state === 'running') q.time.textContent = fmtSecs((now - q.start) / 1000); });
+    } else if (s.t0 && s.t1) { s.time.textContent = fmtSecs((s.t1 - s.t0) / 1000); }
+    STEPS.forEach(function (d) { var q = s.steps[d[0]]; if (q.state !== 'running' && q.took != null) q.time.textContent = fmtSecs(q.took); });
+  });
+  if (RUN.top && current.status !== 'done') {
+    var created = Date.parse(current.created);
+    if (!isNaN(created)) RUN.top.time.textContent = fmtSecs((now + RUN.skew - created) / 1000);
+  } else if (RUN.top && current.finished) {
+    RUN.top.time.textContent = fmtSecs((Date.parse(current.finished) - Date.parse(current.created)) / 1000);
+  }
+}
+setInterval(tick, 1000);
+
+/* ---- results ---- */
+
+var FILE_TYPES = [
+  {name: 'pom.xml', eco: 'Maven', lw: true, ranged: true, note: 'Direct dependencies that have a version.'},
+  {name: 'build.gradle, build.gradle.kts', eco: 'Gradle', lw: true, ranged: true, note: 'Dependencies written as group:artifact:version.'},
+  {name: 'requirements*.txt, requirements/*.txt', eco: 'Python', lw: true, ranged: true, note: 'Lines pinned with ==.'},
+  {name: 'pyproject.toml', eco: 'Python', lw: true, ranged: true, note: 'Dependencies under [project] and [tool.poetry] that have an exact version.'},
+  {name: 'poetry.lock', eco: 'Python', lw: true, note: 'Every resolved package, indirect ones included.'},
+  {name: 'Pipfile.lock', eco: 'Python', lw: true, note: 'Pinned packages from default and develop.'},
+  {name: 'package.json', eco: 'npm', lw: false, ranged: true, note: 'Dependencies that have an exact version.'},
+  {name: 'package-lock.json', eco: 'npm', lw: false, note: 'Every resolved package, indirect ones included.'}
+];
+var KIND_LABEL = {pom: 'Maven', gradle: 'Gradle', requirements: 'Python', pyproject: 'Python', 'poetry.lock': 'Python', 'pipfile.lock': 'Python', 'package.json': 'npm', 'package-lock': 'npm'};
+
+var RANGES_ON = false, POMS = 'off';
+var POM_NOTE = {off: ' Versions set by a parent POM or a BOM are not resolved.', repo: ' Versions set by a parent POM or a BOM in the same repository are resolved; published ones are not.', all: ' Versions set by a parent POM or a BOM are resolved, from the repository or Maven Central.'};
+function renderFileTypes() {
+  var box = $('filesStatic'); box.innerHTML = '';
+  FILE_TYPES.forEach(function (t) {
+    box.appendChild(el('div', {class: 'frow'}, [el('span', {class: 'fname', text: t.name}),
+      el('span', {class: 'ftag' + (t.lw ? ' lw' : ''), text: t.eco + (t.lw ? ': Lightwell + OSV' : ': OSV only'), title: t.lw ? 'Lightwell has builds for this ecosystem' : 'Lightwell has no builds for this ecosystem'}),
+      el('span', {class: 'fnote', text: t.note + (t.name === 'pom.xml' ? POM_NOTE[POMS] || POM_NOTE.off : '') + (t.ranged && RANGES_ON ? ' A range such as >=2.0 or ^1.2 is looked up at the lowest version it allows.' : '')})]));
+  });
+}
+
+function renderFiles(scan) {
+  var box = $('filesScan'); box.innerHTML = '';
+  var repos = scan.repos.filter(function (r) { return r.status === 'done'; });
+  $('filesScanWrap').hidden = !repos.length;
+  repos.forEach(function (r) {
+    var notes = r.notes || [], manifests = r.manifests || [], list = el('div');
+    manifests.forEach(function (m) {
+      var issues = (r.findings || []).filter(function (f) { return f.component.sources.indexOf(m.path) >= 0; }).length;
+      var own = notes.filter(function (n) { return n.indexOf(m.path + ': ') === 0; }).map(function (n) { var t = n.slice(m.path.length + 2); return t.charAt(0).toUpperCase() + t.slice(1); });
+      var row = el('div', {class: 'frow'}, [el('span', {class: 'fname', text: m.path}),
+        el('span', {class: 'ftag', text: (KIND_LABEL[m.kind] || m.kind) + ': ' + m.components + (m.components === 1 ? ' component' : ' components') + (issues ? ', ' + issues + ' vulnerable' : '')})]);
+      own.forEach(function (n) { row.appendChild(el('span', {class: 'fnote', text: n})); });
+      list.appendChild(row);
+    });
+    notes.forEach(function (n) {
+      var m = /^(.+?): (skipped, larger than .+|could not be fetched.*)$/.exec(n);
+      if (m) list.appendChild(el('div', {class: 'frow'}, [el('span', {class: 'fname', text: m[1]}), el('span', {class: 'ftag bad', text: 'Not read'}), el('span', {class: 'fnote', text: m[2]})]));
+    });
+    if (!list.firstChild) list.appendChild(el('div', {class: 'frow'}, [el('span', {class: 'fnote', text: 'No supported dependency files were found.'})]));
+    var d = el('details', {class: 'frepo'}, [el('summary', {}, [(r.slug || r.url) + '  ', el('span', {class: 'muted', text: manifests.length + (manifests.length === 1 ? ' file' : ' files')})]), list]);
+    d.open = repos.length === 1;
+    box.appendChild(d);
+  });
+}
+
+function syncResults(scan) {
+  var key = scan.id + '|' + scan.repos.map(function (r) { return r.status; }).join(',');
+  if (key === RES.key) return;
+  RES.key = key; renderResults(scan); renderFiles(scan);
+}
+
+function totals(scan) {
+  var t = {repos: 0, components: 0, unevaluated: 0, vulnerable: 0, remediated: 0, predisclosure: 0, not_covered: 0, not_checked: 0,
+           resolved: 0, issues_total: 0, sample: false, source: 'none', known: 0, carried: 0, valid: 0, other_version: 0, leads: [], catalog: null, fromRanges: 0, fixLw: 0, fixUp: 0, fixNone: 0, fixLwOnly: 0, unitemised: 0}; SEV.forEach(function (s) { t[s] = 0; });
+  scan.repos.forEach(function (r) {
+    if (r.status !== 'done') return;
+    t.repos++; t.fromRanges += r.from_ranges || 0; t.components += r.components; t.unevaluated += r.unevaluated; t.vulnerable += r.summary.vulnerable_components;
+    SEV.forEach(function (s) { t[s] += r.summary[s] || 0; });
+    var lw = r.summary.lightwell;
+    if (lw) {
+      ['remediated', 'predisclosure', 'not_checked'].forEach(function (k) { t[k] += lw[k] || 0; });
+      t.resolved += lw.issues_resolved || 0; t.issues_total += lw.issues_total || 0;
+      t.sample = t.sample || !!lw.sample; t.source = lw.source;
+      if (lw.catalog && !t.catalog) t.catalog = lw.catalog;
+    }
+    r.findings.forEach(function (f) {
+      var l = f.lightwell || {}, v = l.versions;
+      if (v) { t.known++; if (v.carried) t.carried++; if (v.exact_validated) t.valid++; }
+      var st = lwState(l); if (st === 'other_version') t.other_version++; else if (st === 'not_covered') t.not_covered++;
+      f.vulns.forEach(function (x) {
+        if (x.lightwell_fixed) { t.fixLw++; if (!x.suggested_fix) t.fixLwOnly++; } else if (x.suggested_fix) t.fixUp++; else t.fixNone++;
+      });
+      if ((l.status === 'remediated' || l.status === 'predisclosure') && l.resolves == null) t.unitemised++;
+      ((l.detail || {}).advisories || []).forEach(function (a) { if (typeof a.lead_days === 'number') t.leads.push(a.lead_days); });
+    });
+  });
+  return t;
+}
+
+function stat(label, value, cls) { return el('div', {class: 'stat' + (cls ? ' ' + cls : '')}, [el('div', {class: 'v', text: String(value)}), el('div', {class: 'k', text: label})]); }
+
+function renderResults(scan) {
+  var root = $('results'); root.innerHTML = '';
+  var t = totals(scan);
+  var any = scan.repos.some(function (r) { return r.status === 'done' || r.status === 'error'; });
+  if (!any) { root.appendChild(el('div', {class: 'muted hint', text: 'Findings appear here as each repository finishes.'})); return; }
+  if (t.repos) {
+    var body = el('div', {class: 'sect-body'});
+    var head = el('div', {class: 'sect'}, [el('div', {class: 'sect-head'}, [el('span', {class: 'tag', text: 'Findings'}), el('h3', {text: 'Summary'}), el('div', {class: 'right'}, t.vulnerable ? [filterBox(), planButton(scan.repos.filter(function (r) { return r.status === 'done' && r.findings.length; }), 'all')] : [filterBox()])]), body]);
+    var tiles = el('div', {class: 'stats'});
+    tiles.appendChild(stat('Repositories', t.repos)); tiles.appendChild(stat('Components checked', t.components)); tiles.appendChild(stat('Vulnerable components', t.vulnerable));
+    SEV.forEach(function (s) { if (s !== 'unknown' || t[s]) tiles.appendChild(stat(s, t[s], t[s] ? 'sevtile sc-' + s : 'low')); });
+    body.appendChild(tiles);
+    if (t.vulnerable) {
+      body.appendChild(outcomePanel(t));
+      var lt = el('div', {class: 'stats', style: 'margin-top:14px'});
+      [['remediated', 'Lightwell: remediated build'], ['predisclosure', 'Lightwell: pre-disclosure'], ['other_version', 'Lightwell: another version'], ['not_covered', 'Lightwell: not covered'], ['not_checked', 'Lightwell: not checked']].forEach(function (x) {
+        if (t[x[0]] || x[0] === 'not_covered' || x[0] === 'remediated') lt.appendChild(el('div', {class: 'stat'}, [el('div', {class: 'v', text: String(t[x[0]])}), el('div', {class: 'k'}, [el('span', {class: 'lwchip lw-' + x[0], text: x[1]})])]));
+      });
+      body.appendChild(lt);
+      body.appendChild(el('div', {class: 'hint', text: t.source === 'none'
+        ? 'Lightwell coverage was not checked in this mode. The findings above come from OSV.dev alone.'
+        : 'Of the ' + t.vulnerable + ' vulnerable components, a Lightwell build exists for ' + (t.remediated + t.predisclosure) + ', and those builds address ' + t.resolved + ' of ' + t.issues_total + ' issues.'}));
+      if (t.known || t.catalog) body.appendChild(catalogPanel(t));
+      if (t.sample) body.appendChild(el('div', {class: 'note', text: 'Sample coverage. In demo mode the Lightwell column and the Lightwell detail come from a snapshot of live Lightwell API lookups, covering the versions pinned in the constructed demo repository and the covered versions found in three real repositories. It is not the Lightwell catalog and will drift as that changes.'}));
+    }
+    if (t.fromRanges) body.appendChild(el('div', {class: 'note', text: t.fromRanges + ' components were declared as a range, so the lowest version each range allows was looked up. Those results describe the oldest version the range permits and can overstate what is installed. They are marked "range" in the table.'}));
+    if (t.unevaluated) body.appendChild(el('div', {class: 'note', text: t.unevaluated + ' declared dependencies have no resolved version and were not checked. Open a repository below to see which, and why.'}));
+    root.appendChild(head);
+  }
+  var finished = scan.repos.filter(function (r) { return r.status === 'done' || r.status === 'error'; });
+  finished.forEach(function (r, i) { root.appendChild(repoCard(r, finished.length > 1 ? (i + 1) + ' of ' + finished.length : '')); });
+}
+
+function median(a) { var b = a.slice().sort(function (x, y) { return x - y; }), m = Math.floor(b.length / 2); return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
+
+function catalogPanel(t) {
+  var outer = el('div', {class: 'xp-block', style: 'margin-top:14px'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Lightwell catalog'}), el('span', {class: 'muted', text: 'what Lightwell holds for the packages in this scan'})])]);
+  var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
+  if (t.known) {
+    var st = el('div', {class: 'stats'});
+    st.appendChild(stat('Vulnerable packages Lightwell carries', t.carried + ' of ' + t.known));
+    st.appendChild(stat('Validated build of the exact version', t.valid));
+    st.appendChild(stat('Lightwell build at another version only', t.other_version));
+    st.appendChild(stat('Median fix lead time', t.leads.length ? (median(t.leads) + ' d') : 'n/a'));
+    box.appendChild(st);
+    var bits = [];
+    if (t.leads.length) bits.push('Lead time is the days from the advisory being published to the date Lightwell built the fixing build, over ' + t.leads.length + (t.leads.length === 1 ? ' advisory (' : ' advisories (') + 'shortest ' + Math.min.apply(null, t.leads) + ' d, longest ' + Math.max.apply(null, t.leads) + ' d). A negative number means the build is dated before the advisory.');
+    bits.push('Validated builds are a Lightwell catalog tier. Those repositories record no CVE fixes, so a validated build is shown for information and is not counted as coverage.');
+    box.appendChild(el('div', {class: 'hint', text: bits.join(' ')}));
+  }
+  var repos = (t.catalog || {}).repositories || [];
+  if (repos.length) {
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Lightwell repositories (' + repos.length + ')'}));
+    box.appendChild(el('div', {class: 'hint', text: 'These are the package repositories your Lightwell account can see, not the repositories you scanned. Each one is a library of builds Lightwell publishes for one language. Tier: remediated builds carry Lightwell CVE fixes and are the ones counted as coverage above; validated builds have no recorded fixes and are shown for information only. Builds, Packages and Advisories are the size of each repository: how many builds it holds, how many distinct packages those cover, and how many advisories its builds address.'}));
+    box.appendChild(el('div', {class: 'tscroll'}, [el('table', {}, [
+      el('thead', {}, [el('tr', {}, ['Repository', 'Tier', 'Type', 'Builds', 'Packages', 'Advisories'].map(function (x) { return el('th', {text: x}); }))]),
+      el('tbody', {}, repos.map(function (r) {
+        return el('tr', {}, [el('td', {class: 'mono', text: r.name}), el('td', {text: r.security_level || ''}), el('td', {text: r.content_type || ''}),
+          el('td', {text: r.build_count == null ? '' : r.build_count.toLocaleString()}), el('td', {text: r.package_count == null ? '' : r.package_count.toLocaleString()}),
+          el('td', {text: r.advisory_count == null ? '' : String(r.advisory_count)})]);
+      }))])]));
+  }
+  return outer;
+}
+
+function filterBox() {
+  var sel = el('select', {title: 'Minimum severity', 'aria-label': 'Minimum severity'});
+  [['all', 'All severities'], ['critical', 'Critical'], ['high', 'High and above'], ['moderate', 'Moderate and above'], ['low', 'Low and above']].forEach(function (o) {
+    var op = el('option', {value: o[0], text: o[1]}); if (o[0] === filter.sev) op.selected = true; sel.appendChild(op);
+  });
+  sel.onchange = function () { filter.sev = this.value; renderResults(current); };
+  var inp = el('input', {type: 'text', placeholder: 'Filter package', 'aria-label': 'Filter package', value: filter.text});
+  inp.oninput = function () { filter.text = this.value; var pos = this.selectionStart; renderResults(current); var n = document.querySelector('input[placeholder="Filter package"]'); n.focus(); n.setSelectionRange(pos, pos); };
+  var lsel = el('select', {title: 'Lightwell coverage', 'aria-label': 'Lightwell coverage'});
+  [['all', 'Any Lightwell status'], ['covered', 'Lightwell covers'], ['other', 'Build at another version'], ['not', 'Not covered']].forEach(function (o) {
+    var op = el('option', {value: o[0], text: o[1]}); if (o[0] === filter.lw) op.selected = true; lsel.appendChild(op);
+  });
+  lsel.onchange = function () { filter.lw = this.value; renderResults(current); };
+  return el('div', {class: 'filters'}, [inp, sel, lsel]);
+}
+
+function passes(f) {
+  var worst = SEV.indexOf(f.vulns[0].severity); if (worst < 0) worst = 4;
+  if (filter.sev !== 'all' && worst > SEV.indexOf(filter.sev)) return false;
+  var st = (f.lightwell || {}).status, covered = st === 'remediated' || st === 'predisclosure';
+  if (filter.lw === 'covered' && !covered) return false;
+  if (filter.lw === 'other' && lwState(f.lightwell) !== 'other_version') return false;
+  if (filter.lw === 'not' && (covered || lwState(f.lightwell) === 'other_version')) return false;
+  return !filter.text || f.component.name.toLowerCase().indexOf(filter.text.toLowerCase()) >= 0;
+}
+
+function repoCard(r, place) {
+  var title = r.slug || r.url;
+  var head = el('div', {class: 'sect-head'}, [el('span', {class: 'tag', text: place ? 'Repository ' + place : 'Repository'}), el('h3', {text: title})]);
+  var card = el('div', {class: 'sect repo'}, [head]);
+  var body = el('div', {class: 'sect-body'}); card.appendChild(body);
+  if (r.status === 'error') { body.appendChild(el('div', {class: 'err', text: r.error || 'failed'})); return card; }
+  head.appendChild(el('div', {class: 'right'}, [el('span', {class: 'mono muted', text: r.ref + ' @ ' + (r.commit || '').slice(0, 10) + (r.private ? '  private' : '')})].concat(r.findings.length ? [planButton([r], r.slug || 'repository'), remButton(r)] : [])));
+  body.appendChild(el('div', {class: 'hint', style: 'margin:0 0 10px', text: r.manifests.length + ' manifests, ' + r.components + ' components checked, ' + r.summary.issues + ' issues in ' + r.summary.vulnerable_components + ' components. Click a row to open its details.'}));
+  var slot = el('div'); remState(r.url).node = slot; body.appendChild(slot); paintRem(r);
+  var shown = r.findings.filter(passes);
+  if (!r.findings.length) body.appendChild(el('div', {class: 'muted', text: 'No known vulnerabilities in the components that could be checked.'}));
+  else if (!shown.length) body.appendChild(el('div', {class: 'muted', text: 'Nothing matches the filter.'}));
+  else {
+    var tb = el('tbody');
+    shown.forEach(function (f) {
+      var c = f.component, worst = f.vulns[0], fix = f.fix_all || '';
+      var btn = el('button', {class: 'chev-btn', type: 'button', 'aria-expanded': 'false', 'aria-label': 'Show details for ' + c.name + ' ' + c.version, title: 'Show details'});
+      btn.innerHTML = '<svg aria-hidden="true"><use href="#i-chev" xlink:href="#i-chev"></use></svg>';
+      var row = el('tr', {class: 'pkg'}, [
+        el('td', {class: 'chev'}, [btn]), el('td', {}, [pill(worst.severity, worst.score)]), el('td', {class: 'mono', text: c.name}), el('td', {class: 'mono'}, [c.version].concat(c.ranges && c.ranges.length ? [el('span', {class: 'rtag', text: 'range', title: rangeInfo(c)})] : [])),
+        el('td', {text: String(f.vulns.length)}), lightwellCell(f.lightwell), el('td', {class: 'mono', text: (fix || 'none known') + (fix && f.unfixed ? '  (' + f.unfixed + ' without a fix)' : '')}),
+        el('td', {class: 'mono muted', text: c.sources.join(', ')})]);
+      var det = el('tr', {class: 'detail', style: 'display:none'}, [el('td', {colspan: '8'}, [expansion(f, (r.summary.lightwell || {}).sample)])]);
+      row.onclick = function () {
+        var open = det.style.display === 'none';
+        det.style.display = open ? '' : 'none'; row.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', String(open));
+        btn.setAttribute('aria-label', (open ? 'Hide' : 'Show') + ' details for ' + c.name + ' ' + c.version); btn.title = open ? 'Hide details' : 'Show details';
+      };
+      tb.appendChild(row); tb.appendChild(det);
+    });
+    var tbl = el('table', {}, [el('thead', {}, [el('tr', {}, [el('th', {class: 'chev'})].concat(['Worst', 'Package', 'Version', 'Issues', 'Lightwell', 'Version that clears all', 'Declared in'].map(function (x) { return el('th', {text: x}); })))]), tb]);
+    body.appendChild(el('div', {class: 'tscroll'}, [tbl]));
+  }
+  if (r.unevaluated) {
+    var d = el('details', {}, [el('summary', {text: r.unevaluated + ' components not checked'})]);
+    r.unevaluated_components.forEach(function (u) { d.appendChild(el('div', {class: 'hint'}, [el('span', {class: 'mono', text: u.name}), ' in ' + u.source + ': ' + (u.note || 'no version')])); });
+    body.appendChild(d);
+  }
+  (r.notes || []).forEach(function (n) { body.appendChild(el('div', {class: 'note', text: n})); });
+  return card;
+}
+
+var LW_LABEL = {remediated: 'Remediated', predisclosure: 'Pre-disclosure', other_version: 'Nearest build', not_covered: 'Not covered', not_checked: 'Not checked'};
+/* The scan reports other_version itself. Scans saved before it existed say not_covered for the same case, so derive it for them. */
+function lwState(lw) { return lw && (lw.status === 'other_version' || (lw.status === 'not_covered' && lw.versions && lw.versions.nearest)) ? 'other_version' : lw && lw.status; }
+function rangeInfo(c) {
+  if (!c.ranges || !c.ranges.length) return '';
+  return 'Declared as ' + c.ranges.join(' and ') + '. ' + c.version + (c.range_exclusive ? ' (just above it)' : '') + ' is the lowest version that range allows, and it is what was looked up. The version actually installed may be newer.';
+}
+
+function lightwellCell(lw) {
+  if (!lw) return el('td', {text: ''});
+  var state = lwState(lw), kids = [el('span', {class: 'lwchip lw-' + state, text: state === 'other_version' && lw.versions && lw.versions.nearest ? 'Nearest build: ' + lw.versions.nearest.version : LW_LABEL[state] || state, title: state === 'other_version' ? 'No Lightwell build of the installed version. Lightwell has a remediated build of a different version, so using it means changing versions. Check that it resolves your advisories first.' : lw.note || ''})];
+  if (lw.build) kids.push(el('div', {class: 'mono muted', text: lw.build}));
+  if (lw.embargo_days) kids.push(el('div', {class: 'hint', style: 'margin:2px 0 0', text: 'embargo, ' + lw.embargo_days + ' d left'}));
+  if (lw.status === 'remediated' || lw.status === 'predisclosure')
+    kids.push(el('div', {class: 'hint', style: 'margin:2px 0 0', text: lw.resolves == null ? 'issues addressed: not itemised' : 'addresses ' + lw.resolves + ' of ' + lw.of}));
+  else if (lw.versions) {
+    var v = lw.versions, h = !v.carried ? 'not carried by Lightwell' : [v.nearest ? (state === 'other_version' ? 'a different version from the installed one' : 'nearest remediated: ' + v.nearest.version) + (v.nearest.build ? ' (build ' + v.nearest.build + ')' : '') : '', v.exact_validated ? 'validated build only' : ''].filter(Boolean).join(', ');
+    if (h) kids.push(el('div', {class: 'hint', style: 'margin:2px 0 0', text: h}));
+  }
+  return el('td', {}, kids);
+}
+
+function fmtDate(s) { return s ? String(s).slice(0, 10) : ''; }
+function fmtSize(n) { return n == null ? '' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+function leadText(a) {
+  if (typeof a.lead_days !== 'number') return a.credited ? '' : 'not credited';
+  var d = a.lead_days;
+  return (d === 0 ? 'same day' : Math.abs(d) + (Math.abs(d) === 1 ? ' day ' : ' days ') + (d > 0 ? 'after' : 'before')) + ' publication';
+}
+function lwSev(a) { return a.score != null ? String(a.score) : (a.severity || ''); }
+
+function lightwellDetail(f, sample) {
+  var lw = f.lightwell, d = lw && lw.detail;
+  if (!d || (lw.status !== 'remediated' && lw.status !== 'predisclosure')) return null;
+  var outer = el('div', {class: 'xp-block lwdetail'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Lightwell detail'}),
+    el('span', {class: 'muted', text: sample ? 'snapshot of the live API, not a live lookup' : 'from the Lightwell Network API'})])]);
+  var box = el('div', {class: 'xp-block-b'});
+  outer.appendChild(box);
+  if (d.note) box.appendChild(el('div', {class: 'hint', text: d.note}));
+  var b = d.build || {}, repo = d.repository || {}, rows = [];
+  box.appendChild(el('div', {class: 'lwd-sub', text: 'Build'}));
+  rows.push(['Build', (b.version || lw.build || '') + (b.created_at ? ', built ' + fmtDate(b.created_at) : '') + (b.listed_at && fmtDate(b.listed_at) !== fmtDate(b.created_at) ? ', listed ' + fmtDate(b.listed_at) : '')]);
+  var leads = (d.advisories || []).filter(function (a) { return typeof a.lead_days === 'number'; }).map(function (a) { return a.lead_days; });
+  if (leads.length) rows.push(['Lead time', leads.length === 1 || Math.min.apply(null, leads) === Math.max.apply(null, leads) ? leadText({lead_days: leads[0]}) : 'from ' + Math.min.apply(null, leads) + ' to ' + Math.max.apply(null, leads) + ' days after publication, over ' + leads.length + ' advisories']);
+  if (b.repository) rows.push(['Repository', b.repository + (repo.security_level ? ' (' + repo.security_level + ')' : '')]);
+  if (repo.published_distribution_url) rows.push(['Install from', repo.published_distribution_url]);
+  if (d.author) rows.push(['Author', d.author]);
+  if (d.license) rows.push(['License', d.license]);
+  if (d.project_url) rows.push(['Project', d.project_url]);
+  if (d.summary) rows.push(['Summary', d.summary]);
+  var grid = el('dl', {class: 'lwd-grid'});
+  rows.forEach(function (x) { grid.appendChild(el('dt', {text: x[0]})); grid.appendChild(el('dd', {class: 'mono', text: x[1]})); });
+  box.appendChild(grid);
+
+  var builds = d.builds || [];
+  if (builds.length > 1) {
+    var cur = builds.some(function (x) { return x.build === b.version; });
+    if (cur && builds[0].build !== b.version) box.appendChild(el('div', {class: 'lwd-flag', style: 'margin-top:8px',
+      text: 'A newer build of this version is listed: ' + builds[0].build + ' (built ' + fmtDate(builds[0].created_at) + '). The coverage above is for ' + b.version + '.'}));
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Builds of this version'}));
+    box.appendChild(el('div', {class: 'mono'}, builds.map(function (x) {
+      return el('div', {text: x.build + (x.created_at ? '   ' + fmtDate(x.created_at) : '') + (x.build === b.version ? '   (the build matched above)' : '')});
+    })));
+  }
+  if ((d.distributions || []).length) {
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Distribution files'}));
+    box.appendChild(el('div', {class: 'tscroll'}, [el('table', {}, [
+      el('thead', {}, [el('tr', {}, ['File', 'Type', 'Size', 'sha256'].map(function (x) { return el('th', {text: x}); }))]),
+      el('tbody', {}, d.distributions.map(function (x) {
+        return el('tr', {}, [el('td', {class: 'mono', text: x.filename}), el('td', {text: x.type}), el('td', {text: fmtSize(x.size)}), el('td', {class: 'mono', style: 'word-break:break-all', text: x.sha256})]);
+      }))])]));
+  }
+
+  function advRow(a) {
+    var refs = (a.references || []).length ? el('div', {class: 'hint', text: 'References: ' + a.references.join(', ')}) : null;
+    var more = a.details && a.details !== a.summary ? el('details', {}, [el('summary', {text: 'Lightwell text'}), el('div', {class: 'hint', style: 'white-space:pre-wrap', text: a.details})]) : null;
+    var fixed = a.fixed_in ? a.fixed_in + (a.credited ? '' : '  (newer than the build matched)') : 'not stated';
+    return el('tr', {}, [
+      el('td', {}, [el('b', {text: a.cve || a.id}), el('div', {class: 'mono muted', text: a.id})]),
+      el('td', {text: lwSev(a)}), el('td', {text: a.osv ? (a.osv.severity + (a.osv.score != null ? ' ' + a.osv.score : '')) : 'not flagged'}),
+      el('td', {class: 'mono', text: fixed}), el('td', {text: fmtDate(a.published)}), el('td', {text: leadText(a)}),
+      el('td', {}, [el('div', {text: a.summary || ''}), more, refs].filter(Boolean))]);
+  }
+  function advTable(list) {
+    return el('div', {class: 'tscroll'}, [el('table', {}, [
+      el('thead', {}, [el('tr', {}, ['Advisory', 'Lightwell severity', 'OSV severity', 'Fixed in', 'Published', 'Lead time', 'Lightwell summary'].map(function (x) { return el('th', {text: x}); }))]),
+      el('tbody', {}, list.map(advRow))])]);
+  }
+  var advs = d.advisories || [], both = advs.filter(function (a) { return a.osv; }), only = advs.filter(function (a) { return !a.osv; });
+  if (both.length) { box.appendChild(el('div', {class: 'lwd-sub', text: 'Advisories for this version that OSV also reports (' + both.length + ')'})); box.appendChild(advTable(both)); }
+  if (only.length) {
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Lightwell also lists these for this version; OSV did not flag them (' + only.length + ')'}));
+    box.appendChild(advTable(only));
+  }
+  if (!advs.length) box.appendChild(el('div', {class: 'hint', text: 'Lightwell lists no advisory for this version, so which CVEs the build addresses is not itemised.'}));
+  if (repo.name) {
+    var bits = [repo.build_count != null ? repo.build_count + ' builds' : '', repo.advisory_count != null ? repo.advisory_count + ' advisories' : '', repo.package_count != null ? repo.package_count + ' packages' : ''].filter(Boolean);
+    box.appendChild(el('div', {class: 'hint', style: 'margin-top:8px', text: repo.name + ': ' + bits.join(', ') + ((repo.features || []).length ? '. Lightwell features: ' + repo.features.join(', ') : '')}));
+  }
+  return outer;
+}
+
+function xmlText(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function pomEntry(name, version, test) {
+  var p = name.split(':');
+  var lines = ['<dependency>', '  <groupId>' + xmlText(p[0]) + '</groupId>', '  <artifactId>' + xmlText(p[1] || '') + '</artifactId>', '  <version>' + xmlText(version) + '</version>'];
+  if (test) lines.push('  <scope>test</scope>');
+  lines.push('</dependency>');
+  return lines.join('\n');
+}
+
+function settingsEntry(tier) {
+  var id = 'lightwell-' + tier, label = tier.charAt(0).toUpperCase() + tier.slice(1);
+  return ['<settings>', '  <profiles>', '    <profile>', '      <id>' + id + '</id>', '      <repositories>', '        <repository>', '          <id>' + id + '</id>',
+    '          <name>Lightwell Network - ' + label + '</name>', '          <url>https://packages.redhat.com/api/pulp-content/lightwell/java/' + tier + '/</url>',
+    '          <releases><enabled>true</enabled></releases>', '          <snapshots><enabled>false</enabled></snapshots>', '        </repository>',
+    '      </repositories>', '    </profile>', '  </profiles>', '  <activeProfiles>', '    <activeProfile>' + id + '</activeProfile>', '  </activeProfiles>',
+    '  <servers>', '    <server>', '      <id>' + id + '</id>', '      <username>YOUR_SERVICE_ACCOUNT_USERNAME</username>', '      <password>YOUR_SERVICE_ACCOUNT_TOKEN</password>',
+    '    </server>', '  </servers>', '</settings>'].join('\n');
+}
+
+function copyText(text, btn, pre) {
+  function done(ok) {
+    if (!ok && window.getSelection) { var r = document.createRange(); r.selectNodeContents(pre); var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    btn.textContent = ok ? 'Copied' : 'Press Ctrl+C'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+  }
+  function fallback() {
+    var ta = document.createElement('textarea'), ok = false;
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); done(ok);
+  }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback); else fallback();
+}
+
+function snippet(label, code) {
+  var btn = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Copy'});
+  var pre = el('pre', {class: 'code', text: code});
+  btn.onclick = function () { copyText(code, btn, pre); };
+  return el('div', {class: 'snip'}, [el('div', {class: 'snip-h'}, [el('span', {text: label}), btn]), pre]);
+}
+
+function kindOf(path) {
+  var parts = String(path).split('/'), n = parts[parts.length - 1], dir = parts[parts.length - 2] || '';
+  if (n === 'pom.xml') return 'pom';
+  if (n === 'build.gradle') return 'gradle';
+  if (n === 'build.gradle.kts') return 'gradle.kts';
+  if (n === 'pyproject.toml') return 'pyproject';
+  if (n === 'poetry.lock') return 'poetry.lock';
+  if (n === 'Pipfile.lock') return 'pipfile.lock';
+  if (n === 'package.json') return 'package.json';
+  if (n === 'package-lock.json') return 'package-lock';
+  if (/^requirements[\w.\-]*\.(txt|in)$/i.test(n) || (dir === 'requirements' && /\.txt$/.test(n))) return 'requirements';
+  return '';
+}
+
+var SNIPPET_KINDS = ['pom', 'gradle', 'gradle.kts', 'requirements', 'pyproject', 'poetry.lock', 'pipfile.lock', 'package.json', 'package-lock'];
+
+/* The line or lines to put in one manifest to pin `name` at `ver`. Returns [[caption, code], ...]. */
+function entriesFor(kind, c, ver, dev) {
+  var g = c.ecosystem === 'maven' ? c.name.split(':') : [];
+  switch (kind) {
+    case 'pom': return [['', pomEntry(c.name, ver, dev)]];
+    case 'gradle': return [['', (dev ? 'testImplementation' : 'implementation') + " '" + c.name + ':' + ver + "'"]];
+    case 'gradle.kts': return [['', (dev ? 'testImplementation' : 'implementation') + '("' + c.name + ':' + ver + '")']];
+    case 'requirements': return [['', c.name + '==' + ver]];
+    case 'pyproject': return [
+      ['If the file lists dependencies under [project] (PEP 621):', dev ? '[project.optional-dependencies]\ndev = [\n  "' + c.name + '==' + ver + '",\n]' : '[project]\ndependencies = [\n  "' + c.name + '==' + ver + '",\n]'],
+      ['If it uses [tool.poetry]:', (dev ? '[tool.poetry.dev-dependencies]' : '[tool.poetry.dependencies]') + '\n' + c.name + ' = "' + ver + '"']];
+    case 'pipfile.lock': return [['Pipfile.lock is generated, so run:', 'pipenv install ' + (dev ? '--dev ' : '') + '"' + c.name + '==' + ver + '"']];
+    case 'poetry.lock': return [['poetry.lock is generated, so run:', 'poetry add ' + (dev ? '--group dev ' : '') + '"' + c.name + '==' + ver + '"']];
+    case 'package.json': return [['', '"' + (dev ? 'devDependencies' : 'dependencies') + '": {\n  ' + JSON.stringify(c.name) + ': ' + JSON.stringify(ver) + '\n}']];
+    case 'package-lock': {
+      var out = [['package-lock.json is generated, so run:', 'npm install ' + (dev ? '--save-dev ' : '') + c.name + '@' + ver]];
+      if (c.scopes.indexOf('transitive') >= 0) out.push(['If it is only an indirect dependency, force the version in package.json:', '"overrides": {\n  ' + JSON.stringify(c.name) + ': ' + JSON.stringify(ver) + '\n}']);
+      return out;
+    }
+  }
+  return [];
+}
+
+function gradleRepo(tier, kts) {
+  var url = 'https://packages.redhat.com/api/pulp-content/lightwell/java/' + tier + '/';
+  return kts
+    ? ['repositories {', '    maven {', '        name = "lightwell-' + tier + '"', '        url = uri("' + url + '")', '        credentials {', '            username = findProperty("lightwellUsername") as String?',
+       '            password = findProperty("lightwellPassword") as String?', '        }', '    }', '    mavenCentral()', '}'].join('\n')
+    : ['repositories {', '    maven {', '        name = "lightwell-' + tier + '"', '        url "' + url + '"', '        credentials {', '            username = findProperty("lightwellUsername")',
+       '            password = findProperty("lightwellPassword")', '        }', '    }', '    mavenCentral()', '}'].join('\n');
+}
+
+/* Where the Lightwell repository goes, for each tool the package's manifests belong to. Returns [[caption, code], ...]. */
+function repoEntries(kinds, tier) {
+  var py = 'https://packages.redhat.com/api/pulp-content/lightwell/python/' + tier + '/simple', out = [], netrc = 'machine packages.redhat.com login YOUR_SERVICE_ACCOUNT_USERNAME password YOUR_SERVICE_ACCOUNT_TOKEN';
+  if (kinds.indexOf('pom') >= 0) out.push(['Maven: add to ~/.m2/settings.xml, merging into any existing profiles, activeProfiles and servers sections.', settingsEntry(tier)]);
+  ['gradle', 'gradle.kts'].forEach(function (k) {
+    if (kinds.indexOf(k) >= 0) out.push(['Gradle (' + (k === 'gradle' ? 'build.gradle' : 'build.gradle.kts') + '): put this above mavenCentral(), and set the two properties in ~/.gradle/gradle.properties (the property names are only an example).',
+      gradleRepo(tier, k === 'gradle.kts') + '\n\n# ~/.gradle/gradle.properties\nlightwellUsername=YOUR_SERVICE_ACCOUNT_USERNAME\nlightwellPassword=YOUR_SERVICE_ACCOUNT_TOKEN']);
+  });
+  if (kinds.indexOf('requirements') >= 0) out.push(['pip: add the credentials to ~/.netrc, then either set the index once or put the index line at the top of the requirements file.', netrc + '\n\npip config set global.index-url ' + py + '\n\n# or, first line of the requirements file\n--index-url ' + py]);
+  if (kinds.indexOf('pyproject') >= 0 || kinds.indexOf('poetry.lock') >= 0) out.push(['Poetry: store the credentials and add the repository as the default source.', 'poetry config http-basic.lightwell "YOUR_SERVICE_ACCOUNT_USERNAME" "YOUR_SERVICE_ACCOUNT_TOKEN"\npoetry source add --priority=default lightwell https://packages.redhat.com/api/pulp-content/lightwell/python/' + tier]);
+  if (kinds.indexOf('pipfile.lock') >= 0) out.push(['Pipenv: add the credentials to ~/.netrc, then install from the repository.', netrc + '\n\npipenv install --index ' + py]);
+  return out;
+}
+
+/* The manifest kinds (at most three) a component is declared in, the first file of each kind, and whether it is only a dev dependency. */
+function kindsFor(c) {
+  var byKind = {};
+  c.sources.forEach(function (src) {
+    var k = kindOf(src);
+    if (k && !byKind[k]) byKind[k] = src;
+  });
+  return {byKind: byKind, kinds: SNIPPET_KINDS.filter(function (k) { return byKind[k]; }).slice(0, 3),
+          dev: c.scopes.length > 0 && c.scopes.every(function (x) { return x === 'dev'; })};
+}
+
+function manifestBlock(f) {
+  var c = f.component, l = f.lightwell || {}, kf = kindsFor(c), byKind = kf.byKind, kinds = kf.kinds, dev = kf.dev;
+  if (!kinds.length) return null;
+  var outer = el('div', {class: 'xp-block'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: kinds[0] === 'pom' && kinds.length === 1 ? 'Maven dependency entry' : 'Dependency entry'}),
+    el('span', {class: 'muted', text: 'for ' + kinds.map(function (k) { return byKind[k]; }).join(', ')})])]);
+  var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
+  var tier = '', choices = [];
+  if (l.status === 'remediated' || l.status === 'predisclosure') {
+    tier = l.status === 'predisclosure' ? 'predisclosure' : 'remediated';
+    choices.push({label: 'Lightwell ' + tier + ' build of ' + c.version + ': the same upstream version with the security fixes backported, so no upgrade is needed.', version: l.build});
+  } else {
+    if (f.fix_all) choices.push({label: 'Upgrade to ' + f.fix_all + ', the lowest version that clears every OSV.dev advisory for this package.' + (f.unfixed ? ' ' + f.unfixed + ' advisories list no fixed version at all.' : ''), version: f.fix_all});
+    var near = l.versions && l.versions.nearest;
+    if (near) { tier = 'remediated'; choices.push({label: 'Closest Lightwell build, a different version (' + near.version + '). Check that it resolves your advisories before using it; this page cannot tell.', version: near.build}); }
+    if (!choices.length) box.appendChild(el('div', {text: 'No fixed version is listed for this package, and Lightwell has no build to offer.'}));
+    if (l.status === 'not_checked') box.appendChild(el('div', {class: 'hint', text: 'Lightwell coverage was not checked, so only the OSV.dev upgrade is shown.'}));
+  }
+  choices.forEach(function (ch) {
+    var group = el('div', {class: 'snip-group'}, [el('div', {class: 'snip-title', text: ch.label})]);
+    kinds.forEach(function (k) {
+      entriesFor(k, c, ch.version, dev).forEach(function (e) {
+        group.appendChild(snippet((kinds.length > 1 ? byKind[k] + (e[0] ? ': ' : '') : '') + e[0], e[1]));
+      });
+    });
+    box.appendChild(group);
+  });
+  if (c.ranges && c.ranges.length) box.appendChild(el('div', {class: 'hint', text: 'The version in these entries is the lower bound of the declared range (' + c.ranges.join(', ') + '). Either pin it, or raise the range so that its lower bound is no older than the version you choose.'}));
+  if (kinds.indexOf('pom') >= 0 || kinds.some(function (k) { return k.indexOf('gradle') === 0; }))
+    box.appendChild(el('div', {class: 'hint', text: dev ? 'Test scope is kept. ' : 'No scope is shown: this page keeps only whether a dependency was test scope, so add one if the original had provided or runtime. '}));
+  if (tier) {
+    var repos = repoEntries(kinds, tier);
+    if (repos.length) {
+      var d = el('details', {}, [el('summary', {text: 'Repository for Lightwell builds (once per machine or CI runner)'}),
+        el('div', {class: 'hint', text: 'From the Lightwell Network configuration guide. Create a registry service account first; its username looks like XXXXXXX|service-account-name. Keep the credentials out of version control.'})]);
+      repos.forEach(function (r) { d.appendChild(snippet(r[0], r[1])); });
+      box.appendChild(d);
+    }
+  }
+  return outer;
+}
+
+/* ---- remediation plan ---- */
+
+/* What to do about one finding: a Lightwell build when one covers it (the version in use stays), else the OSV.dev upgrade, else nothing. */
+function actionFor(f) {
+  var l = f.lightwell || {};
+  if ((l.status === 'remediated' || l.status === 'predisclosure') && l.build) return {how: 'lightwell', tier: l.status === 'predisclosure' ? 'predisclosure' : 'remediated', version: l.build};
+  if (f.fix_all) return {how: 'upgrade', version: f.fix_all};
+  return {how: 'none'};
+}
+
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many || one + 's'); }
+
+function planMarkdown(r) {
+  var acts = r.findings.map(function (f) { return {f: f, a: actionFor(f)}; });
+  var viaLw = acts.filter(function (x) { return x.a.how === 'lightwell'; }), viaUp = acts.filter(function (x) { return x.a.how === 'upgrade'; });
+  var none = acts.filter(function (x) { return x.a.how === 'none'; }), lwSrc = (r.summary.lightwell || {}).source;
+  var out = ['# Remediation plan: ' + (r.slug || r.url), '',
+    'Scanned ' + r.ref + ' at ' + (r.commit || '').slice(0, 10) + (r.scanned_at ? ' on ' + String(r.scanned_at).slice(0, 10) : '') + '. Vulnerabilities are from OSV.dev. '
+      + (lwSrc === 'sample' ? 'Lightwell coverage is from the sample catalog, not the live service.' : lwSrc === 'api' ? 'Lightwell coverage is from the Lightwell Network API.' : 'Lightwell coverage was not checked.'), '',
+    '## Summary', '',
+    '- ' + acts.length + ' vulnerable components, ' + r.summary.issues + ' issues',
+    '- ' + viaLw.length + ' can be fixed with a Lightwell build of the version already in use',
+    '- ' + viaUp.length + ' need an upgrade to the version shown',
+    '- ' + none.length + ' have no fixed version and no Lightwell build', ''];
+  var changes = viaLw.concat(viaUp);
+  if (changes.length) out.push('## Changes', '');
+  changes.forEach(function (x) {
+    var f = x.f, c = f.component, kf = kindsFor(c), lw = x.a.how === 'lightwell';
+    out.push('### ' + c.name + ' ' + c.version + ' -> ' + x.a.version, '',
+      plural(f.vulns.length, 'issue') + ', worst ' + f.vulns[0].severity + '. ' + (lw
+        ? 'Use the Lightwell ' + x.a.tier + ' build of the same upstream version; no upgrade is needed.'
+        : 'Upgrade to the lowest version that clears every OSV.dev advisory.' + (f.unfixed ? ' ' + plural(f.unfixed, 'advisory', 'advisories') + ' without a fixed version.' : '')));
+    if (c.ranges && c.ranges.length) out.push('', 'Declared as a range (' + c.ranges.join(', ') + '). The version above was worked out from its lower bound, so pin it or raise the range.');
+    if (!kf.kinds.length) out.push('', 'Declared in ' + c.sources.join(', ') + '. There is no entry template for that file type, so set the version by hand.');
+    kf.kinds.forEach(function (k) {
+      entriesFor(k, c, x.a.version, kf.dev).forEach(function (e) {
+        out.push('', kf.byKind[k] + (e[0] ? ': ' + e[0] : ''), '', '```', e[1], '```');
+      });
+    });
+    out.push('');
+  });
+  if (viaLw.length) {
+    var tiers = {};
+    viaLw.forEach(function (x) { var t = tiers[x.a.tier] = tiers[x.a.tier] || []; kindsFor(x.f.component).kinds.forEach(function (k) { if (t.indexOf(k) < 0) t.push(k); }); });
+    out.push('## Repository setup for Lightwell builds', '', 'Once per machine or CI runner. Create a registry service account first and keep its credentials out of version control. The values below are placeholders.', '');
+    Object.keys(tiers).forEach(function (tier) {
+      repoEntries(tiers[tier], tier).forEach(function (e) { out.push(tier + ': ' + e[0], '', '```', e[1], '```', ''); });
+    });
+  }
+  if (none.length) {
+    out.push('## Not fixable from here', '');
+    none.forEach(function (x) {
+      var v = (x.f.lightwell || {}).versions, near = v && v.nearest;
+      out.push('- ' + x.f.component.name + ' ' + x.f.component.version + ': ' + plural(x.f.vulns.length, 'issue') + ', worst ' + x.f.vulns[0].severity + '. No fixed version is listed'
+        + (near ? ', and Lightwell has no build of this version (nearest remediated version is ' + near.version + ', check it before use).' : ' and Lightwell has no build.'));
+    });
+    out.push('');
+  }
+  if (changes.length) {
+    var title = 'Clear known vulnerabilities in ' + changes.length + ' dependencies' + (viaLw.length ? ' (' + viaLw.length + ' with Lightwell builds, no version change)' : '');
+    out.push('## Draft pull request (dry run)', '', 'Nothing has been pushed or opened. This is text to review before anyone does that.', '',
+      'Branch: fix/dependency-vulnerabilities', '', 'Commit message: ' + title, '', 'Description:', '');
+    changes.forEach(function (x) { out.push('- ' + x.f.component.name + ' ' + x.f.component.version + ' -> ' + x.a.version + (x.a.how === 'lightwell' ? ' (Lightwell ' + x.a.tier + ' build)' : '')); });
+    out.push('', 'Review the Lightwell items against your own advisory list before merging: coverage is only as complete as what Lightwell lists for each build.', '');
+  }
+  return out.join('\n');
+}
+
+function download(name, text) {
+  var a = el('a', {href: URL.createObjectURL(new Blob([text], {type: 'text/markdown'})), download: name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+}
+
+function planButton(repos, name) {
+  var btn = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Download plan', title: 'A markdown plan: the entries to change, repository setup, and a draft pull request. Nothing is pushed.'});
+  btn.onclick = function () { download('remediation-' + name.replace(/[^\w.\-]+/g, '-') + '.md', repos.map(planMarkdown).join('\n\n')); };
+  return btn;
+}
+
+/* ---- remediation: choose where fixes may come from, approve, then follow the job ---- */
+
+var REM = {}, REM_READY = {ready: false, detail: ''};
+var REM_SOURCES = [
+  ['lightwell', 'Lightwell', 'A Lightwell build of the version already in use. The upstream version stays; the build suffix changes.'],
+  ['another', 'Lightwell with Another Build', 'Lightwell has no build of your version but has one of a nearby version, so the version changes. Check that it covers your advisories.'],
+  ['osv', 'OSV', 'The lowest version OSV.dev lists as fixed. This is an upgrade.']];
+var REM_SRC_LABEL = {lightwell: 'Lightwell', another: 'Lightwell, another build', osv: 'OSV'};
+
+function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}}; }
+
+function remButton(r) {
+  var s = remState(r.url);
+  var b = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Remediate', title: 'Clone the repository, change the dependency versions, and build it, using the AAP environment'});
+  b.onclick = function () { s.open = !s.open; if (s.open && !s.plan) remPreview(r); paintRem(r); };
+  return b;
+}
+
+async function remPreview(r) {
+  var s = remState(r.url);
+  try {
+    var d = await api('POST', 'v1/remediations/preview', {scan: current.id, url: r.url, sources: s.sources});
+    s.plan = d.plan; s.error = '';
+  } catch (e) { s.error = e.message; }
+  paintRem(r);
+}
+
+function remDetails(s, key, summary, kids) {
+  var d = el('details', {}, [el('summary', {text: summary})].concat(kids));
+  if (s.details[key]) d.open = true;
+  d.addEventListener('toggle', function () { s.details[key] = d.open; });
+  return d;
+}
+
+function remBranchUrl(r, branch) {
+  if (!r.slug) return '';
+  return r.host === 'github.com' ? 'https://github.com/' + r.slug + '/tree/' + branch : 'https://' + r.host + '/' + r.slug.replace(r.host + '/', '') + '/-/tree/' + branch;
+}
+
+function diffNode(text) {
+  var pre = el('pre', {class: 'code diff'});
+  text.split('\n').forEach(function (line, i, all) {
+    var cls = /^\+(?!\+\+)/.test(line) ? 'add' : /^-(?!--)/.test(line) ? 'del' : '';
+    var span = el('span', {class: cls, text: line + (i < all.length - 1 ? '\n' : '')});
+    pre.appendChild(span);
+  });
+  return pre;
+}
+
+function paintRem(r) {
+  var s = remState(r.url), slot = s.node;
+  if (!slot) return;
+  slot.innerHTML = '';
+  if (!s.open) return;
+  var outer = el('div', {class: 'xp-block rem'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Remediate'}), el('span', {class: 'muted', text: 'clone, update the versions, build'})])]);
+  var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
+  box.appendChild(el('div', {class: 'hint', style: 'margin-top:0', text: REM_READY.detail}));
+  var locked = !!s.run, offered = s.plan ? s.plan.offered : {};
+  box.appendChild(el('div', {class: 'rem-sub', text: 'Fix with'}));
+  var opts = el('div', {class: 'rem-opts'});
+  REM_SOURCES.forEach(function (o) {
+    var cb = el('input', {type: 'checkbox'});
+    cb.checked = s.sources.indexOf(o[0]) >= 0; cb.disabled = locked;
+    cb.onchange = function () {
+      s.sources = REM_SOURCES.map(function (x) { return x[0]; }).filter(function (k) { return k === o[0] ? cb.checked : s.sources.indexOf(k) >= 0; });
+      remPreview(r);
+    };
+    opts.appendChild(el('label', {class: 'rem-opt'}, [cb, el('span', {}, [el('b', {text: o[1]}), s.plan ? ' (' + offered[o[0]] + ' of ' + r.findings.length + ')' : '', el('div', {class: 'hint', text: o[2]})])]));
+  });
+  box.appendChild(opts);
+  box.appendChild(el('div', {class: 'rem-sub', text: 'Java for the build'}));
+  var jv = el('select', {});
+  [['', 'Detect from the repository'], ['8', 'Java 8'], ['11', 'Java 11'], ['17', 'Java 17'], ['21', 'Java 21']].forEach(function (o) { jv.appendChild(el('option', {value: o[0], text: o[1]})); });
+  jv.value = s.java; jv.disabled = locked;
+  jv.onchange = function () { s.java = jv.value; };
+  box.appendChild(el('div', {class: 'rem-java'}, [jv, el('span', {class: 'hint', style: 'margin:0', text: 'Read from the pom (compiler level, java.version, a Spring Boot parent) and version pins. Pick one only if the detection is wrong. The result shows what was used.'})]));
+  if (s.error) box.appendChild(el('div', {class: 'err', text: s.error}));
+  var plan = s.plan;
+  if (plan) {
+    var by = {};
+    plan.changes.forEach(function (c) { by[c.source] = (by[c.source] || 0) + 1; });
+    box.appendChild(el('div', {class: 'rem-sub', text: 'What will change'}));
+    box.appendChild(el('div', {class: 'hint', style: 'margin-top:0', text: plan.changes.length
+      ? plural(plan.changes.length, 'dependency', 'dependencies') + ' (' + Object.keys(by).map(function (k) { return by[k] + ' ' + REM_SRC_LABEL[k]; }).join(', ') + '), ' + plan.skipped.length + ' left alone. A component that qualifies for more than one choice uses Lightwell first, then Lightwell with Another Build, then OSV.'
+      : 'Nothing to change with these choices. ' + plan.skipped.length + ' left alone.'}));
+    if (plan.changes.length) {
+      var tb = el('tbody');
+      plan.changes.forEach(function (c) {
+        tb.appendChild(el('tr', {}, [el('td', {class: 'mono', text: c.name}), el('td', {class: 'mono', text: c.from + '  ->  ' + c.to}), el('td', {text: REM_SRC_LABEL[c.source]}), el('td', {class: 'mono muted', text: c.manifests.join(', ')})]));
+      });
+      box.appendChild(el('div', {class: 'tscroll'}, [el('table', {}, [el('thead', {}, [el('tr', {}, ['Package', 'Version', 'Source', 'File'].map(function (h) { return el('th', {text: h}); }))]), tb])]));
+    }
+    if (plan.skipped.length) box.appendChild(remDetails(s, 'skipped', plan.skipped.length + ' not changed', plan.skipped.map(function (k) {
+      return el('div', {class: 'hint'}, [el('span', {class: 'mono', text: k.name + ' ' + k.from}), ': ' + k.reason]);
+    })));
+  }
+  var v = s.view;
+  if (!locked) {
+    var go = el('button', {class: 'primary', type: 'button', text: 'Approve and run'});
+    go.disabled = !REM_READY.ready || !plan || !plan.changes.length;
+    go.onclick = function () { remStart(r, false); };
+    box.appendChild(el('div', {class: 'rem-actions'}, [go, el('span', {class: 'hint', style: 'margin:0', text: 'Nothing is pushed. The result is built on the build host and the diff is shown here.'})]));
+  } else if (v) {
+    box.appendChild(el('div', {class: 'rem-sub', text: 'Run'}));
+    var st = el('div', {class: 'rem-stages'});
+    v.stages.forEach(function (x) {
+      st.appendChild(el('div', {class: 'rem-stage ' + x.state}, [el('span', {class: 'g'}), el('span', {text: x.label + (x.state === 'running' ? '...' : x.state === 'failed' ? ' (failed)' : '')})]));
+      if (!(x.actions && x.actions.length)) return;
+      var acts = el('div', {class: 'rem-acts'});
+      x.actions.forEach(function (a) {
+        var row = el('div', {class: 'rem-act ' + a.state}, [el('span', {class: 'g'}), el('span', {text: a.label + (a.state === 'running' ? '...' : a.state === 'failed' ? ' (failed)' : '')})]);
+        if (a.detail) row.appendChild(el('div', {class: 'd', text: a.detail}));
+        acts.appendChild(row);
+      });
+      if (x.skipped) acts.appendChild(el('div', {class: 'rem-act skipped', text: plural(x.skipped, 'step', 'steps') + ' not needed for this repository'}));
+      st.appendChild(acts);
+    });
+    box.appendChild(st);
+    if (v.error) box.appendChild(el('div', {class: 'err', text: v.error}));
+    if (v.failure) box.appendChild(el('div', {class: 'err', text: v.failure}));
+    var res = v.result || {};
+    if (res.java && res.java.version) box.appendChild(el('div', {class: 'hint', text: 'Built with Java ' + res.java.version + ' (' + res.java.reason + ').'}));
+    var notApplied = (res.changes || []).filter(function (c) { return !c.applied.length; });
+    if (res.changes) box.appendChild(el('div', {class: 'hint', text: (res.changes.length - notApplied.length) + ' of ' + res.changes.length + ' changes applied.' + (notApplied.length ? ' Not applied: ' + notApplied.map(function (c) { return c.name + ' (' + c.problems.join('; ') + ')'; }).join(', ') : '')}));
+    if (res.diff) { box.appendChild(el('div', {class: 'rem-sub', text: 'Diff'})); box.appendChild(diffNode(res.diff)); }
+    if (res.build_tail) box.appendChild(remDetails(s, 'build', 'Build output' + (res.build_rc === 0 ? ' (succeeded)' : res.build_rc != null ? ' (failed, exit ' + res.build_rc + ')' : ''), [el('pre', {class: 'code', text: res.build_tail})]));
+    else if (v.state === 'failed' && v.log) box.appendChild(remDetails(s, 'log', 'Job output', [el('pre', {class: 'code', text: v.log.slice(-4000)})]));
+    var acts = el('div', {class: 'rem-actions'});
+    if (v.state === 'done' && res.build_rc === 0 && !res.pushed && !v.push) {
+      var push = el('button', {class: 'primary', type: 'button', text: 'Push branch ' + v.branch});
+      push.onclick = function () { if (confirm('Push the branch ' + v.branch + ' to ' + (r.slug || r.url) + '?\n\nThis runs the job again with the push step on, so it needs a token that can write to the repository.')) remStart(r, true); };
+      acts.appendChild(push);
+    }
+    if (res.pushed) {
+      var link = remBranchUrl(r, v.branch);
+      acts.appendChild(link ? el('a', {href: link, target: '_blank', rel: 'noopener'}, ['Pushed to ' + v.branch]) : el('span', {text: 'Pushed to ' + v.branch}));
+    }
+    if (res.push_error) acts.appendChild(el('span', {class: 'err', text: 'Push failed: ' + res.push_error}));
+    if (res.diff) { var dl = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Download diff'}); dl.onclick = function () { download('remediation-' + (r.slug || 'repository').replace(/[^\w.\-]+/g, '-') + '.diff', res.diff); }; acts.appendChild(dl); }
+    if (v.state !== 'running') {
+      var again = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Change the choices'});
+      again.onclick = function () { s.run = null; s.view = null; remPreview(r); };
+      acts.appendChild(again);
+    }
+    box.appendChild(acts);
+  } else box.appendChild(el('div', {class: 'hint', text: 'Starting the job...'}));
+  slot.appendChild(outer);
+}
+
+async function remStart(r, push) {
+  var s = remState(r.url);
+  clearTimeout(s.timer);
+  s.error = ''; s.view = null; s.run = 'starting';
+  paintRem(r);
+  try {
+    var d = await api('POST', 'v1/remediations', {scan: current.id, url: r.url, sources: s.sources, push: push, java: s.java});
+    s.run = d.id;
+    remPoll(r, 0);
+  } catch (e) { s.run = null; s.error = e.message; paintRem(r); }
+}
+
+async function remPoll(r, misses) {
+  var s = remState(r.url), id = s.run;
+  try {
+    var d = await api('GET', 'v1/remediations/' + id);
+    if (s.run !== id) return;
+    s.view = d.run; paintRem(r);
+    if (d.run.state === 'running' || (d.run.state === 'unknown' && misses < 20)) s.timer = setTimeout(function () { remPoll(r, d.run.state === 'unknown' ? misses + 1 : 0); }, 1500);
+  } catch (e) {
+    if (s.run !== id) return;
+    s.error = e.message; paintRem(r);
+  }
+}
+
+function outcomePanel(t) {
+  var total = t.fixLw + t.fixUp + t.fixNone, checked = t.source !== 'none';
+  var parts = [['lw', 'fixed by a Lightwell build, version unchanged', t.fixLw], ['up', 'fixed by upgrading', t.fixUp], ['none', 'no fix available', t.fixNone]].filter(function (x) { return checked || x[0] !== 'lw'; });
+  var outer = el('div', {class: 'xp-block', style: 'margin-top:14px'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'What it takes to clear the issues'}), el('span', {class: 'muted', text: total + ' issues across the vulnerable components'})])]);
+  var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
+  var label = parts.map(function (x) { return x[2] + ' ' + x[1]; }).join(', ');
+  box.appendChild(el('div', {class: 'obar', role: 'img', 'aria-label': label}, parts.filter(function (x) { return x[2]; }).map(function (x) {
+    return el('span', {class: 'o-' + x[0], style: 'width:' + (100 * x[2] / total) + '%', title: x[2] + ' ' + x[1]});
+  })));
+  box.appendChild(el('div', {class: 'olegend'}, parts.map(function (x) {
+    return el('span', {}, [el('i', {class: 'osw o-' + x[0]}), x[2] + ' ' + x[1] + (total ? ' (' + Math.round(100 * x[2] / total) + '%)' : '')]);
+  })));
+  var bits = [];
+  if (!checked) bits.push('Lightwell coverage was not checked, so this is the OSV.dev view alone.');
+  else bits.push('Lightwell fixes ' + t.fixLw + ' of the ' + total + ' issues without changing the version in use' + (t.fixLwOnly ? ', including ' + t.fixLwOnly + ' that OSV.dev lists no fixed version for' : '') + '. Everything else needs an upgrade or has no fix.');
+  if (t.unitemised) bits.push(t.unitemised + ' components have a Lightwell build whose advisories are not itemised; their issues are counted under upgrading or no fix.');
+  box.appendChild(el('div', {class: 'hint', text: bits.join(' ')}));
+  return outer;
+}
+
+function versionsBlock(f) {
+  var l = f.lightwell, v = l && l.versions;
+  if (!v) return null;
+  var covered = l.status === 'remediated' || l.status === 'predisclosure';
+  var outer = el('div', {class: 'xp-block'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Lightwell catalog for this package'}), el('span', {class: 'muted', text: f.component.name})])]);
+  var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
+  if (!v.carried) { box.appendChild(el('div', {text: 'Lightwell does not carry this package at any version.'})); return outer; }
+  var lines = [];
+  if (covered) lines.push('A remediated build of ' + v.installed + ' exists: ' + (l.build || '') + '.');
+  else lines.push('No remediated build of ' + v.installed + '. ' + (v.nearest ? 'The nearest remediated version above it is ' + v.nearest.version + ' (build ' + v.nearest.build + ').' : 'There is no remediated version above it either.'));
+  lines.push(v.exact_validated ? v.installed + ' is in the validated tier. Validated repositories record no CVE fixes, so this is not counted as coverage.' : v.installed + ' is not in the validated tier.');
+  lines.forEach(function (x) { box.appendChild(el('div', {style: 'margin-bottom:4px', text: x})); });
+  function cap(n, total) { return n < total ? ' (showing ' + n + ' of ' + total + ')' : ' (' + total + ')'; }
+  if (v.remediated.length) {
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Remediated versions' + cap(v.remediated.length, v.remediated_total)}));
+    box.appendChild(el('div', {class: 'tscroll'}, [el('table', {}, [
+      el('thead', {}, [el('tr', {}, ['Version', 'Build', 'Repository', ''].map(function (x) { return el('th', {text: x}); }))]),
+      el('tbody', {}, v.remediated.map(function (x) {
+        var mark = covered && x.build === l.build ? 'the build matched' : (v.nearest && x.version === v.nearest.version ? 'nearest above installed' : '');
+        return el('tr', {}, [el('td', {class: 'mono', text: x.version}), el('td', {class: 'mono', text: x.build}), el('td', {class: 'mono', text: x.repository}), el('td', {class: 'muted', text: mark})]);
+      }))])]));
+  }
+  if (v.validated.length) {
+    box.appendChild(el('div', {class: 'lwd-sub', text: 'Validated versions' + cap(v.validated.length, v.validated_total)}));
+    box.appendChild(el('div', {class: 'mono', style: 'overflow-wrap:anywhere', text: v.validated.map(function (x) { return x === v.installed ? x + ' (installed)' : x; }).join('   ')}));
+  }
+  return outer;
+}
+
+function vulnBlock(v, f, k, n) {
+  var link = safeUrl(v.url);
+  var sk = SEV.indexOf(v.severity) < 0 ? 'unknown' : v.severity;
+  var head = [v.score != null ? el('div', {class: 'score sc-' + sk, title: 'CVSS base score ' + v.score + ', ' + sk}, [el('b', {text: Number(v.score).toFixed(1)}), el('span', {text: sk})]) : pill(v.severity), link ? el('a', {href: link, target: '_blank', rel: 'noopener noreferrer', text: v.id}) : el('b', {text: v.id})];
+  if (v.cve && v.cve !== v.id) head.push(el('span', {class: 'mono muted', text: v.cve}));
+  if (v.lightwell_fixed && f && f.lightwell) head.push(el('span', {class: 'lwchip lw-' + f.lightwell.status, text: 'Fixed by Lightwell build ' + (f.lightwell.build || '')}));
+  head.push(el('span', {class: 'vc-n', text: (k + 1) + ' of ' + n}));
+  var kids = [el('div', {class: 'vc-h'}, head)];
+  if (v.summary) kids.push(el('div', {class: 'vc-b', text: v.summary}));
+  kids.push(el('div', {class: 'vc-f', text: 'Fixed in: ' + (v.fixed_versions.length ? v.fixed_versions.join(', ') : 'no fixed version listed') + (v.suggested_fix ? '   Suggested: ' + v.suggested_fix : '')}));
+  return el('div', {class: 'vc vc-' + (SEV.indexOf(v.severity) < 0 ? 'unknown' : v.severity)}, kids);
+}
+
+function expansion(f, sample) {
+  var c = f.component, n = f.vulns.length, label = c.name + ' ' + c.version;
+  var box = el('div', {class: 'xp'}, [el('div', {class: 'xp-head'}, [el('span', {class: 'tag', text: 'Details'}), el('b', {class: 'mono', text: label}),
+    el('span', {class: 'xp-n', text: n + (n === 1 ? ' vulnerability' : ' vulnerabilities')})])]);
+  var mv = manifestBlock(f), lw = lightwellDetail(f, sample), vb = versionsBlock(f);
+  if (rangeInfo(c)) box.appendChild(el('div', {class: 'note', style: 'margin:10px 0 0', text: rangeInfo(c)}));
+  if (mv) box.appendChild(mv);
+  if (lw) box.appendChild(lw);
+  if (vb) box.appendChild(vb);
+  var list = el('div', {class: 'xp-block-b'}, f.vulns.map(function (v, k) { return vulnBlock(v, f, k, n); }));
+  box.appendChild(el('div', {class: 'xp-block'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Vulnerabilities (' + n + ')'}), el('span', {class: 'muted', text: 'from OSV.dev, worst first'})]), list]));
+  box.appendChild(el('div', {class: 'xp-end', text: 'End of details for ' + label}));
+  return box;
+}
+
+/* ---- text size ---- */
+
+function setTextSize(t) {
+  document.documentElement.setAttribute('data-ts', t);
+  try { localStorage.setItem('lw-text-size', t); } catch (e) {}
+  Array.prototype.forEach.call(document.querySelectorAll('#text-size button'), function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-ts') === t)); });
+}
+$('text-size').addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if (b) setTextSize(b.getAttribute('data-ts'));
+});
+setTextSize(document.documentElement.getAttribute('data-ts') || 'm');
+function drawer(open) { $('display-scrim').hidden = !open; if (open) $('close-display').focus(); else $('open-display').focus(); }
+$('open-display').onclick = function () { drawer(true); };
+$('close-display').onclick = function () { drawer(false); };
+$('display-scrim').onclick = function (e) { if (e.target === this) drawer(false); };
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('display-scrim').hidden) drawer(false); });
+
+renderFileTypes();
+init();
+</script>
+</body>
+</html>

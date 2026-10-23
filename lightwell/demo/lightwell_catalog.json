@@ -1,0 +1,2582 @@
+{
+  "sample": true,
+  "note": "SAMPLE, not Lightwell's catalog. These entries mirror live Lightwell Network API lookups (2026-10-19): the versions pinned in demo/repos/demojam__lightwell-coverage-demo.json, plus every covered version found in three real repositories (JoyChou93/java-sec-code, snyk-labs/java-goof and gitlab.com/pdftk-java/pdftk), so demo mode can show every coverage outcome offline. Any version not listed here is shown as not covered, which is what the live API said for the other recorded repositories on that date. Each entry also carries a snapshot of what the same lookups returned for the build's detail (repository facts, build dates, advisory text, Python distribution files). The live catalog changes, so treat this as a snapshot. Review before publishing.",
+  "entries": [
+    {
+      "ecosystem": "maven",
+      "name": "org.postgresql:postgresql",
+      "version": "42.3.3",
+      "status": "remediated",
+      "build": "42.3.3.rhlw-00006",
+      "cves": [
+        "CVE-2022-31197",
+        "CVE-2022-41946",
+        "CVE-2024-1597",
+        "CVE-2026-42198"
+      ],
+      "detail": {
+        "build": {
+          "version": "42.3.3.rhlw-00006",
+          "created_at": "2026-10-08T15:36:30Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-08T15:36:37Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "42.3.3.rhlw-00006",
+            "created_at": "2026-10-08T15:36:30Z"
+          }
+        ],
+        "summary": "PostgreSQL JDBC Driver Postgresql",
+        "license": "BSD-2-Clause",
+        "project_url": "https://jdbc.postgresql.org",
+        "author": "PostgreSQL Global Development Group",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2024-1597-42.3.3",
+            "cve": "CVE-2024-1597",
+            "aliases": [
+              "BIT-postgresql-jdbc-driver-2024-1597",
+              "GHSA-24rp-q3w6-vc56",
+              "CVE-2024-1597"
+            ],
+            "severity": "10.0",
+            "score": 10,
+            "summary": "org.postgresql:postgresql vulnerable to SQL Injection via line comment generation",
+            "details": "# Impact\nSQL injection is possible when using the non-default connection property `preferQueryMode=simple` in combination with application code that has a vulnerable SQL that negates a parameter value.\n\nThere is no vulnerability in the driver when using the default query mode. Users that do not override the query mode are not impacted.\n\n# Exploitation\n\nTo exploit this behavior the following conditions must be met:\n\n1. A placeholder for a numeric value must be immediately preceded by a minus (i.e. `-`)\n1. There must be a second placeholder for a string value after the first placeholder on the s",
+            "published": "2026-10-08T12:37:04Z",
+            "modified": "2026-10-08T12:37:04Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2120",
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "42.3.3.rhlw-00006",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-42198-42.3.3",
+            "cve": "CVE-2026-42198",
+            "aliases": [
+              "BIT-postgresql-jdbc-driver-2026-42198",
+              "GHSA-98qh-xjc8-98pq",
+              "CVE-2026-42198"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "pgjdbc is an open source postgresql JDBC Driver.",
+            "details": "pgjdbc is an open source postgresql JDBC Driver. From version 42.2.0 to before version 42.7.11, pgjdbc is vulnerable to a client-side denial of service during SCRAM-SHA-256 authentication. A malicious server can instruct the driver to perform SCRAM authentication with a very large iteration count. With a large enough value, the client spends an unbounded amount of CPU time inside PBKDF2 before authentication can fail. A single attempt ties up a CPU core. Repeated or concurrent attempts exhaust client CPU and can wedge connection pools. In affected versions, loginTimeout did not fully mitigate ",
+            "published": "2026-10-08T12:37:04Z",
+            "modified": "2026-10-08T12:37:04Z",
+            "references": [
+              "https://gitlab.cee.redhat.com/lightwell/cve-backport-queue/-/work_items/114",
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-2379",
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "42.3.3.rhlw-00006",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2022-31197-42.3.3",
+            "cve": "CVE-2022-31197",
+            "aliases": [
+              "BIT-postgresql-jdbc-driver-2022-31197",
+              "GHSA-r38f-c4h4-hqq2",
+              "CVE-2022-31197"
+            ],
+            "severity": "7.1",
+            "score": 7.1,
+            "summary": "PostgreSQL JDBC Driver SQL Injection in ResultSet.refreshRow() with malicious column names",
+            "details": "### Impact\n_What kind of vulnerability is it? Who is impacted?_\n\nThe PGJDBC implementation of the `java.sql.ResultRow.refreshRow()` method is not performing escaping of column names so a malicious column name that contains a statement terminator, e.g. `;`, could lead to SQL injection. This could lead to executing additional SQL commands as the application's JDBC user.\n\nUser applications that do not invoke the `ResultSet.refreshRow()` method are not impacted.\n\nUser application that do invoke that method are impacted if the underlying database that they are querying via their JDBC application ma",
+            "published": "2026-10-08T12:37:04Z",
+            "modified": "2026-10-08T12:37:04Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "42.3.3.rhlw-00006",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2022-41946-42.3.3",
+            "cve": "CVE-2022-41946",
+            "aliases": [
+              "BIT-postgresql-jdbc-driver-2022-41946",
+              "GHSA-562r-vg33-8x8h",
+              "CVE-2022-41946"
+            ],
+            "severity": "4.7",
+            "score": 4.7,
+            "summary": "TemporaryFolder on unix-like systems does not limit access to created files",
+            "details": "**Vulnerability**\n\n`PreparedStatement.setText(int, InputStream)`\nand\n\n`PreparedStatemet.setBytea(int, InputStream)`\n\nwill create a temporary file if the InputStream is larger than 51k\n\n \nExample of vulnerable code:\n\n```java\nString s = \"some very large string greater than 51200 bytes\";\n\nPreparedStatement.setInputStream(1, new ByteArrayInputStream(s.getBytes()) );\n```\nThis will create a temporary file which is readable by other users on Unix like systems, but not MacOS.\n\nImpact\nOn Unix like systems, the system's temporary directory is shared between all users on that system. Because of this, whe",
+            "published": "2026-10-08T12:37:04Z",
+            "modified": "2026-10-08T12:37:04Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "42.3.3.rhlw-00006",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.apache.kafka:kafka-clients",
+      "version": "3.6.2",
+      "status": "remediated",
+      "build": "3.6.2.rhlw-00004",
+      "cves": [
+        "CVE-2024-31141",
+        "CVE-2025-27817",
+        "CVE-2026-33558",
+        "CVE-2026-35554"
+      ],
+      "detail": {
+        "build": {
+          "version": "3.6.2.rhlw-00004",
+          "created_at": "2026-10-15T18:39:13Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-15T18:41:38Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "3.6.2.rhlw-00004",
+            "created_at": "2026-10-15T18:39:13Z"
+          }
+        ],
+        "license": "The Apache License, Version 2.0",
+        "project_url": "https://kafka.apache.org",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2026-35554-3.6.2",
+            "cve": "CVE-2026-35554",
+            "aliases": [
+              "GHSA-5qcv-4rpc-jp93",
+              "CVE-2026-35554"
+            ],
+            "severity": "8.7",
+            "score": 8.7,
+            "summary": "A race condition in the Apache Kafka Java producer client\u2019s buffer pool management can cause messages to be silently delivered to incorrect topics.",
+            "details": "A race condition in the Apache Kafka Java producer client\u2019s buffer pool management can cause messages to be silently delivered to incorrect topics.\n\nWhen a produce batch expires due to delivery.timeout.ms while a network request containing that batch is still in flight, the batch\u2019s ByteBuffer is prematurely deallocated and returned to the buffer pool. If a subsequent producer batch\u2014potentially destined for a different topic\u2014reuses this freed buffer before the original network request completes, the buffer contents may become corrupted. This can result in messages being delivered to unintended ",
+            "published": "2026-10-15T01:32:14Z",
+            "modified": "2026-10-15T01:32:14Z",
+            "references": [
+              "http://www.openwall.com/lists/oss-security/2026/04/07/6",
+              "https://repo.maven.apache.org/maven2",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/35xxx/CVE-2026-35554.json",
+              "https://lists.apache.org/thread/f07x7j8ovyqhjd1to25jsnqbm6wj01d6",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-35554",
+              "https://issues.apache.org/jira/browse/KAFKA-19012"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "3.6.2.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2025-27817-3.6.2",
+            "cve": "CVE-2025-27817",
+            "aliases": [
+              "BIT-kafka-2025-27817",
+              "GHSA-vgq5-3255-v292",
+              "CVE-2025-27817"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "Apache Kafka Client Arbitrary File Read and Server Side Request Forgery Vulnerability",
+            "details": "A possible arbitrary file read and SSRF vulnerability has been identified in Apache Kafka Client. Apache Kafka Clients accept configuration data for setting the SASL/OAUTHBEARER connection with the brokers, including \"sasl.oauthbearer.token.endpoint.url\" and \"sasl.oauthbearer.jwks.endpoint.url\". Apache Kafka allows clients to read an arbitrary file and return the content in the error log, or sending requests to an unintended location. In applications where Apache Kafka Clients configurations can be specified by an untrusted party, attackers may use the \"sasl.oauthbearer.token.endpoint.url\" and",
+            "published": "2026-10-15T01:32:14Z",
+            "modified": "2026-10-15T01:32:14Z",
+            "references": [
+              "http://www.openwall.com/lists/oss-security/2025/06/09/1",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2025/27xxx/CVE-2025-27817.json",
+              "https://kafka.apache.org/cve-list",
+              "https://nvd.nist.gov/vuln/detail/CVE-2025-27817"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "3.6.2.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2024-31141-3.6.2",
+            "cve": "CVE-2024-31141",
+            "aliases": [
+              "GHSA-2x2g-32r7-p4x8",
+              "CVE-2024-31141"
+            ],
+            "severity": "6.5",
+            "score": 6.5,
+            "summary": "Apache Kafka Clients: Privilege escalation to filesystem read-access via automatic ConfigProvider",
+            "details": "Files or Directories Accessible to External Parties, Improper Privilege Management vulnerability in Apache Kafka Clients.\n\nApache Kafka Clients accept configuration data for customizing behavior, and includes ConfigProvider plugins in order to manipulate these configurations. Apache Kafka also provides FileConfigProvider, DirectoryConfigProvider, and EnvVarConfigProvider implementations which include the ability to read from disk or environment variables.\nIn applications where Apache Kafka Clients configurations can be specified by an untrusted party, attackers may use these ConfigProviders to",
+            "published": "2026-10-15T01:32:14Z",
+            "modified": "2026-10-15T01:32:14Z",
+            "references": [
+              "http://www.openwall.com/lists/oss-security/2024/11/18/5",
+              "https://repo.maven.apache.org/maven2",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2024/31xxx/CVE-2024-31141.json",
+              "https://lists.apache.org/thread/9whdzfr0zwdhr364604w5ssnzmg4v2lv",
+              "https://nvd.nist.gov/vuln/detail/CVE-2024-31141",
+              "https://security.netapp.com/advisory/ntap-20250131-0001/"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "3.6.2.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "RHLW-2026-f7c61b4b79130a3c",
+            "cve": "RHLW-2026-f7c61b4b79130a3c",
+            "aliases": [],
+            "severity": "6.5",
+            "score": 6.5,
+            "summary": "Lightwell Security Advisory: kafka-clients 3.6.2.rhlw-00004",
+            "details": "Red Hat Lightwell has released org.apache.kafka:kafka-clients 3.6.2.rhlw-00004 with backported fixes for CVE-2024-31141, CVE-2025-27817, CVE-2026-33558, and CVE-2026-35554.\n\nCVE-2024-31141: Apache Kafka Clients: Privilege escalation to filesystem read-access via automatic ConfigProvider\n\nCVE-2025-27817: Apache Kafka Client: Arbitrary file read and SSRF vulnerability\n\nCVE-2026-33558: Apache Kafka, Apache Kafka Clients: Information Exposure Through Network Client Log Output\n\nCVE-2026-35554: Apache Kafka Clients: Kafka Producer Message Corruption and Misrouting via Buffer Pool Race Condition\n\nThi",
+            "published": "2026-10-15T01:32:14Z",
+            "modified": "2026-10-15T01:32:14Z",
+            "references": [
+              "https://repo.maven.apache.org/maven2",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2024/31xxx/CVE-2024-31141.json",
+              "https://lists.apache.org/thread/9whdzfr0zwdhr364604w5ssnzmg4v2lv",
+              "https://nvd.nist.gov/vuln/detail/CVE-2024-31141",
+              "https://github.com/advisories/GHSA-2x2g-32r7-p4x8",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2025/27xxx/CVE-2025-27817.json",
+              "https://kafka.apache.org/cve-list",
+              "https://nvd.nist.gov/vuln/detail/CVE-2025-27817",
+              "https://github.com/advisories/GHSA-vgq5-3255-v292",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/33xxx/CVE-2026-33558.json",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-33558",
+              "https://lists.apache.org/thread/pz5g4ky3h0k91tfd14p0dzqjp80960kl",
+              "https://github.com/advisories/GHSA-wf66-mphr-4c4r",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/35xxx/CVE-2026-35554.json",
+              "https://lists.apache.org/thread/f07x7j8ovyqhjd1to25jsnqbm6wj01d6",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-35554",
+              "https://issues.apache.org/jira/browse/KAFKA-19012",
+              "https://github.com/advisories/GHSA-5qcv-4rpc-jp93"
+            ],
+            "source": "",
+            "fixed_in": "3.6.2.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-33558-3.6.2",
+            "cve": "CVE-2026-33558",
+            "aliases": [
+              "BIT-kafka-2026-33558",
+              "GHSA-wf66-mphr-4c4r",
+              "CVE-2026-33558"
+            ],
+            "severity": "5.3",
+            "score": 5.3,
+            "summary": "Information exposure vulnerability has been identified in Apache Kafka.",
+            "details": "Information exposure vulnerability has been identified in Apache Kafka.\n\nThe NetworkClient component will output entire requests and responses information in the DEBUG log level in the logs. By default, the log level is set to INFO level. If the DEBUG level is enabled, the sensitive information will be exposed via the requests and responses output log. The entire lists of impacted requests and responses are:\n\n\n  *  AlterConfigsRequest\n\n  *  AlterUserScramCredentialsRequest\n\n  *  ExpireDelegationTokenRequest\n\n  *  IncrementalAlterConfigsRequest\n\n  *  RenewDelegationTokenRequest\n\n  *  SaslAuthen",
+            "published": "2026-10-15T01:32:14Z",
+            "modified": "2026-10-15T01:32:14Z",
+            "references": [
+              "http://www.openwall.com/lists/oss-security/2026/04/17/3",
+              "https://repo.maven.apache.org/maven2",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/33xxx/CVE-2026-33558.json",
+              "https://kafka.apache.org/cve-list",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-33558",
+              "https://lists.apache.org/thread/pz5g4ky3h0k91tfd14p0dzqjp80960kl"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "3.6.2.rhlw-00004",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.apache.logging.log4j:log4j-core",
+      "version": "2.24.3",
+      "status": "remediated",
+      "build": "2.24.3.rhlw-00004",
+      "cves": [
+        "CVE-2025-68161",
+        "CVE-2026-34477",
+        "CVE-2026-34478",
+        "CVE-2026-34480"
+      ],
+      "detail": {
+        "build": {
+          "version": "2.24.3.rhlw-00004",
+          "created_at": "2026-10-08T16:49:38Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-08T16:50:34Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "2.24.3.rhlw-00004",
+            "created_at": "2026-10-08T16:49:38Z"
+          }
+        ],
+        "summary": "A versatile, industrial-grade, and reference implementation of the Log4j API.\n    It bundles a rich set of components to assist various use cases:\n    Appenders targeting files, network sockets, databases, SMTP servers;\n    Layouts that can render CSV, HTML, JSON, Syslog, etc. formatted outputs;\n    Filters that can be configured using log event rates, regular expressions, scripts, time, etc.\n    It contains several extension points to introduce custom components, if needed.",
+        "license": "Apache-2.0",
+        "project_url": "https://logging.apache.org/log4j/2.x/",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2026-34478-2.24.3",
+            "cve": "CVE-2026-34478",
+            "aliases": [
+              "GHSA-445c-vh5m-36rj",
+              "CVE-2026-34478"
+            ],
+            "severity": "6.9",
+            "score": 6.9,
+            "summary": "Apache Log4j Core: log injection in `Rfc5424Layout` due to silent configuration incompatibility",
+            "details": "Apache Log4j Core's [`Rfc5424Layout`](https://logging.apache.org/log4j/2.x/manual/layouts.html#RFC5424Layout), in versions 2.21.0 through 2.25.3, is vulnerable to log injection via CRLF sequences due to undocumented renames of security-relevant configuration attributes.\n\nTwo distinct issues affect users of stream-based syslog services who configure Rfc5424Layout directly:\n\n  *  The `newLineEscape` attribute was silently renamed, causing newline escaping to stop working for users of TCP framing (RFC 6587), exposing them to CRLF injection in log output.\n  *  The `useTlsMessageFormat` attribute w",
+            "published": "2026-10-08T10:40:59Z",
+            "modified": "2026-10-08T10:40:59Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-13137",
+              "https://redhat.atlassian.net/browse/LTWL-13173",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.24.3.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-34480-2.24.3",
+            "cve": "CVE-2026-34480",
+            "aliases": [
+              "GHSA-3pxv-7cmr-fjr4",
+              "CVE-2026-34480"
+            ],
+            "severity": "6.9",
+            "score": 6.9,
+            "summary": "Apache Log4j Core: Silent log event loss in XmlLayout due to unescaped XML 1.0 forbidden characters",
+            "details": "Apache Log4j Core's [`XmlLayout`](https://logging.apache.org/log4j/2.x/manual/layouts.html#XmlLayout), in versions up to and including 2.25.3, fails to sanitize characters forbidden by the [XML 1.0 specification](https://www.w3.org/TR/xml/#charsets), producing invalid XML output whenever a log message or MDC value contains such characters.\n\nThe impact depends on the StAX implementation in use:\n\n  *  **JRE built-in StAX**: Forbidden characters are silently written to the output, producing malformed XML. Conforming parsers must reject such documents with a fatal error, which may cause downstream",
+            "published": "2026-10-08T10:40:59Z",
+            "modified": "2026-10-08T10:40:59Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-13137",
+              "https://redhat.atlassian.net/browse/LTWL-13173",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.24.3.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-34477-2.24.3",
+            "cve": "CVE-2026-34477",
+            "aliases": [
+              "GHSA-6hg6-v5c8-fphq",
+              "CVE-2026-34477"
+            ],
+            "severity": "6.3",
+            "score": 6.3,
+            "summary": "Apache Log4j Core: `verifyHostName` attribute silently ignored in TLS configuration",
+            "details": "The fix for  CVE-2025-68161 was incomplete: it addressed hostname verification only when enabled via the  [`log4j2.sslVerifyHostName`](https://logging.apache.org/log4j/2.x/manual/systemproperties.html#log4j2.sslVerifyHostName) system property, but not when configured through the [`verifyHostName`](https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName) attribute of the `<Ssl>` element.\n\nAlthough the `verifyHostName` configuration attribute was introduced in Log4j Core 2.12.0, it was silently ignored in all versions through 2.25.3, leaving TLS co",
+            "published": "2026-10-08T10:40:59Z",
+            "modified": "2026-10-08T10:40:59Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-13137",
+              "https://redhat.atlassian.net/browse/LTWL-13173",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.24.3.rhlw-00004",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2025-68161-2.24.3",
+            "cve": "CVE-2025-68161",
+            "aliases": [
+              "GHSA-vc5p-v9hr-52mj",
+              "CVE-2025-68161"
+            ],
+            "severity": "4.8",
+            "score": 4.8,
+            "summary": "The Socket Appender in Apache Log4j Core versions 2.0-beta9 through 2.25.2 does not perform TLS hostname verification of the peer certificate, even when the  v\u2026",
+            "details": "The Socket Appender in Apache Log4j Core versions 2.0-beta9 through 2.25.2 does not perform TLS hostname verification of the peer certificate, even when the  verifyHostName https://logging.apache.org/log4j/2.x/manual/appenders/network.html#SslConfiguration-attr-verifyHostName  configuration attribute or the  log4j2.sslVerifyHostName https://logging.apache.org/log4j/2.x/manual/systemproperties.html#log4j2.sslVerifyHostName  system property is set to true.\n\nThis issue may allow a man-in-the-middle attacker to intercept or redirect log traffic under the following conditions:\n\n  *  The attacker is",
+            "published": "2026-10-08T10:40:59Z",
+            "modified": "2026-10-08T10:40:59Z",
+            "references": [
+              "https://gitlab.cee.redhat.com/lightwell/cve-backport-queue/-/work_items/36",
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-13137",
+              "https://redhat.atlassian.net/browse/LTWL-13173",
+              "https://redhat.atlassian.net/browse/LTWL-13385"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.24.3.rhlw-00004",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.google.code.gson:gson",
+      "version": "2.8.6",
+      "status": "remediated",
+      "build": "2.8.6.rhlw-00002",
+      "cves": [
+        "CVE-2022-25647"
+      ],
+      "detail": {
+        "build": {
+          "version": "2.8.6.rhlw-00002",
+          "created_at": "2026-09-15T20:48:33Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-09-15T20:48:41Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "2.8.6.rhlw-00002",
+            "created_at": "2026-09-15T20:48:33Z"
+          }
+        ],
+        "license": "Apache 2.0",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2022-25647-2.8.6",
+            "cve": "CVE-2022-25647",
+            "aliases": [
+              "GHSA-4jrv-ppp4-jm57",
+              "SNYK-JAVA-COMGOOGLECODEGSON-1730327",
+              "CVE-2022-25647"
+            ],
+            "severity": "7.7",
+            "score": 7.7,
+            "summary": "Deserialization of Untrusted Data",
+            "details": "The package com.google.code.gson:gson before 2.8.9 are vulnerable to Deserialization of Untrusted Data via the writeReplace() method in internal classes, which may lead to DoS attacks.",
+            "published": "2026-09-15T09:50:28Z",
+            "modified": "2026-09-15T09:50:28Z",
+            "references": [
+              "https://github.com/google/gson/pull/1991/commits",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2022/25xxx/CVE-2022-25647.json",
+              "https://nvd.nist.gov/vuln/detail/CVE-2022-25647",
+              "https://github.com/google/gson/pull/1991"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.8.6.rhlw-00002",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.fasterxml.jackson.core:jackson-databind",
+      "version": "2.13.4",
+      "status": "remediated",
+      "build": "2.13.4.rhlw-00027",
+      "cves": [
+        "CVE-2022-42003",
+        "CVE-2026-50193",
+        "CVE-2026-54512",
+        "CVE-2026-54514",
+        "CVE-2026-54515"
+      ],
+      "detail": {
+        "build": {
+          "version": "2.13.4.rhlw-00027",
+          "created_at": "2026-10-06T07:37:15Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-06T07:37:33Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "2.13.4.rhlw-00027",
+            "created_at": "2026-10-06T07:37:15Z"
+          },
+          {
+            "build": "2.13.4.rhlw-00012",
+            "created_at": "2026-09-10T12:46:14Z"
+          },
+          {
+            "build": "2.13.4.rhlw-00010",
+            "created_at": "2026-09-08T08:46:33Z"
+          },
+          {
+            "build": "2.13.4.rhlw-00001",
+            "created_at": "2026-08-04T16:44:19Z"
+          }
+        ],
+        "summary": "General data-binding functionality for Jackson: works on core streaming API",
+        "license": "The Apache Software License, Version 2.0",
+        "project_url": "http://github.com/FasterXML/jackson",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2026-54512-2.13.4",
+            "cve": "CVE-2026-54512",
+            "aliases": [
+              "GHSA-j3rv-43j4-c7qm",
+              "CVE-2026-54512"
+            ],
+            "severity": "8.1",
+            "score": 8.1,
+            "summary": "jackson-databind has a PolymorphicTypeValidator bypass via generic type parameters that allows arbitrary class instantiation",
+            "details": "`jackson-databind`'s `PolymorphicTypeValidator` (PTV) is the primary safety mechanism guarding polymorphic deserialization. When polymorphic typing is enabled and a type identifier contains generic parameters (i.e. the type ID string contains `<`), `DatabindContext._resolveAndValidateGeneric()` validates **only the raw container class name** (the substring before `<`) against the configured PTV.\n\nIf the container type is approved, the method parses the full canonical type string via `TypeFactory.constructFromCanonical()` and returns the fully parameterized type **without ever validating the ne",
+            "published": "2026-10-05T11:18:31Z",
+            "modified": "2026-10-05T11:18:31Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2357",
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-6135",
+              "https://redhat.atlassian.net/browse/LTWL-6229"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.13.4.rhlw-00027",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-50193-2.13.4",
+            "cve": "CVE-2026-50193",
+            "aliases": [
+              "GHSA-3wrr-7qpf-2prh",
+              "CVE-2026-50193"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "jackson-databind: Deeply nested JsonNode throws StackOverflowError for toString()",
+            "details": "### Impact\n\nPotential Denial-of-Service when attacker sends deeply nested JSON if (and only if) service:\n\n1. Reads deeply nested (1000s of levels) JSON as `JsonNode` (ObjectMapper.readTree())\n2. Writes out same (or modifided) node using `JsonNode.toString()`\n\nwhich can consume significant amount of resources with concurrent relatively small requests (1000 nested arrays is 2kB).\n\n### Patches\n\nFixed in 2.14.0 via https://github.com/FasterXML/jackson-databind/issues/3447.\n\n### Workarounds\n\nAvoid serializing `JsonNode` using `toString()`: use ObjectMapper.writeValueAsString(node)",
+            "published": "2026-10-05T11:18:31Z",
+            "modified": "2026-10-05T11:18:31Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2357"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.13.4.rhlw-00027",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2022-42003-2.13.4",
+            "cve": "CVE-2022-42003",
+            "aliases": [
+              "GHSA-jjjh-jjxp-wpff",
+              "CVE-2022-42003"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "In FasterXML jackson-databind before versions 2.13.4.1 and 2.12.17.1, resource exhaustion can occur because of a lack of a check in primitive value deserialize\u2026",
+            "details": "In FasterXML jackson-databind before versions 2.13.4.1 and 2.12.17.1, resource exhaustion can occur because of a lack of a check in primitive value deserializers to avoid deep wrapper array nesting, when the UNWRAP_SINGLE_VALUE_ARRAYS feature is enabled.",
+            "published": "2026-10-05T11:18:31Z",
+            "modified": "2026-10-05T11:18:31Z",
+            "references": [
+              "https://gitlab.cee.redhat.com/lightwell/cve-backport-queue/-/work_items/113",
+              "https://redhat.atlassian.net/browse/LTWL-2357",
+              "https://redhat.atlassian.net/browse/LTWL-6240",
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.13.4.rhlw-00027",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-54514-2.13.4",
+            "cve": "CVE-2026-54514",
+            "aliases": [
+              "GHSA-hgj6-7826-r7m5",
+              "CVE-2026-54514"
+            ],
+            "severity": "5.3",
+            "score": 5.3,
+            "summary": "jackson-databind: InetSocketAddress deserialization triggers eager DNS resolution (SSRF)",
+            "details": "## Summary\n`JDKFromStringDeserializer` constructed `InetSocketAddress` with `new InetSocketAddress(host, port)`, which performs eager DNS name resolution for hostname inputs at deserialization time. An application that binds untrusted JSON into a type containing an `InetSocketAddress` field issues an attacker-chosen DNS query during `readValue`, before any application-level validation or connect logic. The fix uses `InetSocketAddress.createUnresolved(host, port)`, deferring DNS to an explicit connect.\n\n## Impact\nAn attacker controlling JSON deserialized into an `InetSocketAddress`-bearing type",
+            "published": "2026-09-10T09:29:32Z",
+            "modified": "2026-09-10T09:29:32Z",
+            "references": [],
+            "source": "pnc-build",
+            "fixed_in": "2.13.4.rhlw-00012",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-54515-2.13.4",
+            "cve": "CVE-2026-54515",
+            "aliases": [
+              "GHSA-5jmj-h7xm-6q6v",
+              "CVE-2026-54515"
+            ],
+            "severity": "5.3",
+            "score": 5.3,
+            "summary": "jackson-databind has case-insensitive deserialization bypasses per-property @JsonIgnoreProperties",
+            "details": "## Summary\nIn `BeanDeserializerBase.createContextual()`, per-property `@JsonIgnoreProperties` exclusions are applied by `_handleByNameInclusion()`, producing a `contextual` deserializer whose `BeanPropertyMap` has the ignored properties removed. The subsequent per-property case-insensitivity block (triggered by `@JsonFormat(ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) rebuilds from `this._beanProperties` (the original, unfiltered map) instead of `contextual._beanProperties`, then overwrites the filtered map \u2014 restoring every property `_handleByNameInclusion` had just removed. The ignored property bec",
+            "published": "2026-10-05T11:18:31Z",
+            "modified": "2026-10-05T11:18:31Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-2357",
+              "https://redhat.atlassian.net/browse/LTWL-2298",
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-6135",
+              "https://redhat.atlassian.net/browse/LTWL-8763",
+              "https://redhat.atlassian.net/browse/LTWL-6229",
+              "https://redhat.atlassian.net/browse/LTWL-6240"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "2.13.4.rhlw-00027",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.thoughtworks.xstream:xstream",
+      "version": "1.4.18",
+      "status": "remediated",
+      "build": "1.4.18.rhlw-00006",
+      "cves": [
+        "CVE-2021-43859",
+        "CVE-2022-41966",
+        "CVE-2024-47072"
+      ],
+      "detail": {
+        "build": {
+          "version": "1.4.18.rhlw-00006",
+          "created_at": "2026-09-24T16:39:14Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-09-24T16:39:34Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "1.4.18.rhlw-00006",
+            "created_at": "2026-09-24T16:39:14Z"
+          }
+        ],
+        "license": "BSD-3-Clause",
+        "author": "XStream",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2021-43859-1.4.18",
+            "cve": "CVE-2021-43859",
+            "aliases": [
+              "BIT-jenkins-2021-43859",
+              "GHSA-rmr5-cpv2-vgjf",
+              "CVE-2021-43859"
+            ],
+            "severity": "8.8",
+            "score": 8.8,
+            "summary": "User privilege escalation in MinIO",
+            "details": "MinIO is a Kubernetes native application for cloud storage. Prior to version `RELEASE.2021-12-27T07-23-18Z`, a malicious client can hand-craft an HTTP API call that allows for updating policy for a user and gaining higher privileges. The patch in version `RELEASE.2021-12-27T07-23-18Z` changes the accepted request body type and removes the ability to apply policy changes through this API. There is a workaround for this vulnerability: Changing passwords can be disabled by adding an explicit `Deny` rule to disable the API for users.",
+            "published": "2026-09-21T17:10:44Z",
+            "modified": "2026-09-21T17:10:44Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-6520",
+              "https://redhat.atlassian.net/browse/LTWL-8763"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "1.4.18.rhlw-00006",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2022-41966-1.4.18",
+            "cve": "CVE-2022-41966",
+            "aliases": [
+              "GHSA-j563-grx4-pjpv",
+              "CVE-2022-41966"
+            ],
+            "severity": "8.2",
+            "score": 8.2,
+            "summary": "XStream Denial of Service via stack overflow ",
+            "details": "XStream serializes Java objects to XML and back again. Versions prior to 1.4.20 may allow a remote attacker to terminate the application with a stack overflow error, resulting in a denial of service only via manipulation the processed input stream. The attack uses the hash code implementation for collections and maps to force recursive hash calculation causing a stack overflow. This issue is patched in version 1.4.20 which handles the stack overflow and raises an InputManipulationException instead. A potential workaround for users who only use HashMap or HashSet and whose XML refers these only",
+            "published": "2026-09-21T17:10:44Z",
+            "modified": "2026-09-21T17:10:44Z",
+            "references": [
+              "https://x-stream.github.io/CVE-2022-41966.html",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2022/41xxx/CVE-2022-41966.json",
+              "https://github.com/x-stream/xstream/security/advisories/GHSA-j563-grx4-pjpv",
+              "https://nvd.nist.gov/vuln/detail/CVE-2022-41966",
+              "https://security.netapp.com/advisory/ntap-20230216-0005/"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "1.4.18.rhlw-00006",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2024-47072-1.4.18",
+            "cve": "CVE-2024-47072",
+            "aliases": [
+              "GHSA-hfq9-hggm-c56q",
+              "CVE-2024-47072"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "XStream is a simple library to serialize objects to XML and back again. This vulnerability may allow a remote attacker t",
+            "details": "XStream is a simple library to serialize objects to XML and back again. This vulnerability may allow a remote attacker to terminate the application with a stack overflow error resulting in a denial of service only by manipulating the processed input stream when XStream is configured to use the BinaryStreamDriver. XStream 1.4.21 has been patched to detect the manipulation in the binary input stream causing the the stack overflow and raises an InputManipulationException instead. Users are advised to upgrade. Users unable to upgrade may catch the StackOverflowError in the client code calling XStr",
+            "published": "2026-09-21T17:10:44Z",
+            "modified": "2026-09-21T17:10:44Z",
+            "references": [
+              "https://redhat.atlassian.net/browse/LTWL-13385",
+              "https://redhat.atlassian.net/browse/LTWL-13903"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "1.4.18.rhlw-00006",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.yaml:snakeyaml",
+      "version": "1.30",
+      "status": "remediated",
+      "build": "1.30.0.rhlw-00013",
+      "cves": [],
+      "note": "Lightwell lists no advisory for this build, so which CVEs it addresses is not itemised.",
+      "detail": {
+        "build": {
+          "version": "1.30.0.rhlw-00013",
+          "created_at": "2026-09-17T18:52:32Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-09-17T18:52:56Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "1.30.0.rhlw-00013",
+            "created_at": "2026-09-17T18:52:32Z"
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.apache.commons:commons-compress",
+      "version": "1.9",
+      "status": "remediated",
+      "build": "1.9.0.rhlw-00005",
+      "cves": [],
+      "note": "Lightwell lists no advisory for this build, so which CVEs it addresses is not itemised.",
+      "detail": {
+        "build": {
+          "version": "1.9.0.rhlw-00005",
+          "created_at": "2026-09-29T06:38:20Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-09-29T06:38:22Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "1.9.0.rhlw-00005",
+            "created_at": "2026-09-29T06:38:20Z"
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.springframework:spring-core",
+      "version": "5.3.18",
+      "status": "remediated",
+      "build": "5.3.18.rhlw-00006",
+      "cves": [],
+      "note": "An advisory names a newer build (5.3.18.rhlw-00010) than the one found in the package list (5.3.18.rhlw-00006), so no advisory is credited to it.",
+      "detail": {
+        "build": {
+          "version": "5.3.18.rhlw-00006",
+          "created_at": "2026-08-04T16:44:55Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-12T16:20:07Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "5.3.18.rhlw-00010",
+            "created_at": "2026-08-04T16:44:22Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00009",
+            "created_at": "2026-08-04T16:43:59Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00007",
+            "created_at": "2026-08-04T16:44:13Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00006",
+            "created_at": "2026-08-04T16:44:55Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00005",
+            "created_at": "2026-08-04T16:44:28Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00004",
+            "created_at": "2026-08-04T16:44:37Z"
+          },
+          {
+            "build": "5.3.18.rhlw-00003",
+            "created_at": "2026-08-04T16:44:36Z"
+          }
+        ],
+        "summary": "Spring Core",
+        "license": "Apache License, Version 2.0",
+        "project_url": "https://github.com/spring-projects/spring-framework",
+        "author": "Spring IO",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2025-41249-5.3.18",
+            "cve": "CVE-2025-41249",
+            "aliases": [
+              "GHSA-jmp9-x22r-554x",
+              "CVE-2025-41249"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "The Spring Framework annotation detection mechanism may not correctly resolve annotations on methods within type hierarchies with a parameterized super type wi\u2026",
+            "details": "The Spring Framework annotation detection mechanism may not correctly resolve annotations on methods within type hierarchies with a parameterized super type with unbounded generics. This can be an issue if such annotations are used for authorization decisions.\n\nYour application may be affected by this if you are using Spring Security's @EnableMethodSecurity\u00a0feature.\n\nYou are not affected by this if you are not using @EnableMethodSecurity\u00a0or if you do not use security annotations on methods in generic superclasses or generic interfaces.\n\nThis CVE is published in conjunction with  CVE-2025-41248",
+            "published": "2026-07-15T19:35:49Z",
+            "modified": "2026-07-15T19:35:49Z",
+            "references": [],
+            "source": "pnc-build",
+            "fixed_in": "5.3.18.rhlw-00010",
+            "credited": false
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "pypi",
+      "name": "sqlparse",
+      "version": "0.5.5",
+      "status": "remediated",
+      "build": "0.5.5+rhlw.1",
+      "cves": [
+        "CVE-2026-54284",
+        "CVE-2026-59893",
+        "CVE-2026-59894",
+        "CVE-2026-71491",
+        "CVE-2026-84305"
+      ],
+      "detail": {
+        "build": {
+          "version": "0.5.5+rhlw.1",
+          "created_at": "2026-10-13T20:36:11Z",
+          "repository": "lightwell/python/remediated"
+        },
+        "repository": {
+          "name": "lightwell/python/remediated",
+          "security_level": "remediated",
+          "content_type": "python",
+          "build_count": 3,
+          "advisory_count": 6,
+          "package_count": 3,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/python/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "summary": "A non-validating SQL parser.",
+        "author": "Andi Albrecht",
+        "distributions": [
+          {
+            "filename": "sqlparse-0.5.5+rhlw.1.tar.gz",
+            "type": "sdist",
+            "size": 124657,
+            "sha256": "8b527d29e503538ad256c821c3a394173cab597f435d3f22ebe22c16b4737a2d",
+            "created_at": "2026-10-13T20:36:11Z"
+          },
+          {
+            "filename": "sqlparse-0.5.5+rhlw.1-1-py3-none-any.whl",
+            "type": "bdist_wheel",
+            "size": 50819,
+            "sha256": "ce4454e60e73cd9d29a9fa8b7140ba88bb13cb2f048ea9149464f09806d17660",
+            "created_at": "2026-10-13T20:36:05Z"
+          }
+        ],
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2026-71491-0.5.5",
+            "cve": "CVE-2026-71491",
+            "aliases": [
+              "GHSA-f2ff-p2ww-7p4p",
+              "PYSEC-2026-3697",
+              "CVE-2026-71491"
+            ],
+            "severity": "8.7",
+            "score": 8.7,
+            "summary": "sqlparse: Quadratic O(n\u00b2) DoS in group_comments",
+            "details": "sqlparse is a non-validating SQL parser module for Python. Prior to 0.6.0, group_comments in sqlparse/engine/grouping.py repeatedly rescans comment-only statements before the MAX_GROUPING_TOKENS guard, causing quadratic CPU consumption through sqlparse.parse() and sqlparse.format(sql, strip_comments=True). This issue is fixed in version 0.6.0.",
+            "published": "2026-10-13T20:35:24Z",
+            "modified": "2026-10-13T20:35:24Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/71xxx/CVE-2026-71491.json",
+              "https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-f2ff-p2ww-7p4p",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-71491",
+              "https://github.com/andialbrecht/sqlparse/commit/ef2012a5eeb491e604dea2b00d516904a3830c87"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "0.5.5+rhlw.1",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-54284-0.5.5",
+            "cve": "CVE-2026-54284",
+            "aliases": [
+              "GHSA-pwgv-4x5q-6m9f",
+              "PYSEC-2026-3699",
+              "CVE-2026-54284"
+            ],
+            "severity": "8.7",
+            "score": 8.7,
+            "summary": "sqlparse: TokenList.__init__ materializes O(subtree) value per group, causing CPU DoS before depth/token caps trigger",
+            "details": "sqlparse is a non-validating SQL parser module for Python. Prior to 0.6.0, TokenList construction and string conversion in sqlparse/sql.py repeatedly flatten nested token subtrees constructed by group_parenthesis and group_case, causing quadratic CPU consumption through sqlparse.parse(), sqlparse.format(), and sqlparse.split() before depth and token limits terminate processing. This issue is fixed in version 0.6.0.",
+            "published": "2026-10-13T20:35:24Z",
+            "modified": "2026-10-13T20:35:24Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/54xxx/CVE-2026-54284.json",
+              "https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-pwgv-4x5q-6m9f",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-54284",
+              "https://github.com/andialbrecht/sqlparse/commit/939b129e24c0ad5d51368b1aa72fffcaca76f06f"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "0.5.5+rhlw.1",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-59893-0.5.5",
+            "cve": "CVE-2026-59893",
+            "aliases": [
+              "GHSA-prg7-hcfm-mfcr",
+              "PYSEC-2026-3698",
+              "CVE-2026-59893"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "sqlparse: Inefficient Regex Handling of Dollar-Quoted SQL Literals Leads to ReDoS (Denial of Service)",
+            "details": "sqlparse is a non-validating SQL parser module for Python. Prior to 0.6.0, SQL_REGEX in sqlparse/keywords.py and the per-position loop in sqlparse/lexer.py repeatedly scan unmatched dollar-quoted literal and multiline-comment delimiters, causing quadratic CPU consumption through sqlparse.parse(), sqlparse.format(), and sqlparse.split(). This issue is fixed in version 0.6.0.",
+            "published": "2026-10-13T20:35:24Z",
+            "modified": "2026-10-13T20:35:24Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/59xxx/CVE-2026-59893.json",
+              "https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-prg7-hcfm-mfcr",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-59893",
+              "https://github.com/andialbrecht/sqlparse/commit/d1d80602741f77ec78e5a04ce4719244cf32352e"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "0.5.5+rhlw.1",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-59894-0.5.5",
+            "cve": "CVE-2026-59894",
+            "aliases": [
+              "GHSA-3496-9g83-7v6x",
+              "PYSEC-2026-3696",
+              "CVE-2026-59894"
+            ],
+            "severity": "6.2",
+            "score": 6.2,
+            "summary": "sqlparse: Generated Python and PHP snippets allow SQL string breakout through unescaped backslashes",
+            "details": "sqlparse is a non-validating SQL parser module for Python. Prior to 0.6.0, sqlparse/filters/output.py fails to escape existing backslashes before quotes in sqlparse.format output_format='python' and output_format='php' and the corresponding sqlformat -l modes, allowing crafted SQL to terminate the generated string and inject Python or PHP code when a downstream consumer executes or imports the generated source. This issue is fixed in version 0.6.0.",
+            "published": "2026-10-13T20:35:24Z",
+            "modified": "2026-10-13T20:35:24Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/59xxx/CVE-2026-59894.json",
+              "https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-3496-9g83-7v6x",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-59894"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "0.5.5+rhlw.1",
+            "credited": true
+          },
+          {
+            "id": "x_RHLW-CVE-2026-84305-0.5.5",
+            "cve": "CVE-2026-84305",
+            "aliases": [
+              "GHSA-cfqr-cjx5-5jcm",
+              "PYSEC-2026-3923",
+              "CVE-2026-84305"
+            ],
+            "severity": "5.1",
+            "score": 5.1,
+            "summary": "sqlparse: Reindentation of tuple lists causes near-cap quadratic CPU consumption",
+            "details": "sqlparse is a non-validating SQL parser module for Python. Prior to 0.6.0, sqlparse.format(sql, reindent=True) and sqlformat --reindent route attacker-controlled parenthesized tuple lists through ReindentFilter._get_offset() in sqlparse/filters/reindent.py, where _flatten_up_to_token() repeatedly rebuilds and joins the statement prefix. Thousands of offset calculations walk an expanding token tree, producing quadratic CPU consumption for inputs that remain below MAX_GROUPING_TOKENS and causing request delays, reduced throughput, or worker starvation. This issue is fixed in version 0.6.0.",
+            "published": "2026-10-13T20:35:24Z",
+            "modified": "2026-10-13T20:35:24Z",
+            "references": [
+              "https://github.com/andialbrecht/sqlparse/releases/tag/0.6.0",
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2026/84xxx/CVE-2026-84305.json",
+              "https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-cfqr-cjx5-5jcm",
+              "https://nvd.nist.gov/vuln/detail/CVE-2026-84305",
+              "https://github.com/andialbrecht/sqlparse/commit/a51df6d9e2d31b44be9adb6bc8732517db6bf96b"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "0.5.5+rhlw.1",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "pypi",
+      "name": "pypdf2",
+      "version": "3.0.1",
+      "status": "remediated",
+      "build": "3.0.1+rhlw.1",
+      "cves": [
+        "CVE-2023-36464"
+      ],
+      "detail": {
+        "build": {
+          "version": "3.0.1+rhlw.1",
+          "created_at": "2026-09-23T12:12:40Z",
+          "repository": "lightwell/python/remediated"
+        },
+        "repository": {
+          "name": "lightwell/python/remediated",
+          "security_level": "remediated",
+          "content_type": "python",
+          "build_count": 3,
+          "advisory_count": 6,
+          "package_count": 3,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/python/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "summary": "A pure-python PDF library capable of splitting, merging, cropping, and transforming PDF files",
+        "author": "Mathieu Fenniak",
+        "distributions": [
+          {
+            "filename": "pypdf2-3.0.1+rhlw.1.tar.gz",
+            "type": "sdist",
+            "size": 233337,
+            "sha256": "eef7dcfe76a155a678c72b90177d4751378f3bd532b14460afb82bbabe19e103",
+            "created_at": "2026-09-23T12:12:40Z"
+          },
+          {
+            "filename": "pypdf2-3.0.1+rhlw.1-1-py3-none-any.whl",
+            "type": "bdist_wheel",
+            "size": 234516,
+            "sha256": "762ed09812cb14c868ab98b215f7d3068d9c495dd2bc2ad50907eece1bc687d3",
+            "created_at": "2026-09-23T12:12:33Z"
+          }
+        ],
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2023-36464-3.0.1",
+            "cve": "CVE-2023-36464",
+            "aliases": [
+              "GHSA-4vvm-4w3v-6mr8",
+              "PYSEC-2026-1835",
+              "PYSEC-2026-3008",
+              "CVE-2023-36464"
+            ],
+            "severity": "6.2",
+            "score": 6.2,
+            "summary": "Infinite Loop when a comment isn't followed by a character in pypdf",
+            "details": "pypdf is an open source, pure-python PDF library. In affected versions an attacker may craft a PDF which leads to an infinite loop if `__parse_content_stream` is executed. That is, for example, the case if the user extracted text from such a PDF. This issue was introduced in pull request #969 and resolved in pull request #1828. Users are advised to upgrade. Users unable to upgrade may modify the line `while peek not in (b\"\\r\", b\"\\n\")` in `pypdf/generic/_data_structures.py` to `while peek not in (b\"\\r\", b\"\\n\", b\"\")`.",
+            "published": "2026-09-21T20:15:48Z",
+            "modified": "2026-09-21T20:15:48Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2023/36xxx/CVE-2023-36464.json",
+              "https://github.com/py-pdf/pypdf/security/advisories/GHSA-4vvm-4w3v-6mr8",
+              "https://nvd.nist.gov/vuln/detail/CVE-2023-36464",
+              "https://github.com/py-pdf/pypdf/pull/1828",
+              "https://github.com/py-pdf/pypdf/pull/969"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "3.0.1+rhlw.1",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.thoughtworks.xstream:xstream",
+      "version": "1.4.20",
+      "status": "remediated",
+      "build": "1.4.20.rhlw-00001",
+      "cves": [
+        "CVE-2024-47072"
+      ],
+      "detail": {
+        "build": {
+          "version": "1.4.20.rhlw-00001",
+          "created_at": "2026-08-18T18:13:35Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-08-18T18:16:58Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "1.4.20.rhlw-00001",
+            "created_at": "2026-08-18T18:13:35Z"
+          }
+        ],
+        "license": "BSD-3-Clause",
+        "author": "XStream",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2024-47072-1.4.20",
+            "cve": "CVE-2024-47072",
+            "aliases": [
+              "GHSA-hfq9-hggm-c56q",
+              "CVE-2024-47072"
+            ],
+            "severity": "7.5",
+            "score": 7.5,
+            "summary": "XStream is vulnerable to a Denial of Service attack due to stack overflow from a manipulated binary input stream",
+            "details": "XStream is a simple library to serialize objects to XML and back again. This vulnerability may allow a remote attacker to terminate the application with a stack overflow error resulting in a denial of service only by manipulating the processed input stream when XStream is configured to use the BinaryStreamDriver. XStream 1.4.21 has been patched to detect the manipulation in the binary input stream causing the the stack overflow and raises an InputManipulationException instead. Users are advised to upgrade. Users unable to upgrade may catch the StackOverflowError in the client code calling XStr",
+            "published": "2026-08-17T18:26:35Z",
+            "modified": "2026-08-17T18:26:35Z",
+            "references": [
+              "https://github.com/CVEProject/cvelistV5/tree/main/cves/2024/47xxx/CVE-2024-47072.json",
+              "https://github.com/x-stream/xstream/security/advisories/GHSA-hfq9-hggm-c56q",
+              "https://nvd.nist.gov/vuln/detail/CVE-2024-47072",
+              "https://github.com/x-stream/xstream/commit/bb838ce2269cac47433e31c77b2b236466e9f266"
+            ],
+            "source": "pnc-build",
+            "fixed_in": "1.4.20.rhlw-00001",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "commons-beanutils:commons-beanutils",
+      "version": "1.9.4",
+      "status": "remediated",
+      "build": "1.9.4.rhlw-00001",
+      "cves": [
+        "CVE-2025-48734"
+      ],
+      "detail": {
+        "build": {
+          "version": "1.9.4.rhlw-00001",
+          "created_at": "2026-07-29T13:00:25Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-07-29T13:00:34Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "1.9.4.rhlw-00001",
+            "created_at": "2026-07-29T13:00:25Z"
+          }
+        ],
+        "summary": "Apache Commons BeanUtils provides an easy-to-use but flexible wrapper around reflection and introspection.",
+        "project_url": "https://commons.apache.org/proper/commons-beanutils/",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2025-48734-1.9.4",
+            "cve": "CVE-2025-48734",
+            "aliases": [
+              "GHSA-wxr5-93ph-8wr9",
+              "CVE-2025-48734"
+            ],
+            "severity": "8.8",
+            "score": 8.8,
+            "summary": "Improper Access Control vulnerability in Apache Commons.",
+            "details": "Improper Access Control vulnerability in Apache Commons.\n\n\n\nA special BeanIntrospector class was added in version 1.9.2. This can be used to stop attackers from using the declared class property of Java enum objects to get access to the classloader. However this protection was not enabled by default. PropertyUtilsBean (and consequently BeanUtilsBean) now disallows declared class level property access by default.\n\n\n\n\n\nReleases 1.11.0 and 2.0.0-M2 address a potential security issue when accessing enum properties in an uncontrolled way. If an application using Commons BeanUtils passes property pa",
+            "published": "2026-07-29T00:00:00Z",
+            "modified": "2026-07-29T00:00:00Z",
+            "references": [],
+            "source": "pnc-build",
+            "fixed_in": "1.9.4.rhlw-00001",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "commons-net:commons-net",
+      "version": "3.6",
+      "status": "remediated",
+      "build": "3.6.0.rhlw-00001",
+      "cves": [],
+      "note": "Lightwell lists no advisory for this build, so which CVEs it addresses is not itemised.",
+      "detail": {
+        "build": {
+          "version": "3.6.0.rhlw-00001",
+          "created_at": "2026-08-04T13:32:41Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-08-04T13:33:15Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "3.6.0.rhlw-00001",
+            "created_at": "2026-08-04T13:32:41Z"
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "junit:junit",
+      "version": "4.12",
+      "status": "remediated",
+      "build": "4.12.0.rhlw-00002",
+      "cves": [
+        "CVE-2020-15250"
+      ],
+      "detail": {
+        "build": {
+          "version": "4.12.0.rhlw-00002",
+          "created_at": "2026-08-04T16:44:43Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-12T16:20:07Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "4.12.0.rhlw-00002",
+            "created_at": "2026-08-04T16:44:43Z"
+          }
+        ],
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2020-15250-4.12",
+            "cve": "CVE-2020-15250",
+            "aliases": [
+              "GHSA-269g-pwp5-87pp",
+              "CVE-2020-15250"
+            ],
+            "severity": "4.4",
+            "score": 4.4,
+            "summary": "In JUnit4 from version 4.7 and before 4.13.1, the test rule TemporaryFolder contains a local information disclosure vulnerability.",
+            "details": "In JUnit4 from version 4.7 and before 4.13.1, the test rule TemporaryFolder contains a local information disclosure vulnerability. On Unix like systems, the system's temporary directory is shared between all users on that system. Because of this, when files and directories are written into this directory they are, by default, readable by other users on that same system. This vulnerability does not allow other users to overwrite the contents of these directories or files. This is purely an information disclosure vulnerability. This vulnerability impacts you if the JUnit tests write sensitive in",
+            "published": "2026-07-20T14:00:22Z",
+            "modified": "2026-07-20T14:00:22Z",
+            "references": [],
+            "source": "pnc-build",
+            "fixed_in": "4.12.0.rhlw-00002",
+            "credited": true
+          }
+        ]
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.apache.httpcomponents:httpclient",
+      "version": "4.5.12",
+      "status": "remediated",
+      "build": "4.5.12.rhlw-00001",
+      "cves": [
+        "CVE-2020-13956"
+      ],
+      "detail": {
+        "build": {
+          "version": "4.5.12.rhlw-00001",
+          "created_at": "2026-08-04T16:44:53Z",
+          "repository": "lightwell/java/remediated",
+          "listed_at": "2026-10-12T16:20:07Z"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "build_count": 2749,
+          "advisory_count": 272,
+          "package_count": 964,
+          "published_distribution_url": "https://packages.redhat.com/api/pulp-content/lightwell/java/remediated/",
+          "features": [
+            "lightwell-network",
+            "lightwell-clearinghouse",
+            "lightwell-research-institutions"
+          ]
+        },
+        "builds": [
+          {
+            "build": "4.5.12.rhlw-00001",
+            "created_at": "2026-08-04T16:44:53Z"
+          }
+        ],
+        "summary": "Apache HttpComponents Client",
+        "license": "Apache License, Version 2.0",
+        "project_url": "http://hc.apache.org/httpcomponents-client",
+        "author": "The Apache Software Foundation",
+        "advisories": [
+          {
+            "id": "x_RHLW-CVE-2020-13956-4.5.12",
+            "cve": "CVE-2020-13956",
+            "aliases": [
+              "GHSA-7r82-7xv7-xcpj",
+              "CVE-2020-13956"
+            ],
+            "severity": "5.3",
+            "score": 5.3,
+            "summary": "Apache HttpClient versions prior to version 4.5.13 and 5.0.3 can misinterpret malformed authority component in request URIs passed to the library as java.net.U\u2026",
+            "details": "Apache HttpClient versions prior to version 4.5.13 and 5.0.3 can misinterpret malformed authority component in request URIs passed to the library as java.net.URI object and pick the wrong target host for request execution.",
+            "published": "2026-07-15T19:35:45Z",
+            "modified": "2026-07-15T19:35:45Z",
+            "references": [],
+            "source": "pnc-build",
+            "fixed_in": "4.5.12.rhlw-00001",
+            "credited": true
+          }
+        ]
+      }
+    }
+  ],
+  "packages": {
+    "maven|cn.hutool:hutool-all": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|com.alibaba:fastjson": {
+      "remediated": [],
+      "validated": [
+        "2.0.9"
+      ]
+    },
+    "maven|com.fasterxml.jackson.core:jackson-core": {
+      "remediated": [
+        {
+          "version": "2.11.3",
+          "build": "2.11.3.rhlw-00002",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.11.3",
+        "2.13.5",
+        "2.17.3",
+        "2.21.2"
+      ]
+    },
+    "maven|com.fasterxml.jackson.core:jackson-databind": {
+      "remediated": [
+        {
+          "version": "2.11.3",
+          "build": "2.11.3.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.13.4",
+          "build": "2.13.4.rhlw-00027",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.13.4.1",
+          "build": "2.13.4.1-rhlw-00015",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.13.4.2",
+          "build": "2.13.4.2-rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.17.3",
+          "build": "2.17.3.rhlw-00013",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.18.0",
+          "build": "2.18.0.rhlw-00010",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.11.3",
+        "2.13.4",
+        "2.13.4.1",
+        "2.13.4.2",
+        "2.17.3",
+        "2.18.0"
+      ]
+    },
+    "maven|com.google.code.gson:gson": {
+      "remediated": [
+        {
+          "version": "2.8.6",
+          "build": "2.8.6.rhlw-00002",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.8.6"
+      ]
+    },
+    "maven|com.google.guava:guava": {
+      "remediated": [],
+      "validated": [
+        "28.2-android",
+        "30.1.1-android",
+        "32.0.0-jre",
+        "32.0.1-jre",
+        "32.1.2-jre",
+        "32.1.3-jre",
+        "33.4.8-jre"
+      ]
+    },
+    "maven|com.h2database:h2": {
+      "remediated": [
+        {
+          "version": "2.2.219",
+          "build": "2.2.219.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.4.240"
+      ]
+    },
+    "maven|com.monitorjbl:xlsx-streamer": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|com.thoughtworks.xstream:xstream": {
+      "remediated": [
+        {
+          "version": "1.4.18",
+          "build": "1.4.18.rhlw-00006",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.4.20",
+          "build": "1.4.20.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "1.4.2",
+        "1.4.18",
+        "1.4.20"
+      ]
+    },
+    "maven|com.unboundid:unboundid-ldapsdk": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|commons-beanutils:commons-beanutils": {
+      "remediated": [
+        {
+          "version": "1.9.4",
+          "build": "1.9.4.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.10.0",
+          "build": "1.10.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.10.1",
+          "build": "1.10.1.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "1.9.4",
+        "1.10.0",
+        "1.10.1",
+        "1.11.0"
+      ]
+    },
+    "maven|commons-collections:commons-collections": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|commons-httpclient:commons-httpclient": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|commons-io:commons-io": {
+      "remediated": [
+        {
+          "version": "2.2.0",
+          "build": "2.2.0.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.8.0",
+          "build": "2.8.0.rhlw-00002",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.11.0",
+          "build": "2.11.0.rhlw-00009",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "2.13.0",
+          "build": "2.13.0.rhlw-00007",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.2",
+        "2.8.0",
+        "2.11.0",
+        "2.13.0",
+        "2.22.0"
+      ]
+    },
+    "maven|commons-lang:commons-lang": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|commons-net:commons-net": {
+      "remediated": [
+        {
+          "version": "2.0.0",
+          "build": "2.0.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.2.0",
+          "build": "3.2.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.3.0",
+          "build": "3.3.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.4.0",
+          "build": "3.4.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.5.0",
+          "build": "3.5.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.6.0",
+          "build": "3.6.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.7.1",
+          "build": "3.7.1.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.7.2",
+          "build": "3.7.2.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.8.0",
+          "build": "3.8.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.0",
+        "3.0.1",
+        "3.2",
+        "3.3",
+        "3.4",
+        "3.5",
+        "3.6",
+        "3.7.1",
+        "3.7.2",
+        "3.8.0",
+        "3.13.0"
+      ]
+    },
+    "maven|io.netty:netty": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|io.springfox:springfox-swagger-ui": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|io.undertow:undertow-core": {
+      "remediated": [],
+      "validated": [
+        "2.3.21.Final",
+        "2.3.22.Final",
+        "2.3.23.Final",
+        "2.3.24.Final",
+        "2.3.26.Final",
+        "2.4.0.Final",
+        "2.4.1.Final",
+        "2.4.2.Final"
+      ]
+    },
+    "maven|junit:junit": {
+      "remediated": [
+        {
+          "version": "4.12.0",
+          "build": "4.12.0.rhlw-00002",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "4.13.0",
+          "build": "4.13.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "4.12",
+        "4.13"
+      ]
+    },
+    "maven|mysql:mysql-connector-java": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.apache.commons:commons-compress": {
+      "remediated": [
+        {
+          "version": "1.9.0",
+          "build": "1.9.0.rhlw-00005",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "1.9",
+        "1.10",
+        "1.21"
+      ]
+    },
+    "maven|org.apache.commons:commons-lang3": {
+      "remediated": [
+        {
+          "version": "3.17.0",
+          "build": "3.17.0.rhlw-00011",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "3.17.0"
+      ]
+    },
+    "maven|org.apache.geode:geode-core": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.apache.httpcomponents:httpclient": {
+      "remediated": [
+        {
+          "version": "4.5.6",
+          "build": "4.5.6.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "4.5.12",
+          "build": "4.5.12.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "4.5.6",
+        "4.5.9",
+        "4.5.12"
+      ]
+    },
+    "maven|org.apache.kafka:kafka-clients": {
+      "remediated": [
+        {
+          "version": "3.5.2",
+          "build": "3.5.2.rhlw-00005",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.6.2",
+          "build": "3.6.2.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.7.2",
+          "build": "3.7.2.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.8.1",
+          "build": "3.8.1.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "3.9.1",
+          "build": "3.9.1.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "3.9.1",
+        "4.2.0",
+        "4.3.1"
+      ]
+    },
+    "maven|org.apache.logging.log4j:log4j-api": {
+      "remediated": [
+        {
+          "version": "2.24.3",
+          "build": "2.24.3.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.6.2",
+        "2.7",
+        "2.23.0",
+        "2.24.0",
+        "2.24.1",
+        "2.24.2",
+        "2.24.3",
+        "2.25.0",
+        "2.25.1",
+        "2.25.2",
+        "2.25.3",
+        "2.25.4",
+        "2.26.0",
+        "2.26.1"
+      ]
+    },
+    "maven|org.apache.logging.log4j:log4j-core": {
+      "remediated": [
+        {
+          "version": "2.24.3",
+          "build": "2.24.3.rhlw-00004",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "2.6.2",
+        "2.7",
+        "2.23.0",
+        "2.24.0",
+        "2.24.1",
+        "2.24.2",
+        "2.24.3",
+        "2.25.0",
+        "2.25.1",
+        "2.25.2",
+        "2.25.3",
+        "2.25.4",
+        "2.26.0",
+        "2.26.1"
+      ]
+    },
+    "maven|org.apache.poi:poi": {
+      "remediated": [],
+      "validated": [
+        "5.2.3",
+        "5.3.0",
+        "5.5.1"
+      ]
+    },
+    "maven|org.apache.poi:poi-ooxml": {
+      "remediated": [],
+      "validated": [
+        "5.2.3",
+        "5.3.0",
+        "5.5.1"
+      ]
+    },
+    "maven|org.apache.shiro:shiro-core": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.apache.struts:struts2-core": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.apache.velocity:velocity": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.bouncycastle:bcprov-jdk18on": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.dom4j:dom4j": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.hibernate:hibernate-core": {
+      "remediated": [],
+      "validated": [
+        "5.6.15.Final"
+      ]
+    },
+    "maven|org.hibernate:hibernate-validator": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.hsqldb:hsqldb": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.jdom:jdom2": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.jolokia:jolokia-core": {
+      "remediated": [],
+      "validated": [
+        "1.3.7"
+      ]
+    },
+    "maven|org.jsoup:jsoup": {
+      "remediated": [
+        {
+          "version": "1.7.2",
+          "build": "1.7.2.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.15.1",
+          "build": "1.15.1.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "1.7.1",
+        "1.7.2",
+        "1.8.1",
+        "1.10.3",
+        "1.11.1",
+        "1.11.2",
+        "1.11.3",
+        "1.14.3",
+        "1.15.1",
+        "1.15.2",
+        "1.15.3",
+        "1.16.1",
+        "1.16.2",
+        "1.17.1",
+        "1.18.2",
+        "1.19.1",
+        "1.20.1",
+        "1.21.1",
+        "1.21.2",
+        "1.22.1"
+      ]
+    },
+    "maven|org.mozilla:rhino": {
+      "remediated": [],
+      "validated": []
+    },
+    "maven|org.postgresql:postgresql": {
+      "remediated": [
+        {
+          "version": "42.3.3",
+          "build": "42.3.3.rhlw-00006",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "42.7.3",
+          "build": "42.7.3.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "42.3.1",
+        "42.3.2",
+        "42.3.3",
+        "42.7.3",
+        "42.7.12",
+        "42.7.13"
+      ]
+    },
+    "maven|org.springframework.data:spring-data-commons": {
+      "remediated": [],
+      "validated": [
+        "2.6.3",
+        "2.7.18",
+        "4.1.0"
+      ]
+    },
+    "maven|org.springframework.security:spring-security-web": {
+      "remediated": [
+        {
+          "version": "5.7.11",
+          "build": "5.7.11.rhlw-00005",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "5.7.11",
+        "6.5.7",
+        "7.1.0-RC1"
+      ]
+    },
+    "maven|org.springframework:spring-core": {
+      "remediated": [
+        {
+          "version": "5.3.18",
+          "build": "5.3.18.rhlw-00006",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "5.3.18",
+        "7.0.8"
+      ]
+    },
+    "maven|org.springframework:spring-expression": {
+      "remediated": [
+        {
+          "version": "5.3.18",
+          "build": "5.3.18.rhlw-00006",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "5.3.18",
+        "7.0.8"
+      ]
+    },
+    "maven|org.yaml:snakeyaml": {
+      "remediated": [
+        {
+          "version": "1.29.0",
+          "build": "1.29.0.rhlw-00021",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.30.0",
+          "build": "1.30.0.rhlw-00013",
+          "repository": "lightwell/java/remediated"
+        },
+        {
+          "version": "1.33.0",
+          "build": "1.33.0.rhlw-00001",
+          "repository": "lightwell/java/remediated"
+        }
+      ],
+      "validated": [
+        "1.29",
+        "1.33",
+        "2.1",
+        "2.6"
+      ]
+    },
+    "maven|org.zeroturnaround:zt-zip": {
+      "remediated": [],
+      "validated": []
+    },
+    "pypi|certifi": {
+      "remediated": [],
+      "validated": [
+        "2018.8.24",
+        "2021.10.8",
+        "2022.9.24",
+        "2023.5.7",
+        "2023.11.17",
+        "2024.2.2",
+        "2024.6.2",
+        "2024.7.4",
+        "2024.8.30",
+        "2024.12.14",
+        "2025.1.31",
+        "2025.4.26",
+        "2025.6.15",
+        "2025.7.14",
+        "2025.8.3",
+        "2025.10.5",
+        "2025.11.12",
+        "2026.1.4",
+        "2026.2.25",
+        "2026.4.22",
+        "2026.5.20",
+        "2026.6.17",
+        "2026.7.22",
+        "2026.10.18"
+      ]
+    },
+    "pypi|cryptography": {
+      "remediated": [],
+      "validated": [
+        "36.0.0",
+        "36.0.1",
+        "38.0.1",
+        "47.0.0",
+        "48.0.0",
+        "48.0.1",
+        "49.0.0",
+        "50.0.0",
+        "50.0.1",
+        "50.0.2"
+      ]
+    },
+    "pypi|django": {
+      "remediated": [],
+      "validated": [
+        "3.1.12",
+        "3.2.25",
+        "4.1.13",
+        "4.2.30",
+        "5.0.14",
+        "5.1.15",
+        "5.2.15",
+        "5.2.16",
+        "5.2.17",
+        "5.2.18",
+        "6.0.5",
+        "6.0.6",
+        "6.0.7",
+        "6.0.8",
+        "6.0.9",
+        "6.1a1",
+        "6.1",
+        "6.1.1",
+        "6.1.2"
+      ]
+    },
+    "pypi|django-allauth": {
+      "remediated": [],
+      "validated": [
+        "65.18.0",
+        "65.19.0",
+        "65.19.1",
+        "65.19.2",
+        "65.19.3",
+        "65.19.4",
+        "65.19.5",
+        "65.19.6",
+        "65.19.7",
+        "65.20.0"
+      ]
+    },
+    "pypi|flask": {
+      "remediated": [],
+      "validated": [
+        "2.3.1",
+        "2.3.2",
+        "2.3.3",
+        "3.0.0",
+        "3.0.1",
+        "3.0.2",
+        "3.0.3",
+        "3.1.0",
+        "3.1.1",
+        "3.1.2",
+        "3.1.3"
+      ]
+    },
+    "pypi|gevent": {
+      "remediated": [],
+      "validated": [
+        "25.9.1",
+        "26.4.0",
+        "26.5.0",
+        "26.7.0",
+        "26.8.0",
+        "26.9.0"
+      ]
+    },
+    "pypi|idna": {
+      "remediated": [],
+      "validated": [
+        "2.1",
+        "2.5",
+        "2.7",
+        "2.10",
+        "3.3",
+        "3.4",
+        "3.5",
+        "3.6",
+        "3.7",
+        "3.8",
+        "3.9",
+        "3.10",
+        "3.11",
+        "3.12",
+        "3.13",
+        "3.14",
+        "3.15",
+        "3.16",
+        "3.17",
+        "3.18",
+        "3.19",
+        "3.20"
+      ]
+    },
+    "pypi|jinja2": {
+      "remediated": [],
+      "validated": [
+        "3.0.0a1",
+        "3.0.0rc1",
+        "3.0.0rc2",
+        "3.0.0",
+        "3.0.1",
+        "3.0.2",
+        "3.0.3",
+        "3.1.0",
+        "3.1.1",
+        "3.1.2",
+        "3.1.3",
+        "3.1.4",
+        "3.1.5",
+        "3.1.6"
+      ]
+    },
+    "pypi|lxml": {
+      "remediated": [],
+      "validated": [
+        "6.1.3"
+      ]
+    },
+    "pypi|oauthlib": {
+      "remediated": [],
+      "validated": [
+        "1.0.3",
+        "1.1.1",
+        "1.1.2",
+        "2.0.0",
+        "2.0.1",
+        "2.0.2",
+        "2.0.3",
+        "2.0.4",
+        "2.0.5",
+        "2.0.6",
+        "2.0.7",
+        "2.1.0",
+        "3.0.0",
+        "3.0.1",
+        "3.0.2",
+        "3.1.0",
+        "3.1.1",
+        "3.2.0",
+        "3.2.1",
+        "3.2.2",
+        "3.3.0",
+        "3.3.1",
+        "4.0.0"
+      ]
+    },
+    "pypi|pillow": {
+      "remediated": [],
+      "validated": [
+        "12.3.0",
+        "13.0.0"
+      ]
+    },
+    "pypi|py": {
+      "remediated": [],
+      "validated": [
+        "1.5.4",
+        "1.6.0",
+        "1.10.0",
+        "1.11.0"
+      ]
+    },
+    "pypi|pyjwt": {
+      "remediated": [],
+      "validated": [
+        "2.6.0",
+        "2.7.0",
+        "2.8.0",
+        "2.9.0",
+        "2.10.0",
+        "2.10.1",
+        "2.11.0",
+        "2.12.0",
+        "2.12.1",
+        "2.13.0",
+        "2.14.0",
+        "2.15.0",
+        "2.15.1"
+      ]
+    },
+    "pypi|pypdf2": {
+      "remediated": [
+        {
+          "version": "3.0.1",
+          "build": "3.0.1+rhlw.1",
+          "repository": "lightwell/python/remediated"
+        }
+      ],
+      "validated": [
+        "3.0.1"
+      ]
+    },
+    "pypi|pytest": {
+      "remediated": [],
+      "validated": [
+        "8.4.1",
+        "8.4.2",
+        "9.0.0",
+        "9.0.1",
+        "9.0.2",
+        "9.0.3",
+        "9.1.0",
+        "9.1.1"
+      ]
+    },
+    "pypi|python-docx": {
+      "remediated": [],
+      "validated": [
+        "1.2.0"
+      ]
+    },
+    "pypi|pyyaml": {
+      "remediated": [],
+      "validated": [
+        "6.0.2",
+        "6.0.3"
+      ]
+    },
+    "pypi|requests": {
+      "remediated": [],
+      "validated": [
+        "2.25.1",
+        "2.27.1",
+        "2.28.1",
+        "2.32.2",
+        "2.32.3",
+        "2.32.4",
+        "2.32.5",
+        "2.33.0",
+        "2.33.1",
+        "2.34.0.dev1",
+        "2.34.0",
+        "2.34.1",
+        "2.34.2"
+      ]
+    },
+    "pypi|sqlalchemy": {
+      "remediated": [],
+      "validated": [
+        "2.0.43",
+        "2.0.49",
+        "2.0.50",
+        "2.0.51",
+        "2.0.52",
+        "2.0.53",
+        "2.0.54",
+        "2.0.55",
+        "2.1.0b2",
+        "2.1.0",
+        "2.1.1",
+        "2.1.2",
+        "2.1.3",
+        "2.1.4",
+        "2.1.5"
+      ]
+    },
+    "pypi|sqlparse": {
+      "remediated": [
+        {
+          "version": "0.5.5",
+          "build": "0.5.5+rhlw.1",
+          "repository": "lightwell/python/remediated"
+        }
+      ],
+      "validated": [
+        "0.2.4",
+        "0.5.4",
+        "0.5.5",
+        "0.6.0"
+      ]
+    },
+    "pypi|tornado": {
+      "remediated": [],
+      "validated": [
+        "4.5.3",
+        "6.5.5",
+        "6.5.6",
+        "6.5.7",
+        "6.5.8",
+        "6.5.9",
+        "6.5.10"
+      ]
+    },
+    "pypi|transformers": {
+      "remediated": [],
+      "validated": [
+        "5.5.0",
+        "5.5.1",
+        "5.5.2",
+        "5.5.3",
+        "5.5.4",
+        "5.6.0",
+        "5.6.1",
+        "5.6.2",
+        "5.7.0",
+        "5.8.0",
+        "5.8.1",
+        "5.9.0",
+        "5.10.1",
+        "5.10.2",
+        "5.10.4",
+        "5.11.0",
+        "5.12.0",
+        "5.12.1",
+        "5.13.0",
+        "5.13.1",
+        "5.14.0",
+        "5.14.1",
+        "5.15.0",
+        "5.15.1",
+        "5.16.0",
+        "5.16.1",
+        "5.17.0",
+        "5.18.0",
+        "5.19.0",
+        "5.20.0",
+        "5.20.1"
+      ]
+    },
+    "pypi|urllib3": {
+      "remediated": [],
+      "validated": [
+        "1.26.5",
+        "1.26.8",
+        "1.26.12",
+        "1.26.19",
+        "1.26.20",
+        "2.0.7",
+        "2.1.0",
+        "2.2.3",
+        "2.3.0",
+        "2.4.0",
+        "2.5.0",
+        "2.6.3",
+        "2.7.0",
+        "2.8.0"
+      ]
+    },
+    "pypi|werkzeug": {
+      "remediated": [],
+      "validated": [
+        "3.1.8",
+        "3.1.9"
+      ]
+    },
+    "pypi|zipp": {
+      "remediated": [],
+      "validated": [
+        "3.4.0",
+        "3.8.0",
+        "3.11.0",
+        "3.18.2",
+        "3.19.2",
+        "3.20.2",
+        "3.23.0",
+        "3.23.1",
+        "4.1.0",
+        "4.1.1"
+      ]
+    }
+  },
+  "repositories": [
+    {
+      "name": "lightwell/java/remediated",
+      "security_level": "remediated",
+      "content_type": "maven",
+      "build_count": 2749,
+      "advisory_count": 272,
+      "package_count": 964
+    },
+    {
+      "name": "lightwell/java/validated",
+      "security_level": "validated",
+      "content_type": "maven",
+      "build_count": 40787,
+      "advisory_count": 0,
+      "package_count": 6162
+    },
+    {
+      "name": "lightwell/python/remediated",
+      "security_level": "remediated",
+      "content_type": "python",
+      "build_count": 3,
+      "advisory_count": 6,
+      "package_count": 3
+    },
+    {
+      "name": "lightwell/python/validated",
+      "security_level": "validated",
+      "content_type": "python",
+      "build_count": 9042,
+      "advisory_count": 0,
+      "package_count": 1997
+    }
+  ]
+}

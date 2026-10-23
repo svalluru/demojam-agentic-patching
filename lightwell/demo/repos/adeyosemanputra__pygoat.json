@@ -1,0 +1,11 @@
+{
+ "ref": "master",
+ "commit": "19d17cc8874861142b330636d068bbde54e86b85",
+ "notes": [],
+ "manifests": {
+  "dockerized_labs/broken_auth_lab/requirements.txt": "Flask==2.3.3\nWerkzeug==2.3.7\nitsdangerous==2.1.2\nclick==8.1.7\nblinker==1.6.2\nJinja2==3.1.2\nMarkupSafe==2.1.3 ",
+  "dockerized_labs/insec_des_lab/requirements.txt": "Flask==3.0.0\nWerkzeug==3.0.1",
+  "dockerized_labs/sensitive_data_exposure/requirements.txt": "django==3.2.18\ndjango-crispy-forms==1.14.0\n# added this one for some nice form styling\nrequests==2.28.1\n# we may need this later for api stuff\n# TODO: check if we need more packages??\n",
+  "requirements.txt": "argon2-cffi==21.3.0\nargon2-cffi-bindings==21.2.0\nasgiref==3.6.0\ncertifi==2022.12.7\ncffi==1.15.1\ncharset-normalizer==3.0.1\ncryptography==39.0.1\ncrispy-bootstrap4==2022.1\ndefusedxml==0.7.1\ndj-database-url==0.5.0\nDjango==4.2\ndjango-allauth==0.52.0\ndjango-crispy-forms==2.3\ndjango-heroku==0.3.1\ngunicorn==23.0.0\nidna==3.4\nmccabe==0.6.1\noauthlib==3.2.2\nPillow==9.4.0\npsycopg2==2.9.3\npycodestyle==2.7.0\npycparser==2.21\npyflakes==2.3.1\nPyJWT==2.4.0\npython3-openid==3.2.0\npytz==2020.1\nPyYAML==5.1\nrequests==2.28.2\nrequests-oauthlib==1.3.1\nsqlparse==0.3.1\nurllib3==1.26.9\nWerkzeug==2.1.2\nwhitenoise==6.2.0\nzipp==3.8.0\n"
+ }
+}

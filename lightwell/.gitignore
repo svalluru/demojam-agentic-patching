@@ -1,0 +1,10 @@
+# Secrets and per-user config
+.env
+.env.*
+!.env.example
+
+# Scan results and the saved repository list
+data/
+
+__pycache__/
+*.py[cod]

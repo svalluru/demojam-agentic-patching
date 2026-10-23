@@ -137,6 +137,7 @@ for _ in $(seq 1 20); do
   Agentic Patching Console
   mode : $MODE_LABEL
   url  : http://127.0.0.1:$FRONTEND_PORT
+  scan : http://127.0.0.1:$FRONTEND_PORT/lightwell/  (dependency scanner)
   logs : /tmp/demo-backend.log  /tmp/demo-frontend.log
 
   Pick a CVE, Assess CVE Impact, dispatch the plan, then Approve.
@@ -154,12 +155,12 @@ EOF
     done
     echo >&2
     echo "error: a server stopped on its own — last lines of both logs:" >&2
-    tail -20 /tmp/demo-backend.log /tmp/demo-frontend.log >&2
+    tail -n 20 /tmp/demo-backend.log /tmp/demo-frontend.log >&2
     exit 1
   fi
   sleep 1
 done
 
 echo "error: console did not come up — see /tmp/demo-backend.log" >&2
-tail -20 /tmp/demo-backend.log /tmp/demo-frontend.log >&2
+tail -n 20 /tmp/demo-backend.log /tmp/demo-frontend.log >&2
 exit 1

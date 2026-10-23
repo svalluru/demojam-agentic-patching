@@ -80,8 +80,45 @@ runs `insights-client`, which performs a registration check against a legacy
 endpoint, gets a false negative, and exits 1. Set `legacy_upload=False` in
 `/etc/insights-client/insights-client.conf` on the target.
 
+**Insights is slow the first time it is asked about a CVE.** Responses are
+computed on demand and cached: ~30s cold, sub-second after, and the cold one
+often exceeds the gateway's own 30s limit and returns 504. The console retries
+gateway errors; warming a CVE before a demo makes it visibly faster.
+
+**The AAP host name must equal the Insights display name**, because the
+console passes that name through as the job's `limit`, while `ansible_host`
+carries the address that actually resolves.
+
 **Insights is slow the first time it is asked about a CVE** — measured at
 20s cold from the lab bastion against 0.2s warm, and the lab's MCP client
 gives up at about twenty. That is the intermittent fetch failure. The console
 warms the CVE during assessment to spend that time while the plan is being
 read.
+
+## Not done yet
+
+- `CVE - Verify Patch` is created by hand, not by `create-aap-objects.sh`.
+  The live one runs `playbooks/cve_verify_patch.yml` from the
+  `DJ - Agentic Patching` project against `lab-inventory`.
+- The lab controller's own `CVE - Fetch and Commit` and
+  `CVE - Sync and Deploy Remediation` are left untouched — and are what the
+  competition path actually calls. The earlier assumption that they could
+  not see our hosts turned out to be wrong: with the lab Lightspeed service
+  account they reach the same organisation the console does, which is why
+  the separately-named copies below are now redundant.
+
+## Application patching (dependency scanner)
+
+`playbooks/app_clone_update_build.yml` is the job behind the **Remediate** button in the dependency scanner (`lightwell/`). It runs on a host of the job template's inventory: clones a repository at the scanned commit, applies a list of dependency version changes, builds the result (`mvn verify`, or `pip install` for a requirements file), and optionally commits and pushes a branch. The scanner works out the change list; the playbook applies it as written and reports the diff and build result back as the job's artifacts. The editing is done by `playbooks/files/apply_dependency_changes.py`, which also reports any change it could not make and why.
+
+The JDK follows the repository. `playbooks/files/detect_java.py` reads every `pom.xml` (compiler release/source/target, `java.version`, the enforcer's `requireJavaVersion`, a Spring Boot parent) and version pins (`.java-version`, `.sdkmanrc`, `.tool-versions`), takes the highest requirement, and rounds up to 8, 11, 17 or 21; GitHub Actions and Dockerfile hints count only when nothing else says, and the default is 17. The job uses an installed JDK under `/usr/lib/jvm` when there is one of that version, and otherwise downloads a Temurin JDK (checked against the published sha256) and Maven 3.9.9 (checked against the sha512 on Maven Central) into `/tmp/app-patch-tools`, which needs no root and works in the controller's own execution environment. It then needs outbound access to `api.adoptium.net` and Maven Central. The person can override the detected version on the page; the result states the version used and why.
+
+```bash
+./aap-setup/create-app-patch-objects.py --dry-run
+BUILD_INVENTORY="Demo Inventory" MACHINE_CREDENTIAL="Demo Credential" ./aap-setup/create-app-patch-objects.py
+```
+
+It creates the credential type `Lightwell Registry` and a credential from `LIGHTWELL_REGISTRY_USER` and `LIGHTWELL_REGISTRY_TOKEN`, then the job template `App Patch - Clone, Update, Build` with the GitHub token, Lightwell registry and machine credentials attached. It is all application patching needs: it does not set up the CVE templates or the `generated-playbooks` project, so `create-aap-objects.sh` is not a prerequisite. If they are missing it also creates the `GitHub Token` credential type and `github-token` credential (from `GIT_HUB_TOKEN`, which needs Contents read and write to push a branch) and the project `DemoJam Agentic Patching`, following `GITHUB_REPO_URL` on `PROJECT_BRANCH` (default `main`), then syncs it. An existing project is left as it is, and the script stops with a clear message if the project does not list the playbook. The inventory and machine credential must already exist, and the playbook must be pushed to the branch the project tracks. `--delete` removes only the job template, the Lightwell credential and its type. The host needs git 2.31 or newer, python3, curl and tar; the JDK and Maven are fetched as described above (or pip is used for a requirements file). The controller's execution environment meets this, so a build host is optional. There is no option to skip certificate checks; for a controller with a private certificate authority set `AAP_CA_BUNDLE` to its bundle.
+
+The playbook was run here against a local host and a local git repository (clone, edit, build, commit, push to a branch). It has not been run on a real controller, and the Lightwell registry settings have not been exercised against the live registry.
+
