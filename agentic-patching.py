@@ -101,7 +101,7 @@ REVIEW_THRESHOLD = float(env('REVIEW_THRESHOLD', '30'))
 
 LLAMA_URL = env('LLAMA_STACK_URL')
 VECTOR_DB_ID = env('VECTOR_DB_ID')
-LLM_MODEL = env('DEFAULT_LLM_MODEL', 'vllm-inference/summary-deepseek-r1-distill-qwen-14b')
+LLM_MODEL = env('DEFAULT_LLM_MODEL', 'vllm-inference/deepseek-r1-distill-qwen-14b')
 
 MAINTENANCE_WINDOW = env('MAINTENANCE_WINDOW')
 DEFAULT_WINDOW = 'Sat 02:00-06:00 UTC'
@@ -3284,7 +3284,7 @@ SETTINGS: tuple[Setting, ...] = (
             'restart empties the registry, so re-run ingest and re-set this.',
             binds='VECTOR_DB_ID'),
     Setting('DEFAULT_LLM_MODEL', 'RAG', 'Summarisation model', 'str',
-            'vllm-inference/summary-deepseek-r1-distill-qwen-14b', '', binds='LLM_MODEL'),
+            'vllm-inference/deepseek-r1-distill-qwen-14b', '', binds='LLM_MODEL'),
 
     # --- Ansible Orchestrator --------------------------------------------
     Setting('AO_URL', 'Ansible Orchestrator', 'Base URL', 'str', '',

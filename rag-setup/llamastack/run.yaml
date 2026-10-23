@@ -103,26 +103,13 @@ registered_resources:
     provider_id: sentence-transformers
     provider_model_id: nomic-ai/nomic-embed-text-v1.5
     model_type: embedding
-  # The vllm-inference provider above was configured but nothing was ever
-  # registered against it, so /v1/models listed only the embedding model and
-  # every summarisation call returned HTTP 500. Vector search worked, which
-  # made it look like RAG was up.
-  #
-  # Llama Stack exposes a model as provider_id/model_id — that is why the
-  # embedding one reads sentence-transformers/nomic-ai/... — so this entry is
-  # what makes DEFAULT_LLM_MODEL=vllm-inference/summary-<model> resolve.
-  # provider_model_id is the name the endpoint serves. deploy.sh sets both
-  # from INFERENCE_MODEL in .env.
-  #
-  # The summary- prefix is not decoration. VLLM_REFRESH_MODELS also registers
-  # every model the endpoint lists, as vllm-inference/<served name>, and keeps
-  # it in the registry on the PVC. Registering that same name here then fails
-  # at the next start ("already exists with conflicting field values") and
-  # the pod crash-loops. A name the listing never produces cannot collide.
-  - model_id: ${env.LLM_MODEL_ALIAS:=summary-deepseek-r1-distill-qwen-14b}
-    provider_id: vllm-inference
-    provider_model_id: ${env.LLM_PROVIDER_MODEL_ID:=deepseek-r1-distill-qwen-14b}
-    model_type: llm
+  # The LLM is deliberately not listed here. VLLM_REFRESH_MODELS registers
+  # every model the endpoint serves as vllm-inference/<served name> and
+  # keeps it in the registry on the PVC. Registering the same model here as
+  # well fails at the next start ("already exists with conflicting field
+  # values") and the pod crash-loops — and this Llama Stack names the entry
+  # after provider_model_id whatever model_id says, so an alias does not
+  # avoid it. deploy.sh checks the model DEFAULT_LLM_MODEL names was listed.
   vector_dbs: []
   tool_groups: []
 vector_stores:

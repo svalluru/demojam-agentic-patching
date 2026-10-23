@@ -48,20 +48,8 @@ if [[ -f "$ENV_FILE" ]]; then
 else
   info "no env file at $ENV_FILE — using placeholders"
 fi
-# run.yaml registers the LLM as summary-<served name> (why: see run.yaml).
-# The served name is the part after any prefix, so the older
-# "llama-17b/llama-scout-17b" form still works.
-INFERENCE_MODEL="${INFERENCE_MODEL:-deepseek-r1-distill-qwen-14b}"
-LLM_MODEL_ID="${INFERENCE_MODEL##*/}"
-LLM_MODEL_ALIAS="summary-$LLM_MODEL_ID"
-info "LLM model: $LLM_MODEL_ID, registered as vllm-inference/$LLM_MODEL_ALIAS"
-if [[ -n "${DEFAULT_LLM_MODEL:-}" && "$DEFAULT_LLM_MODEL" != "vllm-inference/$LLM_MODEL_ALIAS" ]]; then
-  info "WARNING: .env has DEFAULT_LLM_MODEL=$DEFAULT_LLM_MODEL — the console needs vllm-inference/$LLM_MODEL_ALIAS"
-fi
 oc create secret generic llamastack-inference-secret -n "$NAMESPACE" \
-  --from-literal=INFERENCE_MODEL="$INFERENCE_MODEL" \
-  --from-literal=LLM_MODEL_ID="$LLM_MODEL_ID" \
-  --from-literal=LLM_MODEL_ALIAS="$LLM_MODEL_ALIAS" \
+  --from-literal=INFERENCE_MODEL="${INFERENCE_MODEL:-deepseek-r1-distill-qwen-14b}" \
   --from-literal=VLLM_URL="${VLLM_URL:-http://localhost:8000/v1}" \
   --from-literal=VLLM_API_TOKEN="${VLLM_API_TOKEN:-fake}" \
   --from-literal=VLLM_TLS_VERIFY="${VLLM_TLS_VERIFY:-false}" \
@@ -84,6 +72,30 @@ if ! oc rollout status deployment/llamastack -n "$NAMESPACE" --timeout=900s; the
   echo "Llama Stack did not become ready. Recent logs:" >&2
   oc logs -n "$NAMESPACE" -l app=llamastack --tail=60 >&2 || true
   fail "llamastack rollout failed"
+fi
+
+# The LLM is registered by Llama Stack listing what the endpoint serves
+# (see run.yaml), not by this script, so check it actually appeared. A
+# missing model otherwise shows up much later, as every Assess failing.
+WANT_MODEL="${DEFAULT_LLM_MODEL:-vllm-inference/deepseek-r1-distill-qwen-14b}"
+step "Check the LLM is registered: $WANT_MODEL"
+listed=""
+for _ in $(seq 1 12); do
+  if oc exec -n "$NAMESPACE" deployment/llamastack -- python3 -c "
+import json, sys, urllib.request
+ids = [m.get('identifier') or m.get('id') for m in
+       json.load(urllib.request.urlopen('http://localhost:8321/v1/models')).get('data', [])]
+sys.exit(0 if sys.argv[1] in ids else 1)" "$WANT_MODEL" 2>/dev/null; then
+    listed=yes; break
+  fi
+  sleep 5
+done
+if [[ -n "$listed" ]]; then
+  info "$WANT_MODEL is registered"
+else
+  info "WARNING: $WANT_MODEL is not registered. Check the endpoint serves it:"
+  info "  curl -sk \$VLLM_URL/models -H \"Authorization: Bearer \$VLLM_API_TOKEN\""
+  info "and that DEFAULT_LLM_MODEL in .env is vllm-inference/<a name it lists>."
 fi
 
 step "Done"
