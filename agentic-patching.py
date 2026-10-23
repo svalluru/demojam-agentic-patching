@@ -657,9 +657,11 @@ def _detail_by_tag(cve_id: str, host_limit: int) -> dict[str, Any]:
         'cvss': float(cvss) if cvss is not None else 0.0,
         'description': desc, 'impact': impact,
         'hosts': hosts, 'count': len(hosts),
-        # The honest total for this tag, not for the organisation. gather()
-        # notes truncation from it, so a limit that drops hosts says so.
+        # The honest total for this tag, not for the organisation.
         'total_affected': total,
+        # Without this the cap dropped hosts silently: the CVE list said 3
+        # affected and the plan quietly assessed 1.
+        'limited_from': total if len(hosts) < total else None,
     }
 
 
@@ -1294,8 +1296,8 @@ class InfoAgent:
         capped = detail.get('limited_from')
         if capped:
             notes.append(f'HOSTS_LIMIT capped this plan at {len(hosts)} of '
-                         f'{capped} host(s) that matched — check HOSTS_FILTER '
-                         f'is selecting what you expect.')
+                         f'{capped} host(s) that matched — raise HOSTS_LIMIT, or check '
+                         f'HOSTS_FILTER / HOSTS_TAG select what you expect.')
         # Quietly ignoring them would be its own trap: settings that appear
         # to be in force and are not. Said once, as a note, not as a failure.
         ignored = detail.get('triage_ignored')

@@ -332,7 +332,7 @@ step "Console — live-mode settings"
 # below say which.
 if $DRY; then
   echo "  [dry-run] would set MODE=live, AO_WORKFLOW_NAME, REVIEW_THRESHOLD=65,"
-  echo "            HOSTS_LIMIT=1, INSIGHTS_TIMEOUT=60, AO_TIMEOUT=60, AO_DECIDE_WAIT=900"
+  echo "            HOSTS_LIMIT=3, INSIGHTS_TIMEOUT=60, AO_TIMEOUT=60, AO_DECIDE_WAIT=900"
 else
 python3 - "$ENV_FILE" <<'PY'
 import pathlib, re, sys
@@ -349,8 +349,10 @@ want = {
     # The risk model emits 36.6-100, so the stock threshold of 30 is below
     # everything it can produce and the auto-patch branch never fires.
     'REVIEW_THRESHOLD': '65',
-    # A cap on the plan, independent of whether the filter behaves.
-    'HOSTS_LIMIT': '1',
+    # A cap on the plan, independent of whether the scope behaves. The lab
+    # tag selects node1-3; a cap of 1 left from the single-host days cut
+    # every three-host CVE to its first host.
+    'HOSTS_LIMIT': '3',
     # A large Insights org answers slowly, and a cold CVE takes ~30s.
     'INSIGHTS_TIMEOUT': '60',
     # AO's signal call exceeds the 10s default.
