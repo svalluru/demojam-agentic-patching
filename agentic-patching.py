@@ -101,7 +101,7 @@ REVIEW_THRESHOLD = float(env('REVIEW_THRESHOLD', '30'))
 
 LLAMA_URL = env('LLAMA_STACK_URL')
 VECTOR_DB_ID = env('VECTOR_DB_ID')
-LLM_MODEL = env('DEFAULT_LLM_MODEL', 'vllm-inference/llama-scout-17b')
+LLM_MODEL = env('DEFAULT_LLM_MODEL', 'vllm-inference/deepseek-r1-distill-qwen-14b')
 
 MAINTENANCE_WINDOW = env('MAINTENANCE_WINDOW')
 DEFAULT_WINDOW = 'Sat 02:00-06:00 UTC'
@@ -1160,10 +1160,18 @@ class InfoAgent:
             raise BackendUnavailable('Llama Stack (LLM)', exc,
                                      f'check model {LLM_MODEL!r} is served') from exc
 
+        # A reasoning model (deepseek-r1) also returns its thinking, as a
+        # 'reasoning' item or inside <think> tags. Only the message is the
+        # answer.
         for item in (result or {}).get('output', []):
+            if item.get('type', 'message') != 'message':
+                continue
             for content in item.get('content', []):
-                if content.get('text', '').strip():
-                    return strip_preamble(content['text'].strip())
+                if content.get('type', 'output_text') != 'output_text':
+                    continue
+                text = re.sub(r'(?s)^.*</think>', '', content.get('text', '')).strip()
+                if text:
+                    return strip_preamble(text)
         raise BackendUnavailable('Llama Stack (LLM)', 'empty response',
                                  f'check model {LLM_MODEL!r} is served')
 
@@ -3276,7 +3284,7 @@ SETTINGS: tuple[Setting, ...] = (
             'restart empties the registry, so re-run ingest and re-set this.',
             binds='VECTOR_DB_ID'),
     Setting('DEFAULT_LLM_MODEL', 'RAG', 'Summarisation model', 'str',
-            'vllm-inference/llama-scout-17b', '', binds='LLM_MODEL'),
+            'vllm-inference/deepseek-r1-distill-qwen-14b', '', binds='LLM_MODEL'),
 
     # --- Ansible Orchestrator --------------------------------------------
     Setting('AO_URL', 'Ansible Orchestrator', 'Base URL', 'str', '',
