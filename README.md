@@ -208,6 +208,24 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 
 </details>
 
+### Tearing it down
+
+```bash
+./cleanup.sh --dry-run        # show what would go, change nothing
+./cleanup.sh                  # remove it — asks you to type the namespace
+./cleanup.sh --keep-data      # keep the volumes: vector store, model cache
+```
+
+Removes what `setup.sh` and the console deploy created: the console, risk
+model and RAG stack in `NAMESPACE`, the `CVE - Verify Patch` template, and
+the AO workflow, credential and integration. It deletes each object by name
+and never touches the lab's own templates, projects or workflows, anything
+outside `NAMESPACE`, or `.env`. It makes the same cluster check as setup and
+refuses on a mismatch.
+
+The namespace itself is kept unless you pass `--delete-namespace`, since
+deleting it removes everything inside, including anything that isn't ours.
+
 ### 3. Run it — two ways, same `.env`
 
 | | |
@@ -685,6 +703,7 @@ demo.sh                    start the console — demo by default, --live for rea
                            The console also serves the dependency scanner
                            (lightwell/) at /lightwell/, on the same port
 setup.sh                   everything between a filled-in .env and working live mode
+cleanup.sh                 removes what setup.sh created, and nothing else
 discover-hosts.py          what AAP can patch, found in Insights — uuids and tags
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, HTTP backend
