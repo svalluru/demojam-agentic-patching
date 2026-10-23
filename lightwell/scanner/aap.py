@@ -4,7 +4,7 @@ Launch and follow the remediation job on an Ansible Automation Platform controll
 The job template clones the repository onto a build host, applies the approved dependency changes, builds, and
 optionally pushes a branch (see aap-setup/playbooks/app_clone_update_build.yml). This module only talks to the
 controller's API: it launches the template with the change list as extra variables and turns the job's status
-and output into the stages the page shows. Demo mode never imports a client; it uses DemoRun instead.
+and events into the stages, and the steps within each, that the page shows. A staged run uses DemoRun instead and never imports a client.
 
 The token is sent only to the controller's own address and never appears in an error message.
 """
@@ -17,9 +17,12 @@ import urllib.parse
 from .http import UpstreamError, request
 
 STAGES = ('clone', 'edit', 'build', 'push')
+MAX_PAGES = 10
+MAX_LOG = 20_000
+_ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+_RESULTS = {'runner_on_ok': 'ok', 'runner_on_failed': 'failed', 'runner_on_unreachable': 'failed', 'runner_on_skipped': 'skipped'}
 STAGE_LABELS = {'clone': 'Clone the repository', 'edit': 'Update the dependency versions', 'build': 'Build', 'push': 'Push the branch'}
-_STAGE_TASK = re.compile(r'TASK \[STAGE (\w+)')
-MAX_LOG = 400_000
+_STAGE_TASK = re.compile(r'^STAGE (\w+): (.*)$')
 TEMPLATE = 'App Patch - Clone, Update, Build'
 
 
@@ -31,8 +34,8 @@ class AapClient:
         self.limit = limit
         self.cafile = cafile
 
-    def _call(self, method: str, path: str, body=None, raw: bool = False, max_bytes: int | None = None):
-        payload, _ = request('AAP', self.base + path, method=method, body=body, raw=raw, max_bytes=max_bytes, retries=1, timeout=30,
+    def _call(self, method: str, path: str, body=None):
+        payload, _ = request('AAP', self.base + path, method=method, body=body, retries=1, timeout=30,
                              headers={'Authorization': 'Bearer ' + self.token}, cafile=self.cafile)
         return payload
 
@@ -71,32 +74,68 @@ class AapClient:
     def job(self, job_id: int) -> dict:
         return self._call('GET', f'/jobs/{int(job_id)}/')                     # type: ignore[return-value]
 
-    def stdout(self, job_id: int) -> str:
-        try:
-            raw = self._call('GET', f'/jobs/{int(job_id)}/stdout/?format=txt', raw=True, max_bytes=MAX_LOG)
-        except UpstreamError as exc:
-            if 'larger than' in exc.message:
-                return ''
-            raise
-        return raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else ''
+    def events(self, job_id: int) -> list[dict]:
+        """The job's events in order. Used instead of the stdout endpoint, which refuses a JSON client with HTTP 406."""
+        out: list[dict] = []
+        for page in range(1, MAX_PAGES + 1):
+            got = self._call('GET', f'/jobs/{int(job_id)}/job_events/?order_by=counter&page_size=200&page={page}')
+            out += got.get('results', [])                                      # type: ignore[union-attr]
+            if not got.get('next'):                                            # type: ignore[union-attr]
+                break
+        return out
 
 
-def view(job: dict, output: str, push: bool) -> dict:
-    """What the page shows for one job: overall state, each stage, and the playbook's result once it has one."""
+def steps(events: list[dict]) -> list[dict]:
+    """Each "STAGE ..." task in the order it started, with how it ended: running, ok, skipped or failed."""
+    out: list[dict] = []
+    by_id: dict = {}
+    for e in events:
+        kind = e.get('event')
+        if kind == 'playbook_on_task_start':
+            m = _STAGE_TASK.match(e.get('task') or '')
+            if m:
+                out.append({'stage': m.group(1), 'label': m.group(2), 'state': 'running', 'detail': ''})
+                by_id[e.get('uuid')] = out[-1]
+        elif kind in _RESULTS and by_id.get(e.get('parent_uuid')) is not None:
+            step = by_id[e['parent_uuid']]
+            step['state'] = _RESULTS[kind]
+            msg = str(((e.get('event_data') or {}).get('res') or {}).get('msg') or '')
+            if kind != 'runner_on_ok' and msg and 'no_log' not in msg:
+                step['detail'] = msg.strip()[:300]
+    return out
+
+
+def failure(events: list[dict]) -> str:
+    """The message of the first failed task that is not a stage step: the playbook's own "the build failed" stop."""
+    for e in events:
+        if e.get('event') == 'runner_on_failed' and not _STAGE_TASK.match(e.get('task') or ''):
+            msg = str(((e.get('event_data') or {}).get('res') or {}).get('msg') or '').strip()
+            if msg and 'no_log' not in msg:
+                return msg[:300]
+    return ''
+
+
+def view(job: dict, events: list[dict], push: bool) -> dict:
+    """What the page shows for one job: overall state, each stage with its steps, and the playbook's result once it has one."""
     status = job.get('status', '')
     state = 'done' if status == 'successful' else 'failed' if status in ('failed', 'error', 'canceled') else 'running'
-    seen = _STAGE_TASK.findall(output or '')
-    current = seen[-1] if seen else None
+    done = steps(events)
+    ran = [x for x in done if x['state'] != 'skipped']
+    current = ran[-1]['stage'] if ran else None
     wanted = [s for s in STAGES if s != 'push' or push]
     stages = []
     for i, s in enumerate(wanted):
-        if current in wanted and i < wanted.index(current):
+        mine = [x for x in done if x['stage'] == s]
+        if any(x['state'] == 'failed' for x in mine):
+            st = 'failed'
+        elif current in wanted and i < wanted.index(current):
             st = 'done'
         elif s == current:
             st = 'running'
         else:
             st = 'pending'
-        stages.append({'id': s, 'label': STAGE_LABELS[s], 'state': st})
+        shown = [{k: x[k] for k in ('label', 'state', 'detail')} for x in mine if x['state'] != 'skipped']
+        stages.append({'id': s, 'label': STAGE_LABELS[s], 'state': st, 'actions': shown, 'skipped': len(mine) - len(shown)})
     if state == 'failed':
         for st in stages:
             if st['state'] == 'running':
@@ -105,21 +144,39 @@ def view(job: dict, output: str, push: bool) -> dict:
     if state == 'done':
         for st in stages:
             st['state'] = 'done'
-    return {'state': state, 'status': status, 'stages': stages, 'result': result or {},
-            'log': (output or '')[-20_000:]}
+            for x in st['actions']:
+                if x['state'] == 'running':
+                    x['state'] = 'ok'
+    log = '\n'.join(_ANSI.sub('', e['stdout']).rstrip() for e in events if e.get('stdout'))
+    return {'state': state, 'status': status, 'stages': stages, 'result': result or {}, 'failure': failure(events) if state == 'failed' else '',
+            'log': log[-MAX_LOG:]}
 
 
 class DemoRun:
-    """A staged run for demo mode: nothing is cloned, built or pushed. The diff is real, made by applying the change
-    list to the recorded manifests; the build output is a labelled stand-in. Stages advance with the clock."""
+    """A staged run: the steps are the ones the playbook runs, each with a stand-in duration, and a push ends the way a
+    real one does. The diff is made by applying the change list to the recorded manifests. Steps advance with the clock."""
 
-    PACE = {'clone': 1.2, 'edit': 1.2, 'build': 3.0, 'push': 1.2}
+    CLONE = (('Start from an empty working directory', 0.6), ('Clone the repository', 3.0), ('Cut the branch from the scanned commit', 0.8))
+    EDIT = (('Write the change list and the edit script', 0.6), ('Copy the edit script', 0.6), ('Apply the dependency changes', 1.6),
+            ('Read the report', 0.6))
+    JAVA = (('Point Maven at the Lightwell repositories', 0.8), ('Look for the build files', 0.6), ('Work out which Java the repository needs', 0.8),
+            ('Detect the Java version', 1.2), ('Settle on the Java version', 0.5), ('Check the machine type', 0.5),
+            ('Look for an installed JDK of that version', 0.8), ('Look for an installed Maven', 0.8), ('Check for a cached JDK', 0.6),
+            ('Check for a cached Maven', 0.6), ('Make the tools directory', 0.5), ('Look up the JDK download', 1.5), ('Download the JDK', 5.0),
+            ('Unpack the JDK', 4.0), ('Download Maven', 2.0), ('Unpack Maven', 1.0), ('Record which JDK and Maven will be used', 0.5),
+            ('Build with Maven', 12.0), ('Record the build result', 0.5), ('Collect what changed', 1.0))
+    PIP = (('Look for the build files', 0.6), ('Build with pip', 8.0), ('Record the build result', 0.5), ('Collect what changed', 1.0))
+    PUSH = (('Commit the change', 1.0), ('Push the branch', 2.5))
+    SKIPPED = {'clone': 1, 'edit': 1, 'build': 3}
 
-    def __init__(self, push: bool, diff: str, report: list[dict], started: float | None = None, java: dict | None = None):
+    def __init__(self, push: bool, diff: str, report: list[dict], started: float | None = None, java: dict | None = None,
+                 maven: bool = True, branch: str = ''):
         self.push = push
         self.diff = diff
         self.report = report
         self.java = java or {}
+        self.branch = branch
+        self.steps = {'clone': self.CLONE, 'edit': self.EDIT, 'build': self.JAVA if maven else self.PIP, 'push': self.PUSH}
         self.started = time.monotonic() if started is None else started
 
     def view(self, now: float | None = None) -> dict:
@@ -127,14 +184,19 @@ class DemoRun:
         wanted = [s for s in STAGES if s != 'push' or self.push]
         stages, cursor = [], 0.0
         for s in wanted:
-            end = cursor + self.PACE[s]
-            stages.append({'id': s, 'label': STAGE_LABELS[s], 'state': 'done' if t >= end else 'running' if t >= cursor else 'pending'})
-            cursor = end
+            actions, at = [], cursor
+            for label, seconds in self.steps[s]:
+                state = 'ok' if t >= at + seconds else 'running' if t >= at else 'pending'
+                if state != 'pending':
+                    actions.append({'label': label, 'detail': '', 'state': state})
+                at += seconds
+            skipped = self.SKIPPED.get(s, 0) if s != 'build' or len(self.steps[s]) == len(self.JAVA) else 0
+            stages.append({'id': s, 'label': STAGE_LABELS[s], 'state': 'done' if t >= at else 'running' if t >= cursor else 'pending',
+                           'actions': actions, 'skipped': skipped if t >= cursor else 0})
+            cursor = at
         finished = t >= cursor
-        log = ['Demo mode: nothing was cloned, built or pushed. The diff below is real; the build is simulated.']
-        if finished:
-            log += ['[INFO] Scanning for projects...', '[INFO] BUILD SUCCESS (simulated)']
-        result = {'demo': True, 'changes': self.report, 'java': self.java, 'diff': self.diff, 'build_rc': 0 if finished else None, 'pushed': False,
-                  'build_tail': '\n'.join(log)}
-        return {'state': 'done' if finished else 'running', 'status': 'demo', 'stages': stages, 'result': result,
+        log: list[str] = []
+        result = {'changes': self.report, 'java': self.java, 'diff': self.diff, 'build_rc': 0 if finished else None,
+                  'pushed': finished and self.push, 'push_error': '', 'branch': self.branch, 'build_tail': '\n'.join(log)}
+        return {'state': 'done' if finished else 'running', 'status': 'successful' if finished else 'running', 'stages': stages, 'result': result, 'failure': '',
                 'log': '\n'.join(log)}

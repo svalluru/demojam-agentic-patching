@@ -163,21 +163,64 @@ class EditScriptTests(unittest.TestCase):
         self.assertEqual(json.loads(run.stdout)[0]['name'], 'g:absent')
 
 
+def ev(kind, task='', uuid='', parent='', **more):
+    return {'event': kind, 'task': task, 'uuid': uuid, 'parent_uuid': parent, **more}
+
+
+def started(stage, text, uuid):
+    return ev('playbook_on_task_start', f'STAGE {stage}: {text}', uuid)
+
+
 class JobViewTests(unittest.TestCase):
-    def test_stages_follow_the_last_stage_task_in_the_output(self):
-        out = 'TASK [STAGE clone: Clone] ***\nok\nTASK [STAGE edit: Apply] ***\nchanged\nTASK [STAGE build: Build with Maven] ***\n'
-        v = aap.view({'status': 'running'}, out, push=False)
+    def test_stages_follow_the_last_stage_task_in_the_events(self):
+        events = [started('clone', 'Clone', 'a'), ev('runner_on_ok', parent='a'), started('edit', 'Apply', 'b'), ev('runner_on_ok', parent='b', changed=True),
+                  ev('playbook_on_task_start', 'Not a stage task', 'x'), started('build', 'Build with Maven', 'c')]
+        v = aap.view({'status': 'running'}, events, push=False)
         self.assertEqual([(s['id'], s['state']) for s in v['stages']], [('clone', 'done'), ('edit', 'done'), ('build', 'running')])
         self.assertEqual(v['state'], 'running')
 
+    def test_each_step_shows_how_it_ended_and_skipped_ones_are_only_counted(self):
+        events = [started('build', 'Look for an installed JDK', 'a'), ev('runner_on_ok', parent='a'),
+                  started('build', 'Download the JDK', 'b'), ev('runner_on_skipped', parent='b'),
+                  started('build', 'Build with Maven', 'c')]
+        build = aap.view({'status': 'running'}, events, push=False)['stages'][2]
+        self.assertEqual([(x['label'], x['state']) for x in build['actions']], [('Look for an installed JDK', 'ok'), ('Build with Maven', 'running')])
+        self.assertEqual(build['skipped'], 1)
+
+    def test_a_failed_step_fails_its_stage_and_says_why(self):
+        events = [started('clone', 'Clone', 'a'), ev('runner_on_ok', parent='a'), started('clone', 'Stop if the clone failed', 'b'),
+                  ev('runner_on_failed', parent='b', event_data={'res': {'msg': 'git clone failed (rc 128): repository not found'}}), ev('playbook_on_stats')]
+        v = aap.view({'status': 'failed'}, events, push=False)
+        clone = v['stages'][0]
+        self.assertEqual(clone['state'], 'failed')
+        self.assertEqual(clone['actions'][1], {'label': 'Stop if the clone failed', 'state': 'failed', 'detail': 'git clone failed (rc 128): repository not found'})
+
+    def test_steps_skipped_after_the_build_do_not_hide_where_the_job_got_to(self):
+        events = [started('clone', 'Clone', 'a'), ev('runner_on_ok', parent='a'), started('edit', 'Apply', 'b'), ev('runner_on_ok', parent='b'),
+                  started('build', 'Build with Maven', 'c'), ev('runner_on_ok', parent='c'), started('push', 'Commit the change', 'd'), ev('runner_on_skipped', parent='d'),
+                  ev('playbook_on_task_start', 'Fail the job if the build or the push failed', 'e'),
+                  ev('runner_on_failed', 'Fail the job if the build or the push failed', parent='e', event_data={'res': {'msg': 'The build failed (rc 1).'}})]
+        v = aap.view({'status': 'failed'}, events, push=False)
+        self.assertEqual([(s['id'], s['state']) for s in v['stages']], [('clone', 'done'), ('edit', 'done'), ('build', 'failed')])
+        self.assertEqual(v['failure'], 'The build failed (rc 1).')
+        self.assertEqual(aap.view({'status': 'running'}, events[:8], push=False)['failure'], '')
+
+    def test_a_hidden_failure_message_is_not_shown(self):
+        events = [started('build', 'Build', 'a'), ev('runner_on_failed', parent='a', event_data={'res': {'msg': "the output has been hidden due to the fact that 'no_log: true' was specified"}})]
+        self.assertEqual(aap.view({'status': 'failed'}, events, push=False)['stages'][2]['actions'][0]['detail'], '')
+
+    def test_the_log_is_the_events_output_without_colour_codes(self):
+        events = [ev('playbook_on_start', stdout='\x1b[0;32mPLAY [x]\x1b[0m'), ev('runner_on_ok', stdout='ok: [localhost]')]
+        self.assertEqual(aap.view({'status': 'running'}, events, push=False)['log'], 'PLAY [x]\nok: [localhost]')
+
     def test_a_failed_job_marks_the_stage_it_stopped_in(self):
-        out = 'TASK [STAGE clone: Clone] ***\nTASK [STAGE edit: Apply] ***\n'
-        v = aap.view({'status': 'failed'}, out, push=True)
+        events = [started('clone', 'Clone', 'a'), started('edit', 'Apply', 'b')]
+        v = aap.view({'status': 'failed'}, events, push=True)
         self.assertEqual([(s['id'], s['state']) for s in v['stages']], [('clone', 'done'), ('edit', 'failed'), ('build', 'pending'), ('push', 'pending')])
         self.assertEqual(v['state'], 'failed')
 
     def test_a_successful_job_shows_everything_done_and_the_artifact(self):
-        v = aap.view({'status': 'successful', 'artifacts': {'app_patch': {'build_rc': 0, 'diff': 'x'}}}, 'TASK [STAGE build: B] ***', push=False)
+        v = aap.view({'status': 'successful', 'artifacts': {'app_patch': {'build_rc': 0, 'diff': 'x'}}}, [started('build', 'B', 'a')], push=False)
         self.assertEqual({s['state'] for s in v['stages']}, {'done'})
         self.assertEqual(v['result'], {'build_rc': 0, 'diff': 'x'})
         self.assertEqual([s['id'] for s in v['stages']], ['clone', 'edit', 'build'])
@@ -206,11 +249,18 @@ class ClientTests(unittest.TestCase):
         self.assertIn('"Nope" does not exist', cm.exception.message)
         self.assertNotIn('tok', cm.exception.message)
 
-    def test_an_oversized_log_is_treated_as_empty(self):
-        def fake(*a, **k):
-            raise UpstreamError('AAP', 'https://c/x is larger than 400 KB')
+    def test_events_are_read_page_by_page_without_asking_for_text(self):
+        urls = []
+
+        def fake(service, url, **kw):
+            urls.append((url, kw.get('raw', False)))
+            page = int(url.rsplit('page=', 1)[1])
+            return {'results': [{'counter': page}], 'next': 'more' if page < 2 else None}, {}
         with mock.patch('scanner.aap.request', fake):
-            self.assertEqual(aap.AapClient('https://c', 't').stdout(1), '')
+            got = aap.AapClient('https://c', 't').events(5)
+        self.assertEqual([e['counter'] for e in got], [1, 2])
+        self.assertEqual([u for u, _ in urls], ['https://c/jobs/5/job_events/?order_by=counter&page_size=200&page=1', 'https://c/jobs/5/job_events/?order_by=counter&page_size=200&page=2'])
+        self.assertFalse(any(raw for _, raw in urls))
 
 
 class JavaTests(unittest.TestCase):
@@ -276,6 +326,7 @@ class JavaTests(unittest.TestCase):
         self.assertNotIn('java_version', client.launch.call_args[0][0])
         remediation.Runs().start_live(client, repo, ref, plan, False, 8)
         self.assertEqual(client.launch.call_args[0][0]['java_version'], 8)
+        self.assertEqual(client.launch.call_args[0][0]['registry_base'], 'https://packages.redhat.com/api/pulp-content/lightwell')
 
 
 class StatusTests(unittest.TestCase):
@@ -317,17 +368,40 @@ class RunTests(unittest.TestCase):
         first = runs.view(run_id)
         self.assertEqual(first['state'], 'running')
         self.assertIn('-django==2.2\n+django==2.2.28', first['result']['diff'])
-        self.assertTrue(first['result']['demo'])
         run = runs._runs[run_id]['demo']
         later = run.view(run.started + 60)
         self.assertEqual((later['state'], {s['state'] for s in later['stages']}), ('done', {'done'}))
+        self.assertTrue(all(a['state'] == 'ok' for s in later['stages'] for a in s['actions']))
+        self.assertEqual([a['state'] for a in first['stages'][0]['actions']], ['running'])
         self.assertEqual(later['result']['build_rc'], 0)
+
+    def test_demo_run_follows_the_playbook_and_ends_a_push_like_a_real_one(self):
+        runs = remediation.Runs()
+        run_id = runs.start_demo(self.REPO, self.PLAN, True, {'pom.xml': '<project/>'})
+        run = runs._runs[run_id]['demo']
+        mid = run.view(run.started + 22)
+        self.assertEqual([s['state'] for s in mid['stages']], ['done', 'done', 'running', 'pending'])
+        self.assertIn('Download the JDK', [a['label'] for a in mid['stages'][2]['actions']])
+        self.assertFalse(mid['result']['pushed'])
+        later = run.view(run.started + 120)
+        self.assertEqual([s['id'] for s in later['stages']], ['clone', 'edit', 'build', 'push'])
+        self.assertEqual((later['state'], later['result']['pushed'], later['result']['branch']), ('done', True, remediation.BRANCH))
+        self.assertEqual(later['stages'][3]['skipped'], 0)
+
+    def test_demo_run_builds_python_with_pip_and_not_pushing_stays_unpushed(self):
+        runs = remediation.Runs()
+        run_id = runs.start_demo(self.REPO, self.PLAN, False, {'requirements.txt': 'django==2.2\n'})
+        run = runs._runs[run_id]['demo']
+        later = run.view(run.started + 120)
+        self.assertEqual([s['id'] for s in later['stages']], ['clone', 'edit', 'build'])
+        self.assertEqual([a['label'] for a in later['stages'][2]['actions']][1], 'Build with pip')
+        self.assertFalse(later['result']['pushed'])
 
     def test_live_run_launches_with_the_approved_changes_and_follows_the_job(self):
         client = mock.Mock()
         client.launch.return_value = 99
         client.job.return_value = {'status': 'successful', 'artifacts': {'app_patch': {'build_rc': 0}}}
-        client.stdout.return_value = ''
+        client.events.return_value = []
         runs = remediation.Runs()
         ref = RepoRef('github', 'github.com', 'acme/app', 'main', 'svc')
         run_id = runs.start_live(client, self.REPO, ref, self.PLAN, True)

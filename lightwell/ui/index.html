@@ -404,6 +404,16 @@
   .rem-stage.done .g { background: var(--green); border-color: var(--green); }
   .rem-stage.failed .g { background: var(--red); border-color: var(--red); }
   .rem-stage.pending { color: var(--muted); }
+  .rem-acts { display: grid; gap: 4px; margin: -2px 0 4px 21px; }
+  .rem-act { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: calc(11px * var(--ts)); color: var(--muted); }
+  .rem-act .g { width: 8px; height: 8px; border-radius: 2px; border: 2px solid var(--line); flex: none; }
+  .rem-act.running { color: var(--text); }
+  .rem-act.running .g { border-color: var(--accent); animation: halo 1s ease-in-out infinite alternate; }
+  .rem-act.ok .g { background: var(--green); border-color: var(--green); }
+  .rem-act.failed { color: var(--red); }
+  .rem-act.failed .g { background: var(--red); border-color: var(--red); }
+  .rem-act.skipped { padding-left: 16px; font-style: italic; }
+  .rem-act .d { flex-basis: 100%; padding-left: 16px; color: var(--red); overflow-wrap: anywhere; }
   .rem-sub { margin: 16px 0 6px; font-size: calc(11px * var(--ts)); font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
   pre.code.diff { max-height: 420px; overflow: auto; }
   pre.code.diff .add { color: var(--green); }
@@ -497,7 +507,7 @@
   html.embedded header .logo, html.embedded header h1:not(.page-title), html.embedded header .tagline { display: none; }
   html.embedded header { justify-content: flex-end; }
   html.embedded header .head-right { margin-left: 0; order: 1; }
-  html.embedded #console { display: none; }
+  html.embedded #console, html.embedded #demo-chip { display: none; }
   .page-title { display: none; }
   html.embedded .page-title {
     display: block; flex-shrink: 0; order: 2; margin-left: 6px; padding: 7px 16px 7px 14px;
@@ -1266,7 +1276,7 @@ function pomEntry(name, version, test) {
 function settingsEntry(tier) {
   var id = 'lightwell-' + tier, label = tier.charAt(0).toUpperCase() + tier.slice(1);
   return ['<settings>', '  <profiles>', '    <profile>', '      <id>' + id + '</id>', '      <repositories>', '        <repository>', '          <id>' + id + '</id>',
-    '          <name>Lightwell Network - ' + label + '</name>', '          <url>https://packages.redhat.com/lightwell/java/' + tier + '/</url>',
+    '          <name>Lightwell Network - ' + label + '</name>', '          <url>https://packages.redhat.com/api/pulp-content/lightwell/java/' + tier + '/</url>',
     '          <releases><enabled>true</enabled></releases>', '          <snapshots><enabled>false</enabled></snapshots>', '        </repository>',
     '      </repositories>', '    </profile>', '  </profiles>', '  <activeProfiles>', '    <activeProfile>' + id + '</activeProfile>', '  </activeProfiles>',
     '  <servers>', '    <server>', '      <id>' + id + '</id>', '      <username>YOUR_SERVICE_ACCOUNT_USERNAME</username>', '      <password>YOUR_SERVICE_ACCOUNT_TOKEN</password>',
@@ -1335,7 +1345,7 @@ function entriesFor(kind, c, ver, dev) {
 }
 
 function gradleRepo(tier, kts) {
-  var url = 'https://packages.redhat.com/lightwell/java/' + tier + '/';
+  var url = 'https://packages.redhat.com/api/pulp-content/lightwell/java/' + tier + '/';
   return kts
     ? ['repositories {', '    maven {', '        name = "lightwell-' + tier + '"', '        url = uri("' + url + '")', '        credentials {', '            username = findProperty("lightwellUsername") as String?',
        '            password = findProperty("lightwellPassword") as String?', '        }', '    }', '    mavenCentral()', '}'].join('\n')
@@ -1345,14 +1355,14 @@ function gradleRepo(tier, kts) {
 
 /* Where the Lightwell repository goes, for each tool the package's manifests belong to. Returns [[caption, code], ...]. */
 function repoEntries(kinds, tier) {
-  var py = 'https://packages.redhat.com/lightwell/python/' + tier + '/simple', out = [], netrc = 'machine packages.redhat.com login YOUR_SERVICE_ACCOUNT_USERNAME password YOUR_SERVICE_ACCOUNT_TOKEN';
+  var py = 'https://packages.redhat.com/api/pulp-content/lightwell/python/' + tier + '/simple', out = [], netrc = 'machine packages.redhat.com login YOUR_SERVICE_ACCOUNT_USERNAME password YOUR_SERVICE_ACCOUNT_TOKEN';
   if (kinds.indexOf('pom') >= 0) out.push(['Maven: add to ~/.m2/settings.xml, merging into any existing profiles, activeProfiles and servers sections.', settingsEntry(tier)]);
   ['gradle', 'gradle.kts'].forEach(function (k) {
     if (kinds.indexOf(k) >= 0) out.push(['Gradle (' + (k === 'gradle' ? 'build.gradle' : 'build.gradle.kts') + '): put this above mavenCentral(), and set the two properties in ~/.gradle/gradle.properties (the property names are only an example).',
       gradleRepo(tier, k === 'gradle.kts') + '\n\n# ~/.gradle/gradle.properties\nlightwellUsername=YOUR_SERVICE_ACCOUNT_USERNAME\nlightwellPassword=YOUR_SERVICE_ACCOUNT_TOKEN']);
   });
   if (kinds.indexOf('requirements') >= 0) out.push(['pip: add the credentials to ~/.netrc, then either set the index once or put the index line at the top of the requirements file.', netrc + '\n\npip config set global.index-url ' + py + '\n\n# or, first line of the requirements file\n--index-url ' + py]);
-  if (kinds.indexOf('pyproject') >= 0 || kinds.indexOf('poetry.lock') >= 0) out.push(['Poetry: store the credentials and add the repository as the default source.', 'poetry config http-basic.lightwell "YOUR_SERVICE_ACCOUNT_USERNAME" "YOUR_SERVICE_ACCOUNT_TOKEN"\npoetry source add --priority=default lightwell https://packages.redhat.com/lightwell/python/' + tier]);
+  if (kinds.indexOf('pyproject') >= 0 || kinds.indexOf('poetry.lock') >= 0) out.push(['Poetry: store the credentials and add the repository as the default source.', 'poetry config http-basic.lightwell "YOUR_SERVICE_ACCOUNT_USERNAME" "YOUR_SERVICE_ACCOUNT_TOKEN"\npoetry source add --priority=default lightwell https://packages.redhat.com/api/pulp-content/lightwell/python/' + tier]);
   if (kinds.indexOf('pipfile.lock') >= 0) out.push(['Pipenv: add the credentials to ~/.netrc, then install from the repository.', netrc + '\n\npipenv install --index ' + py]);
   return out;
 }
@@ -1594,11 +1604,22 @@ function paintRem(r) {
   } else if (v) {
     box.appendChild(el('div', {class: 'rem-sub', text: 'Run'}));
     var st = el('div', {class: 'rem-stages'});
-    v.stages.forEach(function (x) { st.appendChild(el('div', {class: 'rem-stage ' + x.state}, [el('span', {class: 'g'}), el('span', {text: x.label + (x.state === 'running' ? '...' : x.state === 'failed' ? ' (failed)' : '')})])); });
+    v.stages.forEach(function (x) {
+      st.appendChild(el('div', {class: 'rem-stage ' + x.state}, [el('span', {class: 'g'}), el('span', {text: x.label + (x.state === 'running' ? '...' : x.state === 'failed' ? ' (failed)' : '')})]));
+      if (!(x.actions && x.actions.length)) return;
+      var acts = el('div', {class: 'rem-acts'});
+      x.actions.forEach(function (a) {
+        var row = el('div', {class: 'rem-act ' + a.state}, [el('span', {class: 'g'}), el('span', {text: a.label + (a.state === 'running' ? '...' : a.state === 'failed' ? ' (failed)' : '')})]);
+        if (a.detail) row.appendChild(el('div', {class: 'd', text: a.detail}));
+        acts.appendChild(row);
+      });
+      if (x.skipped) acts.appendChild(el('div', {class: 'rem-act skipped', text: plural(x.skipped, 'step', 'steps') + ' not needed for this repository'}));
+      st.appendChild(acts);
+    });
     box.appendChild(st);
     if (v.error) box.appendChild(el('div', {class: 'err', text: v.error}));
+    if (v.failure) box.appendChild(el('div', {class: 'err', text: v.failure}));
     var res = v.result || {};
-    if (res.demo) box.appendChild(el('div', {class: 'note', text: 'Demo mode: nothing was cloned, built or pushed. The diff is real, made from the recorded files; the build is simulated.'}));
     if (res.java && res.java.version) box.appendChild(el('div', {class: 'hint', text: 'Built with Java ' + res.java.version + ' (' + res.java.reason + ').'}));
     var notApplied = (res.changes || []).filter(function (c) { return !c.applied.length; });
     if (res.changes) box.appendChild(el('div', {class: 'hint', text: (res.changes.length - notApplied.length) + ' of ' + res.changes.length + ' changes applied.' + (notApplied.length ? ' Not applied: ' + notApplied.map(function (c) { return c.name + ' (' + c.problems.join('; ') + ')'; }).join(', ') : '')}));

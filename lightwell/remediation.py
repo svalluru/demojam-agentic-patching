@@ -23,6 +23,7 @@ from scanner.repo import RepoRef
 
 BRANCH = 'fix/dependency-vulnerabilities'
 MAX_RUNS = 50
+REGISTRY_BASE = 'https://packages.redhat.com/api/pulp-content/lightwell'
 JAVA_VERSIONS = (8, 11, 17, 21)
 SCRIPTS = Path(__file__).resolve().parent.parent / 'aap-setup' / 'playbooks' / 'files'
 _scripts: dict = {}
@@ -106,7 +107,8 @@ class Runs:
 
     def start_demo(self, repo: dict, plan: dict, push: bool, manifests: dict[str, str], java: int | None = None) -> str:
         diff, report, chosen = demo_diff(plan, manifests, java)
-        return self._add({'mode': 'demo', 'url': repo['url'], 'plan': plan, 'push': push, 'demo': DemoRun(push, diff, report, java=chosen)})
+        return self._add({'mode': 'demo', 'url': repo['url'], 'plan': plan, 'push': push, 'demo': DemoRun(push, diff, report, java=chosen, branch=BRANCH,
+                                                                                                           maven=any(m.endswith('pom.xml') for m in manifests))})
 
     def start_live(self, client: AapClient, repo: dict, ref: RepoRef, plan: dict, push: bool, java: int | None = None) -> str:
         """Launches the job. Raises UpstreamError when the controller cannot be reached or refuses."""
@@ -115,6 +117,7 @@ class Runs:
             'patch_run_id': run_id, 'repo_url': clone_url(ref), 'repo_host': ref.host, 'commit': repo.get('commit') or '',
             'new_branch': BRANCH, 'subdir': ref.subpath.strip('/'), 'push': push, 'commit_message': commit_message(plan),
             'changes': [{k: c[k] for k in ('name', 'from', 'to', 'manifests')} for c in plan['changes']], 'registry': plan['registry'],
+            'registry_base': REGISTRY_BASE,
         }
         if java:
             extra['java_version'] = java
@@ -138,7 +141,7 @@ class Runs:
             return {**head, **run['final']}
         client, job = run['client'], run['job']
         try:
-            state = job_view(client.job(job), client.stdout(job), run['push'])
+            state = job_view(client.job(job), client.events(job), run['push'])
         except UpstreamError as exc:
             return {**head, 'state': 'unknown', 'status': '', 'stages': [], 'result': {}, 'log': '', 'error': exc.message}
         if state['state'] != 'running':

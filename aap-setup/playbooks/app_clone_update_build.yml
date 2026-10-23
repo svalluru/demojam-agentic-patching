@@ -38,7 +38,7 @@
     work_dir: "/tmp/app-patch/{{ patch_run_id | default('manual') }}"
     src_dir: "{{ work_dir }}/src"
     build_dir: "{{ src_dir }}{{ ('/' ~ subdir) if (subdir | default('')) else '' }}"
-    registry_base: "https://packages.redhat.com/lightwell"
+    registry_base: "https://packages.redhat.com/api/pulp-content/lightwell"
     tools_dir: /tmp/app-patch-tools
     maven_version: "3.9.9"
     maven_url: "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/{{ maven_version }}/apache-maven-{{ maven_version }}-bin.tar.gz"
