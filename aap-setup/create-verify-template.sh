@@ -119,12 +119,24 @@ upsert() {  # $1 endpoint  $2 name  $3 payload  -> echoes id
   printf '%s' "$id"
 }
 
+# Payloads are built on their own, from the environment, through a quoted
+# heredoc — never as a python -c string nested inside another $( ).
+# macOS's /bin/bash 3.2 loses track of quotes in that nesting: the dict's
+# braces went unquoted, brace expansion split it at every comma, and each
+# fragment reached python as a separate SyntaxError.
 step "Project"
-PROJ_ID="$(upsert /projects/ "$PROJECT_NAME" "$(python3 -c "
-import json; print(json.dumps({'name': '''$PROJECT_NAME''', 'organization': int('$ORG_ID'),
-  'scm_type': 'git', 'scm_url': '''$REPO_URL''', 'scm_branch': '''$BRANCH''',
-  'scm_update_on_launch': True,
-  'description': 'The verify playbook, from this repo. Tracks the branch it was set up from.'}))")")"
+PROJ_PAYLOAD="$(P_NAME="$PROJECT_NAME" P_ORG="$ORG_ID" P_URL="$REPO_URL" P_BRANCH="$BRANCH" \
+  python3 - <<'PY'
+import json, os
+print(json.dumps({
+    'name': os.environ['P_NAME'], 'organization': int(os.environ['P_ORG']),
+    'scm_type': 'git', 'scm_url': os.environ['P_URL'],
+    'scm_branch': os.environ['P_BRANCH'], 'scm_update_on_launch': True,
+    'description': 'The verify playbook, from this repo. Tracks the branch it was set up from.',
+}))
+PY
+)"
+PROJ_ID="$(upsert /projects/ "$PROJECT_NAME" "$PROJ_PAYLOAD")"
 
 if ! $DRY; then
   # A template cannot name a playbook the project has not synced yet.
@@ -139,12 +151,21 @@ if ! $DRY; then
 fi
 
 step "Job template"
-JT_ID="$(upsert /job_templates/ "$JT_NAME" "$(python3 -c "
-import json; print(json.dumps({'name': '''$JT_NAME''', 'job_type': 'run',
-  'inventory': int('$INV_ID'), 'project': int('$PROJ_ID') if '$PROJ_ID'.isdigit() else None,
-  'playbook': '''$PLAYBOOK''', 'ask_variables_on_launch': True,
-  'extra_vars': 'target_host: \"\"\ncve_id: \"\"',
-  'description': 'Confirms a CVE is no longer outstanding on the target. Never fails the run.'}))")")"
+JT_PAYLOAD="$(P_NAME="$JT_NAME" P_INV="$INV_ID" P_PROJ="$PROJ_ID" P_BOOK="$PLAYBOOK" \
+  python3 - <<'PY'
+import json, os
+proj = os.environ['P_PROJ']
+print(json.dumps({
+    'name': os.environ['P_NAME'], 'job_type': 'run',
+    'inventory': int(os.environ['P_INV']),
+    'project': int(proj) if proj.isdigit() else None,
+    'playbook': os.environ['P_BOOK'], 'ask_variables_on_launch': True,
+    'extra_vars': 'target_host: ""\ncve_id: ""',
+    'description': 'Confirms a CVE is no longer outstanding on the target. Never fails the run.',
+}))
+PY
+)"
+JT_ID="$(upsert /job_templates/ "$JT_NAME" "$JT_PAYLOAD")"
 
 if ! $DRY; then
   have="$(api GET "/job_templates/$JT_ID/credentials/" | python3 -c "
