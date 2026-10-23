@@ -12,6 +12,7 @@ CONSOLE_CONFIGMAP="cve-console-config"
 
 SKIP_TRAIN=false
 RETRAIN=false
+REBUILD=false
 SKIP_CONSOLE=false
 SKIP_VERIFY=false
 NO_ROUTE=false
@@ -27,6 +28,7 @@ Steps: train (B1) -> build (B3) -> deploy (B4) -> verify (B5) -> wire console (B
 Options:
   -n, --namespace NAME   Target namespace (default: ${NAMESPACE})
       --retrain          Re-run save_model.py even if model.joblib exists
+      --rebuild          Build the image even if one exists for these exact sources
       --skip-train       Never train; fail if model.joblib is missing
       --skip-console     Do not set RISK_URL on the cve-console ConfigMap
       --skip-verify      Do not run the post-deploy prediction check
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--namespace) NAMESPACE="$2"; shift 2 ;;
     --retrain)      RETRAIN=true; shift ;;
+    --rebuild)      REBUILD=true; shift ;;
     --skip-train)   SKIP_TRAIN=true; shift ;;
     --skip-console) SKIP_CONSOLE=true; shift ;;
     --skip-verify)  SKIP_VERIFY=true; shift ;;
@@ -119,8 +122,42 @@ else
   oc new-build --name=risk-score --binary --strategy=docker -n "${NAMESPACE}" >/dev/null
 fi
 
-info "Uploading build context from ${ROOT} (this takes a few minutes)"
-oc start-build risk-score --from-dir="${ROOT}" --follow -n "${NAMESPACE}"
+# Skip the build when the image already exists for these exact sources.
+#
+# Re-running setup.sh rebuilt the image every time — minutes of uploading and
+# pip installing to produce what was already in the registry. "An image
+# exists" is not enough to skip on, though: a retrained model or edited
+# server must still rebuild. So the inputs the image is made from are
+# fingerprinted, the fingerprint is recorded on the BuildConfig after a
+# successful build, and a matching fingerprint with the image still present
+# is the only thing that skips.
+#
+# These four are everything the Dockerfile copies or installs from. If it
+# starts copying something else, add it here, or a change to it will not
+# trigger a rebuild.
+SOURCES=(Dockerfile serving/requirements-ocp.txt serving/run_local.py training/model.joblib)
+SOURCE_SHA="$(cd "${ROOT}" && cat "${SOURCES[@]}" 2>/dev/null | shasum -a 256 | cut -c1-16)"
+BUILT_SHA="$(oc get buildconfig risk-score -n "${NAMESPACE}" \
+  -o jsonpath='{.metadata.annotations.agentic-patching/source-sha}' 2>/dev/null || true)"
+HAVE_IMAGE="$(oc get istag risk-score:latest -n "${NAMESPACE}" \
+  -o jsonpath='{.image.dockerImageReference}' 2>/dev/null || true)"
+
+if [[ "${REBUILD}" != true && -n "${HAVE_IMAGE}" && "${BUILT_SHA}" == "${SOURCE_SHA}" ]]; then
+  info "Image already built from these sources (${SOURCE_SHA}) — skipping"
+  info "Pass --rebuild to build anyway"
+else
+  if [[ "${REBUILD}" == true ]]; then info "Rebuilding (--rebuild)"
+  elif [[ -z "${HAVE_IMAGE}" ]]; then info "No image yet — building"
+  elif [[ -z "${BUILT_SHA}" ]]; then info "Image exists but its sources were not recorded — building once to record them"
+  else info "Sources changed since the last build (${BUILT_SHA} -> ${SOURCE_SHA}) — building"
+  fi
+  info "Uploading build context from ${ROOT} (this takes a few minutes)"
+  oc start-build risk-score --from-dir="${ROOT}" --follow -n "${NAMESPACE}"
+  # Recorded only after the build succeeded — set -e stops before this
+  # otherwise — so a failed build never looks current.
+  oc annotate buildconfig risk-score -n "${NAMESPACE}" \
+    "agentic-patching/source-sha=${SOURCE_SHA}" --overwrite >/dev/null
+fi
 
 IMAGE_TAG="$(oc get istag risk-score:latest -n "${NAMESPACE}" \
   -o jsonpath='{.image.dockerImageReference}' 2>/dev/null || true)"
