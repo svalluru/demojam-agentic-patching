@@ -103,6 +103,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual([(c['name'], c['to'], c['source']) for c in p['plan']['changes']], [('django', '2.2.28', 'osv')])
         self.assertEqual(p['plan']['offered'], {'lightwell': 0, 'another': 0, 'osv': 1})
+        self.assertFalse(p['plan']['allow_major'])
+        self.assertTrue(self.js('POST', '/v1/remediations/preview', {**body, 'allow_major': True})[1]['plan']['allow_major'])
         code, p = self.js('POST', '/v1/remediations/preview', {**body, 'sources': ['lightwell']})
         self.assertEqual((code, p['plan']['changes'], len(p['plan']['skipped'])), (200, [], 1))
         self.assertEqual(self.js('POST', '/v1/remediations', {**body, 'sources': ['lightwell']})[0], 400)       # nothing to change

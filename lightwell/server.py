@@ -23,7 +23,7 @@ second port is needed. Run directly, it listens on port 8790 by default.
   GET  /v1/scans              recent scans
   GET  /v1/scans/{id}         one scan, with findings
   GET  /v1/scans/{id}/findings.csv
-  POST /v1/remediations/preview  {"scan", "url", "sources": ["lightwell", "another", "osv"]} -> the changes that choice would make
+  POST /v1/remediations/preview  {"scan", "url", "sources": ["lightwell", "another", "osv"], "allow_major": false} -> the changes that choice would make
   POST /v1/remediations          same, plus "push": true to push the branch -> 202 {"id"}; runs on AAP (live) or is staged (demo)
   GET  /v1/remediations/{id}     stages, the diff and the build result
 """
@@ -297,7 +297,7 @@ def findings_csv(scan: dict) -> str:
 
 def remediation_status() -> dict:
     if MODE == 'demo':
-        return {'ready': True, 'detail': 'Demo mode: a staged run. Nothing is cloned, built or pushed; the diff is made from the recorded files.'}
+        return {'ready': True, 'detail': 'Clones the repository, updates the versions and builds it.'}
     if not (AAP_BASE_URL and AAP_TOKEN):
         return {'ready': False, 'detail': 'Set AAP_BASE_URL and AAP_TOKEN in .env to run remediation on the controller.'}
     return {'ready': True, 'detail': f'Runs the job template "{env("AAP_APP_TEMPLATE", TEMPLATE)}" on {AAP_BASE_URL}.'}
@@ -324,7 +324,7 @@ def start_remediation(body: dict) -> str:
     """Starts a run for the repository and fix sources in `body` and returns its id. ValueError for a bad request,
     UpstreamError when the controller cannot be reached."""
     repo, sources = _remediation_target(body)
-    plan = preview(repo, sources)
+    plan = preview(repo, sources, body.get('allow_major') is True)
     if not plan['changes']:
         raise ValueError('nothing to change with those choices')
     push = body.get('push') is True
@@ -458,7 +458,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/v1/remediations/preview':
                 repo, sources = _remediation_target(body)
-                plan = preview(repo, sources)
+                plan = preview(repo, sources, body.get('allow_major') is True)
                 self._json(200, {'ok': True, 'plan': plan, 'message': commit_message(plan) if plan['changes'] else ''})
             else:
                 self._json(202, {'ok': True, 'id': start_remediation(body)})
