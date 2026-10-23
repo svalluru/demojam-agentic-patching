@@ -19,8 +19,18 @@ step "Preflight"
 command -v oc >/dev/null 2>&1 || fail "oc not found on PATH"
 oc whoami >/dev/null 2>&1 || fail "not logged in — run: oc login <api-url>"
 info "cluster:   $(oc whoami --show-server)"
-oc get namespace "$NAMESPACE" >/dev/null 2>&1 || fail "namespace '$NAMESPACE' not found"
-info "namespace: $NAMESPACE"
+# Created if missing, skipped if present. Checked with 'oc get project'
+# rather than 'oc get namespace': a user without cluster-scoped read can see
+# their own projects but may not be allowed to read the namespace object,
+# and would be told a project they own does not exist.
+if oc get project "$NAMESPACE" >/dev/null 2>&1; then
+  info "namespace: $NAMESPACE (exists)"
+else
+  oc new-project "$NAMESPACE" --skip-config-write >/dev/null 2>&1 \
+    || oc create namespace "$NAMESPACE" >/dev/null \
+    || fail "could not create namespace '$NAMESPACE'"
+  info "namespace: $NAMESPACE (created)"
+fi
 
 step "Secrets"
 # Milvus root password — only consumed when Milvus auth is enabled, but the

@@ -39,7 +39,26 @@ die()  { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
 
 command -v oc >/dev/null || die "oc not found"
 oc whoami >/dev/null 2>&1 || die "not logged in — run 'oc login' first"
-NS="$(oc project -q)"
+# NAMESPACE from .env, as the RAG and risk-model scripts use, so all three
+# land in the same place. Falling back to the current oc project kept the
+# old behaviour, but it meant the console went wherever oc happened to be
+# pointed — which need not be where its backing services were.
+NS="$(sed -n 's/^NAMESPACE=//p' "$ENV_FILE" 2>/dev/null | tr -d "\"'" | tail -1)"
+NS="${NAMESPACE:-${NS:-$(oc project -q)}}"
+# Created if missing, skipped if present. Checked with 'oc get project'
+# rather than 'oc get namespace': a user without cluster-scoped read can see
+# their own projects but may not be allowed to read the namespace object,
+# and would be told a project they own does not exist.
+if oc get project "$NS" >/dev/null 2>&1; then
+  ok "namespace: $NS (exists)"
+elif $DELETE; then
+  ok "namespace $NS does not exist — nothing to delete"; exit 0
+else
+  oc new-project "$NS" --skip-config-write >/dev/null 2>&1 \
+    || oc create namespace "$NS" >/dev/null \
+    || die "could not create namespace '$NS'"
+  ok "namespace: $NS (created)"
+fi
 
 if $DELETE; then
   step "Deleting"

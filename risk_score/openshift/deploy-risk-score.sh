@@ -67,10 +67,18 @@ fi
 info "Cluster: $(oc whoami --show-server)"
 info "User:    $(oc whoami)"
 
-if ! oc get namespace "${NAMESPACE}" >/dev/null 2>&1; then
-  fail "Namespace '${NAMESPACE}' does not exist. Create it or pass -n <namespace>."
+# Created if missing, skipped if present. Checked with 'oc get project'
+# rather than 'oc get namespace': a user without cluster-scoped read can see
+# their own projects but may not be allowed to read the namespace object,
+# and would be told a project they own does not exist.
+if oc get project "${NAMESPACE}" >/dev/null 2>&1; then
+  info "namespace: ${NAMESPACE} (exists)"
+else
+  oc new-project "${NAMESPACE}" --skip-config-write >/dev/null 2>&1 \
+    || oc create namespace "${NAMESPACE}" >/dev/null \
+    || fail "could not create namespace '${NAMESPACE}'"
+  info "namespace: ${NAMESPACE} (created)"
 fi
-info "Namespace: ${NAMESPACE}"
 
 [[ -f "${MANIFEST}" ]] || fail "Manifest not found: ${MANIFEST}"
 [[ -f "${ROOT}/Dockerfile" ]] || fail "Dockerfile not found: ${ROOT}/Dockerfile"
