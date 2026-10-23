@@ -435,9 +435,12 @@ else:
 fi
 
 step "Done"
-echo "  Console: http://127.0.0.1:8788   (./demo.sh --live)"
+echo "  Run the console:"
+echo "    locally        ./demo.sh --live                 http://127.0.0.1:8788"
+echo "    on OpenShift   ./console-app-ocp-setup/deploy.sh   prints the Route"
 echo
-echo "  Not covered by this script, because they are decisions about real machines:"
-echo "    - the target host itself          ./discover-hosts.py checks it"
-echo "    - its AAP inventory + SSH credential"
-echo "    - an Elastic IP, so the address stops moving on every stop"
+echo "  Before a demo:"
+echo "    - check the RAG store still answers; a Llama Stack restart empties it"
+echo "      silently. Re-run rag-setup/ingest.py --ensure if assessments fail on RAG"
+echo "    - after a lab rebuild, re-run ./discover-hosts.py --write — every host"
+echo "      identifier it writes changes with the lab"
