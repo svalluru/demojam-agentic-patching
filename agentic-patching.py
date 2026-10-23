@@ -778,6 +778,22 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
             return _detail_host_first(cve_id, host_filter)
         if HOSTS_TAG:
             return _detail_by_tag(cve_id, host_limit)
+        # Neither set means asking which hosts in the whole organisation the
+        # CVE affects — and in a shared lab that organisation is everybody's.
+        # Ours holds 3,601 hosts across every user of the same lab. The first
+        # page, trimmed by HOSTS_LIMIT, is other people's machines; and since
+        # dispatch sends AAP the short name, a stranger's
+        # node1.smvj2-1.internal goes out as 'node1' and lands on ours —
+        # patching it for a CVE assessed against someone else's host.
+        #
+        # This used to run, quietly. It refuses now, in the console and not
+        # only as a warning in setup.sh, because the console is what can be
+        # started without ever running setup.sh.
+        raise BackendUnavailable(
+            'Host scope', 'neither HOSTS_TAG nor HOSTS_FILTER is set, so this '
+            'would assess every affected host in the Insights organisation',
+            'run ./discover-hosts.py --write to set HOSTS_TAG to your hosts, or '
+            'set HOSTS_FILTER to one host\'s uuid — either in .env or the gear panel')
     try:
         detail = insights_get(f'/cves/{cve_id}')
         # advisory_available=true, to match the filter the CVE list counts
@@ -3980,7 +3996,11 @@ def serve(host: str, port: int) -> None:
     print(f'  vector db  : {VECTOR_DB_ID or "(unset)"}')
     hf, hl = env('HOSTS_FILTER'), env('HOSTS_LIMIT')
     if hf or hl:
-        print(f'  host narrowing: filter={hf or "-"} limit={hl or "-"}')
+        print(f'  host narrowing: filter={hf or "-"} tag={HOSTS_TAG or "-"} limit={hl or "-"}')
+        if not offline() and not hf and not HOSTS_TAG:
+            print('  WARNING: neither HOSTS_FILTER nor HOSTS_TAG is set — every '
+                  'assessment will be refused until one is. '
+                  'Run ./discover-hosts.py --write.')
     print(f'  listening on http://{host}:{port}')
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

@@ -129,10 +129,17 @@ one machine registered in the same Insights organisation as your
 satisfy one or the other, and the two halves can each look perfectly healthy
 while never overlapping.
 
-`./discover-hosts.py` answers it. It reads the AAP inventory, finds each host
-in Insights, and prints the uuid and group tag to put in `.env` — and it says
-plainly when a host is in AAP but *not* registered in your Insights
-organisation, which otherwise surfaces as a confusing empty assessment.
+`./discover-hosts.py --write` answers it. It reads the AAP inventory, finds
+each host in Insights, and writes `HOSTS_TAG` — the tag that selects exactly
+those hosts — into `.env`. It says plainly when a host is in AAP but *not*
+registered in your Insights organisation, which otherwise surfaces as a
+confusing empty assessment, and it refuses to write a tag that also selects
+other people's machines. `setup.sh` runs it for you when neither `HOSTS_TAG`
+nor `HOSTS_FILTER` is set.
+
+**Live mode will not assess without one of them.** With both empty the
+console would ask which hosts in the whole Insights organisation a CVE
+affects — in a shared lab, everyone's — so it refuses and says why.
 
 This branch assumes the lab provides the hosts. Building one from scratch is
 a different exercise and is not covered here.
@@ -421,7 +428,8 @@ Every row below is also a row in the settings panel.
 | Variable | Default | Effect |
 |---|---|---|
 | `MODE` | `demo` | `demo` = staged data, no endpoint contacted. `live` = real endpoints, no fallback |
-| `HOSTS_FILTER` | — | The host to assess: a substring of the display name, or a system uuid. Prefer the uuid — display names are not unique in a shared organisation, and they change. Live mode only |
+| `HOSTS_TAG` | — | An Insights tag selecting the hosts this console owns, e.g. `insights-client/group=h77wc`. Scopes the CVE list and the host lookup to them. `./discover-hosts.py --write` sets it. Live mode only |
+| `HOSTS_FILTER` | — | One host to assess: a system uuid, or a substring of the display name. Takes precedence over `HOSTS_TAG`. Prefer the uuid — display names are not unique in a shared organisation, and they change. **With both empty, live assessments are refused.** Live mode only |
 | `HOSTS_LIMIT` | — | Cap host count. A filter matching more hosts than this **refuses** rather than silently keeping an arbitrary one. Live mode only |
 | `REVIEW_THRESHOLD` | `30` | Risk score above which a host needs approval — model scores only. See [known gaps](#known-gaps) |
 | `AO_WORKFLOW_NAME` | `RHEL CVE Remediation - Intelligent Patching - Demo Jam` | Workflow to trigger, resolved by name so the id can differ per cluster. `ao-setup/create-ao-workflow.sh` creates it under this name |

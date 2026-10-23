@@ -18,7 +18,8 @@ So: ask AAP which hosts it can reach, find each one in Insights, and read
 the identities back off the answer rather than carrying them forward.
 
   ./discover-hosts.py                       report what is there
-  ./discover-hosts.py --host node1 --write  point .env at that host
+  ./discover-hosts.py --write               scope .env to all of them (HOSTS_TAG)
+  ./discover-hosts.py --host node1 --write  ...and pin one (HOSTS_FILTER)
   ./discover-hosts.py --inventory X         a different AAP inventory
 
 Run it after any cluster rebuild. Every identifier it writes is one that
@@ -240,6 +241,20 @@ def main():
     lab_tag = tag.split('/', 1)[1] if '/' in tag else tag
     write = {'LAB_TAG': lab_tag}
 
+    # HOSTS_TAG is what the console scopes Insights by, and the reason to run
+    # this at all. It used to be worked out, verified and printed, then left
+    # out of what --write wrote, so the one value that matters most had to be
+    # copied in by hand.
+    #
+    # Only when the tag selects exactly these hosts. One shared with the rest
+    # of the organisation is not a filter, and writing it would scope the
+    # console to other people's machines while looking configured.
+    if exact:
+        write['HOSTS_TAG'] = tag
+    else:
+        print('\nHOSTS_TAG not written: the tag does not select exactly these '
+              'hosts. Set HOSTS_FILTER to a uuid above instead (--host).')
+
     # --host pins HOSTS_FILTER to that machine's uuid. The uuid rather than
     # the name because a display name is whatever the host last called
     # itself: these three have already flipped between 'node1' and
@@ -268,7 +283,8 @@ def main():
         env_path.write_text(s)
         print(f'\nwrote {", ".join(write)} to {env_path}')
         if not args.host:
-            print('HOSTS_FILTER left alone — pass --host to repoint it.')
+            print('HOSTS_FILTER left alone — empty means the console covers every '
+                  'host HOSTS_TAG selects; pass --host to pin one.')
     return 1 if missing else 0
 
 

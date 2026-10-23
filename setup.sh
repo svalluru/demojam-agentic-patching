@@ -120,6 +120,28 @@ AO_TOKEN="$(curl -sk -m 25 -X POST "${AO_URL%/}/api/v1/auth/login" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)"
 [[ -n "$AO_TOKEN" ]] && ok "AO login works" || note_fail "AO login failed"
 
+# -- host scope ------------------------------------------------------------
+#
+# The console now refuses a live assessment with neither HOSTS_FILTER nor
+# HOSTS_TAG set, because that would be the whole Insights organisation —
+# in a shared lab, everyone's machines. So setup must leave one set.
+# discover-hosts.py derives HOSTS_TAG from the AAP inventory and checks it
+# selects exactly those hosts; it writes nothing it cannot verify.
+if [[ -z "${HOSTS_FILTER:-}" && -z "${HOSTS_TAG:-}" && "$code" == "200" ]]; then
+  if $CHECK_ONLY || $DRY; then
+    note_fail "neither HOSTS_FILTER nor HOSTS_TAG is set — live assessments will be refused; run ./discover-hosts.py --write"
+  elif "$ROOT/discover-hosts.py" --write >/tmp/setup-discover.log 2>&1; then
+    set -a; . "$ENV_FILE"; set +a
+    if [[ -n "${HOSTS_TAG:-}" ]]; then
+      ok "HOSTS_TAG discovered: $HOSTS_TAG"
+    else
+      note_fail "discover-hosts.py found no tag that selects only your hosts — set HOSTS_FILTER to a uuid (see /tmp/setup-discover.log)"
+    fi
+  else
+    note_fail "discover-hosts.py failed — see /tmp/setup-discover.log"
+  fi
+fi
+
 # -- the question that decides whether any of this can work -----------------
 #
 # The console reads Insights; AAP reaches machines. A host has to be in both
@@ -180,8 +202,9 @@ if not host:
     if os.environ.get('HOSTS_TAG', '').strip():
         print(f"  \033[32m✓\033[0m hosts scoped by HOSTS_TAG={os.environ['HOSTS_TAG']}")
     else:
-        print('  \033[33m!\033[0m neither HOSTS_FILTER nor HOSTS_TAG is set — live mode '
-              'will plan for every affected host in the organisation')
+        print('  \033[31m✗\033[0m neither HOSTS_FILTER nor HOSTS_TAG is set — the console '
+              'will refuse live assessments')
+        sys.exit(1)
     sys.exit(0)
 
 d, c = get('https://console.redhat.com/api/inventory/v1/hosts'
