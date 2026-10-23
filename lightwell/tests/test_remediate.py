@@ -61,6 +61,22 @@ class ResolveTests(unittest.TestCase):
         got = by_name(resolve(FINDINGS, ['lightwell', 'osv']))
         self.assertEqual(got['a:exact']['source'], 'lightwell')
 
+    def test_an_osv_fix_across_a_major_version_is_left_alone_unless_allowed(self):
+        jump = [finding('spring-data', '1.13.11.RELEASE', fix='3.5.12'), finding('d:osv', '4.0', fix='4.2')]
+        plan = resolve(jump, ['osv'])
+        self.assertEqual(set(by_name(plan)), {'d:osv'})
+        why = plan['skipped'][0]
+        self.assertEqual((why['name'], why['major']), ('spring-data', '3.5.12'))
+        self.assertIn('major version (1 to 3)', why['reason'])
+        self.assertFalse(plan['allow_major'])
+        allowed = resolve(jump, ['osv'], allow_major=True)
+        self.assertEqual(set(by_name(allowed)), {'spring-data', 'd:osv'})
+        self.assertTrue(allowed['allow_major'])
+
+    def test_the_major_version_rule_does_not_touch_lightwell_builds(self):
+        plan = resolve([finding('a:exact', '1.0', status='remediated', build='1.0.rhlw-1', fix='3.0')], ['lightwell', 'osv'])
+        self.assertEqual(by_name(plan)['a:exact']['source'], 'lightwell')
+
     def test_osv_changes_carry_no_registry(self):
         plan = resolve(FINDINGS, ['osv'])
         self.assertEqual(plan['registry'], [])

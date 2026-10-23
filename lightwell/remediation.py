@@ -58,8 +58,8 @@ def find_repo(scan: dict | None, url: str) -> dict:
     raise ValueError('that repository has no finished result in this scan')
 
 
-def preview(repo: dict, sources) -> dict:
-    return resolve(repo['findings'], sources)
+def preview(repo: dict, sources, allow_major: bool = False) -> dict:
+    return resolve(repo['findings'], sources, allow_major)
 
 
 def commit_message(plan: dict) -> str:

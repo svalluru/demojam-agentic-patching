@@ -8,7 +8,9 @@ this order, is used:
     another     Lightwell has no build of that version but has one of a nearby version
     osv         OSV.dev lists a fixed version
 
-A component with no acceptable source is left alone and listed with the reason. Only pom.xml and requirements
+A fix from OSV that moves the component to a new major version (1.x to 3.x) is left alone unless the person allows
+it, because it often needs a newer Java or Python and changes an API the code relies on. A component with no
+acceptable source is left alone and listed with the reason. Only pom.xml and requirements
 files are edited for now; a component declared anywhere else is listed as "edit by hand".
 
 Nothing here touches the network or a repository. The job that does the work receives this list and applies it as
@@ -26,6 +28,12 @@ EDITABLE = ('pom', 'requirements')
 SAFE_VERSION = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$')
 SAFE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,200}$')
 SAFE_PATH = re.compile(r'^[A-Za-z0-9_./-]{1,300}$')
+_MAJOR = re.compile(r'^\D*(\d+)')
+
+
+def major(version: str) -> int | None:
+    m = _MAJOR.match(version or '')
+    return int(m.group(1)) if m else None
 
 
 def options(finding: dict) -> dict[str, str]:
@@ -51,9 +59,10 @@ def _safe(change: dict) -> bool:
             and all(SAFE_PATH.match(p) and '..' not in p.split('/') for p in change['manifests']))
 
 
-def resolve(findings: list[dict], sources) -> dict:
+def resolve(findings: list[dict], sources, allow_major: bool = False) -> dict:
     """`sources` is any subset of SOURCES. Returns the changes to make, the findings left alone, how many findings each
-    source could fix on its own, and which Lightwell repositories the build will need."""
+    source could fix on its own, and which Lightwell repositories the build will need. An OSV fix across a major
+    version is left alone unless `allow_major`."""
     chosen = [s for s in SOURCES if s in set(sources or ())]
     changes: list[dict] = []
     skipped: list[dict] = []
@@ -73,6 +82,10 @@ def resolve(findings: list[dict], sources) -> dict:
                 reason = 'No fixed version, and Lightwell has no build of this version or a nearby one.'
             skipped.append({**base, 'reason': reason})
             continue
+        if pick == 'osv' and not allow_major and major(c['version']) != major(opts['osv']):
+            skipped.append({**base, 'reason': f'OSV fixes it in {opts["osv"]}, a new major version ({major(c["version"])} to {major(opts["osv"])}). That can need a newer runtime '
+                                              'and changes APIs, so it is not applied unless you allow upgrades across a major version.', 'major': opts['osv']})
+            continue
         manifests = [p for p in c['sources'] if manifest_kind(p) in EDITABLE]
         if not manifests:
             kinds = sorted({manifest_kind(p) or p for p in c['sources']})
@@ -86,5 +99,5 @@ def resolve(findings: list[dict], sources) -> dict:
             change['tier'] = _tier(f)
             registry.add((c['ecosystem'], change['tier']))
         changes.append(change)
-    return {'sources': chosen, 'changes': changes, 'skipped': skipped, 'offered': offered,
+    return {'sources': chosen, 'allow_major': allow_major, 'changes': changes, 'skipped': skipped, 'offered': offered,
             'registry': [{'ecosystem': e, 'tier': t} for e, t in sorted(registry)]}

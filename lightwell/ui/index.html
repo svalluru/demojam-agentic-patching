@@ -1508,7 +1508,7 @@ var REM_SOURCES = [
   ['osv', 'OSV', 'The lowest version OSV.dev lists as fixed. This is an upgrade.']];
 var REM_SRC_LABEL = {lightwell: 'Lightwell', another: 'Lightwell, another build', osv: 'OSV'};
 
-function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}}; }
+function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], major: false, java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}}; }
 
 function remButton(r) {
   var s = remState(r.url);
@@ -1520,7 +1520,7 @@ function remButton(r) {
 async function remPreview(r) {
   var s = remState(r.url);
   try {
-    var d = await api('POST', 'v1/remediations/preview', {scan: current.id, url: r.url, sources: s.sources});
+    var d = await api('POST', 'v1/remediations/preview', {scan: current.id, url: r.url, sources: s.sources, allow_major: s.major});
     s.plan = d.plan; s.error = '';
   } catch (e) { s.error = e.message; }
   paintRem(r);
@@ -1568,6 +1568,10 @@ function paintRem(r) {
     };
     opts.appendChild(el('label', {class: 'rem-opt'}, [cb, el('span', {}, [el('b', {text: o[1]}), s.plan ? ' (' + offered[o[0]] + ' of ' + r.findings.length + ')' : '', el('div', {class: 'hint', text: o[2]})])]));
   });
+  var mj = el('input', {type: 'checkbox'});
+  mj.checked = s.major; mj.disabled = locked;
+  mj.onchange = function () { s.major = mj.checked; remPreview(r); };
+  opts.appendChild(el('label', {class: 'rem-opt'}, [mj, el('span', {}, [el('b', {text: 'Allow upgrades across a major version'}), el('div', {class: 'hint', text: 'Off by default. An OSV fix that moves to a new major version (1.x to 3.x) often needs a newer Java or Python and changes APIs, so the build can fail.'})])]));
   box.appendChild(opts);
   box.appendChild(el('div', {class: 'rem-sub', text: 'Java for the build'}));
   var jv = el('select', {});
@@ -1654,7 +1658,7 @@ async function remStart(r, push) {
   s.error = ''; s.view = null; s.run = 'starting';
   paintRem(r);
   try {
-    var d = await api('POST', 'v1/remediations', {scan: current.id, url: r.url, sources: s.sources, push: push, java: s.java});
+    var d = await api('POST', 'v1/remediations', {scan: current.id, url: r.url, sources: s.sources, allow_major: s.major, push: push, java: s.java});
     s.run = d.id;
     remPoll(r, 0);
   } catch (e) { s.run = null; s.error = e.message; paintRem(r); }
