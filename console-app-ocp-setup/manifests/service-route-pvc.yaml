@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cve-console-state
+  labels:
+    app: cve-console
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cve-console
+  labels:
+    app: cve-console
+spec:
+  # The frontend only. The backend port is deliberately absent — see the
+  # comment on the backend container.
+  selector:
+    app: cve-console
+  ports:
+    - name: http
+      port: 8788
+      targetPort: 8788
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: cve-console
+  labels:
+    app: cve-console
+  annotations:
+    # The browser holds this connection for the whole of a decision:
+    # /api/decide blocks for up to AO_DECIDE_WAIT while the approved chain
+    # runs. At 900s that budget exactly equalled this timeout, so the
+    # router would have cut the request at the moment the backend stopped
+    # waiting. Each hop outward gets more room, not less.
+    haproxy.router.openshift.io/timeout: 1200s
+spec:
+  to:
+    kind: Service
+    name: cve-console
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -21,7 +21,7 @@ Both open <http://127.0.0.1:8788>.
 |---|---|
 | [Architecture](#architecture) | The agents, what is built, what lives in Ansible Orchestrator |
 | [Demo mode](#demo-mode) | Run it with nothing installed. What is staged, what is not real |
-| [Live mode](#live-mode) | Prerequisites, one-command setup, running against real infrastructure |
+| [Live mode](#live-mode) | Prerequisites, one-command setup, and running it on your laptop or on the cluster |
 | [Using the console](#using-the-console) | The flow, the left panel, the settings panel, the CLI |
 | [Configuration](#configuration) | Every switch, and where it is set |
 | [ROI report](#roi-report) | What is measured, what is assumed, and how the two are kept apart |
@@ -177,27 +177,70 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 ./rag-setup/deploy.sh                          # Milvus + Llama Stack
 ./rag-setup/ingest.py --route https://$ROUTE --dir ./rag-setup/data --ensure
 ./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
+./aap-setup/create-verify-template.sh          # our one AAP template
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
-./aap-setup/create-aap-objects.sh              # AAP projects, credentials, job templates
-./aap-setup/create-ao-workflow.sh              # the AO workflow, published
+./ao-setup/create-ao-workflow.sh               # the AO workflow, published
 ```
 
 </details>
 
-### 3. Run
+### 3. Run it — two ways, same `.env`
+
+| | |
+|---|---|
+| **Locally** | fastest to start and to restart, and nothing to rebuild between changes. Only you can reach it |
+| **On OpenShift** | reachable by anyone with the URL, and the console sits beside the services it calls instead of crossing the internet to reach them |
+
+Either way live mode behaves identically: real endpoints, no fallback at any
+step, and a banner that stays on screen. That banner is not a source label —
+it means the opposite, that nothing will be substituted and an unreachable
+service fails the run outright, which someone needs to know before they
+start.
+
+#### Locally
 
 ```bash
 ./demo.sh --live
 ```
 
-If `.env` is missing it is created from `.env.example` and the console
-**refuses to start**, naming the keys that matter. A blank key in live mode is
-not a step that degrades; it is a run that cannot finish.
+Opens <http://127.0.0.1:8788>. If `.env` is missing it is created from
+`.env.example` and the console **refuses to start**, naming the keys that
+matter. A blank key in live mode is not a step that degrades; it is a run
+that cannot finish.
 
-Live mode keeps its banner on screen at all times. That is not a source label —
-it means the opposite, that nothing will be substituted and an unreachable
-service will fail the run outright, which someone needs to know before they
-start.
+#### On OpenShift
+
+```bash
+oc login <api-url>
+./console-app-ocp-setup/deploy.sh          # build, configure, deploy; prints the Route
+```
+
+No second copy of the configuration: it splits `.env` into a ConfigMap and a
+Secret, and rewrites `LLAMA_STACK_URL` and `RISK_URL` to in-cluster Services
+so the console stops going out to the router to reach a pod beside it. It
+checks Llama Stack and the risk model are up before it starts, and deploys
+neither — those are `rag-setup/` and `risk_score/openshift/`.
+
+```bash
+./console-app-ocp-setup/deploy.sh --config-only   # after editing .env — no rebuild
+./console-app-ocp-setup/deploy.sh --delete
+```
+
+Two things to know before a demo.
+
+**`--config-only` restarts the pod**, which is the point — a running process
+does not pick up a changed ConfigMap, and one holding last week's
+`VECTOR_DB_ID` looks healthy while returning no RAG hits. But the run state
+lives in memory, so **a restart clears any assessment open in a browser**.
+The page says so and asks for a fresh Assess rather than failing at the next
+button. Do not redeploy mid-run.
+
+**The console has no authentication.** The Route is reachable by anyone with
+the URL and it can patch real machines. Acceptable in a lab; drop the Route
+and use `oc port-forward` if it is not.
+
+[console-app-ocp-setup/README.md](console-app-ocp-setup/README.md) covers the pod layout, the
+timeout chain and what it does not deploy.
 
 ---
 
@@ -211,11 +254,21 @@ the twenty on screen would report "nothing found" for almost all of them.
 Results are cached per query, so clearing the box or returning to an earlier
 search costs nothing.
 
-**The dispatch button is labelled from the plan's verdict** — *Patch N hosts* in
+**Tick the hosts to send.** With more than one host the table gains a
+checkbox per row, all selected to begin with. Dispatch goes only to the ones
+ticked, which is how you patch one machine and watch it before committing the
+rest. Hosts left unticked stay on the table with no status, rather than
+disappearing.
+
+**The dispatch button is labelled from the selection** — *Patch N hosts* in
 red when the press really does patch them unattended, *Send N for approval* in
-black when every host will halt at the gate instead. Hosts on the approval
-branch show Approve / Reject, and once approved the row tracks its execution
-through the remaining workflow nodes to *Patched*.
+black when every selected host will halt at the gate instead. Deselecting
+every gated host turns it red; deselecting every ungated one turns it black.
+The colour is the page's one safety signal, so it tracks what this press will
+actually do rather than what the plan as a whole says.
+
+Hosts on the approval branch show Approve / Reject, and once approved the row
+tracks its execution through the remaining workflow nodes to *Patched*.
 
 **Calculate ROI** costs that run out against doing the same work by hand.
 **Patch runs** lists past executions, read live from AO. **Details** on any
@@ -233,6 +286,53 @@ The Agent trace reports each workflow node as AO moves through it, with its
 elapsed time, for both the dispatch and the post-approval run. A run sitting
 at four minutes is normal or stuck depending on which node it is in, and a
 progress bar cannot tell you which.
+
+### Checking on the host itself
+
+The console reports what Ansible Orchestrator reports. Worth confirming on
+the machine at least once, and worth doing in front of an audience, because
+it is the only step nothing in this repo can fake.
+
+**Before** — the advisory is listed, so the host is vulnerable:
+
+```bash
+sudo dnf updateinfo list --cve CVE-2026-64753
+# RHSA-2026:39317 Low/Sec.  libxml2-2.9.13-14.el9_8.2.x86_64
+```
+
+**After** — empty output means no advisory is outstanding:
+
+```bash
+sudo dnf updateinfo list --cve CVE-2026-64753   # silence is the pass
+rpm -q --last libxml2 | head -1                 # installed just now
+uptime                                          # rebooted, if the kernel moved
+```
+
+Two things about that check. **Empty output is the success case**, which
+reads oddly the first time — there is no cheerful message, the advisory
+simply stops being listed. And it is local, so it answers immediately
+rather than waiting on an upload being re-evaluated by Insights, which lags
+by ten to thirty minutes.
+
+This is exactly what the workflow's own Verify Patch step runs, so the
+console's verdict and your terminal are answering the same question the
+same way.
+
+**A second host makes it conclusive.** Run it on one you did not patch:
+
+```bash
+# node2, patched            → silence
+# node3, same CVE, untouched → RHSA-2026:39317 still listed
+```
+
+Same advisory, same inventory, and only the host you targeted changed.
+
+To check what Insights thinks, rather than the host:
+
+```bash
+sudo insights-client --status      # registered, and when it last reported
+sudo insights-client               # force an upload if you do not want to wait
+```
 
 ### The left panel
 
@@ -264,8 +364,10 @@ animates identically whether the call was answered or substituted.
 ### Settings panel
 
 The gear in the top right opens every switch below, grouped, with its built-in
-default shown until something overrides it. A row is chipped `.env` when it was
-set before startup and `changed` when this panel set it.
+default shown until something overrides it. A row is chipped `changed` when
+this panel set it — the one state worth seeing, because it is process-local
+and will not survive a restart. Where a value came from otherwise, `.env` or
+the built-in default, is on hover over the setting's key.
 
 Changes take effect on the next assessment and are **in-memory only** — they are
 lost on restart, and `.env` stays the durable place. The two passwords are
@@ -322,7 +424,7 @@ Every row below is also a row in the settings panel.
 | `HOSTS_FILTER` | — | The host to assess: a substring of the display name, or a system uuid. Prefer the uuid — display names are not unique in a shared organisation, and they change. Live mode only |
 | `HOSTS_LIMIT` | — | Cap host count. A filter matching more hosts than this **refuses** rather than silently keeping an arbitrary one. Live mode only |
 | `REVIEW_THRESHOLD` | `30` | Risk score above which a host needs approval — model scores only. See [known gaps](#known-gaps) |
-| `AO_WORKFLOW_NAME` | `DemoJam Agentic Patching` | Workflow to trigger, resolved by name so the id can differ per cluster. `setup.sh` writes the Demo Jam one |
+| `AO_WORKFLOW_NAME` | `RHEL CVE Remediation - Intelligent Patching - Demo Jam` | Workflow to trigger, resolved by name so the id can differ per cluster. `ao-setup/create-ao-workflow.sh` creates it under this name |
 | `AO_HOST_SHORTNAME` | `true` | Send the first label of the Insights display name to the workflow, so an FQDN still matches an AAP inventory host named short. Turn off only if your inventory host names are fully qualified |
 | `AO_DECIDE_WAIT` | `90` | Seconds to wait for a run to settle after approve/reject |
 | `PATCHED_WITHIN_MINUTES` | `10080` | How recently a host must have been patched for this CVE to be left out of a re-assessment. 7 days; `0` turns the guard off |
@@ -333,6 +435,7 @@ Every row below is also a row in the settings panel.
 | `INSIGHTS_TIMEOUT` / `RISK_TIMEOUT` / `RAG_TIMEOUT` / `AO_TIMEOUT` | 15 / 8 / 20 / 10 | Per-service read budgets, seconds |
 | `INSIGHTS_VERIFY_TLS` / `RISK_VERIFY_TLS` | `true` | Set `false` if this machine cannot verify the chain |
 | `LAB_TAG` | — | Passed to the workflow as `lab_tag` |
+| `WARM_AFFECTED` | `true` | After an assessment, quietly ask Insights for the CVE's affected systems. Nothing here needs the answer — the lab MCP server calls that endpoint during the fetch step, where it takes 20s cold against 0.2s warm, longer than the MCP client waits. Warming it while the operator reads the plan spends that time harmlessly |
 
 `ROI_*` has its own table under [ROI report](#roi-report).
 
@@ -545,8 +648,6 @@ Listed so they are not re-raised as bugs.
 - **A Llama Stack restart silently empties the vector store registry** —
   searches return no hits with no error. Run `ingest.py --ensure` after any
   restart; see [rag-setup/README.md](rag-setup/README.md).
-- `CVE - Verify Patch` is created by hand rather than by
-  `aap-setup/create-aap-objects.sh`.
 - No scheduler service exists; the maintenance window is configuration.
 
 ---
@@ -571,12 +672,11 @@ frontend/
   server.py                dev server — serves the UI, proxies /api/* to :8787
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
-  demojam_lab_workflow.json  the AO workflow, exported — the only one
+  create-ao-workflow.sh    imports the workflow below and publishes it
+  demojam_lab_workflow.json  the workflow the console dispatches to
 aap-setup/
-  create-aap-objects.sh    AAP projects, credentials and job templates
-  create-ao-workflow.sh    creates + publishes a one-node test workflow
-  run-test.sh              launch one job template and show its artifacts
-  playbooks/               fetch-and-commit · sync-and-deploy · verify
+  create-verify-template.sh  CVE - Verify Patch — the one AAP object that is ours
+  playbooks/                 cve_verify_patch.yml
 rag-setup/
   deploy.sh                Milvus + Llama Stack as plain Pods (no RHOAI)
   ingest.py                load/verify the RAG vector store
@@ -584,6 +684,10 @@ rag-setup/
 risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
+console-app-ocp-setup/
+  deploy.sh                run the console itself on OpenShift, from .env
+  Containerfile            UBI9 + the source; no dependencies to install
+  manifests/               Deployment, Service, Route, PVC
 multi-agent/
   architecture.jpg/.html   architecture diagram (editable source)
 ```

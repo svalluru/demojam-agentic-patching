@@ -721,6 +721,46 @@ def _detail_host_first(cve_id: str, host_filter: str) -> dict[str, Any]:
     }
 
 
+_warmed: set[str] = set()
+WARM_AFFECTED = env_bool('WARM_AFFECTED', True)
+
+
+def warm_affected_systems(cve_id: str) -> None:
+    """Ask Insights for a CVE's affected systems so the next caller gets it warm.
+
+    Nothing here needs the answer. The workflow's fetch step reaches Insights
+    through the lab MCP server, which calls /cves/{id}/affected_systems — and
+    measured from the bastion that takes 20.2 seconds cold against 0.2 warm.
+    The MCP client gives up at about twenty, so a cold CVE fails the step and
+    a warm one sails through. That is the whole of the intermittency: the same
+    CVE failed at 17:22, succeeded at 18:53 and failed again at 19:40, tracking
+    nothing but whether the upstream cache still held it.
+
+    Doing it here buys the twenty seconds for free. The operator reads the
+    patch plan, thinks, and presses dispatch; the warm-up runs in that gap and
+    is long finished. Warming at dispatch instead would just move the delay in
+    front of the button.
+
+    Deliberately silent and deliberately unawaited. A warm-up that fails has
+    cost nothing — the step behaves exactly as it does today — and one that
+    raised or blocked would turn an optimisation into a dependency. It is not
+    a fix either: the real fault is a client timeout shorter than the call it
+    makes, and that is the lab's to raise.
+    """
+    if not (WARM_AFFECTED and cve_id) or offline() or cve_id in _warmed:
+        return
+    _warmed.add(cve_id)
+
+    def go():
+        try:
+            insights_get(f'/cves/{urllib.parse.quote(cve_id)}'
+                         f'/affected_systems?limit=1')
+        except Exception:
+            _warmed.discard(cve_id)      # let a later assessment try again
+
+    threading.Thread(target=go, daemon=True, name=f'warm-{cve_id}').start()
+
+
 def fetch_cve_detail(cve_id: str, host_filter: str = '',
                      host_limit: int = 0) -> dict[str, Any]:
     """C1 + C2 — CVE metadata and the hosts it affects.
@@ -1259,6 +1299,7 @@ class InfoAgent:
         )
         self._trace('info', 'supervisor',
                     f'{len(review)}/{len(assessed)} need review — {plan.verdict}')
+        warm_affected_systems(detail.get('cve_id') or '')
         return {'hosts': [asdict(a) for a in assessed], 'plan': asdict(plan)}
 
 
@@ -1283,7 +1324,7 @@ class InfoAgent:
 AO_URL = env('AO_URL').rstrip('/')
 AO_USERNAME = env('AO_USERNAME')
 AO_PASSWORD = env('AO_PASSWORD')
-AO_WORKFLOW_NAME = env('AO_WORKFLOW_NAME', 'DemoJam Agentic Patching')
+AO_WORKFLOW_NAME = env('AO_WORKFLOW_NAME', 'RHEL CVE Remediation - Intelligent Patching - Demo Jam')
 AO_TRIGGER_NODE = env('AO_TRIGGER_NODE', 'trigger_manual')
 AO_POLL_TIMEOUT = int(env('AO_POLL_TIMEOUT', '900'))
 LAB_TAG = env('LAB_TAG')
@@ -1600,6 +1641,58 @@ class PatchingAgent:
             'Ansible Orchestrator', f'workflow {AO_WORKFLOW_NAME!r} not found',
             f'set AO_WORKFLOW_NAME to one of: {", ".join(filter(None, names))}')
 
+    # Node id -> the name the workflow gives it. Class-level because it
+    # describes the workflow, not any one agent instance.
+    _labels: dict[str, str] = {}
+
+    def node_labels(self) -> dict[str, str]:
+        """What each workflow node is called, for anything a person reads.
+
+        AO reports activities by node id — approval_prod, fetch_and_commit —
+        which is right in a definition and poor on screen: the console was
+        asking an operator to approve something called 'approval_prod' and
+        reporting 'run_cve_remediation_prod done in 1m39s'.
+
+        The workflow already names every node: 'Approve Production Patch',
+        'Run CVE Remediation', 'Verify Patch'. So there is nothing to invent
+        and no second list to keep in step — rename a node in AO and this
+        follows it.
+
+        Cached, because the definition only changes when the workflow is
+        republished and this is wanted on every activity poll.
+        """
+        if self._labels:
+            return self._labels
+        try:
+            wf = ao_call(f'/api/v1/workflows/{self.workflow_id()}') or {}
+        except BackendUnavailable:
+            return {}              # an id is a poor label, but better than none
+        wd = (wf.get('version') or {}).get('workflow_definition') or {}
+        out = {n['id']: n['name']
+               for n in list(wd.get('nodes') or []) + list(wd.get('triggers') or [])
+               if n.get('id') and n.get('name')}
+        PatchingAgent._labels = out
+        return out
+
+    def relabel(self, text: str | None) -> str | None:
+        """Swap node ids for their names inside a message meant for a person.
+
+        AO phrases failures as 'fetch_and_commit_prod: AAP job 262 failed',
+        and that string is what the Patch runs table prints in full. Every
+        other node reference on the page reads 'Fetch from Lightspeed &
+        Commit to Gitea'; this one did not, so the one place an operator
+        looks when something breaks was the one still speaking in ids.
+
+        Longest id first, so fetch_and_commit_prod is not half-replaced by
+        the rule for fetch_and_commit.
+        """
+        if not text:
+            return text
+        labels = self.node_labels()
+        for node_id in sorted(labels, key=len, reverse=True):
+            text = text.replace(node_id, labels[node_id])
+        return text
+
     def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '') -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
@@ -1721,7 +1814,7 @@ class PatchingAgent:
             # Needed to signal the approval gate; see decide().
             'approval_activity_id': approval_activity,
             'matched_port': matched_port,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             'steps': steps,
             # AO's own clock, carried through rather than left for a later
             # read. The simulated path gets these from SimStore.put(), so
@@ -1770,21 +1863,21 @@ class PatchingAgent:
             if status in ('waiting', 'pending') and s.get('node_type') != 'approval':
                 continue
             seen[name] = status
+            shown = s.get('label') or name
             took = _elapsed(s.get('started_at'), s.get('completed_at'))
             if status in ('completed', 'succeeded'):
-                detail = f'{name} done' + (f' in {took}' if took else '')
+                detail = f'{shown} done' + (f' in {took}' if took else '')
             elif status in ('failed', 'error'):
-                detail = f'{name} FAILED' + (f' after {took}' if took else '')
+                detail = f'{shown} FAILED' + (f' after {took}' if took else '')
                 if s.get('error'):
                     detail += f' — {str(s["error"])[:90]}'
             elif status in ('waiting', 'pending'):
-                detail = f'{name} waiting for approval'
+                detail = f'{shown} waiting for approval'
             else:
-                detail = f'{name} {status}'
+                detail = f'{shown} {status}'
             self._trace('ao', 'patching', f'{host.split(".")[0]}: {detail}')
 
-    @staticmethod
-    def _activities(exec_id: str) -> tuple[list[dict], str, str]:
+    def _activities(self, exec_id: str) -> tuple[list[dict], str, str]:
         """Per-node outcome, the switch port taken, and any waiting approval.
 
         The signal endpoint addresses an activity by temporal_activity_id (the
@@ -1795,6 +1888,7 @@ class PatchingAgent:
         except BackendUnavailable:
             return [], '', ''
         steps, port, approval = [], '', ''
+        labels = self.node_labels()
         for a in (found or {}).get('resources', []):
             out = a.get('output_data') or {}
             if a.get('activity_name') == 'route_switch':
@@ -1802,6 +1896,10 @@ class PatchingAgent:
             if a.get('node_type') == 'approval' and a.get('status') in ('waiting', 'pending'):
                 approval = a.get('temporal_activity_id') or a.get('activity_name') or ''
             steps.append({'name': a.get('activity_name'),
+                          # What a person reads. The id stays in 'name' so
+                          # anything joining on it keeps working.
+                          'label': labels.get(a.get('activity_name') or '',
+                                              a.get('activity_name')),
                           'status': a.get('status'),
                           'error': a.get('error_details'),
                           # 'waiting' means two different things depending on
@@ -1885,7 +1983,7 @@ class PatchingAgent:
                             if status in ('completed', 'succeeded')
                             else 'running'),
                 'approval_pending': pending,
-                'error': e.get('error_details'),
+                'error': self.relabel(e.get('error_details')),
                 'created_at': e.get('created_at'),
                 'completed_at': e.get('completed_at'),
                 # Workflow time, gate wait removed — the same figure the
@@ -1922,8 +2020,8 @@ class PatchingAgent:
 
     # Everything the workflow still has to do once the gate clears. route_switch
     # and the gate itself are already behind an approved run.
-    _AFTER_GATE = tuple(n for n, _ in fallbacks.SIM_STEPS
-                        if n not in ('route_switch', 'approval_gate'))
+    _PROD_NODES = [n for n, _ in fallbacks.SIM_STEPS_PROD]
+    _AFTER_GATE = tuple(_PROD_NODES[_PROD_NODES.index(fallbacks.SIM_GATE) + 1:])
 
     def _decide_sim(self, execution_id: str, decision: str) -> dict:
         """Resolve a simulated approval gate. No signal is sent anywhere."""
@@ -1941,7 +2039,7 @@ class PatchingAgent:
                 'status': 'completed', 'outcome': 'rejected',
                 'approval_pending': False, 'approval_activity_id': '',
                 'decision': decision,
-                'steps': fallbacks.sim_steps('approval_gate', status='rejected'),
+                'steps': fallbacks.sim_steps(fallbacks.SIM_GATE, status='rejected'),
             })
             SIM.put(run)
             self._trace('patching', 'console',
@@ -1963,7 +2061,7 @@ class PatchingAgent:
             demo_pause(3)
 
         run.update({'status': 'completed', 'outcome': 'patched',
-                    'steps': fallbacks.sim_steps('run_cve_remediation')})
+                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD)})
         SIM.put(run)
         self._trace('patching', 'console',
                     f'{execution_id[:12]} -> SIMULATED patched')
@@ -2004,7 +2102,7 @@ class PatchingAgent:
             'approval_pending': pending,
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             'created_at': state.get('created_at'),
             'completed_at': state.get('completed_at'),
             # Workflow execution time: wall clock less whatever the run spent
@@ -2047,7 +2145,7 @@ class PatchingAgent:
         # 'running' for a run that fails a second later, and nothing revisits
         # it. Bounded so the button does not hang.
         state: dict[str, Any] = {}
-        deadline = time.time() + int(env('AO_DECIDE_WAIT', '90'))
+        deadline = time.time() + int(env('AO_DECIDE_WAIT', '900'))
         # An approved run does its real work here — fetch, deploy, remediate,
         # verify, two to three minutes of it. Reporting none of that was the
         # complaint: the gate cleared, and then the trace said nothing and the
@@ -2094,7 +2192,7 @@ class PatchingAgent:
             'approval_pending': bool(state.get('approval_pending')),
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
-            'error': state.get('error_details'),
+            'error': self.relabel(state.get('error_details')),
             # The gate is where most of the exposure window is spent, so this
             # is the read that matters for timing: completed_at only exists
             # once the approved run finishes.
@@ -2948,7 +3046,7 @@ def roi_report(state: dict, overrides: dict | None = None,
 # SETTINGS — one registry describing every tunable this process reads
 #
 # Scope is deliberately "what this process reads", not "everything in
-# .env.example". NAMESPACE, GIT_HUB_TOKEN, the AAP_* and VLLM_* keys belong to
+# .env.example". NAMESPACE, the AAP_* and VLLM_* keys belong to
 # ao-setup/ and rag-setup/, which are separate shell scripts; offering them
 # here would imply changing them does something, and it would not.
 #
@@ -3125,9 +3223,13 @@ SETTINGS: tuple[Setting, ...] = (
             binds='HTTP_TIMEOUT'),
     Setting('AO_POLL_TIMEOUT', 'Timeouts', 'AO poll', 'int', '900',
             'How long to follow a dispatched execution.', binds='AO_POLL_TIMEOUT'),
-    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '90',
+    Setting('AO_DECIDE_WAIT', 'Timeouts', 'AO settle after decision', 'int', '900',
             'Seconds to wait for a run to reach a terminal status after '
-            'approve or reject.'),
+            'approve or reject. An approved chain on the lab workflow runs '
+            'six to seven minutes, so the old 90 and the 300 setup.sh wrote '
+            'both expired mid-remediation and left the row saying "running". '
+            'Must stay under the frontend PROXY_TIMEOUT and the Route '
+            'timeout, which the request is held open against.'),
     Setting('DEMO_LATENCY', 'Timeouts', 'Demo pause per step', 'float', '0.35',
             'Offline only. Answering instantly renders as "complete in 0s" and '
             'reads as broken. 0 disables.', binds='DEMO_LATENCY'),
@@ -3169,10 +3271,18 @@ SETTINGS: tuple[Setting, ...] = (
             'Write-only. Leave blank to keep the current value.',
             secret=True, binds='AO_PASSWORD'),
     Setting('AO_WORKFLOW_NAME', 'Ansible Orchestrator', 'Workflow name', 'str',
-            'DemoJam Agentic Patching',
+            'RHEL CVE Remediation - Intelligent Patching - Demo Jam',
             'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
     Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
+    Setting('WARM_AFFECTED', 'Ansible Orchestrator', 'Warm the CVE cache',
+            'bool', 'true',
+            'After an assessment, quietly ask Insights for the CVE\'s '
+            'affected systems. Nothing here needs the answer: the lab MCP '
+            'server calls that endpoint during the fetch step, and it takes '
+            '20s cold against 0.2s warm — longer than the MCP client waits. '
+            'Warming it during the assessment spends that time while the '
+            'operator is reading the plan.', binds='WARM_AFFECTED'),
     Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
     Setting('AO_HOST_SHORTNAME', 'Ansible Orchestrator',
@@ -3399,7 +3509,15 @@ def _patch_async(assessment: dict) -> None:
     try:
         state = sup.patch(assessment)
         with _RUN_LOCK:
+            # Keep every assessed host on screen, not just the dispatched
+            # ones. Patching a subset used to delete the rest from the
+            # table — tick two of five, press the button, and three hosts
+            # disappear with nothing saying they were skipped rather than
+            # lost. They stay, with no status, which reads as "not sent".
+            assessed = _RUN.get('hosts') or []
             _RUN.update(state, status='complete', phase='patching', error=None)
+            if len(assessed) > len(state.get('hosts') or []):
+                _RUN['hosts'] = assessed
     except BackendUnavailable as exc:
         with _RUN_LOCK:
             _RUN.update(status='failed', phase='patching', events=list(sup.events),
@@ -3409,6 +3527,53 @@ def _patch_async(assessment: dict) -> None:
         with _RUN_LOCK:
             _RUN.update(status='failed', phase='patching', events=list(sup.events),
                         error={'service': 'patching', 'detail': str(exc), 'fix': ''})
+
+
+def _absorb_run_detail(detail: dict) -> None:
+    """Fold a freshly-read execution back into the stored run.
+
+    decide() waits AO_DECIDE_WAIT for an approved chain to settle and then
+    returns whatever it last saw. A chain that outlives the wait — six and a
+    half minutes against a five minute budget, on a workflow whose
+    remediation step alone takes three — leaves its result saying 'running'
+    with nothing server-side ever revisiting it. AO had the run finished and
+    verified; the console went on reporting it in flight, and said so again
+    after a reload, because the browser was healing only its own copy.
+
+    This is the read that already asks AO about exactly those rows, so the
+    answer is free. Terminal states only: a row mid-flight is already being
+    polled and overwriting it with another in-flight snapshot gains nothing.
+    """
+    exec_id = detail.get('execution_id')
+    if not exec_id or detail.get('outcome') in (None, 'running', 'awaiting_approval'):
+        return
+    with _RUN_LOCK:
+        patch = _RUN.get('patch') or {}
+        results = patch.get('results') or []
+        row = next((r for r in results if r.get('execution_id') == exec_id), None)
+        if row is None or row.get('outcome') == detail.get('outcome'):
+            return
+        row.update({k: v for k, v in detail.items() if v is not None})
+        _RUN['patch'] = {**patch, 'results': results,
+                         'summary': _summarise(results)}
+        _RUN['next'] = next_step(_RUN['patch']['summary'])
+
+
+def _summarise(results: list[dict]) -> dict:
+    """One definition of the counts, because there were two and they
+    disagreed: the decision path's omitted 'running', so a host still being
+    patched was counted nowhere and the console showed five zeroes over a
+    dispatched host."""
+    def n(*outcomes):
+        return sum(1 for r in results if r.get('outcome') in outcomes)
+    return {
+        'patched': n('patched'),
+        'awaiting_approval': n('awaiting_approval'),
+        'running': n('running'),
+        'rejected': n('rejected'),
+        'failed': n('failed', 'timeout'),
+        'unavailable': n('unavailable'),
+    }
 
 
 def _rereport(state: dict) -> dict | None:
@@ -3422,15 +3587,7 @@ def _rereport(state: dict) -> dict | None:
     results = (state.get('patch') or {}).get('results') or []
     if not results:
         return None
-    summary = {
-        'patched': sum(1 for r in results if r.get('outcome') == 'patched'),
-        'awaiting_approval': sum(1 for r in results
-                                 if r.get('outcome') == 'awaiting_approval'),
-        'rejected': sum(1 for r in results if r.get('outcome') == 'rejected'),
-        'failed': sum(1 for r in results
-                      if r.get('outcome') in ('failed', 'timeout')),
-        'unavailable': sum(1 for r in results if r.get('outcome') == 'unavailable'),
-    }
+    summary = _summarise(results)
     state['patch'] = {**state['patch'], 'summary': summary}
     nxt = next_step(summary)
     with _RUN_LOCK:
@@ -3563,8 +3720,9 @@ class Handler(BaseHTTPRequestHandler):
             agent = PatchingAgent()
             try:
                 if q.get('execution_id'):
-                    self._send(200, {'ok': True,
-                                     'run': agent.run_detail(q['execution_id'][0])})
+                    detail = agent.run_detail(q['execution_id'][0])
+                    _absorb_run_detail(detail)
+                    self._send(200, {'ok': True, 'run': detail})
                 else:
                     limit = int((q.get('limit') or ['40'])[0])
                     runs = agent.recent_runs(limit)
@@ -3653,12 +3811,51 @@ class Handler(BaseHTTPRequestHandler):
                                'Run "Assess CVE Impact" first — the Patching Agent '
                                'needs each host\'s decision to pick a workflow branch.')})
                 return
+
+            # An optional subset, by system uuid. Absent means every
+            # assessed host, which is what the console did before the
+            # checkboxes existed and what the CLI still does.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                body = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                body = {}
+            chosen = body.get('hosts')
+            if chosen is not None:
+                if not isinstance(chosen, list):
+                    self._send(400, {'ok': False,
+                                     'error': 'hosts must be a list of system uuids'})
+                    return
+                known = {h.get('system_uuid'): h for h in snapshot['hosts']}
+                # Unknown uuids are rejected rather than skipped. This
+                # endpoint patches real machines, and "I selected three and
+                # two were patched" is a discrepancy nobody notices until
+                # the host they cared about is still vulnerable.
+                unknown = [u for u in chosen if u not in known]
+                if unknown:
+                    self._send(400, {
+                        'ok': False, 'error': 'unknown host in selection',
+                        'detail': f'not in this assessment: {", ".join(map(str, unknown[:3]))}'})
+                    return
+                if not chosen:
+                    self._send(400, {
+                        'ok': False, 'error': 'No hosts selected',
+                        'detail': 'Tick at least one host, or clear the '
+                                  'selection to dispatch all of them.'})
+                    return
+                # Preserve assessment order rather than selection order, so
+                # the plan, the report and the runs list agree.
+                snapshot = dict(snapshot,
+                                hosts=[h for h in snapshot['hosts']
+                                       if h.get('system_uuid') in set(chosen)])
+
             with _RUN_LOCK:
                 _RUN.update(status='running', phase='patching', error=None)
             threading.Thread(target=_patch_async, args=(snapshot,),
                              daemon=True, name='patching').start()
             self._send(200, {'ok': True, 'cve': snapshot.get('cve_id'),
-                             'status': 'running'})
+                             'status': 'running',
+                             'dispatching': len(snapshot['hosts'])})
             return
 
         if path == '/api/settings':

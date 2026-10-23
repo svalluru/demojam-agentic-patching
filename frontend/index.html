@@ -2943,7 +2943,29 @@ let traceHost = '';      // '' = every event
 // have to cope with whatever Insights returns in live mode, each message is
 // tested against the run's own host list. Exact substring, known set.
 function eventHost(e, hosts) {
-  return hosts.find(h => e.message.includes(h)) || '';
+  // Match the short name as well as the full one. The per-node AO lines are
+  // prefixed "node2: fetch_and_commit_prod done in 21s" — short, because a
+  // 50-character FQDN in front of every line is unreadable — while the
+  // supervisor's own lines carry the full display name. Matching only the
+  // full name meant filtering the trace to a host hid all fourteen lines
+  // describing what that host's workflow was doing, and kept the two that
+  // said least: the panel read "2 of 17" over a run with plenty to show.
+  return hosts.find(h => e.message.includes(h)
+                      || e.message.includes(h.split('.')[0] + ':')) || '';
+}
+
+// Insights reports whatever a host last called itself, and the three lab
+// nodes disagree: two answer to node1.sandbox-h77wc-ocp4-cluster.svc.
+// cluster.local and one to plain node3. Listed side by side that reads as
+// three unrelated machines, and the long ones push every other column off
+// the row.
+//
+// The first label is shown instead — which is also the name AAP knows them
+// by and the name a dispatch sends, so the table now matches what the
+// patch actually addresses. The full value stays in the tooltip, because
+// it is what Insights holds and what you would search on there.
+function shortHost(name) {
+  return String(name || '').split('.')[0] || String(name || '');
 }
 
 function renderTrace(s) {
@@ -2967,7 +2989,7 @@ function renderTrace(s) {
             + `${esc(h.split('.')[0])}</option>`).join('')}
        </select>` : '';
 
-  document.getElementById('trace').innerHTML =
+  const html =
     `<div class="trace-k">Agent trace${events.length
       ? `<span class="c">${esc(shown.length)}${traceHost ? ` of ${events.length}` : ''}</span>`
       : ''}${picker}</div>`
@@ -2987,6 +3009,16 @@ function renderTrace(s) {
              lookup, the risk scoring, the report — cover every host at once.</div>`)
       : `<div class="trace-log trace-idle">Nothing running. Assess a CVE and the
           Supervisor's calls to each agent appear here as they happen.</div>`);
+
+  // Assess polls every STEP_TICK — four times a second — and this used to
+  // rebuild the panel on every tick whether or not a line had been added.
+  // Replacing the subtree that often makes the text visibly flicker and
+  // throws away the scroll position mid-read. Most ticks change nothing, so
+  // most ticks should touch nothing.
+  const box = document.getElementById('trace');
+  if (box.dataset.html === html) return;
+  box.dataset.html = html;
+  box.innerHTML = html;
 
   const sel = document.getElementById('trace-host');
   if (sel) sel.addEventListener('change', e => {
@@ -3174,10 +3206,23 @@ function riskMeter(h, plan) {
 // queues it for someone to approve. Calling both "Start Patch" overstates one
 // and understates the other, and with live model scores a single CVE can split
 // across both branches at once.
-function dispatchAction(plan) {
-  const review = Number(plan.hosts_review) || 0;
-  const auto   = Number(plan.hosts_auto) || 0;
+// review/auto come from the selection, not the plan, so the button
+// describes what this press will actually do. The red/black distinction is
+// the page's one safety signal — red means hosts get patched unattended —
+// and deselecting every gated host has to turn it red, just as deselecting
+// every ungated one has to turn it black.
+function dispatchAction(plan, hosts, sel) {
+  const live = (hosts || []).filter(h => !sel || sel.has(h.system_uuid));
+  const review = live.length ? live.filter(h => h.decision === 'review').length
+                             : Number(plan.hosts_review) || 0;
+  const auto   = live.length ? live.filter(h => h.decision !== 'review').length
+                             : Number(plan.hosts_auto) || 0;
   const n = (c, w) => `${c} ${w}${c === 1 ? '' : 's'}`;
+  if (sel && sel.size === 0) {
+    return { label: 'Select a host', calm: true, disabled: true,
+             title: 'Tick the hosts to dispatch. Nothing is sent until at '
+                  + 'least one is selected.' };
+  }
   if (!review && !auto) {
     return { label: 'Nothing to patch', title: 'No affected hosts in this plan.',
              calm: true, disabled: true };
@@ -3208,6 +3253,14 @@ function dispatchAction(plan) {
 // in one, the Approve/Reject buttons in the other. Rendered by its own
 // function because both renderers need to refresh it without redrawing the
 // frame around it.
+// Which hosts a dispatch will go to. null means "all of them", which is
+// both the default and what the backend assumes when no list is sent, so
+// the common case puts nothing in the request and behaves as it always did.
+// Reset whenever a new assessment arrives — uuids from the last CVE would
+// silently exclude hosts from this one.
+let hostSel = null;
+let hostSelCve = '';
+
 let showCols = localStorage.getItem('showCols') === '1';
 // Same idea for the runs table, kept separate: the two tables are read in
 // different situations and an operator who wants exec ids in one does not
@@ -3254,6 +3307,29 @@ function renderHostTable(s) {
   const fresh = sig !== patchRowSig;
   patchRowSig = sig;
 
+  // Checkboxes only before dispatch. Afterwards the same columns carry
+  // status and progress, and a tickbox beside a host already being patched
+  // offers a choice that no longer exists.
+  const pick = !dispatched && (s.hosts || []).length > 1;
+  if (hostSelCve !== (s.cve_id || '')) { hostSel = null; hostSelCve = s.cve_id || ''; }
+
+  // Resetting on a change of CVE is not enough, because the host set moves
+  // under a CVE that has not changed: assess, patch one host, re-assess, and
+  // that host is gone from the affected list. The uuid stayed in the
+  // selection, invisible because its row no longer rendered, and went out
+  // with the next dispatch — which the backend rejected, naming a uuid that
+  // appears nowhere on screen.
+  //
+  // Anything not in this assessment is dropped. An emptied selection is left
+  // empty rather than treated as "all": the operator unticking everything
+  // means none, and guessing the opposite would dispatch the lot.
+  if (hostSel) {
+    const live = new Set((s.hosts || []).map(h => h.system_uuid));
+    const kept = new Set([...hostSel].filter(u => live.has(u)));
+    if (kept.size !== hostSel.size) hostSel = kept;
+  }
+  const sel = hostSel || new Set((s.hosts || []).map(h => h.system_uuid));
+
   const rows = (s.hosts || []).map((h, i) => {
     const r = byHost[h.host];
     const o = r ? (OUTCOME[r.outcome] || { cls: 'review', label: r.outcome }) : null;
@@ -3277,7 +3353,10 @@ function renderHostTable(s) {
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     const prog = r ? stepProgress(r) : null;
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
-      <td class="cve-id">${esc(h.host)}</td>
+      ${pick ? `<td><input type="checkbox" class="host-pick"
+          value="${esc(h.system_uuid)}"${sel.has(h.system_uuid) ? ' checked' : ''}
+          title="Dispatch to this host"></td>` : ''}
+      <td class="cve-id" title="${esc(h.host)}">${esc(shortHost(h.host))}</td>
       <td>${riskMeter(h, plan)}</td>
       <td><span class="badge ${h.decision}">${esc(planLabel(h.decision))}</span></td>
       ${dispatched ? `<td class="decide-cell">${status}</td>` : ''}
@@ -3295,6 +3374,8 @@ function renderHostTable(s) {
     </div>
     <div class="${showCols && dispatched ? 'tscroll' : ''}">
     <table class="${showCols && dispatched ? 'wide' : ''}"><thead><tr>
+      ${pick ? `<th><input type="checkbox" id="host-pick-all"
+          title="Select every host"${sel.size === (s.hosts || []).length ? ' checked' : ''}></th>` : ''}
       <th>Host</th><th>Risk vs gate</th><th>Plan</th>
       ${dispatched ? '<th>Status</th>' : ''}
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
@@ -3320,6 +3401,26 @@ function renderHostTable(s) {
     });
   }
 
+  // Bound per render, because the inputs are replaced each time. Changing a
+  // tick re-renders rather than mutating in place, so the header checkbox,
+  // the row ticks and the dispatch button cannot disagree about what is
+  // selected — and the button is the one that matters.
+  el.querySelectorAll('.host-pick').forEach(box => {
+    box.addEventListener('change', () => {
+      const next = new Set(sel);
+      box.checked ? next.add(box.value) : next.delete(box.value);
+      hostSel = next;
+      renderHostTable(s);
+      refreshDispatchButton(s);
+    });
+  });
+  const all = document.getElementById('host-pick-all');
+  if (all) all.addEventListener('change', () => {
+    hostSel = all.checked ? null : new Set();
+    renderHostTable(s);
+    refreshDispatchButton(s);
+  });
+
   const cb = document.getElementById('more-cols');
   if (cb) cb.addEventListener('change', e => {
     showCols = e.target.checked;
@@ -3328,11 +3429,48 @@ function renderHostTable(s) {
   });
 }
 
+// The run lives in the backend's memory, so a restarted pod — a redeploy,
+// an OOM kill, a drained node — comes back with nothing while this page
+// carries on showing a complete assessment. Everything looks fine until
+// the first button, which fails with "No assessment available" over a
+// screenful of assessment and reads as a broken console rather than a
+// restarted one.
+//
+// Nothing polls /api/state once a plan is on screen: the assess and
+// dispatch loops both exit when their step finishes. So this is a slow
+// heartbeat that exists only to notice the floor disappearing.
+let restartWatch = null;
+function watchForRestart() {
+  clearTimeout(restartWatch);
+  const tick = async () => {
+    if (!parked) return;
+    let s;
+    try { s = await (await fetch('/api/state')).json(); } catch { restartWatch = setTimeout(tick, 10000); return; }
+    // Idle with no plan, while we are displaying one, can only mean the
+    // backend lost it. A run in any other state is just a run in progress.
+    if (s && s.status === 'idle' && !s.plan && !s.cve_id) {
+      const el = document.getElementById('result');
+      if (el) {
+        el.className = 'result show err';
+        el.innerHTML = '<strong>The console restarted and lost this assessment.</strong>'
+          + '<br>What is on screen is from before the restart. Press '
+          + '<strong>Assess</strong> again to rebuild it — nothing was dispatched.';
+      }
+      const pb = document.getElementById('head-patch');
+      if (pb) { pb.disabled = true; pb.title = 'The backend no longer holds this assessment.'; }
+      return;                       // stop; the page needs a human now
+    }
+    restartWatch = setTimeout(tick, 10000);
+  };
+  restartWatch = setTimeout(tick, 10000);
+}
+
 function renderPlan(s) {
   // Parked here so leaving this view can offer a way back to it. Only
   // promoted to 'patch' by renderPatch, which runs after dispatch.
   parked = s;
   if (parkedPhase !== 'patch') parkedPhase = 'plan';
+  watchForRestart();
   const plan = s.plan || {};
   const done = runFinished(s);
   const notes = (plan.notes || []).map(n => `<div class="note">${esc(n)}</div>`).join('');
@@ -3367,8 +3505,15 @@ function renderPlan(s) {
     back: BACK_CVES, patch: true,
   });
   renderStages(s);
+  refreshDispatchButton(s);
+}
+
+// Split out so a checkbox can call it without re-running the whole view.
+function refreshDispatchButton(s) {
   const pb = document.getElementById('head-patch');
-  const act = dispatchAction(plan);
+  if (!pb) return;
+  const plan = s.plan || {};
+  const act = dispatchAction(plan, s.hosts, hostSel);
   pb.textContent = act.label;
   pb.title = act.title;
   pb.classList.toggle('calm', act.calm);
@@ -3419,6 +3564,12 @@ const STEP_AT   = ['running', 'waiting'];
 // animation: this one stalls when the run stalls, which is the thing an
 // operator needs to see.
 function stepProgress(r) {
+  // A host can be on the plan without having been dispatched, since the
+  // checkboxes let an operator send a subset. Those rows have no result at
+  // all, and reading r.steps off undefined threw — taking the whole table
+  // render with it, so ticking "Show more columns" appeared to do nothing
+  // while the console had in fact stopped redrawing the table.
+  if (!r) return null;
   const steps = (r.steps || []).filter(s => s.status && s.status !== 'skipped');
   if (!steps.length) return null;
   const done = steps.filter(s => STEP_DONE.includes(s.status)).length;
@@ -3443,7 +3594,7 @@ const progCls = r => r.outcome === 'running'
 
 function progressCell(r) {
   const p = stepProgress(r);
-  if (!p) return `<span class="desc">${esc(r.error || '—')}</span>`;
+  if (!p) return `<span class="desc">${esc((r || {}).error || '—')}</span>`;
   return `<span class="prog ${progCls(r)}" style="--p:${p.pct}%">`
        + `<span class="prog-fill"></span></span>`
        + `<span class="prog-meta"><span class="prog-step">${esc(p.label)}</span>`
@@ -3606,6 +3757,9 @@ function renderPatch(s) {
   patchState = s;
   // Dispatched: resuming now has to rebuild this half too, not just the plan.
   parked = s;
+  // Keep watching after dispatch too. A restart here is worse, not better:
+  // the runs exist in AO and the console has forgotten it started them.
+  watchForRestart();
   parkedPhase = 'patch';
   if (runFinished(s)) {
     const rs = (s.patch || {}).results || [];
@@ -3677,9 +3831,13 @@ async function startRemediation(cveId) {
   el.className = 'result show info';
   el.innerHTML = `Handing <strong>${esc(cveId)}</strong> to the Patching Agent…`;
   try {
+    // Only send a list when one was actually chosen. Omitting it means
+    // "every assessed host", so the untouched case sends what it always
+    // sent and cannot be changed by a stale selection.
     const r = await fetch('/api/patch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cve: cveId }),
+      body: JSON.stringify(hostSel ? { cve: cveId, hosts: [...hostSel] }
+                                   : { cve: cveId }),
     });
     const d = await r.json().catch(() => ({}));
     if (!(r.ok && d.ok)) {
@@ -3709,10 +3867,17 @@ async function startRemediation(cveId) {
       }
       if (s.status === 'complete' && s.patch) {
         const sm = s.patch.summary || {};
+        const n = (s.patch.results || []).length;
+        // No counts here. This line is written once and never revisited, so
+        // whatever numbers it carried froze at the moment of dispatch — it
+        // went on reading "1 awaiting approval" long after that host had
+        // been approved, patched and verified, directly above stat boxes
+        // saying otherwise. Those are live and own the counts; this says
+        // only the part that stays true: what was sent, and to how many.
         el.className = 'result show ' + (sm.failed ? 'err' : 'ok');
-        el.innerHTML = `Dispatched <strong>${esc(cveId)}</strong> — `
-          + `${esc(sm.patched)} patched, ${esc(sm.awaiting_approval)} awaiting approval, `
-          + `${esc(sm.failed)} failed.`;
+        el.innerHTML = `Dispatched <strong>${esc(cveId)}</strong> to `
+          + `${esc(n)} host${n === 1 ? '' : 's'}. Status below updates as the `
+          + `workflow runs.`;
         dispatched = true;
         renderPatch(s);
         return;
@@ -4648,7 +4813,7 @@ async function showRuns() {
       <td class="muted-sm" style="white-space:nowrap"
           title="${esc(ago(r.created_at))}">${esc(stamp(r.created_at))}</td>
       <td class="cve-id">${cveLabel(r.cve_id)}</td>
-      <td class="cve-id">${esc(r.host)}</td>
+      <td class="cve-id" title="${esc(r.host)}">${esc(shortHost(r.host))}</td>
       <td>${esc(patchType(r.group))}</td>
       <td class="decide-cell">${status}</td>
       <td>${rep
@@ -4786,7 +4951,7 @@ async function showRunDetail(execId) {
     </div>
     <table style="margin-top:12px"><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
       <tr><td>CVE</td><td class="cve-id">${cveLabel(run.cve_id)}</td></tr>
-      <tr><td>Host</td><td class="cve-id">${esc(run.host || '—')}</td></tr>
+      <tr><td>Host</td><td class="cve-id" title="${esc(run.host || '')}">${esc(shortHost(run.host) || '—')}</td></tr>
       <tr><td>Patch type</td><td>${esc(patchType(run.group))}</td></tr>
       ${run.decision ? `<tr><td>Decision</td><td>${esc(run.decision)}</td></tr>` : ''}
       ${run.gate_wait ? `<tr><td>Waited at gate</td><td>${esc(run.gate_wait)}
@@ -5126,15 +5291,26 @@ function renderSettings() {
     key.className = 'set-key';
     key.textContent = s.key;
     name.appendChild(key);
-    if (s.source !== 'default') {
+    // Only 'changed' gets a chip. '.env' was on almost every row — once the
+    // console is configured at all, that is simply where its settings come
+    // from — so it marked the ordinary case and left the panel looking
+    // busier than it is. 'changed' is the one worth seeing: it says this
+    // value is process-local and will not survive a restart.
+    //
+    // The .env origin is still there, on hover over the key.
+    if (s.source === 'override') {
       const src = document.createElement('span');
       src.className = `set-src ${s.source}`;
       src.textContent = SRC_LABEL[s.source];
-      src.title = s.source === 'env'
-        ? `Set before startup. Built-in default: ${s.default || '(empty)'}`
-        : `Changed in this panel. Built-in default: ${s.default || '(empty)'}`;
+      src.title = `Changed in this panel, in memory only — lost on restart. `
+                + `Built-in default: ${s.default || '(empty)'}`;
       name.appendChild(src);
     }
+    key.title = s.source === 'env'
+      ? `${s.key} — set in .env before startup. Built-in default: ${s.default || '(empty)'}`
+      : s.source === 'override'
+        ? `${s.key} — changed in this panel. Built-in default: ${s.default || '(empty)'}`
+        : `${s.key} — built-in default (${s.default || 'empty'}); nothing has overridden it`;
     if (s.help) {
       // Sits with the label rather than with the field, because it explains
       // the setting and not the box you type in. Closed on every render: the

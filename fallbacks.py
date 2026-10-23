@@ -152,27 +152,45 @@ def history(host: str) -> str:
 # and carries an execution id that exists in no AO instance. Live mode never
 # reaches here — it raises instead.
 
-# Mirrors the node sequence of the AO workflow 'DemoJam Agentic Patching',
-# which implements steps 5-10 of the architecture. route_switch and
-# fetch_and_commit_prod are the real node ids; the console keys off both.
-SIM_STEPS = [
-    ('route_switch',                 'Step 5 — env gate, route prod/dev'),
-    ('approval_gate',                'Step 5 — hold for operator approval'),
-    ('generate_playbook',            'Step 6 — generate playbook from Lightspeed'),
-    ('fetch_and_commit_prod',        'Step 7 — commit remediation to git'),
-    ('sync_aap_project',             'Step 8 — sync the AAP project'),
-    ('schedule_job',                 'Step 9 — schedule inside the window'),
-    ('run_cve_remediation',          'Step 10 — phased remediation'),
+# Mirrors the AO workflow the console dispatches to — node ids and the names
+# the workflow itself gives them — so the offline demo tells the same story
+# as a live run, verification step included.
+#
+# This used to be a seven-step list of its own: an approval_gate, a
+# generate_playbook, a schedule_job that no workflow has ever contained, and
+# no verify step at all. The demo showed a run that could not happen and left
+# out the part of the real one that proves the patch landed.
+#
+# Two branches, because the real workflow has two and they use different node
+# ids — fetch_and_commit on the unattended path, fetch_and_commit_prod behind
+# the gate. The console keys off route_switch and fetch_and_commit_prod.
+SIM_STEPS_PROD = [
+    ('trigger_manual',            'CVE Alert'),
+    ('route_switch',              'Route Decision'),
+    ('approval_prod',             'Approve Production Patch'),
+    ('fetch_and_commit_prod',     'Fetch from Lightspeed & Commit to Gitea'),
+    ('deploy_script_prod',        'Sync & Deploy via AAP'),
+    ('run_cve_remediation_prod',  'Run CVE Remediation'),
+    ('verify_patch_prod',         'Verify Patch'),
 ]
+SIM_STEPS_DEV = [
+    ('trigger_manual',            'CVE Alert'),
+    ('route_switch',              'Route Decision'),
+    ('fetch_and_commit',          'Fetch from Lightspeed & Commit to Gitea'),
+    ('deploy_script',             'Sync & Deploy via AAP'),
+    ('run_cve_remediation',       'Run CVE Remediation'),
+    ('verify_patch',              'Verify Patch'),
+]
+SIM_GATE = 'approval_prod'
+SIM_LAST_PROD = SIM_STEPS_PROD[-1][0]
+SIM_LAST_DEV = SIM_STEPS_DEV[-1][0]
 
 
 def sim_steps(up_to: str, *, status: str = 'completed',
-           skip: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+              prod: bool = True) -> list[dict[str, Any]]:
     """Step list ending at `up_to`; nodes after it stay pending."""
     out, reached = [], False
-    for name, label in SIM_STEPS:
-        if name in skip:
-            continue
+    for name, label in (SIM_STEPS_PROD if prod else SIM_STEPS_DEV):
         if reached:
             out.append({'name': name, 'label': label, 'status': 'pending', 'error': None})
             continue
@@ -198,10 +216,10 @@ def patch_simulated(cve_id: str, host: str, group: str, reason: str,
         'status': 'waiting' if pending else 'completed',
         'outcome': 'awaiting_approval' if pending else 'patched',
         'approval_pending': pending,
-        'approval_activity_id': 'approval_gate' if pending else '',
+        'approval_activity_id': SIM_GATE if pending else '',
         'matched_port': group,
-        'steps': (sim_steps('approval_gate', status='waiting') if pending
-                  else sim_steps('run_cve_remediation', skip=('approval_gate',))),
+        'steps': (sim_steps(SIM_GATE, status='waiting') if pending
+                  else sim_steps(SIM_LAST_DEV, prod=False)),
         'error': None,
         'degraded': True, 'source': 'fallback', 'simulated': True,
         'reason': f'Ansible Orchestrator unreachable: {reason}',
