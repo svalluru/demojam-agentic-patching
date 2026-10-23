@@ -48,14 +48,20 @@ if [[ -f "$ENV_FILE" ]]; then
 else
   info "no env file at $ENV_FILE — using placeholders"
 fi
-# run.yaml registers the LLM from LLM_MODEL_ID. The served name is the part
-# after any prefix, so the older "llama-17b/llama-scout-17b" form still works.
+# run.yaml registers the LLM as summary-<served name> (why: see run.yaml).
+# The served name is the part after any prefix, so the older
+# "llama-17b/llama-scout-17b" form still works.
 INFERENCE_MODEL="${INFERENCE_MODEL:-deepseek-r1-distill-qwen-14b}"
 LLM_MODEL_ID="${INFERENCE_MODEL##*/}"
-info "LLM model: $LLM_MODEL_ID (console calls it as vllm-inference/$LLM_MODEL_ID)"
+LLM_MODEL_ALIAS="summary-$LLM_MODEL_ID"
+info "LLM model: $LLM_MODEL_ID, registered as vllm-inference/$LLM_MODEL_ALIAS"
+if [[ -n "${DEFAULT_LLM_MODEL:-}" && "$DEFAULT_LLM_MODEL" != "vllm-inference/$LLM_MODEL_ALIAS" ]]; then
+  info "WARNING: .env has DEFAULT_LLM_MODEL=$DEFAULT_LLM_MODEL — the console needs vllm-inference/$LLM_MODEL_ALIAS"
+fi
 oc create secret generic llamastack-inference-secret -n "$NAMESPACE" \
   --from-literal=INFERENCE_MODEL="$INFERENCE_MODEL" \
   --from-literal=LLM_MODEL_ID="$LLM_MODEL_ID" \
+  --from-literal=LLM_MODEL_ALIAS="$LLM_MODEL_ALIAS" \
   --from-literal=VLLM_URL="${VLLM_URL:-http://localhost:8000/v1}" \
   --from-literal=VLLM_API_TOKEN="${VLLM_API_TOKEN:-fake}" \
   --from-literal=VLLM_TLS_VERIFY="${VLLM_TLS_VERIFY:-false}" \

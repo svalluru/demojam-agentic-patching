@@ -58,12 +58,12 @@ spec:
                 secretKeyRef:
                   name: llamastack-inference-secret
                   key: INFERENCE_MODEL
-            # run.yaml registers the LLM under this name, served under the same.
-            - name: LLM_MODEL_ID
+            # run.yaml registers the LLM as the alias, served as the model id.
+            - name: LLM_MODEL_ALIAS
               valueFrom:
                 secretKeyRef:
                   name: llamastack-inference-secret
-                  key: LLM_MODEL_ID
+                  key: LLM_MODEL_ALIAS
             - name: LLM_PROVIDER_MODEL_ID
               valueFrom:
                 secretKeyRef:
