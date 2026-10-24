@@ -33,6 +33,9 @@
     --spring:cubic-bezier(.34,1.26,.64,1);
     --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
+  /* Set by the console, which owns Text size for both halves; this page used
+     to carry a second copy of the control and its own drawer. Standalone on
+     8790 there is nobody to set it and the default above applies. */
   html[data-ts="s"] { --ts: 1; }
   html[data-ts="m"] { --ts: 1.1; }
   html[data-ts="l"] { --ts: 1.24; }
@@ -67,7 +70,7 @@
     display: grid; place-items: center;
     font-weight: 800; font-size: calc(12.5px * var(--ts)); letter-spacing: .4px; color: #ffffff;
   }
-  header h1:not(.page-title) { font-size: calc(16px * var(--ts)); font-weight: 700; letter-spacing: -0.34px; line-height: 1.25; }
+  header h1 { font-size: calc(16px * var(--ts)); font-weight: 700; letter-spacing: -0.34px; line-height: 1.25; }
   header .tagline { font-size: calc(11px * var(--ts)); color: var(--muted); margin-top: 1px; }
   .head-right { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
   #demo-chip {
@@ -187,17 +190,34 @@
   button.primary:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
   button.primary svg { width: 16px; height: 16px; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .chip {
-    padding: 5px 13px; border: 1px solid var(--border); border-radius: 20px;
-    background: var(--panel); color: var(--muted); font-family: inherit;
-    font-size: calc(12px * var(--ts)); font-weight: 600; cursor: pointer; max-width: 100%;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    transition: color .14s var(--ease), border-color .14s var(--ease), transform .14s var(--spring), box-shadow .14s var(--ease);
+  /* The applications are a choice, not free text: every repository the scanner
+     can reach is listed by name and you tick the ones to patch. */
+  .sub-label { margin-top: 16px; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+  .sub-label + .applist { margin-top: 6px; }
+  /* A group with no heading of its own still needs to not touch the one above. */
+  .applist + .applist { margin-top: 8px; }
+  .applist { border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; background: var(--panel); }
+  .applist:empty { display: none; }
+  .app {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 10px;
+    align-items: center; padding: 9px 12px; cursor: pointer;
+    border-bottom: 1px solid var(--line); transition: background .14s var(--ease);
   }
-  .chip:hover { border-color: var(--red); color: var(--red); transform: translateY(-1px); box-shadow: var(--sh-1); }
-  .chip-label { margin-top: 14px; font-size: calc(11px * var(--ts)); font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
-  .chip-label + .chips { margin-top: 6px; }
+  .app:last-child { border-bottom: 0; }
+  .app:hover { background: var(--surface); }
+  .app input { grid-row: span 2; width: 16px; height: 16px; margin: 0; accent-color: var(--red); cursor: pointer; }
+  .app-n { font-weight: 700; font-size: calc(12.5px * var(--ts)); overflow-wrap: anywhere; }
+  .app-w { grid-column: 2; color: var(--muted); font-family: var(--mono); font-size: calc(10.5px * var(--ts)); overflow-wrap: anywhere; }
+  /* Only decoration — without :has() the native tick still tells you. */
+  .app:has(input:checked) { background: var(--tint-r); }
+  .app:has(input:checked) .app-n { color: var(--red); }
+  .applist-head { display: flex; align-items: baseline; gap: 10px; }
+  .link-btn {
+    margin-left: auto; padding: 0; background: none; border: 0; color: var(--red);
+    font-size: calc(11px * var(--ts)); font-weight: 700; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .link-btn:disabled { color: var(--muted); cursor: not-allowed; text-decoration: none; }
 
   .result {
     margin-bottom: 14px; padding: 12px 14px; border-radius: 9px;
@@ -460,22 +480,6 @@
   .empty strong { color: var(--text); font-size: calc(13.5px * var(--ts)); font-weight: 700; }
   .empty svg { width: 34px; height: 34px; opacity: .22; }
 
-  /* ---- display drawer ---- */
-  .drawer-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 40; background: rgba(11,11,12,.34); display: flex; justify-content: flex-end; animation: fade .22s var(--ease) both; }
-  @keyframes fade { from { opacity: 0; } }
-  .drawer { width: min(420px, 100%); height: 100%; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; box-shadow: var(--sh-3); animation: slidein .34s var(--ease) both; }
-  @keyframes slidein { from { transform: translateX(26px); opacity: .4; } }
-  .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-  .drawer-head h2 { font-size: calc(15px * var(--ts)); font-weight: 700; }
-  .drawer-head .icon-btn { margin-left: auto; }
-  .drawer-body { flex: 1; overflow-y: auto; padding: 4px 18px 18px; }
-  .seg { display: flex; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); padding: 2px; gap: 2px; }
-  .seg button { flex: 1; padding: 8px 4px; border: none; border-radius: 7px; cursor: pointer; background: transparent; color: var(--muted); font-family: inherit; font-weight: 700; transition: background .15s var(--ease), color .15s var(--ease); }
-  .seg button:hover { color: var(--red); }
-  .seg button[aria-pressed="true"] { background: var(--red); color: #ffffff; box-shadow: var(--sh-1); }
-  .seg button[data-ts="s"] { font-size: calc(11.5px * 1); }
-  .seg button[data-ts="m"] { font-size: calc(11.5px * 1.1); }
-  .seg button[data-ts="l"] { font-size: calc(11.5px * 1.24); }
 
   /* ---- layout by width ---- */
   @media (min-width: 861px) {
@@ -504,16 +508,10 @@
     .lwd-grid { grid-template-columns: minmax(0, 1fr); }
     .lwd-grid dt { margin-top: 5px; }
   }
-  html.embedded header .logo, html.embedded header h1:not(.page-title), html.embedded header .tagline { display: none; }
+  html.embedded header .logo, html.embedded header h1, html.embedded header .tagline { display: none; }
   html.embedded header { justify-content: flex-end; }
   html.embedded header .head-right { margin-left: 0; order: 1; }
   html.embedded #console, html.embedded #demo-chip { display: none; }
-  .page-title { display: none; }
-  html.embedded .page-title {
-    display: block; flex-shrink: 0; order: 2; margin-left: 6px; padding: 7px 16px 7px 14px;
-    background: #1d2026; color: #ffffff; border-left: 4px solid var(--red); border-radius: 2px 9px 2px 9px;
-    font-size: calc(15px * var(--ts)); font-weight: 700; letter-spacing: -0.2px; line-height: 1.25; user-select: none;
-  }
   @media (max-width: 560px) {
     #console { display: none; }
     .frame-head { padding: 11px 12px; }
@@ -524,7 +522,9 @@
   }
   @media (pointer: coarse), (max-width: 860px) {
     textarea, input[type=text], select { font-size: max(16px, calc(12px * var(--ts))); }
-    .chip, .ghost-btn, .icon-btn, .seg button, button.primary { min-height: 40px; }
+    .ghost-btn, .icon-btn, button.primary { min-height: 40px; }
+    .app { padding: 12px; }
+    .app input { width: 20px; height: 20px; }
     .icon-btn { min-width: 40px; height: 40px; }
     .rs-log summary, details summary { padding-top: 10px; padding-bottom: 10px; }
   }
@@ -532,12 +532,6 @@
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   }
 </style>
-<script>
-  try {
-    var t = localStorage.getItem('lw-text-size');
-    if (t === 's' || t === 'm' || t === 'l') document.documentElement.setAttribute('data-ts', t);
-  } catch (e) {}
-</script>
 </head>
 <body>
 
@@ -554,7 +548,6 @@
 </svg>
 
 <header>
-  <h1 class="page-title">Application Patching</h1>
   <div class="logo">LW</div>
   <div>
     <h1>Lightwell Dependency Scanner</h1>
@@ -566,22 +559,22 @@
     <div class="status" role="status" aria-live="polite"><span class="dot" id="dot"></span><span id="status">Loading...</span></div>
     <div class="head-tools">
       <a class="ghost-btn" id="console" href="#">Infrastructure Patching</a>
-      <button class="icon-btn" id="open-display" type="button" title="Text size" aria-label="Text size">Aa</button>
     </div>
   </div>
 </header>
 <div class="scan"></div>
 
 <div class="frames">
-  <section class="frame" id="side-frame" aria-label="Repositories">
-    <div class="frame-head"><h2>Repositories</h2><div class="frame-sub"><span>GitHub and GitLab</span></div></div>
+  <section class="frame" id="side-frame" aria-label="Deployed applications inventory">
+    <div class="frame-head"><h2>Deployed applications inventory</h2></div>
     <div class="frame-body">
-      <label class="f" for="repos">Repositories, one per line</label>
-      <textarea id="repos" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="owner/repo (GitHub)&#10;https://github.com/owner/repo&#10;https://gitlab.com/group/project&#10;https://github.com/owner/repo/tree/main/service-a"></textarea>
-      <p class="hint">A <span class="mono">/tree/branch/folder</span> URL scans just that folder. The files it reads are listed below.</p>
-      <div class="chip-label">Try these: Lightwell has builds for some of their dependencies</div>
-      <div class="chips" id="tryChips"></div>
-      <div class="chips" id="demoChips"></div>
+      <div class="applist-head">
+        <label class="f">Applications to patch</label>
+        <button class="link-btn" id="selAll" type="button">Select all</button>
+      </div>
+      <p class="hint">Tick the applications to scan, then press Scan. The files read from each one are listed below.</p>
+      <div id="appGroups"></div>
+      <p class="hint" id="selCount"></p>
       <div class="row">
         <button class="primary" id="scan" type="button"><svg aria-hidden="true"><use href="#i-gear" xlink:href="#i-gear"></use></svg><span id="scanLabel">Scan</span></button>
         <button class="ghost-btn" id="rescan" type="button" title="Scan every repository in the list again, including the ones that already have a result">Rescan all</button>
@@ -608,36 +601,22 @@
     <div class="frame-body">
       <div class="result" id="banner" role="status"></div>
       <div class="run" id="run" hidden></div>
-      <div id="results"><div class="empty"><svg aria-hidden="true"><use href="#i-doc" xlink:href="#i-doc"></use></svg><strong>No scan yet</strong><span>Add repositories and press Scan.</span></div></div>
+      <div id="results"><div class="empty"><svg aria-hidden="true"><use href="#i-doc" xlink:href="#i-doc"></use></svg><strong>No scan yet</strong><span>Select applications and press Scan.</span></div></div>
     </div>
   </section>
-</div>
-
-<div class="drawer-scrim" id="display-scrim" hidden>
-  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="display-title">
-    <div class="drawer-head">
-      <h2 id="display-title">Display</h2>
-      <button class="icon-btn" id="close-display" type="button" title="Close" aria-label="Close">&times;</button>
-    </div>
-    <div class="drawer-body">
-      <div class="grp">Text size</div>
-      <div class="seg" id="text-size" role="group" aria-label="Text size">
-        <button type="button" data-ts="s">Small</button>
-        <button type="button" data-ts="m">Medium</button>
-        <button type="button" data-ts="l">Large</button>
-      </div>
-      <p class="hint">Applies as soon as you pick it and is remembered in this browser. Nothing is sent to the server.</p>
-    </div>
-  </aside>
 </div>
 
 <script>
 var $ = function (id) { return document.getElementById(id); };
 var SEV = ['critical', 'high', 'moderate', 'low', 'unknown'];
-var SUGGESTED = [{text: 'JoyChou93/java-sec-code'}, {text: 'snyk-labs/java-goof'}, {text: 'https://gitlab.com/pdftk-java/pdftk', slug: 'gitlab.com/pdftk-java/pdftk'}, {text: 'https://github.com/mitreid-connect/simple-web-app.git', slug: 'mitreid-connect/simple-web-app', tip: 'Add to the list. Lightwell coverage has not been checked for this repository.'}];
+var SUGGESTED = [{text: 'JoyChou93/java-sec-code'}, {text: 'snyk-labs/java-goof'}, {text: 'https://gitlab.com/pdftk-java/pdftk', slug: 'gitlab.com/pdftk-java/pdftk'}, {text: 'https://github.com/mitreid-connect/simple-web-app.git', slug: 'mitreid-connect/simple-web-app', tip: 'Lightwell coverage has not been checked for this repository.'}];
+// Constructed, not a real repository, so it is only offered when demo mode can
+// serve it from recorded data. The walkthrough opens and closes on this one.
+var DEMO_ONLY = [{text: 'demojam/lightwell-coverage-demo', tip: 'Constructed for the demo from versions Lightwell patches, so every coverage outcome appears. Recorded data only.'}];
 var STEPS = [['fetch', 'Fetch repository', 0.15], ['parse', 'Read manifests', 0.05], ['osv', 'Query OSV.dev', 0.3], ['coverage', 'Check Lightwell coverage', 0.5]];
 var STEP_STATE = {waiting: 'Waiting', running: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped'};
 var current = null, poll = null, failures = 0, filter = {sev: 'all', text: '', lw: 'all'};
+var BUSY = false;   // a scan this page started; syncSel() turns it into disabled buttons
 var RUN = {id: null, secs: [], top: null, fetchedAt: 0, skew: 0};
 var RES = {key: ''};
 
@@ -675,13 +654,73 @@ async function api(method, path, body) {
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
-function repoList() { return $('repos').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean); }
-
-function chip(text, title) {
-  var c = el('button', {class: 'chip', type: 'button', text: text, title: title});
-  c.onclick = function () { var l = repoList(); if (l.indexOf(text) < 0) { l.push(text); $('repos').value = l.join('\n'); } };
-  return c;
+/* ---- the application list ----------------------------------------------
+   The scan runs on whatever is ticked. Values stay in the form the scanner
+   parses (a slug or a URL); only the label is prettified. */
+function repoList() {
+  return boxes().filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
 }
+function boxes() { return [].slice.call($('appGroups').querySelectorAll('input[type=checkbox]')); }
+
+/* One repository two ways: a key for matching, and a name a person reads.
+   github.com/owner/repo.git, owner/repo and a /tree/branch/folder URL all have
+   to collapse to the same key, or a saved entry comes back as a second row. */
+function repoKey(text) {
+  return String(text).trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '')
+    .replace(/\.git$/, '').replace(/\/+$/, '').replace(/^github\.com\//, '');
+}
+function appParts(text) {
+  var s = String(text).trim().replace(/^https?:\/\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  var cut = s.split(/\/(?:-\/)?tree\//);          // GitLab spells it /-/tree/
+  var seg = cut[0].split('/').filter(Boolean);
+  var host = seg.length && seg[0].indexOf('.') > 0 ? seg.shift() : 'github.com';
+  var name = seg[seg.length - 1] || cut[0];
+  var owner = seg.slice(0, -1).join('/');
+  if (cut[1]) {                                   // .../tree/<branch>/<folder>
+    var sub = cut[1].split('/').filter(Boolean).slice(1);
+    if (sub.length) { owner = (owner ? owner + '/' : '') + name; name = sub[sub.length - 1]; }
+  }
+  return {name: name, where: (owner ? owner + ' · ' : '') + host};
+}
+
+function appRow(text, title) {
+  var p = appParts(text);
+  var box = el('input', {type: 'checkbox', value: text});
+  box.onchange = syncSel;
+  return el('label', {class: 'app', title: title ? text + ' — ' + title : text},
+            [box, el('span', {class: 'app-n', text: p.name}), el('span', {class: 'app-w', text: p.where})]);
+}
+
+/* Groups are built once; ticking is the only thing that changes afterwards. */
+function renderApps(groups) {
+  var wrap = $('appGroups');
+  wrap.innerHTML = '';
+  groups.forEach(function (g) {
+    if (!g.items.length) return;
+    if (g.label) wrap.appendChild(el('div', {class: 'sub-label', text: g.label}));
+    var list = el('div', {class: 'applist'});
+    g.items.forEach(function (it) { list.appendChild(appRow(it.text, it.tip)); });
+    wrap.appendChild(list);
+  });
+  syncSel();
+}
+
+function syncSel() {
+  var all = boxes(), n = repoList().length;
+  $('scan').disabled = BUSY || !n;
+  $('rescan').disabled = BUSY || !n;
+  $('selAll').disabled = !all.length;
+  $('selAll').textContent = all.length && n === all.length ? 'Clear all' : 'Select all';
+  $('selCount').textContent = !all.length ? ''
+    : n ? n + ' of ' + all.length + ' selected'
+        : 'Nothing selected — tick at least one application to scan.';
+}
+$('selAll').onclick = function () {
+  var all = boxes(), on = repoList().length !== all.length;
+  all.forEach(function (b) { b.checked = on; });
+  syncSel();
+};
 
 function setStatus(text, busy) {
   $('status').textContent = text;
@@ -692,6 +731,10 @@ async function init() {
   $('console').href = location.pathname.indexOf('/lightwell/') === 0 ? '/' : location.protocol + '//' + location.hostname + ':8788';
   if (window.parent !== window) {
     document.documentElement.classList.add('embedded');
+    // Nothing scanned yet, so the console's bar goes back to all pending
+    // rather than keeping whatever an earlier load of this frame left on it.
+    // It is drawn either way — the stages are what this side is going to do.
+    reportProgress(null);
   }
   setStatus('Connecting...', false);
   try {
@@ -701,19 +744,37 @@ async function init() {
     REM_READY = m.remediation || REM_READY;
     var lb = $('lwbadge'), li = m.lightwell || {};
     lb.hidden = false; lb.title = li.note || '';
-    lb.textContent = li.source === 'sample' ? 'Lightwell: sample data' : li.source === 'api' ? 'Lightwell: live API' + (li.demo_repositories ? ' (demo repositories)' : '') : 'Lightwell: not checked';
+    lb.textContent = li.source === 'sample' ? 'Lightwell data' : li.source === 'api' ? 'Lightwell: live API' + (li.demo_repositories ? ' (demo repositories)' : '') : 'Lightwell: not checked';
     lb.className = 'cov-chip' + (li.source === 'api' ? '' : li.source === 'sample' ? ' sample' : ' none');
     $('tokenNote').textContent = m.mode === 'live'
       ? (m.github_token ? 'GitHub token set. ' : 'No GitHub token: 60 API calls an hour. ') + (m.gitlab_token ? 'GitLab token set.' : 'No GitLab token: public projects only.')
       : 'Demo mode opens no network connection.';
-    $('tryChips').innerHTML = ''; $('demoChips').innerHTML = '';
-    SUGGESTED.forEach(function (s) { $('tryChips').appendChild(chip(s.text, s.tip || 'Add to the list. Had Lightwell-covered versions when checked on 2026-10-19; the live catalog changes.')); });
-    var suggested = SUGGESTED.map(function (s) { return s.slug || s.text; });
-    if (m.mode === 'demo') (m.demo_repos || []).forEach(function (r) {
-      if (suggested.indexOf(r) < 0) $('demoChips').appendChild(chip(r, 'Add to the list'));
-    });
     var saved = await api('GET', 'v1/repos');
-    if (saved.repos.length) $('repos').value = saved.repos.join('\n');
+    var seen = {}, take = function (text, tip) {
+      var k = repoKey(text);
+      if (seen[k]) return null;
+      seen[k] = 1;
+      return {text: text, tip: tip};
+    };
+    var shortlist = SUGGESTED.concat(m.mode === 'demo' ? DEMO_ONLY : []);
+    shortlist.forEach(function (s) { seen[repoKey(s.slug || s.text)] = 1; });
+    var suggested = shortlist.map(function (s) {
+      return {text: s.text, tip: s.tip || 'Had Lightwell-covered versions when checked on 2026-10-19; the live catalog changes.'};
+    });
+    // In demo mode the rest of the recorded repositories are listed too: offline
+    // they are the only other ones a scan can answer for. No heading of their
+    // own — they are a second box under the first, not a separate idea.
+    var recorded = m.mode !== 'demo' ? []
+      : (m.demo_repos || []).map(function (r) { return take(r, 'Recorded for demo mode'); }).filter(Boolean);
+    var extra = (saved.repos || []).map(function (r) { return take(r, 'From your saved list'); }).filter(Boolean);
+    renderApps([{label: 'Lightwell has builds for some of their dependencies', items: suggested},
+                {label: '', items: recorded},
+                {label: 'Saved', items: extra}]);
+    // The saved list is the selection, so a reload comes back as you left it.
+    var want = {};
+    (saved.repos || []).forEach(function (r) { want[repoKey(r)] = 1; });
+    boxes().forEach(function (b) { if (want[repoKey(b.value)]) b.checked = true; });
+    syncSel();
     await loadHistory();
     setStatus(m.mode === 'live' ? 'Live. Ready' : 'Demo. Ready', false);
   } catch (e) { $('dot').className = 'dot off'; setStatus('Offline', false); banner('Could not reach the scanner: ' + e.message); }
@@ -733,9 +794,10 @@ $('save').onclick = async function () {
   try { await api('PUT', 'v1/repos', {repos: repoList()}); banner(''); } catch (e) { banner(e.message); }
 };
 function scanning(on) {
-  $('scan').disabled = on; $('rescan').disabled = on;
+  BUSY = on;
   $('scanLabel').textContent = on ? 'Scanning...' : 'Scan';
   $('scan').querySelector('svg').style.animation = on ? 'spin 2.4s linear infinite' : '';
+  syncSel();          // owns the disabled state: busy, or nothing ticked
 }
 async function startScan(reuse) {
   banner('');
@@ -760,15 +822,112 @@ async function show(id) {
     failures = 0; banner('');
     current = d.scan;
     RUN.fetchedAt = Date.now();
-    syncRun(current); syncResults(current); syncHead(current);
+    syncRun(current); syncResults(current); syncHead(current); reportProgress(current);
     var running = current.status !== 'done';
-    scanning(running && $('scan').disabled);
+    scanning(running && BUSY);
     if (running) poll = setTimeout(function () { show(id); }, 800); else { loadHistory().catch(function () {}); }
   } catch (e) {
     failures++;
     if (failures <= 5) { banner('Lost contact with the scanner (' + e.message + '). Retrying, attempt ' + failures + ' of 5...'); poll = setTimeout(function () { show(id); }, 1500); }
     else { banner('Could not reach the scanner: ' + e.message); scanning(false); setStatus('Offline', false); }
   }
+}
+
+/* ---- the console's scan bar ----
+   Embedded in the console, the header carries a progress bar per side of the
+   Infrastructure / Application toggle, and this page owns the application
+   one. The console draws it; this works out what it says, because the
+   progress lives here. Same origin -- the console serves this page off its
+   own port at /lightwell/ -- so it is a function call, not a message.
+
+   One bar for a scan of any number of repositories, so each step is the state
+   of that step across all of them: still running somewhere means running. */
+function stepRollup(scan) {
+  var MAP = {waiting: 'pending', running: 'active', done: 'done', failed: 'failed', skipped: 'skipped'};
+  var st = {};
+  STEPS.forEach(function (d, i) {
+    var any = {};
+    (scan.repos || []).forEach(function (r) {
+      var p = r.progress, x = p && p.steps && p.steps[d[0]];
+      // A finished repository drops its progress, so its steps are read off
+      // the repository itself: done means every step of it got there, and an
+      // error with nothing reported never got past the first one -- marking
+      // all four failed would blame steps that were never attempted.
+      var s = x ? (MAP[x.state] || 'pending')
+        : r.status === 'done' ? 'done'
+        : r.status === 'error' ? (i ? 'skipped' : 'failed') : 'pending';
+      any[s] = 1;
+    });
+    st[d[0]] = any.active ? 'active' : any.failed ? 'failed' : any.pending ? 'pending'
+      : any.done ? 'done' : any.skipped ? 'skipped' : 'pending';
+  });
+  // Between one repository finishing and the next starting, nothing is
+  // running and the bar would read as stalled. Light the step it is up to.
+  if (scan.status !== 'done') {
+    var live = STEPS.filter(function (d) { return st[d[0]] === 'active'; }).length;
+    if (!live) {
+      var next = STEPS.filter(function (d) { return st[d[0]] === 'pending'; })[0];
+      if (next) st[next[0]] = 'active';
+    }
+  }
+  return st;
+}
+
+/* The other half of the bar: the remediation run, for the one repository
+   whose panel is open. Read off the same state paintRem() draws from, so the
+   bar and the card can never disagree. Nothing open is four pending. */
+function remRollup() {
+  var st = {plan: 'pending', approve: 'pending', build: 'pending', push: 'pending'};
+  var s = remFocus();
+  if (!s) return st;
+
+  // Plan: the preview comes back from the server, so there is a moment of
+  // waiting, and a failed preview is a failed stage rather than a stuck one.
+  st.plan = s.plan ? 'done' : s.error && !s.run ? 'failed' : 'active';
+
+  // Approval: active means the gate is open and waiting on a person, the same
+  // as the patch run's own. A plan with nothing in it has nothing to approve.
+  if (s.run) st.approve = 'done';
+  else if (s.plan) st.approve = s.plan.changes.length ? 'active' : 'skipped';
+
+  if (!s.run) return st;
+  var v = s.view;
+  // The job is away but has not reported yet.
+  if (!v) { st.build = 'active'; return st; }
+  var byId = {};
+  (v.stages || []).forEach(function (x) { byId[x.id] = x.state; });
+  // Clone, edit and build only. The run as a whole failing is not enough to
+  // call this failed — a push that is rejected fails the run with the build
+  // already behind it, and marking the build failed because of that is a lie
+  // about work that succeeded. The run's own state is the fallback for a
+  // failure that never named a stage.
+  var work = ['clone', 'edit', 'build'].map(function (k) { return byId[k]; });
+  st.build = work.indexOf('failed') >= 0 ? 'failed'
+    : work.every(function (x) { return x === 'done'; }) ? 'done'
+    : v.state === 'failed' ? 'failed' : 'active';
+
+  // Push is its own run with the push step turned on, so a build that was
+  // never pushed leaves this pending rather than failed — there is a button
+  // offering it. A failed build never gets the chance.
+  var res = v.result || {};
+  st.push = res.pushed ? 'done'
+    : res.push_error ? 'failed'
+    : byId.push ? (byId.push === 'running' ? 'active' : byId.push)
+    : st.build === 'failed' ? 'skipped' : 'pending';
+  return st;
+}
+
+// Never allowed to break a scan: the console is a separate document and may
+// be an older build, or not there at all when this page runs standalone.
+function reportProgress(scan) {
+  if (window.parent === window) return;
+  try {
+    if (typeof window.parent.appStages === 'function') {
+      var st = scan ? stepRollup(scan) : {}, rem = remRollup();
+      for (var k in rem) st[k] = rem[k];
+      window.parent.appStages(st);
+    }
+  } catch (e) { /* different origin, or no console: the bar is not essential */ }
 }
 
 function syncHead(scan) {
@@ -1510,10 +1669,33 @@ var REM_SRC_LABEL = {lightwell: 'Lightwell', another: 'Lightwell, another build'
 
 function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], major: false, java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}}; }
 
+// A scan covers every repository ticked; a remediation is one of them. The
+// console's bar has to pick one for its second half, and the one you just
+// opened is the one you are looking at. Panels can be left open, so this is
+// the last opened rather than the first found.
+var REM_FOCUS = '';
+function remFocus() {
+  var s = REM_FOCUS && current ? REM[current.id + ' ' + REM_FOCUS] : null;
+  // A run keeps the focus after its panel is collapsed: a job still building
+  // is worth more on the bar than four pending circles.
+  return s && (s.open || s.run) ? s : null;
+}
+
 function remButton(r) {
   var s = remState(r.url);
-  var b = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Remediate', title: 'Clone the repository, change the dependency versions, and build it, using the AAP environment'});
-  b.onclick = function () { s.open = !s.open; if (s.open && !s.plan) remPreview(r); paintRem(r); };
+  // Not 'Remediate'. This button remediates nothing — it opens the panel and
+  // works out a change list. The press that clones and builds is Approve and
+  // run, inside. Naming the read-only step after the destructive one promises
+  // the wrong thing, and the Infrastructure side does not do it either: there
+  // the entry button is Assess and the gate is a separate press.
+  var b = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Plan a fix', title: 'Choose where the fixes come from and see exactly which dependency versions would change. Nothing is cloned or built until you approve it'});
+  b.onclick = function () {
+    s.open = !s.open;
+    if (s.open) REM_FOCUS = r.url;
+    else if (REM_FOCUS === r.url && !s.run) REM_FOCUS = '';
+    if (s.open && !s.plan) remPreview(r);
+    paintRem(r);
+  };
   return b;
 }
 
@@ -1550,10 +1732,16 @@ function diffNode(text) {
 
 function paintRem(r) {
   var s = remState(r.url), slot = s.node;
+  // Every change to a remediation comes through here — opening the panel, the
+  // preview arriving, each poll of the job — so this is the one place the
+  // console's bar needs telling about the second half of its stages.
+  reportProgress(current);
   if (!slot) return;
   slot.innerHTML = '';
   if (!s.open) return;
-  var outer = el('div', {class: 'xp-block rem'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Remediate'}), el('span', {class: 'muted', text: 'clone, update the versions, build'})])]);
+  // The panel is the whole flow, so it keeps the noun. The stages in the
+  // subtitle are the ones the console's header bar draws for this half.
+  var outer = el('div', {class: 'xp-block rem'}, [el('div', {class: 'xp-block-h'}, [el('span', {text: 'Remediation'}), el('span', {class: 'muted', text: 'plan, approve, build, push'})])]);
   var box = el('div', {class: 'xp-block-b'}); outer.appendChild(box);
   box.appendChild(el('div', {class: 'hint', style: 'margin-top:0', text: REM_READY.detail}));
   var locked = !!s.run, offered = s.plan ? s.plan.offered : {};
@@ -1655,6 +1843,8 @@ function paintRem(r) {
 async function remStart(r, push) {
   var s = remState(r.url);
   clearTimeout(s.timer);
+  // Approving a run makes it the one the bar is about, whatever else is open.
+  REM_FOCUS = r.url;
   s.error = ''; s.view = null; s.run = 'starting';
   paintRem(r);
   try {
@@ -1753,24 +1943,6 @@ function expansion(f, sample) {
   box.appendChild(el('div', {class: 'xp-end', text: 'End of details for ' + label}));
   return box;
 }
-
-/* ---- text size ---- */
-
-function setTextSize(t) {
-  document.documentElement.setAttribute('data-ts', t);
-  try { localStorage.setItem('lw-text-size', t); } catch (e) {}
-  Array.prototype.forEach.call(document.querySelectorAll('#text-size button'), function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-ts') === t)); });
-}
-$('text-size').addEventListener('click', function (e) {
-  var b = e.target.closest ? e.target.closest('button') : null;
-  if (b) setTextSize(b.getAttribute('data-ts'));
-});
-setTextSize(document.documentElement.getAttribute('data-ts') || 'm');
-function drawer(open) { $('display-scrim').hidden = !open; if (open) $('close-display').focus(); else $('open-display').focus(); }
-$('open-display').onclick = function () { drawer(true); };
-$('close-display').onclick = function () { drawer(false); };
-$('display-scrim').onclick = function (e) { if (e.target === this) drawer(false); };
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('display-scrim').hidden) drawer(false); });
 
 renderFileTypes();
 init();

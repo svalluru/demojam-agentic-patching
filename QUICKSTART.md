@@ -29,10 +29,20 @@ cd demojam-agentic-patching
 ./demo.sh
 ```
 
-Then open <http://127.0.0.1:8788>. The **Application Patching** button in the header
-opens the application-library scanner (Lightwell), served from the same
-address at `/lightwell/`. It is part of the console's own server, so it needs no
-port of its own.
+Then open <http://127.0.0.1:8788>. The **Infrastructure / Application** toggle in
+the header switches between patching the hosts and patching what the
+applications depend on. Application is the library scanner (Lightwell), served
+from the same address at `/lightwell/`. It is part of the console's own server,
+so it needs no port of its own.
+
+The bar under the toggle is where the run has got to, and it belongs to the
+side you are on: on Infrastructure, the five stages of a patch run; on
+Application, the four steps of a dependency scan and then the four of
+remediating one of the repositories it found — Fetch, Manifests, OSV.dev,
+Lightwell, Plan, Approval, Build, Push. The scan half is the whole scan,
+so a step is done when every ticked repository is past it. The remediation
+half follows whichever repository you pressed **Plan a fix** on, and sits
+pending until you press it somewhere.
 
 That is the whole setup. Do **not** create a `.env` — fallback mode does not
 read one, and it is not needed unless you are connecting to the real cluster.

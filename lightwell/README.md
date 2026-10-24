@@ -8,7 +8,7 @@ Point it at GitHub or GitLab repositories and it tells you which of their depend
 
 For the full picture (where the CVEs come from, the scan flow, starting and stopping everything, and a demo script) see [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 
-It lives in its own folder and shares no code or state with the patching console. The console's server loads it and serves it as the **Application Patching** page at `/lightwell/` on the console's own port, in the same process, so `./demo.sh` is all that is needed and there is one address to open. It also runs on its own, as below, which is only needed when working on it.
+It lives in its own folder and shares no code or state with the patching console. The console's server loads it and serves it as the **Application** side of the header toggle, at `/lightwell/` on the console's own port, in the same process, so `./demo.sh` is all that is needed and there is one address to open. It also runs on its own, as below, which is only needed when working on it.
 
 ## Run it
 
@@ -114,7 +114,7 @@ Check the credentials before scanning: `curl -s localhost:8790/v1/lightwell/stat
 
 ## The page
 
-The page follows the look of the patching console in `../frontend`: the same colours, type scale, header, panels and controls. Text size (Small, Medium, Large) is under the Aa button and is kept in the browser only. It is one column below 860 px wide and keeps tables scrollable inside their panels.
+The page follows the look of the patching console in `../frontend`: the same colours, type scale, header, panels and controls. Text size follows the console's own setting, under the gear there; served from the console this page has no copy of the control, and standalone on 8790 it uses the medium scale. It is one column below 860 px wide and keeps tables scrollable inside their panels.
 
 The left panel lists the files the scanner reads (with which ecosystems Lightwell has builds for), and after a scan, the files it actually read in each repository: path, type, component count, how many of those components are vulnerable, any note about the file, and files that were skipped or could not be fetched.
 
@@ -258,7 +258,9 @@ Run the tests with `python3 -m unittest discover -s tests -t .` from this folder
 
 ## Remediation
 
-Each repository card has a **Remediate** button. It clones the repository, changes the dependency versions, builds the result, and can push the branch, all as one job on the AAP controller (`aap-setup/playbooks/app_clone_update_build.yml`). The scanner decides what to change and the job applies exactly that list, so what you approved is what runs.
+Each repository card has a **Plan a fix** button, and it does only that: it opens a panel and works out which dependency versions would change. Nothing is cloned, built or pushed by pressing it, so you can change the choices below as often as you like and watch the change list follow.
+
+**Approve and run**, inside the panel, is the press that acts. It clones the repository, changes the dependency versions and builds the result as one job on the AAP controller (`aap-setup/playbooks/app_clone_update_build.yml`). The scanner decides what to change and the job applies exactly that list, so what you approved is what runs. Pushing the branch is a third press again, offered only once the build has succeeded.
 
 Pick where a fix may come from, with three checkboxes:
 

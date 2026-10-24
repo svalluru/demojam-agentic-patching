@@ -8,14 +8,14 @@ This walks through what was built, where the vulnerability data comes from, how 
 
 ## What this is
 
-Two programs. They share no code, no state and no data. The console's server loads the scanner and serves it under `/lightwell/`, so with `./demo.sh` both are opened from one address and the console header has an **Application Patching** button.
+Two programs. They share no code, no state and no data. The console's server loads the scanner and serves it under `/lightwell/`, so with `./demo.sh` both are opened from one address and the console header has an **Infrastructure / Application** toggle that switches between them.
 
 | Program | What it is | Port | Where it lives |
 |---------|-----------|------|----------------|
 | Patching console | The existing agentic OS-patching demo. Picks a CVE, scores risk, asks for approval, patches hosts through Ansible | 8788 (UI), 8787 (API) | Repository root |
 | Lightwell scanner | New. Takes GitHub repositories, finds vulnerable dependencies, shows whether Lightwell has a fix | 8788, at `/lightwell/` (8790 only when run on its own) | `lightwell/` |
 
-The scanner tells you what is wrong and what could fix it. From a finished scan, the **Remediate** button on a repository card clones it, changes the dependency versions you approved (from Lightwell builds, a nearby Lightwell build, or OSV upgrades, as you choose), and builds it as an AAP job. See the Remediation section of the README.
+The scanner tells you what is wrong and what could fix it. From a finished scan, **Plan a fix** on a repository card works out which dependency versions would change and where each fix comes from — Lightwell builds, a nearby Lightwell build, or OSV upgrades, as you choose. That is a preview: nothing is cloned and nothing is built. **Approve and run**, inside the panel, dispatches the AAP job that clones the repository, applies exactly that list and builds it; pushing the branch is a further press again. See the Remediation section of the README.
 
 ## Where the CVEs come from
 
@@ -30,7 +30,7 @@ There are two different sources, because the two programs look at different laye
 
 Two things are worth saying out loud when you present this:
 - **Lightwell is not where the vulnerabilities come from.** Lightwell does not find vulnerabilities. It supplies fixes: remediated builds of specific library versions. The scanner asks OSV what is wrong, then asks whether Lightwell has a build that addresses it.
-- **The Lightwell answer in demo mode is sample data.** It is a small hand-written file, labelled as a sample everywhere it appears. In live mode without credentials the scanner says "not checked". With a Red Hat console service account (in a group with the Repositories viewer role) in `lightwell/.env`, it asks the real Lightwell Network API instead.
+- **The Lightwell answer in demo mode is sample data.** It is a small hand-written file. The findings panel says so in a note above the results, and the header badge says so in its tooltip. In live mode without credentials the scanner says "not checked". With a Red Hat console service account (in a group with the Repositories viewer role) in `lightwell/.env`, it asks the real Lightwell Network API instead.
 
 ## How a scan works
 
@@ -173,9 +173,9 @@ To clear the scanner's saved results and repository list, delete the folder `lig
 
 ## Using it
 
-1. Open <http://127.0.0.1:8790>. The header says which mode you are in and that the Lightwell coverage is sample data.
-2. In demo mode, click a chip to add a recorded repository. In live mode, type any `owner/repo` or GitHub URL, one per line.
-3. Press **Scan**. Each repository shows its progress, then its results.
+1. Open <http://127.0.0.1:8790>. The header says which mode you are in and carries a **Lightwell data** badge; hover it to read where that data came from.
+2. Tick the applications to patch in the **Deployed applications inventory** on the left. Each is listed by application name with its owner and host underneath; **Select all** takes the lot. The inventory is a shortlist Lightwell has builds for, then the rest of the repositories a demo scan can answer for, then anything previously saved. In live mode only the shortlist and your saved list appear.
+3. Press **Scan**. Each repository shows its progress, then its results. Run from the console rather than on its own, the scan also appears as a bar under the header toggle, in the place the patch run's own stages take on the Infrastructure side. Eight stages: the four steps of the scan — Fetch, Manifests, OSV.dev, Lightwell — and then the four of remediating one of the repositories it found — Plan, Approval, Build, Push. Build is the AAP job (clone, apply the versions, build and verify) and stops at the build host; Push is the separate press that puts the branch somewhere a person can see it. The scan half is one bar for the whole scan, so a step is done when every repository is past it. The remediation half is one repository at a time, so it follows whichever repository you pressed **Plan a fix** on and reads as pending until you press it somewhere.
 4. The summary shows repositories scanned, components checked, vulnerable components, and counts by severity, then the Lightwell coverage tiles.
 5. Click a package row to open its advisories. Each shows the CVE and GitHub advisory ids (linked to osv.dev), severity and score, the versions that fix it, and a "Fixed by Lightwell build" tag where the build addresses it.
 6. Use the filters to narrow by severity, by package name, or by Lightwell coverage.
@@ -231,8 +231,8 @@ Before going on stage run `./preflight.py` (add `--scan appsecco/dvja` for a ful
 
 1. **Set the scene (30 seconds).** Two programs: the patching console handles the operating system, the scanner handles the application's libraries. Different layers, different CVE sources.
 2. **Show where CVEs come from (30 seconds).** Open the scanner. Point at the header: demo mode, sample Lightwell coverage. Say that the CVEs come from OSV.dev, an open database, and that Lightwell supplies fixes, not findings.
-3. **Scan a Java app (1 minute).** Add `appsecco/dvja`, press Scan. Open struts2-core. Show the critical advisories, the fixed versions, and the Lightwell column saying "Not covered". Say that this is the real answer: Lightwell patches specific versions, and these are not among them.
-4. **Show Lightwell coverage (1 minute).** Add `demojam/lightwell-coverage-demo` and scan. Point at postgresql ("addresses 4 of 4"), then jackson-databind ("addresses 5 of 12", with the "Fixed by Lightwell build" tag on five advisories only). Say that a build is credited only with the advisories Lightwell lists for it, and that snakeyaml shows a build with "not itemised". Say that this repository is constructed from versions Lightwell patches, and the page says so.
-5. **Show the honesty (1 minute).** Add `sunil-samuel/Image-Processor`. Point at "11 components not checked" and the yellow note that the manifest was reconstructed. Say that the scanner prefers saying "not checked" to guessing.
+3. **Scan a Java app (1 minute).** Tick `appsecco/dvja` in the inventory, press Scan. Open struts2-core. Show the critical advisories, the fixed versions, and the Lightwell column saying "Not covered". Say that this is the real answer: Lightwell patches specific versions, and these are not among them.
+4. **Show Lightwell coverage (1 minute).** Tick `demojam/lightwell-coverage-demo` in the inventory and scan. Point at postgresql ("addresses 4 of 4"), then jackson-databind ("addresses 5 of 12", with the "Fixed by Lightwell build" tag on five advisories only). Say that a build is credited only with the advisories Lightwell lists for it, and that snakeyaml shows a build with "not itemised". Say that this repository is constructed from versions Lightwell patches, and the page says so.
+5. **Show the honesty (1 minute).** Tick `sunil-samuel/Image-Processor` and scan. Point at "11 components not checked" and the yellow note that the manifest was reconstructed. Say that the scanner prefers saying "not checked" to guessing.
 6. **Show the other side (1 minute).** Open the patching console. Assess CVE-2024-3094, send it for approval, approve. Say that this is the operating system layer, and that remediation for the application layer, using the scanner's findings, is the next step.
 7. **Close the loop (1 minute).** Go back to `demojam/lightwell-coverage-demo` and point at the bar "What it takes to clear the issues": most issues are fixed by a Lightwell build with the version unchanged, and some of those have no fixed version in OSV.dev at all. Press Download plan and open the file: the entries to paste, the Lightwell repository setup, and the draft pull request. Say that the pull request is text, nothing is pushed. Then say what comes next: carrying it out through Ansible and a real pull request.

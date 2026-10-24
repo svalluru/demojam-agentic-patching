@@ -180,12 +180,31 @@
                       padding: 3px 9px; border-radius: var(--r-xs);
                       background: rgba(0,0,0,.22); }
 
+  /* Three columns rather than a flex row, because the toggle in the middle
+     has to be centred on the page and not on whatever space the title and
+     the status chip happen to leave. 1fr auto 1fr forces the two outer
+     columns equal, so the middle one lands on the centre line.
+
+     Second row for the progress bar. Sharing the top row with the title and
+     the status chip cost it most of its width — centring the toggle reserves
+     that column out of both sides — and it was down to bare icons at 1440px
+     and gone below that. A row of its own is the width of the window. */
   header {
     position: relative; z-index: 5;
-    display: flex; align-items: center; gap: 13px;
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    grid-template-areas: "left toggle right" "bar bar bar";
+    align-items: center;
+    /* No row gap: the second row is declared whether or not a bar is in it,
+       and a gap above an empty row is 13px of header nobody asked for. The
+       bars carry their own top margin instead, which goes when they do. */
+    gap: 0 13px;
     padding: 12px 22px; background: var(--panel);
     border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
+  .head-left, .head-right { display: flex; align-items: center; gap: 13px; min-width: 0; }
+  .head-left { grid-area: left; }
+  .head-right { grid-area: right; justify-content: flex-end; }
+  #patch-toggle { grid-area: toggle; }
   .logo {
     width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
     background: linear-gradient(145deg, var(--red), var(--red-lo));
@@ -195,6 +214,9 @@
   }
   header h1 { font-size: calc(16px * var(--ts)); font-weight: 700; letter-spacing: -0.34px; }
   header .tagline { font-size: calc(11px * var(--ts)); color: var(--muted); margin-top: 1px; }
+  /* display:flex below beats the user agent's [hidden] rule, and the chip is
+     hidden on the Application side. Same trap as .stages. */
+  .status[hidden] { display: none; }
   .status {
     margin-left: auto; display: flex; align-items: center; gap: 8px;
     padding: 5px 12px 5px 10px; border-radius: 20px;
@@ -1189,11 +1211,20 @@
      Four states, not three. A stage can be legitimately *skipped* — when no
      host crosses the threshold there is no approval gate to wait at — and
      drawing that as 'pending' would promise an operator a prompt that is never
-     coming. See stageStates(). */
+     coming. See stageStates().
+
+     There are two of these, one per side of the domain toggle: the five
+     stages of a patch run, and the eight of a scan and the remediation that
+     follows it. They share the second header row and only one is ever shown,
+     so the row is as tall as whichever is up. Both are drawn before anything
+     runs — the stages are what the side is going to do, which is worth
+     knowing in advance. */
   .stages {
-    margin: 0 auto; display: flex; align-items: center;
-    flex: 0 1 auto; min-width: 0; overflow: hidden;
+    grid-area: bar; display: flex; align-items: center; justify-content: center;
+    min-width: 0; margin-top: 11px; overflow: hidden;
   }
+  /* display:flex above would otherwise beat the user agent's [hidden] rule. */
+  .stages[hidden] { display: none; }
   .stage { display: flex; align-items: center; gap: 8px; flex: none; }
   .stage-icon {
     width: 27px; height: 27px; border-radius: 50%; flex: none;
@@ -1233,16 +1264,6 @@
      branch stacks inside it at half the line height, so the header does not
      grow and the two stages still read as peers of each other rather than
      as a continuation of Patch. */
-  #demo-chip {
-    flex: none; padding: 4px 12px; border-radius: 999px;
-    font-size: calc(12.5px * var(--ts)); font-weight: 800; letter-spacing: 1px;
-    /* Green, not the amber it started as: amber reads as a warning next to a
-       console whose every other accent is red, and demo mode is a safe
-       state, not a degraded one. #15803d keeps white text above 7:1. */
-    color: #fff; background: #15803d;
-  }
-  #demo-chip[hidden] { display: none; }
-
   .stage-fork {
     width: 18px; height: 22px; margin: 0 2px 0 9px; flex: none;
     border-left: 2px solid var(--border);
@@ -1277,14 +1298,19 @@
     70%      { box-shadow: 0 0 0 9px rgba(204,0,0,0); }
   }
 
-  /* The header is the first thing to run out of room. Shed the labels before
-     the icons, and the whole bar before the title or the status. */
-  @media (max-width: 1240px) {
-    .stage-label { display: none; }
-    .stage-link { width: 16px; margin: 0 6px; }
-    .stage-fork { margin-left: 6px; width: 12px; }
-  }
-  @media (max-width: 880px) { .stages { display: none; } }
+  /* The header is the first thing to run out of room: shed the labels before
+     the icons, and the whole bar before the title or the status.
+
+     These were width breakpoints, 1240px and 880px. They are classes now
+     because the right answer is not a window width: Large text widens every
+     label at once, and the branch appears and disappears mid-run. fitBar()
+     measures the bar that is actually on screen instead. Now that the bar has
+     a row to itself these rarely fire — they are the narrow-window floor, not
+     the normal case. */
+  .stages.bar-tight .stage-label { display: none; }
+  .stages.bar-tight .stage-link { width: 16px; margin: 0 6px; }
+  .stages.bar-tight .stage-fork { margin-left: 6px; width: 12px; }
+  .stages.bar-gone { display: none; }
 
   /* ---- frame 1: the architecture ----
      This column is the whole of frame 1 now. It shows the one thing no other
@@ -1617,11 +1643,51 @@
     font-size: calc(12px * var(--ts)); font-weight: 700; cursor: pointer;
     transition: background .14s var(--ease), color .14s var(--ease);
   }
-  .ghost-btn:hover, .ghost-btn[aria-pressed="true"] { background: var(--red); color: #ffffff; }
+  .ghost-btn:hover { background: var(--red); color: #ffffff; }
   #scanner-pane { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg); }
   #scanner-pane[hidden] { display: none; }
-  @media (max-width: 700px) { .wide-only, header .tagline { display: none; } }
-  a.ghost-btn { display: inline-flex; align-items: center; height: 34px; padding-top: 0; padding-bottom: 0; text-decoration: none; white-space: nowrap; }
+  /* Infrastructure and application patching are two halves of the same job,
+     so the header shows both at once with the current one filled. The button
+     this replaced named the side you were going to, which meant it read
+     "Application" while you were looking at infrastructure.
+
+     Not .seg — that is the text-size control in the settings drawer, defined
+     further down, and it would win every rule here.
+
+     Grid rather than flex so the two columns are equal and the thumb can be
+     half the width and slide by exactly its own width. width:max-content is
+     what makes 1fr equal: left to shrink-to-fit, each track settles at its own
+     content and "Infrastructure" comes out 17px wider than "Application". */
+  .domain-toggle {
+    position: relative; display: inline-grid; align-items: center; height: 34px;
+    grid-auto-flow: column; grid-auto-columns: 1fr; width: max-content;
+    padding: 2px; background: var(--panel);
+    border: 1px solid var(--red); border-radius: 11px; box-shadow: var(--sh-1);
+  }
+  .dt-thumb {
+    position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px);
+    background: var(--red); border-radius: 8px; box-shadow: var(--sh-red);
+    transition: transform .28s var(--spring);
+  }
+  .domain-toggle[data-pane="app"] .dt-thumb { transform: translateX(100%); }
+  /* Smaller than the h1 beside it: it is the control, not the title. */
+  .dt-btn {
+    position: relative; z-index: 1; height: 100%;
+    padding: 0 14px; background: transparent; border: 0; border-radius: 8px;
+    color: var(--red); font-family: inherit;
+    font-size: calc(12.5px * var(--ts)); font-weight: 700; letter-spacing: -0.1px;
+    cursor: pointer; white-space: nowrap; transition: color .2s var(--ease);
+  }
+  .dt-btn[aria-pressed="true"] { color: #ffffff; cursor: default; }
+  .dt-btn[aria-pressed="false"]:hover { color: var(--red-lo); }
+  /* The centre column is reserved out of both sides, so the title has less
+     room than it used to at the same window width. The strapline goes before
+     the title is allowed to wrap onto a second line and push the header down. */
+  @media (max-width: 1040px) { header .tagline { display: none; } }
+  @media (max-width: 700px) {
+    .wide-only { display: none; }
+    .dt-btn { padding: 0 10px; }
+  }
   button.primary.inline { width: auto; margin-top: 0; padding: 8px 18px; font-size: calc(12px * var(--ts)); }
   .set-group {
     margin-top: 18px; margin-bottom: 7px;
@@ -1747,20 +1813,28 @@
 <div id="mode-banner"></div>
 
 <header>
-  <div class="logo">AP</div>
-  <div>
-    <h1>Agentic Patching Console</h1>
-    <div class="tagline">CVE triage, risk assessment and supervised remediation</div>
+  <div class="head-left">
+    <div class="logo">AP</div>
+    <div>
+      <h1>Agentic Patching Console</h1>
+      <!-- Follows the toggle: the title names the product, this names the
+           half of it you are looking at. -->
+      <div class="tagline" id="tagline">CVE triage, risk assessment and supervised remediation</div>
+    </div>
   </div>
-  <!-- Where the run is, across the top, filled by renderStages(). -->
-  <nav class="stages" id="stages" aria-label="Run progress"></nav>
-  <!-- Always on in demo mode, unlike the banner above, which only appears
-       with source labelling turned on. Someone walking up to the screen, or
-       looking at a screenshot of it, should be able to tell. -->
-  <span id="demo-chip" hidden>DEMO</span>
+  <!-- Dead centre of the header, in its own grid column. A span with
+       role="group" rather than a fieldset: it is two buttons that behave like
+       a radio pair, and it must not add a heading or a form to the page. -->
+  <span class="domain-toggle" id="patch-toggle" role="group" aria-label="Patching domain" data-pane="infra" data-src="/lightwell/">
+    <span class="dt-thumb" aria-hidden="true"></span>
+    <button type="button" class="dt-btn" data-pane="infra" aria-pressed="true"
+            title="Patch the hosts: CVE triage, risk assessment and supervised remediation.">Infra<span class="wide-only">structure</span></button>
+    <button type="button" class="dt-btn" data-pane="app" aria-pressed="false"
+            title="Patch what the applications depend on: scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here.">App<span class="wide-only">lication</span></button>
+  </span>
+  <div class="head-right">
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
   <div class="head-tools">
-  <a class="ghost-btn" id="open-scanner" href="/lightwell/" title="Scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here." aria-pressed="false">Application<span class="wide-only">&nbsp;Patching</span></a>
   <button class="icon-btn" id="open-guide" title="Demo guide" aria-label="Demo guide">
     <!-- open book, drawn here like every other icon: no network offline -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -1778,6 +1852,14 @@
     </svg>
   </button>
   </div>
+  </div>
+  <!-- Second header row, under the toggle, one bar per side of it. Each is
+       about the run on its own side, so they swap with the toggle rather than
+       stack: the patch stages mean nothing while you are scanning a
+       repository, and the scan steps mean nothing while you are patching a
+       host. Filled by renderStages() and renderAppStages(). -->
+  <nav class="stages" id="stages" aria-label="Run progress"></nav>
+  <nav class="stages" id="app-stages" aria-label="Scan progress" hidden></nav>
 </header>
 
 <!-- Shown only while a run is in flight; see body.busy. -->
@@ -2593,6 +2675,16 @@ const ICON = {
          + '<path d="M8.5 11.5 11 14l8-8"></path>',
   patch:   '<path d="M14.5 6.2a4.6 4.6 0 0 1 6.1-5.9l-3.1 3.1 1.9 1.9 3.1-3.1a4.6 4.6 0 0 1-5.9 6.1'
          + 'l-8.3 8.3a2 2 0 1 1-2.8-2.8z" transform="translate(-1 1.5)"></path>',
+  // The three below are only on the application side. A shield for coverage
+  // because that is what a Lightwell build is; a list for the change plan;
+  // a branch for the push, since that is literally what it leaves behind.
+  shield:  '<path d="M12 3 4 6v5.5c0 4.3 3.3 7.6 8 9.5 4.7-1.9 8-5.2 8-9.5V6z"></path>'
+         + '<path d="m9 12 2.2 2.2L15.5 10"></path>',
+  list:    '<path d="M9 6h11"></path><path d="M9 12h11"></path><path d="M9 18h11"></path>'
+         + '<path d="M4.5 6h.01"></path><path d="M4.5 12h.01"></path><path d="M4.5 18h.01"></path>',
+  branch:  '<circle cx="7" cy="5.5" r="2.4"></circle><circle cx="7" cy="18.5" r="2.4"></circle>'
+         + '<circle cx="17.5" cy="8.5" r="2.4"></circle><path d="M7 7.9v8.2"></path>'
+         + '<path d="M17.5 10.9c0 3.1-3.3 3.9-6.1 4.6"></path>',
 };
 
 const STAGES = [
@@ -2683,35 +2775,140 @@ function stageStates(s) {
 // The fork itself: one connector that splits, and the two stages stacked
 // against it. Drawn as markup rather than an SVG so the stages keep the same
 // hover, title and state classes as the linear ones.
-function renderBranch(st) {
-  const lit = ['done', 'skipped'].includes(st.patch) ? ' on' : '';
-  const row = x => `<div class="stage ${st[x.key]}" title="${esc(x.label)} — ${esc(x.tip)}">
+// One stage, in whichever of the three bars. Shared so the scan bar on the
+// application side cannot drift from the patch bar beside it in the toggle.
+function stageHTML(x, state) {
+  return `<div class="stage ${state}" title="${esc(x.label)} — ${esc(x.tip)}">
       <span class="stage-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
         stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
         stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
       <span class="stage-label">${esc(x.label)}</span>
     </div>`;
+}
+
+// A run of stages with the connectors between them. The connector lights once
+// the stage behind it is settled, so the bar still reads as progress at widths
+// where the labels have been dropped.
+function stageRun(defs, st) {
+  return defs.map((x, i) => {
+    const prev = i && st[defs[i - 1].key];
+    const link = i === 0 ? ''
+      : `<span class="stage-link ${['done', 'skipped'].includes(prev) ? 'on' : ''}"></span>`;
+    return link + stageHTML(x, st[x.key]);
+  }).join('');
+}
+
+function renderBranch(st) {
+  const lit = ['done', 'skipped'].includes(st.patch) ? ' on' : '';
   return `<span class="stage-fork${lit}" aria-hidden="true"></span>
-    <div class="stage-branch">${BRANCH.map(row).join('')}</div>`;
+    <div class="stage-branch">${BRANCH.map(x => stageHTML(x, st[x.key])).join('')}</div>`;
 }
 
 function renderStages(s) {
   const st = stageStates(s);
-  document.getElementById('stages').innerHTML = STAGES.map((x, i) => {
-    // The connector lights once the stage behind it is settled, so the bar
-    // still reads as progress at widths where the labels have been dropped.
-    const link = i === 0 ? ''
-      : `<span class="stage-link ${['done', 'skipped'].includes(st[STAGES[i - 1].key]) ? 'on' : ''}"></span>`;
-    return `${link}<div class="stage ${st[x.key]}" title="${esc(x.label)} — ${esc(x.tip)}">
-      <span class="stage-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-        stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
-        stroke-linejoin="round" aria-hidden="true">${x.icon}</svg></span>
-      <span class="stage-label">${esc(x.label)}</span>
-    </div>`;
-  }).join('') + renderBranch(st);
+  const bar = document.getElementById('stages');
+  bar.innerHTML = stageRun(STAGES, st) + renderBranch(st);
+  fitBar(bar);
   renderSide(s);
   renderTrace(s);
 }
+
+// ---- the application side's bar -------------------------------------------
+// The five stages above are a patch run and mean nothing on the scanner side,
+// so that side gets its own bar in the same place. The scanner reports into
+// window.appStages() as it goes; it is the one with the progress, and it is
+// same-origin, so it calls straight through.
+//
+// The same shape of job as the patch run next to it: find out what is wrong,
+// work out what to do, ask a person, do it. The first four are the scan — see
+// STEPS in lightwell/ui/index.html and scan_repository() in
+// lightwell/scanner/scan.py. The last four are a remediation run — the change
+// plan, the Approve and run button, and the clone/edit/build/push stages of
+// the AAP job, see STAGES in lightwell/scanner/aap.py.
+//
+// The two halves are not about the same thing, and the tooltips say so. A scan
+// covers every repository you ticked, so a step is done when all of them are
+// past it. A remediation is one repository at a time, so the second half
+// follows the repository whose Plan a fix panel is open, and reads as pending
+// when none is.
+//
+// Nothing here is called Remediate. These eight stages *are* the remediation,
+// so naming one of them after the whole is the same part-for-whole confusion
+// the card button used to make — and it would promise more than it delivers:
+// a green build on the build host leaves the repository byte-identical. The
+// seventh stage is called Build, which is what it is, and Push is the one
+// that puts the fix anywhere a person can reach it.
+//
+// The Infrastructure bar calls its equivalent stage Patch, and the symmetry
+// was tempting. It is not the same thing: there, Patch finishes the job and
+// the host is patched. Here it would not.
+const APP_STAGES = [
+  { key: 'fetch',     label: 'Fetch',     icon: ICON.search,
+    tip: 'Read each ticked repository at the ref being scanned. All of them.' },
+  { key: 'parse',     label: 'Manifests', icon: ICON.doc,
+    tip: 'Read the dependency manifests and lockfiles, and resolve versions.' },
+  { key: 'osv',       label: 'OSV.dev',   icon: ICON.pulse,
+    tip: 'Look every component up for known vulnerabilities.' },
+  { key: 'coverage',  label: 'Lightwell', icon: ICON.shield,
+    tip: 'Check which of those have a Lightwell build that fixes them.' },
+  { key: 'plan',      label: 'Plan',      icon: ICON.list,
+    tip: 'The change list for the repository you pressed Plan a fix on: what '
+       + 'moves to which version, from which source, and what is left alone.' },
+  { key: 'approve',   label: 'Approval',  icon: ICON.approve,
+    tip: 'The human gate. Nothing is cloned or built until Approve and run.' },
+  { key: 'build',     label: 'Build',     icon: ICON.patch,
+    tip: 'The AAP job: clone the repository, apply the approved versions, '
+       + 'build and verify. Nothing leaves the build host.' },
+  { key: 'push',      label: 'Push',      icon: ICON.branch,
+    tip: 'Push the fix branch. A second run, and only if you ask for it — a '
+       + 'build that is never pushed is a finished job, not a half-done one.' },
+];
+
+// Drawn whether or not anything is scanning, like the patch bar beside it:
+// the stages are what the side is going to do, so they are worth showing
+// before one starts. No argument, or nothing recognised in it, is all pending.
+//
+// Called by the scanner on every poll, so it is defensive about its input —
+// it crosses a document boundary, and anything unexpected has to draw as
+// pending rather than throw inside a frame's progress loop.
+function renderAppStages(st) {
+  st = st || {};
+  const bar = document.getElementById('app-stages');
+  const ok = ['done', 'active', 'failed', 'skipped'];
+  const safe = {};
+  APP_STAGES.forEach(x => { safe[x.key] = ok.includes(st[x.key]) ? st[x.key] : 'pending'; });
+  bar.innerHTML = stageRun(APP_STAGES, safe);
+  fitBar(bar);
+}
+window.appStages = renderAppStages;
+// Before the frame has even been created, so switching to that side never
+// finds the row empty.
+renderAppStages(null);
+
+// Three ways to draw a bar, in order of preference: labelled, icons only, not
+// at all. Which one fits is not a window width — Large text widens every label
+// at once, and the branch comes and goes mid-run — so try each and keep the
+// first that is not cut off. Called on every render because the content
+// changes the width, and on resize because the window does.
+function fitBar(bar) {
+  if (!bar) { document.querySelectorAll('.stages').forEach(b => fitBar(b)); return; }
+  // Not scrollWidth. The bar is centred, so content too wide for it hangs off
+  // both ends; the left overhang is not scrollable and scrollWidth never sees
+  // it, which would report every bar as fitting however far it was cut. The
+  // ends are where the clipping is, so measure those.
+  const fits = () => {
+    const first = bar.firstElementChild, last = bar.lastElementChild;
+    if (!first) return true;
+    const box = bar.getBoundingClientRect();
+    return first.getBoundingClientRect().left >= box.left - 1
+        && last.getBoundingClientRect().right <= box.right + 1;
+  };
+  bar.classList.remove('bar-tight', 'bar-gone');
+  if (fits()) return;
+  bar.classList.add('bar-tight');
+  if (!fits()) bar.classList.add('bar-gone');
+}
+new ResizeObserver(() => fitBar()).observe(document.querySelector('header'));
 
 // ---- left panel: the architecture, live -----------------------------------
 // The column used to be a CVE field, a hint, and then white space. Assess
@@ -5130,15 +5327,10 @@ async function renderMode() {
   // Demo mode is banner-worthy because every number on the page is staged.
   // Live mode is not: nothing is substituted, so there is nothing to warn
   // about — a failure there announces itself by failing.
-  // The chip is not behind showSrc(): it says which mode the console is in,
-  // not that a particular value was substituted, and that is worth knowing
-  // whatever the page is doing about source labels.
-  const chip = document.getElementById('demo-chip');
-  if (chip) {
-    chip.hidden = m.mode !== 'demo';
-    chip.title = 'Demo mode — every value is staged, no endpoint is '
-               + 'contacted and nothing will be patched.';
-  }
+  //
+  // There was a green DEMO chip in the header too, always on in demo mode.
+  // It is gone: the banner below says the same thing with room to say why,
+  // and the header is the one place on the page competing for width.
   if (m.mode === 'demo' && showSrc()) {
     el.innerHTML = `<span class="tag">DEMO</span>
       <span>Staged data &mdash; every value on this page is a stored default.</span>
@@ -5384,7 +5576,21 @@ function setTextSize(t) {
   for (const b of document.querySelectorAll('#text-size button')) {
     b.setAttribute('aria-pressed', String(b.dataset.ts === t));
   }
+  sizeScanner();
 }
+
+// The scanner is a separate document, so it does not inherit --ts. It used to
+// carry its own copy of this control; one setting for the whole console means
+// reaching in and setting the same attribute there. Same origin — it is served
+// from this server at /lightwell/ — so this is a plain attribute write, no
+// message passing. Called again on load because the iframe may not have one
+// yet when the setting is made.
+function sizeScanner() {
+  const pane = document.getElementById('scanner-pane');
+  const doc = pane && pane.contentDocument;
+  if (doc && doc.documentElement) doc.documentElement.dataset.ts = document.documentElement.dataset.ts;
+}
+document.getElementById('scanner-pane').addEventListener('load', sizeScanner);
 
 document.getElementById('text-size').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -5561,23 +5767,48 @@ renderStages({});
   btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
 })();
 
-// The scanner lives in an iframe that is created on first use and then only
-// hidden, so a scan in progress and its results survive going back and forth.
+// The two sides of the toggle. The scanner lives in an iframe that is created
+// on first use and then only hidden, so a scan in progress and its results
+// survive going back and forth.
 (() => {
-  const btn = document.getElementById('open-scanner');
+  const seg = document.getElementById('patch-toggle');
   const pane = document.getElementById('scanner-pane');
   const frames = document.getElementById('frames');
-  btn.dataset.title = btn.title;
-  const show = on => {
-    if (on && !pane.src) pane.src = btn.getAttribute('href');
-    pane.hidden = !on;
-    frames.hidden = on;
-    btn.setAttribute('aria-pressed', String(on));
-    btn.innerHTML = (on ? 'Infrastructure' : 'Application') + '<span class="wide-only">&nbsp;Patching</span>';
-    btn.title = on ? 'Back to infrastructure patching' : btn.dataset.title;
-    history.replaceState(null, '', on ? '#scanner' : location.pathname + location.search);
+  const btns = [...seg.querySelectorAll('.dt-btn')];
+  const show = app => {
+    if (app && !pane.src) pane.src = seg.dataset.src;
+    pane.hidden = !app;
+    frames.hidden = app;
+    seg.dataset.pane = app ? 'app' : 'infra';
+    btns.forEach(b => b.setAttribute('aria-pressed',
+                                     String((b.dataset.pane === 'app') === app)));
+    // The strapline is the rest of the heading, so it follows the side.
+    document.getElementById('tagline').textContent = app
+      ? 'Dependency scanning, Lightwell coverage and supervised remediation'
+      : 'CVE triage, risk assessment and supervised remediation';
+    // And so does the bar under the toggle. Both are measured once they are
+    // on screen: a hidden one has no width to fit against.
+    const bars = { infra: document.getElementById('stages'),
+                   app: document.getElementById('app-stages') };
+    bars.infra.hidden = app;
+    bars.app.hidden = !app;
+    fitBar(bars[app ? 'app' : 'infra']);
+    // The status chip counts CVEs from Insights, which is the Infrastructure
+    // side's business. On the Application side it would be reporting on a
+    // service this half of the console never calls — and the scanner has its
+    // own status in its own header row, so the slot is not even empty.
+    document.querySelector('.head-right .status').hidden = app;
+    history.replaceState(null, '', app ? '#scanner' : location.pathname + location.search);
   };
-  btn.addEventListener('click', e => { e.preventDefault(); show(pane.hidden); });
+  btns.forEach(b => b.addEventListener('click', () => show(b.dataset.pane === 'app')));
+  // Left and right move between the two, as a radio group does.
+  seg.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const app = e.key === 'ArrowRight';
+    show(app);
+    btns[app ? 1 : 0].focus();
+  });
   if (location.hash === '#scanner') show(true);
 })();
 
