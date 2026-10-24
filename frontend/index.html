@@ -475,6 +475,11 @@
   #head-back:hover, .view-toggle:hover, #head-roi:hover {
     background: var(--red); color: #ffffff;
   }
+  /* While the report is up the button is the way out of it, so it reads as a
+     pressed control rather than as an offer to open what is already open. */
+  #head-roi.on {
+    background: var(--red); border-color: var(--red); color: #ffffff;
+  }
   /* Filled rather than outlined, and the only filled control on the two
      views it appears in. It is shown exactly when there is unfinished work
      to go back to, so it should be the thing the eye lands on — and the
@@ -770,6 +775,48 @@
   .btn-approve:disabled, .btn-reject:disabled { opacity: .4; cursor: not-allowed; }
   .muted-sm { font-size: calc(11px * var(--ts)); color: var(--muted); }
   .err-sm   { font-size: calc(11px * var(--ts)); color: var(--red); }
+
+  /* The retry affordance on a host the patch did not take on. Quieter than
+     Approve: this is an invitation to look, not a press that patches
+     anything, and the press that does is at the bottom of the panel it
+     opens. It sits under the badge rather than beside it — the status
+     column is the narrowest on the table. */
+  .btn-retry {
+    display: block; margin-top: 5px; padding: 3px 9px;
+    background: transparent; color: var(--red);
+    border: 1px solid var(--red); border-radius: var(--r-xs);
+    font-size: calc(10.5px * var(--ts)); font-weight: 700; cursor: pointer;
+    transition: background .13s var(--ease), color .13s var(--ease);
+  }
+  .btn-retry:hover { background: var(--red); color: #ffffff; }
+  .retry-row > td {
+    background: var(--tint-r); border-top: 0;
+    border-left: 3px solid var(--red); padding: 12px 14px;
+  }
+  .retry-why { font-size: calc(11.5px * var(--ts)); line-height: 1.5;
+               margin-bottom: 10px; }
+  .retry-why b { color: var(--red); }
+  /* auto-fit so three fields sit in a row on a wide panel and stack on a
+     narrow one, rather than three unreadably thin columns. */
+  .retry-grid { display: grid; gap: 9px; margin-bottom: 10px;
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .retry-f { display: block; }
+  .retry-k { display: block; font-size: calc(10px * var(--ts)); font-weight: 700;
+             text-transform: uppercase; letter-spacing: .4px; color: var(--muted);
+             margin-bottom: 4px; }
+  .retry-rec { text-transform: none; letter-spacing: 0; font-weight: 700;
+               color: var(--red); margin-left: 6px; }
+  .retry-in { display: flex; align-items: center; gap: 5px; }
+  .retry-in input {
+    width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+    border-radius: var(--r-xs); background: var(--panel); color: inherit;
+    font-size: calc(12px * var(--ts)); font-family: inherit;
+  }
+  .retry-in i { font-style: normal; font-size: calc(10.5px * var(--ts));
+                color: var(--muted); }
+  .retry-foot { display: flex; align-items: center; justify-content: space-between;
+                gap: 12px; flex-wrap: wrap; }
+  .retry-hint { font-size: calc(10.5px * var(--ts)); color: var(--muted); }
   .desc { white-space: normal; }
   /* ---- risk meter ----
      A bare number cannot show how close a host came to the gate, which is
@@ -809,6 +856,10 @@
      that have reported finished — never a timer. So a bar that stops moving
      means the run stopped moving, which is the whole point of showing it. */
   .prog-cell { min-width: 180px; }
+  /* Wide enough for the two buttons, and for the bar that replaces them once a
+     decision is sent — a bar in a cell sized to the word "patching…" reads as
+     full before it has started. */
+  .decide-cell { min-width: 150px; }
   .prog {
     position: relative; display: block; height: 6px; overflow: hidden;
     background: var(--surface); border-radius: 4px;
@@ -948,8 +999,30 @@
   .roi-sl .val.edited { color: var(--red); }
   .roi-sl input { grid-column: 1 / -1; width: 100%; height: 16px; margin: 0;
                   accent-color: var(--text); cursor: pointer; }
+  /* One group per side. The rule between them does the separating, so the
+     headings can stay quiet — they are labels on a control panel, not
+     section titles competing with the card headings around them. */
+  .roi-slg + .roi-slg { margin-top: 14px; padding-top: 13px;
+                        border-top: 1px solid var(--line); }
+  .roi-slg > .h { font-size: calc(10.5px * var(--ts)); font-weight: 800;
+                  letter-spacing: .05em; text-transform: uppercase; }
+  .roi-slg > .h span { display: block; margin-top: 2px; font-weight: 500;
+                       letter-spacing: 0; text-transform: none;
+                       color: var(--muted); }
   .roi-head { display: flex; align-items: baseline; gap: 10px; }
   .roi-head .pill { margin-left: auto; }
+
+  /* Section rules, one per side. The report is now two arguments and a
+     shared record, and without a break between them the second side's
+     "Where the effort goes" reads as a continuation of the first side's
+     rather than the start of a new one. */
+  .roi-sec { display: flex; align-items: baseline; gap: 12px; margin: 26px 0 0;
+             padding-bottom: 7px; border-bottom: 2px solid var(--text);
+             font-size: calc(15px * var(--ts)); font-weight: 800;
+             letter-spacing: -.01em; }
+  .roi-sec:first-child { margin-top: 0; }
+  .roi-sec > span { margin-left: auto; font-size: calc(10.5px * var(--ts));
+                    font-weight: 500; color: var(--muted); text-align: right; }
 
   /* The range under the headline figure. Same weight as the number it
      qualifies would drown it; much lighter would make it decorative. */
@@ -1646,6 +1719,18 @@
   .ghost-btn:hover { background: var(--red); color: #ffffff; }
   #scanner-pane { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg); }
   #scanner-pane[hidden] { display: none; }
+  /* The ROI report, full width. Same dot grid as .frames so it reads as the
+     same ground with one wide sheet on it rather than as a different page,
+     and the report's own cards supply the sheet. The max-width is for the
+     prose: this card stack is read, not scanned, and a 2400px line of body
+     text is unreadable however much room there is for it. */
+  #roi-pane {
+    flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 28px;
+    background: radial-gradient(circle at 1px 1px,
+                rgba(11,11,12,.055) 1px, transparent 0) 0 0 / 22px 22px;
+  }
+  #roi-pane[hidden] { display: none; }
+  #roi-pane > .roi { max-width: 1180px; margin: 0 auto; }
   /* Infrastructure and application patching are two halves of the same job,
      so the header shows both at once with the current one filled. The button
      this replaced named the side you were going to, which meant it read
@@ -1833,9 +1918,33 @@
             title="Patch what the applications depend on: scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here.">App<span class="wide-only">lication</span></button>
   </span>
   <div class="head-right">
+  <!-- Chrome, not a frame action. It was in the right-hand frame's toolbar,
+       which scoped it twice over: the toggle hides that whole frame on the
+       Application side, and only the post-dispatch view ever switched it on.
+       The report costs both halves of the console now, so it sits beside the
+       toggle and the stage bar — the other two things that span both sides.
+
+       Outlined red, not filled: red marks everything clickable, and the fill
+       is kept back for the actions with consequences. Working out what a run
+       saved changes nothing.
+
+       Shown as soon as either side has run something, not once both have.
+       Requiring both would hide it exactly where it is most wanted — right
+       after a first run — and the report says for itself which halves it
+       has. An absent button explains nothing.
+
+       It is last in the row, against the icons, and the status chip is before
+       it. This row is right-aligned, so anything to the right of a thing that
+       comes and goes comes and goes with it — and the chip does: it counts
+       CVEs from Insights, which is the Infrastructure side's business, so the
+       Application side hides it. With the button after the chip, the chip
+       appears and disappears to its left and the button does not move. One
+       control that spans both sides has to be in one place on both sides, or
+       the first thing a presenter does on the toggle is go looking for it. -->
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
+  <button class="pill" id="head-roi" hidden>Calculate ROI</button>
   <div class="head-tools">
-  <button class="icon-btn" id="open-guide" title="Demo guide" aria-label="Demo guide">
+  <button class="icon-btn" id="open-guide" title="Presenter's guide" aria-label="Presenter's guide">
     <!-- open book, drawn here like every other icon: no network offline -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1869,39 +1978,39 @@
      re-renders out from under any message written into it. -->
 <div id="toasts"></div>
 
-<!-- Demo guide. Static content on purpose: it is the one thing in here that
-     has to still be readable when every backend is down, and a presenter
-     opening it thirty seconds before walking into a room cannot be waiting
-     on a fetch. The one live part is the mode note, filled by openGuide(). -->
+<!-- Presenter's guide. Static content, and no mode note: the run of show is the
+     same whatever this console is pointed at, and a drawer that opened by
+     telling the presenter which mode they were in would be the one place the
+     console breaks its own rule of presenting a single face. It also has to
+     still be readable when every backend is down, and a presenter opening it
+     thirty seconds before walking into a room cannot be waiting on a fetch. -->
 <div class="drawer-scrim" id="guide-scrim" hidden>
   <aside class="drawer wide" role="dialog" aria-modal="true" aria-labelledby="guide-title">
     <div class="drawer-head">
-      <h2 id="guide-title">Demo guide</h2>
+      <h2 id="guide-title">Presenter's guide</h2>
       <button class="icon-btn" id="close-guide" title="Close" aria-label="Close">✕</button>
     </div>
-    <div class="drawer-note" id="guide-mode">Checking which mode this console is in…</div>
     <div class="drawer-body">
       <div class="guide">
 
         <section>
           <h3>Before you open the door</h3>
           <ul>
-            <li>Run <code>./demo.sh</code> and open <code>http://127.0.0.1:8788</code>. There is no
-                banner to look for — the console presents one face whether a value was measured
-                or stood in for. Confirm the mode in the terminal instead:
-                <code>mode : offline</code>.</li>
-            <li>Know what is under it anyway. The <strong>Agent trace</strong> in the left column
-                names every service that did not answer, and <code>/tmp/demo-backend.log</code>
-                has a <code>DEGRADED</code> line for each one. If you want the marks back on the
-                page, turn on <strong>Label substituted values</strong> in the gear panel.</li>
-            <li>Reset to a clean slate between runs: <code>rm -f runs/simulated.json</code>, then reload.</li>
-            <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-demo — it
-                does not disturb the run.</li>
+            <li>Start the console and leave it on the CVE list with nothing run yet — beat 1
+                depends on the diagram still being grey.</li>
+            <li>Know what is under the page before you are asked. The <strong>Agent trace</strong>
+                in the left column names every service the run called and every one that did not
+                answer, and <code>/tmp/demo-backend.log</code> carries the same record. Read it
+                once beforehand so you are not reading it for the first time in front of
+                anybody.</li>
+            <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-run — it
+                does not disturb anything.</li>
             <li>On a projector, set <strong>Text size</strong> to Large in the gear panel.
                 It is a browser setting — nothing is sent to the server and nobody
                 else's view changes.</li>
-            <li>Budget <strong>10 minutes</strong> for the seven beats below, plus questions.
-                The short version is beats 1, 2, 4 and 6.</li>
+            <li>Budget <strong>12 minutes</strong> for the eight beats below, plus questions.
+                The short version is beats 1, 2, 4 and 7. If you only have time for one side,
+                drop beat 6.</li>
           </ul>
         </section>
 
@@ -1955,11 +2064,11 @@
             <div class="g-n">3</div>
             <div>
               <h4>Read the plan like a reviewer would <span class="t">90s</span></h4>
-              <div class="g-do"><b>Do</b><span>Walk the plan: the score per host, that host's own
-                patch history, the maintenance window, the verdict.</span></div>
-              <div class="g-say"><b>Say</b><span>“This is what a human approves against, so it has
-                to carry everything that decision needs. All five hosts came back above the review
-                threshold, so the verdict is manual review.”</span></div>
+              <div class="g-do"><b>Do</b><span>Walk the plan: the maintenance window, the counts,
+                then the score per host against the gate line.</span></div>
+              <div class="g-say"><b>Say</b><span>“One question here: which of these do we send.
+                Every bar is past the gate, so all five need a person — and what that person reads
+                comes up on the next screen, next to the button they press.”</span></div>
               <div class="g-do"><b>Do</b><span>Point at the dispatch button before you press it.
                 It reads <strong>Send 5 for approval</strong>, in black.</span></div>
               <div class="g-say"><b>Say</b><span>“The button is labelled from the verdict. It never
@@ -1977,9 +2086,24 @@
                 of them stopped. Nothing moves until somebody approves it. That bar is the
                 fraction of workflow steps that have reported finished — it is not a timer. If the
                 run stalls, the bar stalls.”</span></div>
+              <div class="g-do"><b>Do</b><span>Approve the rest. One of them comes back
+                <strong>Not verified</strong> instead of green. Stop there.</span></div>
+              <div class="g-say"><b>Say</b><span>“Every step of that run went green and the host is
+                still vulnerable. The last step goes back to the machine and asks, and the advisory
+                is still listed. A console that read <em>patched</em> off <em>the job exited
+                zero</em> would have told you this one was done.”</span></div>
+              <div class="g-do"><b>Do</b><span>Press <strong>Fix &amp; retry</strong> on that row.
+                Point at the pre-filled drain timeout before you press <strong>Retry this
+                host</strong>, then approve it again.</span></div>
+              <div class="g-say"><b>Say</b><span>“The thirty-second drain expired with connections
+                still open, so the package transaction never ran. Those numbers are not a fleet
+                default — they are this host's own history, the same record the plan scored it
+                from. Same gate, second run, and now it verifies.”</span></div>
               <div class="g-why">Say the bar line to an ops audience specifically. They have all
                 been lied to by a progress bar, and volunteering that yours is measured buys more
-                credibility than the rest of the demo put together.</div>
+                credibility than the rest of the demo put together. The not-verified host is worth
+                the same honesty: a demo where everything works is a demo nobody believes, and this
+                is the failure the last workflow step exists to catch.</div>
             </div>
           </div>
 
@@ -1995,18 +2119,82 @@
                 hosts get. Nothing stops to ask again.”</span></div>
               <div class="g-why">Shows the routing is a real decision rather than a fixed script,
                 and that the console changes its own language depending on the consequence.
-                Also worth pointing at: the RAG store stays grey on this one, because no host
-                needed review so nothing ever asked it.</div>
+                Also worth pointing at: <strong>Recommendation</strong> stays grey on this one,
+                because no host needed review so nothing ever asked it.</div>
             </div>
           </div>
 
           <div class="g-beat">
             <div class="g-n">6</div>
             <div>
+              <h4>The other half: patch what the code depends on <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span>Switch the header toggle to
+                <strong>Application</strong>. Tick <strong>JoyChou93/java-sec-code</strong> —
+                any listed repository works — and scan it. The stage bar above changes with
+                you: same two rows, different eight stages.</span></div>
+              <div class="g-say"><b>Say</b><span>“Same console, same gate, different unit of
+                work. A host has a CVE; a repository has a dependency, and the dependency has
+                the CVE. This reads the manifests, asks OSV.dev what is known about every
+                version in them, and then asks Lightwell whether there is a build that fixes it
+                without moving anyone off the version they are on.”</span></div>
+              <div class="g-do"><b>Do</b><span>Open a repository, press <strong>Plan a fix</strong>,
+                read the change list, then <strong>Approve and run</strong>. While it builds,
+                point at the stages.</span></div>
+              <div class="g-say"><b>Say</b><span>“Plan a fix launches nothing — it is a preview,
+                and the exact list of version changes is on screen before anybody approves
+                anything. Approve and run clones it, applies that list and builds it. It stops
+                at built and verified. Nothing has been pushed.”</span></div>
+              <div class="g-do"><b>Do</b><span>It fails. Let the red land, then read the amber
+                line underneath it out loud.</span></div>
+              <div class="g-say"><b>Say</b><span>“The build broke, and the console is not hiding
+                it. A Lightwell rebuild keeps the version number and the API, but it is compiled
+                to a supported Java baseline — and this project still compiles for 8. That next
+                step is read out of Maven's own output, not out of anything we knew in
+                advance.”</span></div>
+              <div class="g-do"><b>Do</b><span>Press <strong>Change the choices and run
+                again</strong>, set <strong>Java for the build</strong> to 11, and approve
+                it.</span></div>
+              <div class="g-say"><b>Say</b><span>“Nothing was pushed, because there was nothing
+                worth pushing — the Push button never appeared. One control, one re-run, and this
+                time it goes green.”</span></div>
+              <div class="g-do"><b>Do</b><span>Now press <strong>Push branch</strong> and let them
+                notice how quick it is.</span></div>
+              <div class="g-say"><b>Say</b><span>“Second approval, and it does not build again —
+                the build that went green is the one it pushes. It re-applies the same change
+                list, checks the tree hashes to the diff that was verified, and only then
+                pushes. If it did not match, it would stop: a branch nobody built is worse than
+                no branch.”</span></div>
+              <div class="g-why">This is the beat that turns a patching demo into a platform
+                one. Say the Lightwell line slowly — “fixed without changing the version you
+                run” is the part that is genuinely hard to do elsewhere, and the diff on screen
+                is the proof. The push being quick is not a detail: it is why a second approval
+                is affordable at all. The failed build is the same move as the not-verified host
+                in beat 4, on the other side of the console: the gate holds, the broken thing
+                never leaves the build host, and the way forward is one named control rather than
+                a ticket.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">7</div>
+            <div>
               <h4>What it saved <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>. Say where the
-                timings came from before you touch a number — the page will not say it for
-                you.</span></div>
+              <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>, top right of
+                the header. Say where the timings came from before you touch a number — the page
+                will not say it for you.</span></div>
+              <div class="g-say"><b>Say</b><span>“Both halves of the console on one page, each
+                against its own baseline — same arithmetic, different work, and they are added
+                in hours and money and in nothing else. There is no total of hosts and
+                repositories anywhere on it, because that number would mean nothing.”</span></div>
+              <div class="g-do"><b>Do</b><span>Point at <strong>Still left by hand</strong> in
+                <em>Where the effort goes</em>. It is on whichever side you ran, and it is the
+                segment worth volunteering before anybody finds it.</span></div>
+              <div class="g-say"><b>Say</b><span>“The manual column costs the whole job — every
+                repository scanned, every host the CVE affects — so everything the run did not
+                finish is priced at the manual rate and charged back against us. Find thirty,
+                fix six, and the page will not let you claim the saving on thirty. A host counts
+                only when it reports patched: one nobody ticked, one that failed and one somebody
+                rejected are all still vulnerable, and all three are charged.”</span></div>
               <div class="g-say"><b>Say</b><span>“The measured half is this run's own clock. The
                 manual half is assumed — it has to be, because the manual run never happened.
                 So the first card is a slider for every assumption behind the comparison. If you
@@ -2047,21 +2235,21 @@
           </div>
 
           <div class="g-beat">
-            <div class="g-n">7</div>
+            <div class="g-n">8</div>
             <div>
               <h4>Close on what was real <span class="t">20s</span></h4>
-              <div class="g-do"><b>Do</b><span>Point at the <strong>Agent trace</strong> in the
-                left column, which has been building the whole time.</span></div>
-              <div class="g-say"><b>Say</b><span>“Everything you just saw ran with no cluster
-                attached. No host was touched and those workflow runs exist nowhere. The agent
-                logic, the routing, the gate and the plan are the real ones — the data under
-                them is stored. The screens do not shout that at you, deliberately, so here is
-                the trace that does: every service that did not answer is named in it, and in
-                the log behind it.”</span></div>
-              <div class="g-why">Ending on the limitation is not a weak close. It is the reason
-                they will believe the rest of it, and it pre-empts the question that was coming
-                anyway. You have to say it out loud now — the console no longer says it for
-                you, which makes this beat the one you cannot skip.</div>
+              <div class="g-do"><b>Do</b><span>Switch back to Infrastructure and point at the
+                <strong>Agent trace</strong> in the left column, which has been building the
+                whole time.</span></div>
+              <div class="g-say"><b>Say</b><span>“Every hop you just watched is in that list, in
+                order, with the seconds between them — and each one names the service it called
+                and what came back. The diagram and the trace are drawn from the same event log,
+                so the two cannot disagree with each other, and neither of them can disagree
+                with what actually ran.”</span></div>
+              <div class="g-why">Close on the trace, because it is the only part of the demo the
+                room can audit for itself, and offering that is worth more than another claim.
+                It also answers the question that was coming anyway — whether what they saw is
+                what happened — before anybody has to ask it.</div>
             </div>
           </div>
         </section>
@@ -2071,14 +2259,16 @@
 
           <div class="g-qa"><b>“Is any of this real?”</b>
             <span>The agents, the control flow, the approval gate, the thresholds and the routing
-            rules are. The CVEs, hosts, scores and history are stored defaults, and the same
-            console runs against real backends with <code>./demo.sh --live</code>.</span></div>
+            rules are, and the trace under the diagram is every call they made — so you can check
+            that rather than take it from me. Which hosts and which repositories it is pointed at
+            is configuration, not code.</span></div>
 
           <div class="g-qa"><b>“What happens when one of your backends is down?”</b>
-            <span>Reads degrade, writes fail closed. A step that could not reach its service falls
-            back to a stored default, and then the plan names the step, the service and the fix,
-            and that box turns red in the diagram. A patch is never assumed — that asymmetry is
-            deliberate, because a missing risk score can be estimated and a patch cannot.</span></div>
+            <span>Writes fail closed: a patch is never assumed. That asymmetry is deliberate —
+            a missing risk score can be worked around and a missing patch cannot. And nothing is
+            silent: whatever happened to a step is in the <strong>Agent trace</strong> and in the
+            backend log, named service by service, so a gap is something you point at rather than
+            something somebody finds later.</span></div>
 
           <div class="g-qa"><b>“Can it patch without a human?”</b>
             <span>Yes, below the threshold, and the threshold is a setting — the gear at the top
@@ -2098,6 +2288,16 @@
             <span>Gear icon, every tunable the process reads, grouped, with its default shown
             until something overrides it. In-memory and lost on restart; <code>.env</code> is the
             durable place.</span></div>
+
+          <div class="g-qa"><b>“Why not just upgrade every dependency to the latest version?”</b>
+            <span>Because that is the upgrade nobody has time to test. Lightwell builds the fix
+            back onto the version you already run, so the change list moves patch levels and not
+            majors — and the exact list is on screen before anyone approves it.</span></div>
+
+          <div class="g-qa"><b>“Does it merge the fix?”</b>
+            <span>No. It pushes a branch, and your existing review and CI decide from there.
+            There are two approvals before even that: <strong>Approve and run</strong> to build
+            it, and <strong>Push branch</strong> once the build is green.</span></div>
         </section>
 
         <section class="g-never">
@@ -2109,20 +2309,26 @@
             <li><strong>Do not claim the risk score discriminates between hosts yet.</strong>
                 Three of its four inputs describe the CVE rather than the host, so hosts of one
                 CVE score almost alike. It needs tuning, and saying so costs you nothing.</li>
-            <li><strong>Do not let the clean screens imply it is live.</strong> Nothing on the
-                page marks a stored value as stored any more, so the honesty is entirely on
-                you now. Saying it costs twenty seconds; being caught not saying it costs the
-                whole demo and not just that slide.</li>
-            <li><strong>Do not run <code>--live</code> in front of a customer without checking
-                first.</strong> The AAP job templates the workflow calls do not exist yet, so an
-                approved run against a real Ansible Orchestrator fails part way through. The
-                offline path is unaffected — demo on that.</li>
+            <li><strong>Do not let a clean screen stand in for a check.</strong> The page does
+                not mark where a value came from; the <strong>Agent trace</strong> does, and so
+                does the log behind it. If you are asked whether a number was measured, read the
+                trace rather than the card. Saying so costs twenty seconds; being caught not
+                saying it costs the whole demo and not just that slide.</li>
+            <li><strong>Do not call a green build a guarantee the application still works.</strong>
+                It is the repository's own <code>mvn verify</code>: it compiles and its tests
+                pass. That is why the run stops at a branch and your review and CI take it from
+                there — claim the branch, not the release.</li>
+            <li><strong>Do not promise the infrastructure workflow against a controller nobody
+                has set up.</strong> Two of the three job templates it calls belong to the lab
+                and exist nowhere else, so pointing it at a customer's own Ansible Orchestrator
+                fails part way through an approved run. Check what is there before you offer
+                it.</li>
             <li><strong>Do not present agents 3 and 4 as coming soon with a date.</strong> They
                 are not started. The diagram already shows them dashed; let it.</li>
             <li><strong>Do not divide this run's exposure window by 43 days and quote the
                 multiple.</strong> It is a five-figure number that rests entirely on the assumed
-                side, and offline the numerator is <code>DEMO_LATENCY</code> rather than work.
-                The page prints the two durations and no ratio on purpose — do the same.</li>
+                side of the comparison. The page prints the two durations and no ratio on
+                purpose — do the same.</li>
             <li><strong>Do not turn the $4.99M breach cost into a saving.</strong> Nothing here
                 avoided a breach, and nobody in the room will let you multiply it by a
                 probability you made up. It is on the page for scale and it is in no total.</li>
@@ -2137,7 +2343,10 @@
           <h3>Between demos</h3>
           <p>Delete the run store and reload — <code>rm -f runs/simulated.json</code> — otherwise
           the ROI page's lifetime card carries your last rehearsal into the next room. Everything
-          else is in memory and resets when you restart <code>./demo.sh</code>.</p>
+          else is in memory and comes back clean when you restart the console.</p>
+          <p>The one thing a restart does not undo is a branch that was pushed. Delete it before
+          the next run, or the next <strong>Push branch</strong> lands on a branch that already
+          exists.</p>
         </section>
 
       </div>
@@ -2211,6 +2420,14 @@
 
 <iframe id="scanner-pane" title="Lightwell Scanner" hidden></iframe>
 
+<!-- The third destination, and a peer of the two panes above rather than a
+     view inside either. The toggle offers Infrastructure or Application; this
+     report is about both, so it cannot live on one side of a switch that says
+     pick one. It takes the whole width while it is up, which the two widest
+     things on it have always wanted — the remediation clock drawn to scale,
+     and a hundred dots. -->
+<main id="roi-pane" hidden></main>
+
 <div class="frames" id="frames">
 
   <!-- Sits on the seam, vertically centred, so it reads as belonging to the
@@ -2278,10 +2495,9 @@
         <button class="pill" id="head-resume" hidden></button>
         <button class="pill view-toggle" id="view-runs">Patch runs</button>
         <button class="pill" id="head-refresh" hidden>Refresh</button>
-        <!-- Outlined red, not filled: red marks everything clickable, and the
-             fill is what is kept back for the actions with consequences.
-             Working out what the run saved changes nothing. -->
-        <button class="pill" id="head-roi" hidden>Calculate ROI</button>
+        <!-- Calculate ROI used to live here. It costs both halves of the
+             console now, so it belongs to the chrome rather than to this
+             frame — see .head-right in the header. -->
         <!-- Label is set from the plan by dispatchAction(); this is placeholder
              text that is never shown, since the button is hidden until then. -->
         <button class="go-patch" id="head-patch" hidden>Dispatch</button>
@@ -2525,14 +2741,18 @@ function resumeRun() {
   if (parkedPhase === 'patch') renderPatch(parked);
 }
 
-// `back` names where back goes, because it is no longer always the CVE list:
-// the ROI view is reached from the remediation and has to return there.
+// `back` names where back goes, because it is not always the CVE list.
+//
+// There is no `roi` here any more. Calculate ROI used to be a frame action,
+// enabled by the dispatched-run view and hidden by every other; it is now a
+// header control owned by roiOffer(), because the report covers both sides
+// and this head belongs to only one of them.
 //
 // `resume` is asked for by the views that are not the run itself, which is
 // where it is needed — on the run's own views it would point at the page
 // already being looked at.
 function frameHead({ title, sub = '', pills = false, back = null,
-                     refresh = false, patch = false, roi = false,
+                     refresh = false, patch = false,
                      resume = false }) {
   document.getElementById('frame-title').textContent = title;
   const s = document.getElementById('frame-sub');
@@ -2551,7 +2771,6 @@ function frameHead({ title, sub = '', pills = false, back = null,
   }
   document.getElementById('head-refresh').hidden = !refresh;
   document.getElementById('head-patch').hidden = !patch;
-  document.getElementById('head-roi').hidden = !roi;
 
   const r = document.getElementById('head-resume');
   const open = resume && parked && parkedPhase && resumable(parked);
@@ -2574,13 +2793,9 @@ function frameHead({ title, sub = '', pills = false, back = null,
   }
 }
 
-// The two destinations back can have. Named so a view asks for one by
-// meaning rather than repeating the callback.
+// Where back goes. One destination now that the ROI report has left the
+// frame: it used to return to the remediation, having been reached from it.
 const BACK_CVES = { label: 'CVE list', go: () => render() };
-// renderPatch fills #patch-body, which only exists once renderPlan has laid
-// the frame out, so coming back has to rebuild both halves — which is what
-// resumeRun does, so back and the resume pill share the one code path.
-const BACK_PATCH = { label: 'Remediation', go: resumeRun };
 
 function render() {
   frameHead({ title: 'CVEs', pills: true, resume: true });
@@ -2885,6 +3100,79 @@ window.appStages = renderAppStages;
 // finds the row empty.
 renderAppStages(null);
 
+// ---- the application side's counts ----------------------------------------
+// The other thing the scanner reports through the same same-origin channel:
+// what it found and what it fixed, as counts. Never minutes and never money —
+// the server owns the baseline and the arithmetic, and a page that priced its
+// own work could be argued with. This is the input to that, nothing more.
+//
+// Last-one-wins rather than accumulated. The scanner sends a whole-scan
+// summary on every poll, so each call supersedes the one before it; adding
+// them would count the same repository once per second of scanning.
+//
+// Held here rather than fetched when the report is opened, because by then the
+// frame may have been reloaded or the side switched away from. The counts
+// outlive the view that produced them, which is the point — the report is
+// about both sides at once and either one may be off screen.
+let appCounts = null;
+let appCountsJson = '';
+
+// ---- which destination is up ----------------------------------------------
+// Three of them: the two sides and the report. `paneSide` is the side the
+// toggle is showing as pressed, which is also where Close goes back to —
+// the report is not a side and leaving it has to land somewhere that is.
+// Both are declared here, above every function that reads them, and assigned
+// by the toggle at the bottom of the script.
+let paneNow = 'infra';
+let paneSide = 'infra';
+let paneShow = () => {};
+
+// Whether the infrastructure side has anything to report on. The application
+// side's equivalent is `appCounts` being non-null; this one has no payload to
+// carry, because that half of the report is assembled from the server's own
+// run state rather than from anything this page holds.
+let infraDispatched = false;
+
+// The one place that decides whether the report can be asked for. Either side
+// having run is enough — a report with one half and an explicit "nothing has
+// run on the other side yet" is more useful than no report at all, and
+// requiring both would hide the button from everyone who only uses one half
+// of the console.
+function roiOffer() {
+  const b = document.getElementById('head-roi');
+  if (b) b.hidden = !(infraDispatched || appCounts);
+}
+
+window.appRoi = function (c) {
+  if (!c || typeof c !== 'object') return;
+  // Compared before it is kept. The scanner reports on every poll, which is
+  // about once a second while a scan runs, and almost all of those carry the
+  // same counts as the one before — a page that recomputed on each of them
+  // would replace the report under a reader on a timer.
+  //
+  // The two clocks are left out of the comparison, because a running one
+  // ticks on every poll and would defeat it. Nothing is lost: they only
+  // reach the report alongside a count that moved, since the moment a run
+  // stops its clock is also the moment it lands in fixed, held or failed.
+  let json;
+  try {
+    const k = Object.assign({}, c);
+    delete k.scan_s; delete k.run_s;
+    json = JSON.stringify(k);
+  } catch (e) { return; }
+  // The latest clocks are kept either way — they cost nothing to hold and
+  // the next recompute, whenever a count moves, should send the current ones.
+  appCounts = c;
+  if (json === appCountsJson) return;
+  appCountsJson = json;
+  // The button lives in the header and is shared with the other side, so the
+  // first scan that returns anything is what makes it appear. roiOffer() is
+  // the single place that decides; this just tells it something changed.
+  roiOffer();
+  // And if the report is already open, it is now out of date.
+  if (paneNow === 'roi') refreshRoi();
+};
+
 // Three ways to draw a bar, in order of preference: labelled, icons only, not
 // at all. Which one fits is not a window width — Large text widens every label
 // at once, and the branch comes and goes mid-run — so try each and keep the
@@ -2933,24 +3221,30 @@ const ARCH_VB = [356, 362];   // results box now ends at y=354
 const NODES = [
   { id: 'console',    x: 26,  y: 4,   w: 304, h: 28,
     t: 'CONSOLE', s: 'the operator — you' },
-  { id: 'insights',   x: 52,  y: 52,  w: 186, h: 28, ext: 1,
+  { id: 'insights',   x: 52,  y: 52,  w: 164, h: 28, ext: 1,
     t: 'RED HAT INSIGHTS', s: 'common code · CVE + affected hosts' },
   { id: 'supervisor', x: 26,  y: 98,  w: 304, h: 36, hero: 1,
     t: 'SUPERVISOR AGENT', s: 'owns control flow and per-CVE state' },
-  { id: 'info',       x: 52,  y: 154, w: 186, h: 38,
+  { id: 'info',       x: 52,  y: 154, w: 164, h: 38,
     t: '1 · CVE-GATHER-INFO', s: 'risk · history · window · plan' },
-  { id: 'risk-model', x: 252, y: 150, w: 78,  h: 22, ext: 1, mid: 1,
+  { id: 'risk-model', x: 230, y: 150, w: 100, h: 22, ext: 1, mid: 1,
     t: 'RISK MODEL' },
-  { id: 'rag',        x: 252, y: 178, w: 78,  h: 22, ext: 1, mid: 1,
-    t: 'RAG STORE' },
-  { id: 'patching',   x: 52,  y: 214, w: 186, h: 38,
+  // 'RAG store' is what it is built out of, not what it is for. The box
+  // answers "has this host been patched before, and what happened" — a
+  // recommendation drawn from its own history — and a room that has to be
+  // told what retrieval-augmented generation is has already stopped
+  // listening. The id stays 'rag' because the backend's trace events and
+  // DEG_NODE still say so; only the label is for people.
+  { id: 'rag',        x: 230, y: 178, w: 100, h: 22, ext: 1, mid: 1,
+    t: 'RECOMMENDATION' },
+  { id: 'patching',   x: 52,  y: 214, w: 164, h: 38,
     t: '2 · PATCHING AGENT', s: 'one AO workflow run per host' },
-  { id: 'ao',         x: 252, y: 216, w: 78,  h: 22, ext: 1, mid: 1,
+  { id: 'ao',         x: 230, y: 216, w: 100, h: 22, ext: 1, mid: 1,
     t: 'ANSIBLE ORCH' },
-  { id: 'communication', x: 52, y: 266, w: 186, h: 38,
+  { id: 'communication', x: 52, y: 266, w: 164, h: 38,
     t: '3 · COMMUNICATION', s: 'PDF report · Slack/SNOW pending' },
-  { id: 'results',    x: 52,  y: 316, w: 186, h: 38,
-    t: '4 · RESULTS', s: 'RAG record · training row' },
+  { id: 'results',    x: 52,  y: 316, w: 164, h: 38,
+    t: '4 · RESULTS', s: 'past-run record · training row' },
 ];
 
 // One path per direction, never one line shared by both: the question this
@@ -2965,13 +3259,13 @@ const EDGES = [
   { id: 'sup>con',   d: 'M26,122 L15,122 L15,24 L21,24' },
   { id: 'sup>info',  d: 'M34,134 L34,164 L45,164' },
   { id: 'info>sup',  d: 'M48,182 L44,182 L44,139' },
-  { id: 'info>risk', d: 'M238,161 L249,161' },
-  { id: 'info>rag',  d: 'M238,189 L249,189' },
+  { id: 'info>risk', d: 'M216,161 L227,161' },
+  { id: 'info>rag',  d: 'M216,189 L227,189' },
   { id: 'sup>pat',   d: 'M34,134 L34,227 L45,227' },
   { id: 'pat>sup',   d: 'M48,242 L44,242 L44,139' },
-  { id: 'pat>ao',    d: 'M238,227 L249,227' },
-  { id: 'con>pat',   d: 'M330,20 L338,20 L338,244 L241,244' },
-  { id: 'pat>con',   d: 'M238,250 L346,250 L346,26 L333,26' },
+  { id: 'pat>ao',    d: 'M216,227 L227,227' },
+  { id: 'con>pat',   d: 'M330,20 L338,20 L338,244 L219,244' },
+  { id: 'pat>con',   d: 'M216,250 L346,250 L346,26 L333,26' },
   { id: 'sup>com',   d: 'M34,134 L34,279 L45,279' },
   { id: 'com>con',   d: 'M48,294 L44,294 L44,139' },
   { id: 'sup>res',   d: 'M34,134 L34,329 L45,329' },
@@ -3527,6 +3821,14 @@ function renderHostTable(s) {
   }
   const sel = hostSel || new Set((s.hosts || []).map(h => h.system_uuid));
 
+  // Width of the retry panel's single cell. Counted from the same flags that
+  // build the header, so a column added above cannot leave the panel short
+  // and pull the table out of alignment.
+  // Host and Risk vs gate always; Plan, Status and the history cell only once
+  // the run has been dispatched.
+  const cols = (pick ? 1 : 0) + 2 + (dispatched ? 3 : 0)
+             + (showCols && dispatched ? 2 : 0);
+
   const rows = (s.hosts || []).map((h, i) => {
     const r = byHost[h.host];
     const o = r ? (OUTCOME[r.outcome] || { cls: 'review', label: r.outcome }) : null;
@@ -3541,12 +3843,19 @@ function renderHostTable(s) {
       : canDecide
         ? `<button class="btn-approve" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','approved')">Approve</button>`
           + `<button class="btn-reject" onclick="decide('${esc(r.execution_id)}','${esc(r.approval_activity_id)}','rejected')">Reject</button>`
-      : r._signal ? '<span class="muted-sm">signalling…</span>'
+      : r._signal ? liveProgress(r, r._signal === 'approved' ? 'approved' : 'rejected')
       : r._signalError
         ? `<span class="badge ${o.cls}">${esc(o.label)}</span>`
           + `<div class="err-sm">${esc(r._signalError)}</div>`
       : r.outcome === 'running'
-        ? `<span class="badge ${o.cls}">${r.decision === 'approved' ? 'Approved — patching…' : 'Patching…'}</span>`
+        ? liveProgress(r, r.decision === 'approved' ? 'approved — patching' : 'patching')
+      // The one terminal state with an action still attached. Everything
+      // else here is over; this one is over and did not work, and the thing
+      // to do about it is on the next line rather than in somebody's head.
+      : r.outcome === 'not_verified'
+        ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
+          + `<button class="btn-retry" onclick="toggleRetry('${esc(h.system_uuid)}')">`
+          + `${retryOpen.has(h.system_uuid) ? 'Cancel' : 'Fix &amp; retry'}</button>`
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     const prog = r ? stepProgress(r) : null;
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
@@ -3555,13 +3864,14 @@ function renderHostTable(s) {
           title="Dispatch to this host"></td>` : ''}
       <td class="cve-id" title="${esc(h.host)}">${esc(shortHost(h.host))}</td>
       <td>${riskMeter(h, plan)}</td>
-      <td><span class="badge ${h.decision}">${esc(planLabel(h.decision))}</span></td>
-      ${dispatched ? `<td class="decide-cell">${status}</td>` : ''}
+      ${dispatched ? `<td><span class="badge ${h.decision}">${esc(planLabel(h.decision))}</span></td>
+      <td class="decide-cell">${status}</td>` : ''}
       ${showCols && dispatched ? `<td class="prog-cell"${prog ? ` title="${esc(prog.title)}"` : ''}>${progressCell(r)}</td>
       <td class="mono">${esc(((r || {}).execution_id || '').slice(0, 8))}</td>` : ''}
-      <td class="desc" title="${esc(h.history || h.reason)}"><span class="clip">${
-        esc(h.history || h.reason)}</span><span class="more"></span></td>
-    </tr>`;
+      ${dispatched ? `<td class="desc" title="${esc(h.history || h.reason)}"><span class="clip">${
+        esc(h.history || h.reason)}</span><span class="more"></span></td>` : ''}
+    </tr>` + (retryOpen.has(h.system_uuid) && r && r.outcome === 'not_verified'
+      ? retryRow(h, r, cols) : '');
   }).join('');
 
   if (!(s.hosts || []).length) { el.innerHTML = ''; return; }
@@ -3570,13 +3880,19 @@ function renderHostTable(s) {
       ${dispatched ? `<label class="morecols" title="Adds workflow progress and execution id. The table scrolls sideways to fit them."><input type="checkbox" id="more-cols"${showCols ? ' checked' : ''}> Show more columns</label>` : ''}
     </div>
     <div class="${showCols && dispatched ? 'tscroll' : ''}">
+    <!-- Plan and the history cell are dispatch-only. Before dispatch the
+         question is which hosts to send, and the risk meter already answers
+         it — the verdict badge only restates which side of the gate the bar
+         is on, and the history is the text the approval screen puts in front
+         of whoever is deciding. Showing both twice made the plan screen read
+         as the approval screen with the buttons missing. -->
     <table class="${showCols && dispatched ? 'wide' : ''}"><thead><tr>
       ${pick ? `<th><input type="checkbox" id="host-pick-all"
           title="Select every host"${sel.size === (s.hosts || []).length ? ' checked' : ''}></th>` : ''}
-      <th>Host</th><th>Risk vs gate</th><th>Plan</th>
-      ${dispatched ? '<th>Status</th>' : ''}
+      <th>Host</th><th>Risk vs gate</th>
+      ${dispatched ? '<th>Plan</th><th>Status</th>' : ''}
       ${showCols && dispatched ? '<th>Workflow progress</th><th>Exec</th>' : ''}
-      <th title="For a host needing review: what the patch-history store holds about it, summarised by the LLM — past failures, known sensitivities, what worked. For a host cleared automatically: why its risk score stayed under the gate. Click a row to read the full text.">RAG history / reason</th>
+      ${dispatched ? '<th title="For a host needing review: what the patch-history store holds about it, summarised by the LLM — past failures, known sensitivities, what worked. For a host cleared automatically: why its risk score stayed under the gate. Click a row to read the full text.">Recommendation / reason</th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 
   // Which cells the clamp actually bit can only be known after layout — a
@@ -3718,6 +4034,122 @@ function refreshDispatchButton(s) {
   pb.onclick = () => startRemediation(plan.cve_id);
 }
 
+// Which rows have their retry panel open. Keyed by uuid rather than by index
+// so it survives the table redrawing under it, which it does on every poll.
+let retryOpen = new Set();
+
+function toggleRetry(uuid) {
+  retryOpen.has(uuid) ? retryOpen.delete(uuid) : retryOpen.add(uuid);
+  if (patchState) renderHostTable(patchState);
+}
+
+// The panel under a host the patch did not take on. Three things, in the
+// order a person needs them: what the verify step found, what this host's
+// own history says to do about it, and the fields to do it with.
+//
+// The fields are pre-filled from the history and not from a fleet default.
+// Where there is no history to read they come up at the playbook's own
+// defaults and are left for the operator — a box pre-filled with a number
+// the console made up, sitting under a heading that says the history
+// recommends it, would be the page lying about its own provenance on the one
+// screen built to catch exactly that.
+function retryRow(h, r, cols) {
+  const v = r.verify || {};
+  const spec = (MODE && MODE.remediation_inputs) || {};
+  const rec = h.tuning || {};
+  const sent = r.inputs || {};
+
+  const why = v.why
+    ? `<div class="retry-why"><b>Verify read the host and the advisory is still
+        listed${(v.outstanding_advisories || []).length
+          ? ` (${esc(v.outstanding_advisories.join(', '))})` : ''}.</b>
+        ${esc(v.why)}.</div>`
+    : `<div class="retry-why"><b>Verify read the host and it is still
+        vulnerable</b>, although the workflow itself reported no error.</div>`;
+
+  const fields = Object.keys(spec).map(key => {
+    const f = spec[key];
+    // What this attempt actually ran with, then the recommendation, then the
+    // default. Showing the last value sent matters on a second retry: the
+    // operator needs to see what did not work, not the suggestion they
+    // already declined.
+    const val = sent[key] != null ? sent[key]
+              : rec[key] != null ? rec[key] : f.default;
+    const flag = rec[key] != null && rec[key] !== f.default
+      ? `<span class="retry-rec" title="From this host's patch history">history: ${esc(rec[key])}${esc(f.unit)}</span>` : '';
+    return `<label class="retry-f" title="${esc(f.help)}">
+        <span class="retry-k">${esc(f.label)}${flag}</span>
+        <span class="retry-in"><input type="number" data-rk="${esc(key)}"
+          value="${esc(val)}" min="${esc(f.min)}" max="${esc(f.max)}"
+          step="1"><i>${esc(f.unit)}</i></span>
+      </label>`;
+  }).join('');
+
+  const hint = Object.keys(rec).length
+    ? 'Pre-filled from this host\'s patch history, in the right-hand column.'
+    : 'No structured recommendation for this host — read the history column '
+      + 'and set these yourself.';
+
+  return `<tr class="retry-row" data-retry="${esc(h.system_uuid)}">
+    <td colspan="${cols}">
+      ${why}
+      <div class="retry-grid">${fields}</div>
+      <div class="retry-foot">
+        <span class="retry-hint">${esc(hint)}</span>
+        <button class="btn-approve" onclick="retryHost('${esc(h.system_uuid)}')">
+          Retry this host</button>
+      </div>
+    </td></tr>`;
+}
+
+// Re-dispatch one host with the parameters on screen. Deliberately sends
+// whatever is in the boxes, including values that will not work: a retry
+// panel that silently corrected the operator's number would make the second
+// failure incomprehensible, and the point of the panel is that the fix is a
+// decision somebody made and can be held to.
+async function retryHost(uuid) {
+  const row = document.querySelector(`tr[data-retry="${uuid}"]`);
+  if (!row) return;
+  const inputs = {};
+  row.querySelectorAll('input[data-rk]').forEach(i => {
+    const n = Number(i.value);
+    if (Number.isFinite(n)) inputs[i.dataset.rk] = n;
+  });
+  const btn = row.querySelector('.btn-approve');
+  if (btn) { btn.disabled = true; btn.textContent = 'Dispatching…'; }
+  try {
+    const res = await fetch('/api/patch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cve: (patchState || {}).cve_id,
+                             hosts: [uuid], inputs }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.detail || j.error || 'retry refused');
+    retryOpen.delete(uuid);
+    // Dispatch is async server-side: the state goes back to 'running' while
+    // the one host is registered, and the merged results only exist once it
+    // settles. Rendering before then would briefly show the table without
+    // the row that was just retried.
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await new Promise(x => setTimeout(x, STEP_TICK));
+      let s;
+      try { s = await (await fetch('/api/state')).json(); } catch { continue; }
+      if (s && s.status !== 'running' && s.patch) { renderPatch(s); return; }
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry this host'; }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry this host'; }
+    const foot = row.querySelector('.retry-foot');
+    if (foot && !foot.querySelector('.err-sm')) {
+      const d = document.createElement('div');
+      d.className = 'err-sm';
+      d.textContent = String(e.message || e);
+      foot.appendChild(d);
+    }
+  }
+}
+
 const OUTCOME = {
   patched:           { cls: 'ok',     label: 'Patched' },
   awaiting_approval: { cls: 'review', label: 'Awaiting approval' },
@@ -3728,6 +4160,11 @@ const OUTCOME = {
   unavailable:       { cls: 'fail',   label: 'Not dispatched' },
   completed:         { cls: 'ok',     label: 'Completed' },
   cancelled:         { cls: 'fail',   label: 'Cancelled' },
+  // The run succeeded and the host is still vulnerable. Deliberately not
+  // 'Failed': nothing failed, and an operator who reads this as a failure
+  // goes looking for a stack trace that does not exist. What it needs is a
+  // retry with different parameters, which is a different action entirely.
+  not_verified:      { cls: 'fail',   label: 'Not verified' },
 };
 
 // Set by renderMode() before the first render.
@@ -3799,21 +4236,55 @@ function progressCell(r) {
        + (r.error ? `<div class="prog-err">${esc(r.error)}</div>` : '');
 }
 
+// The same bar, in the status cell, for a row that is working. "signalling…"
+// and "patching…" both said only that something was happening, on the one
+// screen where how far along it is can actually be answered — and they said it
+// in the column that is always visible, while the bar that had the answer sat
+// in a column you have to tick a box to see. The caption is the node in flight
+// once there are nodes to read; until then it is why the row is moving. This
+// never renders a terminal state: the badge comes back the moment the run
+// settles, so a host that finishes still reads Patched.
+function liveProgress(r, caption) {
+  const p = stepProgress(r), pct = p ? p.pct : 0;
+  return `<span class="prog live" style="--p:${pct}%"${p ? ` title="${esc(p.title)}"` : ''}>`
+       + '<span class="prog-fill"></span></span>'
+       + `<span class="prog-meta"><span class="prog-step">${esc(p ? p.label : caption)}</span>`
+       + `<span class="prog-n">${pct}%</span></span>`;
+}
+
 // Moves an existing bar instead of rebuilding the cell, so the width animates
 // from where it was. Rebuilding would snap it to the new value and throw away
 // the one cue that says the run is advancing rather than just sitting at a
 // different number.
 function paintProgress(r) {
-  const cell = document.querySelector(`tr[data-exec="${r.execution_id}"] .prog-cell`);
-  if (!cell) return;
-  const p = stepProgress(r), bar = cell.querySelector('.prog');
-  if (!p || !bar) { if (cell) cell.innerHTML = progressCell(r); return; }
-  bar.style.setProperty('--p', `${p.pct}%`);
-  bar.className = `prog ${progCls(r)}`;
-  cell.title = p.title;
-  const step = cell.querySelector('.prog-step'), n = cell.querySelector('.prog-n');
+  const row = document.querySelector(`tr[data-exec="${r.execution_id}"]`);
+  if (!row) return;
+  const p = stepProgress(r);
+  const cell = row.querySelector('.prog-cell');
+  if (cell) {
+    const bar = cell.querySelector('.prog');
+    if (!p || !bar) cell.innerHTML = progressCell(r);
+    else {
+      bar.style.setProperty('--p', `${p.pct}%`);
+      bar.className = `prog ${progCls(r)}`;
+      cell.title = p.title;
+      const step = cell.querySelector('.prog-step'), n = cell.querySelector('.prog-n');
+      if (step) step.textContent = p.label;
+      if (n) n.textContent = `${p.done}/${p.total}`;
+    }
+  }
+  // The status cell's copy is repainted and never rebuilt: that cell holds the
+  // Approve/Reject buttons or an outcome badge in every state this function is
+  // not about, and replacing either of those from here would take a decision
+  // away from an operator mid-click.
+  const live = row.querySelector('.decide-cell .prog');
+  if (!live || !p) return;
+  live.style.setProperty('--p', `${p.pct}%`);
+  live.title = p.title;
+  const step = row.querySelector('.decide-cell .prog-step');
+  const n = row.querySelector('.decide-cell .prog-n');
   if (step) step.textContent = p.label;
-  if (n) n.textContent = `${p.done}/${p.total}`;
+  if (n) n.textContent = `${p.pct}%`;
 }
 
 const stepKey = r => (r.steps || []).map(s => s.status).join(',');
@@ -3946,7 +4417,17 @@ function recountPatch(s) {
     // that is happening, and a host in flight looks like one that was lost.
     running: rs.filter(r => r.outcome === 'running').length,
     failed: rs.filter(r => ['failed', 'timeout'].includes(r.outcome)).length,
+    // Its own tile, not folded into failed. Every node went green and the
+    // host is still vulnerable, which needs a retry rather than a postmortem.
+    not_verified: rs.filter(r => r.outcome === 'not_verified').length,
     rejected: rs.filter(r => ['rejected', 'cancelled'].includes(r.outcome)).length,
+    // Hosts on the plan that no run was dispatched for. Their rows stay in
+    // the table with an empty status, but every counter above it was reading
+    // off the dispatched subset — so a plan of five with two sent showed five
+    // rows and five tiles adding to two, with nothing on screen reconciling
+    // them. A host nobody sent is the one most worth counting: it is still
+    // exposed, and it is the only state here that no run will ever resolve.
+    not_sent: Math.max(0, (s.hosts || []).length - rs.length),
   };
 }
 
@@ -3974,8 +4455,13 @@ function renderPatch(s) {
     title: 'Remediation',
     sub: `<span class="cve-id">${cveLabel(plan.cve_id || '')}</span>`
        + `<span>${esc((s.patch || {}).results?.length || 0)} host(s) dispatched</span>`,
-    back: BACK_CVES, patch: true, roi: true,
+    back: BACK_CVES, patch: true,
   });
+  // A dispatched run is the infrastructure side's half of the ROI report, so
+  // this is where that half starts existing. The button itself is in the
+  // header and shared with the other side.
+  infraDispatched = true;
+  roiOffer();
   // Every host already has a workflow run; pressing it again would start a
   // second one per host, so the primary action retires once it has fired.
   const pb = document.getElementById('head-patch');
@@ -3996,12 +4482,18 @@ function renderPatch(s) {
     <div class="sev-title high" style="margin-top:18px">
       Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
     </div>
-    <div class="stats" style="grid-template-columns:repeat(5,1fr)">
+    <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(92px,1fr))">
       <div class="stat"><div class="v">${esc(sum.patched)}</div><div class="k">Patched</div></div>
       <div class="stat"><div class="v">${esc(sum.running || 0)}</div><div class="k">Patching</div></div>
       <div class="stat${sum.awaiting_approval ? ' alert' : ''}"><div class="v">${esc(sum.awaiting_approval)}</div><div class="k">Awaiting approval</div></div>
       <div class="stat${sum.failed ? ' alert' : ''}"><div class="v">${esc(sum.failed)}</div><div class="k">Failed</div></div>
+      <div class="stat${sum.not_verified ? ' alert' : ''}"
+           title="The workflow finished cleanly and the host is still vulnerable — the verify step read the machine and the advisory is still listed. Not a failure: a retry with different parameters."><div
+        class="v">${esc(sum.not_verified || 0)}</div><div class="k">Not verified</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
+      <div class="stat${sum.not_sent ? ' alert' : ''}"
+           title="Affected hosts left unticked at dispatch. No workflow run exists for them and none will — they are still vulnerable. Assess the CVE again to send them."><div
+        class="v">${esc(sum.not_sent || 0)}</div><div class="k">Not sent</div></div>
     </div>`;
 
   document.getElementById('patch-body').innerHTML = `
@@ -4199,6 +4691,7 @@ const RUN_OUTCOME = {
   running:           { cls: 'work',   label: 'Running' },
   unavailable:       { cls: 'fail',   label: 'Not dispatched' },
   timeout:           { cls: 'fail',   label: 'Timed out' },
+  not_verified:      { cls: 'fail',   label: 'Not verified' },
 };
 
 const ago = iso => {
@@ -4254,8 +4747,13 @@ const fmtSec = s => s === null || s === undefined ? '—'
 // Both paths drawn against one scale, and that scale is the larger total.
 // Two independently-scaled bars would each fill their track and the
 // comparison — the only reason the chart exists — would vanish.
-function roiBars(roi) {
-  const max = Math.max(roi.manual.minutes, roi.auto.minutes) || 1;
+//
+// `man` and `aut` are passed in rather than read off a side, because the
+// application half charges one more thing against the automated bar than its
+// own `auto` breakdown holds: the work the run did not finish. That belongs
+// in the picture, so the caller assembles the bar it wants drawn.
+function roiBars(roi, man, aut) {
+  const max = Math.max(man.minutes, aut.minutes) || 1;
   const bar = (name, cls, total, breakdown) => {
     const segs = Object.entries(breakdown).filter(([, m]) => m > 0);
     const body = segs.map(([label, m], i) => {
@@ -4280,10 +4778,10 @@ function roiBars(roi) {
       + `<span class="roi-sw ${cls}" style="opacity:${(1 - i * 0.16).toFixed(2)}"></span>`
       + `${esc(label)}</span>`).join('');
 
-  return bar('By hand', 'man', roi.manual.minutes, roi.manual.breakdown)
-       + bar('With the console', 'aut', roi.auto.minutes, roi.auto.breakdown)
-       + `<div class="roi-legend">${keys('man', roi.manual.breakdown)}`
-       + `${keys('aut', roi.auto.breakdown)}</div>`;
+  return bar('By hand', 'man', man.minutes, man.breakdown)
+       + bar('With the console', 'aut', aut.minutes, aut.breakdown)
+       + `<div class="roi-legend">${keys('man', man.breakdown)}`
+       + `${keys('aut', aut.breakdown)}</div>`;
 }
 
 // How the two scale with the size of the estate. This is the real argument:
@@ -4291,17 +4789,23 @@ function roiBars(roi) {
 // the hosts that stop for a person, and the per-CVE triage is paid once by a
 // machine instead of once by someone. The shaded gap between them is the
 // saving, which is why it is the only filled area on the chart.
-function roiCurve(roi) {
-  const pts = roi.curve || [];
+//
+// `xk` is which count the curve runs over — hosts on one side, repositories
+// on the other. The shape of the argument is identical and so is the chart;
+// only the noun changes, so the noun is a parameter rather than the chart
+// being written twice. `mark_note` is already written out by the caller,
+// which can: the marked point is by definition the one at `here_n`.
+function roiCurve(roi, s, xk, here_n, axis, mark_note) {
+  const pts = s.curve || [];
   if (pts.length < 2) return '';
   const W = 720, H = 250, L = 64, R = 18, T = 16, B = 40;
-  const maxX = pts[pts.length - 1].hosts;
+  const maxX = pts[pts.length - 1][xk];
   // Headroom, so the manual line stops short of the frame rather than
   // running into the corner and reading as clipped.
   const maxY = (Math.max(...pts.map(p => p.manual)) || 1) * 1.08;
   const x = v => L + v / maxX * (W - L - R);
   const y = v => H - B - v / maxY * (H - T - B);
-  const at = (p, k) => `${x(p.hosts).toFixed(1)} ${y(p[k]).toFixed(1)}`;
+  const at = (p, k) => `${x(p[xk]).toFixed(1)} ${y(p[k]).toFixed(1)}`;
   const line = k => pts.map((p, i) => `${i ? 'L' : 'M'}${at(p, k)}`).join(' ');
   const gap = line('manual')
             + pts.slice().reverse().map(p => ` L${at(p, 'auto')}`).join('') + ' Z';
@@ -4313,9 +4817,9 @@ function roiCurve(roi) {
          + ` text-anchor="end">${esc(money(roi.currency, v))}</text>`;
   }).join('');
 
-  const here = pts.find(p => p.hosts === roi.measured.hosts);
-  const ticks = pts.map(p => `<text class="axis" x="${x(p.hosts).toFixed(1)}"`
-    + ` y="${H - B + 17}" text-anchor="middle">${p.hosts}</text>`).join('');
+  const here = pts.find(p => p[xk] === here_n);
+  const ticks = pts.map(p => `<text class="axis" x="${x(p[xk]).toFixed(1)}"`
+    + ` y="${H - B + 17}" text-anchor="middle">${p[xk]}</text>`).join('');
 
   // The run on screen, so the projection is anchored to something real
   // rather than floating free of the page it is on.
@@ -4323,10 +4827,10 @@ function roiCurve(roi) {
     <!-- Starts below the callout, not at the frame. On a small host count the
          marker sits close to the left edge, which is where the callout is, and
          a full-height rule would be drawn straight through the text. -->
-    <line class="mk" x1="${x(here.hosts).toFixed(1)}" x2="${x(here.hosts).toFixed(1)}"
+    <line class="mk" x1="${x(here[xk]).toFixed(1)}" x2="${x(here[xk]).toFixed(1)}"
           y1="${T + 20}" y2="${H - B}"/>
-    <circle class="dot man" cx="${x(here.hosts).toFixed(1)}" cy="${y(here.manual).toFixed(1)}" r="4.5"/>
-    <circle class="dot aut" cx="${x(here.hosts).toFixed(1)}" cy="${y(here.auto).toFixed(1)}" r="4.5"/>
+    <circle class="dot man" cx="${x(here[xk]).toFixed(1)}" cy="${y(here.manual).toFixed(1)}" r="4.5"/>
+    <circle class="dot aut" cx="${x(here[xk]).toFixed(1)}" cy="${y(here.auto).toFixed(1)}" r="4.5"/>
     <!-- The readout sits in the plot's top-left rather than beside the dots.
          Labels pinned to the dots have to dodge three things at once — the
          line they label, the other line, and the axes — and where they can
@@ -4337,11 +4841,11 @@ function roiCurve(roi) {
       <tspan class="lbl man">${esc(money(roi.currency, here.manual))} by hand</tspan>
       <tspan class="axis" dx="7">vs</tspan>
       <tspan class="lbl aut" dx="7">${esc(money(roi.currency, here.auto))} here</tspan>
-      <tspan class="axis" dx="7">at ${esc(here.hosts)} host(s) — this run</tspan>
+      <tspan class="axis" dx="7">${esc(mark_note)}</tspan>
     </text>` : '';
 
   return `<svg class="roi-chart" viewBox="0 0 ${W} ${H}" role="img"
-       aria-label="Labour cost against number of hosts, manual versus automated">
+       aria-label="Labour cost against ${esc(axis)}, manual versus automated">
     ${grid}
     <path class="gap" d="${gap}"/>
     <path class="ln man" d="${line('manual')}"/>
@@ -4349,7 +4853,7 @@ function roiCurve(roi) {
     ${mark}
     ${ticks}
     <text class="axis" x="${((L + W - R) / 2).toFixed(1)}" y="${H - 4}"
-          text-anchor="middle">Hosts on one CVE</text>
+          text-anchor="middle">${esc(axis)}</text>
   </svg>`;
 }
 
@@ -4360,8 +4864,8 @@ function roiCurve(roi) {
 // lead time against a clock that is demo-paced offline — as the most
 // impressive picture on it. The durations say the same thing and can be
 // argued with.
-function roiExposure(roi) {
-  const s = roi.measured.exposure_s;
+function roiExposure(roi, side) {
+  const s = side.measured.exposure_s;
   if (s === null || s === undefined) {
     return `<div class="sub">Not measurable yet — no host has finished.
       Exposure runs to the moment a host is actually patched, which includes
@@ -4369,7 +4873,7 @@ function roiExposure(roi) {
       Quoting it before then would leave out the wait that usually dominates
       it.</div>`;
   }
-  const sla = roi.sla || {};
+  const sla = side.sla || {};
   // Stated against the deadline the organisation already set, rather than
   // converted into money. Pricing an exposure window needs a breach
   // probability and a breach cost multiplied together, neither of which
@@ -4377,7 +4881,7 @@ function roiExposure(roi) {
   // weakest footing of anything on it.
   const chip = (within, text) =>
     `<div class="roi-chip ${within ? 'ok' : 'bad'}">${esc(text)}</div>`;
-  const m = roi.measured;
+  const m = side.measured;
   // Both measured, and the difference between them is the part of the saving
   // that comes from concurrency rather than speed. Only worth saying when
   // there was more than one host to overlap and the two figures actually came
@@ -4392,7 +4896,7 @@ function roiExposure(roi) {
         hand they queue behind whoever is doing them.</div>` : '';
 
   return `<div class="roi-exp">
-      <div><div class="t">By hand</div><div class="v man">${esc(fmtMin(roi.manual.lead_hours * 60))}</div>
+      <div><div class="t">By hand</div><div class="v man">${esc(fmtMin(side.manual.lead_hours * 60))}</div>
         <div class="src">Assumed — <code>ROI_LEAD_HOURS</code>. Mostly queueing
           and waiting for a window, not effort.</div>
         ${chip(sla.manual_within, sla.manual_within ? `within the ${esc(sla.hours)}h deadline`
@@ -4403,11 +4907,63 @@ function roiExposure(roi) {
         ${chip(sla.auto_within, sla.auto_within
           ? `${esc(sla.headroom_pct)}% inside the deadline` : 'misses the deadline')}</div>
     </div>
-    <div class="note">Around <b>${esc(fmtMin(roi.saved.exposure_hours * 60))}</b>
+    <div class="note">Around <b>${esc(fmtMin(side.saved.exposure_hours * 60))}</b>
       less time with the host exploitable, per host on this CVE. The deadline
       is your policy, not ours — <code>ROI_SLA_HOURS</code>, currently
       ${esc(sla.hours)}h.</div>
     ${parallel}`;
+}
+
+// The same two durations for the other side, and a different story around
+// them. There is no gate wait to call out and no concurrency to explain —
+// the remediation runs one repository at a time — but there is one thing the
+// infrastructure side has no equivalent for, which is the fix that existed
+// before the advisory did.
+function roiAppExposure(roi, app) {
+  const m = app.measured, sla = app.sla || {};
+  const pre = app.predisclosure;
+  // Drawn whether or not anything was pushed: a fix that was available
+  // before the advisory was public is a property of the scan, not of the
+  // remediation, and holding it back until something is pushed would hide
+  // the one number on this page that a scan alone earns.
+  const early = pre ? `<div class="roi-be lead">
+      <b>${esc(pre.components)}</b> of the vulnerable components had a
+      Lightwell build <b>${esc(pre.days)} days</b> before the advisory was
+      public. For those, the exposure window measured below is the wrong
+      window — the fix was already shipped and installable while the clock
+      everyone else is measuring had not started. This is the only figure on
+      the page that can go negative, and it is the only one the
+      infrastructure side cannot produce at all.</div>` : '';
+
+  if (m.exposure_s === null || m.exposure_s === undefined) {
+    return `<div class="sub">Not measurable yet — nothing has been pushed.
+      A build that went green and was never pushed left the repository
+      byte-identical, so there is no moment at which the component stopped
+      being vulnerable and no window to close.</div>${early}`;
+  }
+  const chip = (within, text) =>
+    `<div class="roi-chip ${within ? 'ok' : 'bad'}">${esc(text)}</div>`;
+
+  return `<div class="roi-exp">
+      <div><div class="t">By hand</div>
+        <div class="v man">${esc(fmtMin(app.manual.lead_hours * 60))}</div>
+        <div class="src">Assumed — <code>ROI_APP_LEAD_HOURS</code>. Noticing
+          the advisory, finding a fixed version, and getting the pull request
+          merged.</div>
+        ${chip(sla.manual_within, sla.manual_within ? `within the ${esc(sla.hours)}h deadline`
+          : `misses by ${esc(fmtMin(sla.manual_over_h * 60))}`)}</div>
+      <div><div class="t">This run</div><div class="v">${esc(fmtSec(m.exposure_s))}</div>
+        <div class="src">Measured — scan start through to the last fix
+          pushed, the approval wait included.</div>
+        ${chip(sla.auto_within, sla.auto_within
+          ? `${esc(sla.headroom_pct)}% inside the deadline` : 'misses the deadline')}</div>
+    </div>
+    <div class="note">Around <b>${esc(fmtMin(app.saved.exposure_hours * 60))}</b>
+      less time with the dependency exploitable. Scanning took
+      <b>${esc(fmtSec(m.scan_s))}</b> and the remediations
+      <b>${esc(fmtSec(m.run_s))}</b>; both count, because a vulnerability
+      nobody has found yet is still open.</div>
+    ${early}`;
 }
 
 // How wrong the assumptions can be before the conclusion changes. This is the
@@ -4416,19 +4972,24 @@ function roiExposure(roi) {
 // same place. It is also the only part of the page that cannot be argued
 // with, because it assumes nothing: it is arithmetic on whatever the reader
 // has already set the sliders to.
-function roiBreakeven(roi) {
-  const be = roi.breakeven || {}, sv = roi.saved;
-  const handling = be.handling_min
+function roiBreakeven(roi, side) {
+  const be = side.breakeven || {}, sv = side.saved;
+  // Only the infrastructure side publishes a handling figure. On the other,
+  // hands-on time is two numbers — per component and per repository — and
+  // "break-even at 7 minutes of something" would be a figure the reader
+  // cannot map back to any slider on the page.
+  const handling = !('handling_min' in be) ? ''
+    : `<div class="roi-be">${be.handling_min
     ? `Break-even lands at <b>${esc(be.handling_min)} min</b> of hands-on time
        per host, against the ${esc(be.handling_now)} min assumed here.`
     : `There is no per-host handling time that makes the manual path cheaper.
        Even at zero minutes a host, reading the advisory once already costs
-       more than this entire run cost in operator time.`;
+       more than this entire run cost in operator time.`}</div>`;
   return `<div class="roi-be">The manual baseline would have to be
       <b>${esc(be.shrink_pct)}% smaller</b> — not ${esc(be.shrink_pct)}% off the
       total, ${esc(be.shrink_pct)}% of it gone — before doing this by hand cost
       the same as doing it here.</div>
-    <div class="roi-be">${handling}</div>
+    ${handling}
     <div class="roi-be">Moving the hourly rate changes the money and never the
       verdict: it multiplies both sides equally, so only the minutes decide
       this. That is also why the range below is on the manual side alone.</div>
@@ -4481,22 +5042,39 @@ function roiPayback(roi) {
   const pb = roi.payback || {};
   if (!pb.platform_cost) return '';
   const pct = pb.recovered_pct || 0;
+  // One platform, built once, recovering its cost from whichever sides are
+  // in use. Each marginal figure is shown only where its side has run: a
+  // "saved per repository" of nothing, next to a real per-host number, reads
+  // as the application side having no value rather than no data.
+  const cell = (t, v) => `<div><div class="t">${esc(t)}</div>
+        <div class="v">${v}</div></div>`;
+  const cells = [
+    pb.per_host !== null && pb.per_host !== undefined
+      ? cell('Saved per host', esc(money(roi.currency, pb.per_host))) : '',
+    pb.per_repo !== null && pb.per_repo !== undefined
+      ? cell('Saved per repository', esc(money(roi.currency, pb.per_repo))) : '',
+    pb.per_host !== null && pb.per_host !== undefined
+      ? cell('Hosts to break even', pb.hosts ? esc(pb.hosts.toLocaleString()) : '—') : '',
+  ].filter(Boolean).join('');
+
   return `<div class="roi-grid">
       <div><div class="t">Platform cost</div>
         <div class="v man">${esc(money(roi.currency, pb.platform_cost))}</div></div>
-      <div><div class="t">Saved per host</div>
-        <div class="v">${esc(money(roi.currency, pb.per_host))}</div></div>
-      <div><div class="t">Hosts to break even</div>
-        <div class="v">${pb.hosts ? esc(pb.hosts.toLocaleString()) : '—'}</div></div>
+      ${cells}
       <div><div class="t">Recovered so far</div>
         <div class="v ${pct >= 100 ? '' : 'sm'}">${esc(pct)}%</div></div>
     </div>
     <div class="roi-pb"><span style="width:${Math.min(100, pct)}%"></span></div>
-    <div class="note">Per-host saving excludes the per-CVE triage, because the
-      next host does not arrive with another advisory to read — amortising it
-      across hosts would flatter this figure on exactly the estates where it
-      matters least. <b>The platform cost is the weakest number on this
-      page</b>: nothing here can measure it. Set
+    ${pb.both ? `<div class="roi-be">Both sides are recovering the same build
+      cost, which is the one place on this page where combining them changes
+      the answer rather than the presentation. A platform that pays for itself
+      twice as fast because it was pointed at a second problem is the argument
+      for building a platform at all.</div>` : ''}
+    <div class="note">The marginal savings exclude per-advisory triage, because
+      the next host or repository does not arrive with the same advisory to
+      read again — amortising it would flatter these figures on exactly the
+      estates where they matter least. <b>The platform cost is the weakest
+      number on this page</b>: nothing here can measure it. Set
       <code>ROI_PLATFORM_COST</code> to what this actually cost you, or to 0
       to drop this card.</div>`;
 }
@@ -4519,9 +5097,30 @@ const ROI_SLIDE = {
   // rather than 1 so the travel stays usable over the wider range; 72 and
   // 1032 both land on it.
   ROI_LEAD_HOURS: [0, 1200, 6],
+  // The application side. Same reasoning, different work: a build-and-test
+  // cycle runs longer than a host reboot, so its travel is wider, and the
+  // break rate goes to 50% because a dependency bump breaking the build is
+  // ordinary where a host patch failing is not.
+  ROI_APP_TRIAGE_MIN: [0, 120, 1], ROI_APP_BUMP_MIN: [0, 60, 1],
+  ROI_APP_BUILD_MIN: [0, 180, 1], ROI_APP_PR_MIN: [0, 120, 1],
+  ROI_APP_BREAK_PCT: [0, 50, 1], ROI_APP_REVIEW_MIN: [0, 60, 1],
+  ROI_APP_LEAD_HOURS: [0, 1200, 6],
   ROI_SLA_HOURS: [1, 720, 1], ROI_BAND_PCT: [0, 60, 1],
   ROI_PLATFORM_COST: [0, 200000, 1000],
 };
+
+// Which group each side's sliders sit under, and in which order. Three
+// headings rather than one flat list of eighteen: the two baselines are
+// genuinely separate numbers and a reader arguing with one should not have to
+// work out which of two "triage per …" rows belongs to the side they are
+// looking at.
+const ROI_SIDES = [
+  ['infra', 'Infrastructure baseline', 'A host, by hand.'],
+  ['app', 'Application baseline', 'A dependency, by hand. A separate baseline '
+    + 'because it is not the same work: a host patch is one unit per host, a '
+    + 'dependency fix is paid per component and again per repository.'],
+  ['shared', 'Both sides', 'Rate, deadline and the margin on the guesswork.'],
+];
 
 // Survives leaving the page and coming back, which is the point: someone who
 // has argued the baseline down to their own numbers should not have to do it
@@ -4537,8 +5136,12 @@ function roiVal(a, v) {
   return `${a.unit}${Number(v).toLocaleString()}`;
 }
 
+// Grouped by side, and a group whose side did not run is dropped rather than
+// greyed out. Dragging the application baseline with no scan on record would
+// move nothing on the page, and a control that does nothing is worse than an
+// absent one — it reads as a fault.
 function roiSliders(roi) {
-  return (roi.assumptions || []).filter(a => ROI_SLIDE[a.key]).map(a => {
+  const one = a => {
     const [lo, hi, step] = ROI_SLIDE[a.key];
     const edited = a.key in roiOverrides;
     return `<div>
@@ -4548,6 +5151,20 @@ function roiSliders(roi) {
              min="${lo}" max="${Math.max(hi, a.value)}" step="${step}"
              value="${esc(a.value)}" aria-label="${esc(a.label)}">
     </div>`;
+  };
+  const all = (roi.assumptions || []).filter(a => ROI_SLIDE[a.key]);
+  const sides = roi.sides || {};
+  return ROI_SIDES.map(([side, title, blurb]) => {
+    if (side !== 'shared' && !sides[side]) return '';
+    // An older report, before the sides existed, has no `side` on its
+    // assumptions. Everything then falls into the first group, which is the
+    // layout this page had anyway.
+    const rows = all.filter(a => (a.side || 'infra') === side);
+    if (!rows.length) return '';
+    return `<div class="roi-slg">
+        <div class="h">${esc(title)}<span>${esc(blurb)}</span></div>
+        <div class="roi-sl">${rows.map(one).join('')}</div>
+      </div>`;
   }).join('');
 }
 
@@ -4758,22 +5375,92 @@ function roiReveal(instant) {
   cards.forEach(c => io.observe(c));
 }
 
-function roiBody(roi) {
-  const sv = roi.saved, m = roi.measured;
+// ---- the headline strip ---------------------------------------------------
+// The combined total, and it is deliberately the first thing on the page even
+// when only one side has run. The question this page answers is "what is the
+// platform worth", and that question is about the platform, not about one
+// half of it. The per-side figures are a screen below, under their own
+// headings, where a reader who wants to take one side apart can find it.
+function roiTotals(roi) {
+  const c = roi.combined, sides = roi.sides || {};
+  const parts = [];
+  // The scope each side covered, so the two read alike: the app side counts
+  // every repository scanned, not every one it pushed.
+  if (sides.infra) parts.push(`${esc(roi.infra.measured.scope)} host(s)`);
+  if (sides.app) parts.push(`${esc(roi.app.measured.repos)} repositor`
+    + (roi.app.measured.repos === 1 ? 'y' : 'ies'));
+
+  return `<div class="stats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><div class="v">${esc(money(roi.currency, c.cost))}</div>
+        <div class="k">Labour saved${c.both ? ', both sides' : ''}</div>
+        <div class="roi-range">${esc(money(roi.currency, c.cost_low))}&ndash;${esc(money(roi.currency, c.cost_high))}
+          at &plusmn;${esc(roi.band_pct)}%</div></div>
+      <div class="stat"><div class="v">${esc(fmtMin(c.minutes))}</div>
+        <div class="k">Engineer time saved</div></div>
+      <div class="stat"><div class="v sm">${parts.join(' &middot; ')}</div>
+        <div class="k">What this ran against</div></div>
+    </div>
+    ${c.both ? `<div class="roi-be">Added in hours and in money, which add, and
+      in nothing else. There is no total of hosts and repositories on this
+      page: they are different units of work with different baselines, and a
+      combined count of eleven of them would mean nothing.</div>` : ''}`;
+}
+
+// ---- the infrastructure section -------------------------------------------
+function roiInfraBody(roi) {
+  const s = roi.infra, sv = s.saved, m = s.measured, left = s.left;
+
+  // Same treatment the application side gives it: the work the run did not
+  // finish, priced at the manual rate and shown on the automated bar. The
+  // model is right to keep it separate — it is not automation time, it is
+  // the automation's unpaid bill — but on one shared scale it has to be
+  // visible or the bar is a claim rather than a comparison.
+  const aut = {
+    minutes: s.total_auto_minutes,
+    breakdown: Object.assign({}, s.auto.breakdown,
+      left.minutes > 0 ? { 'Still left by hand': left.minutes } : {}),
+  };
+
   // When nothing was gated the automated path cost no human time at all, so
   // there is no ratio to print. That is the better outcome, not a gap in the
   // data, and it should not render as a broken statistic.
   const mult = sv.effort_x
     ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
     : `<div class="v sm">Fully unattended</div><div class="k">Operator time</div>`;
+
+  // Every affected host not counted as patched, and why. Three reasons, and
+  // they are not the same: one nobody sent, one the run could not finish, and
+  // one a person declined. All three leave the host exposed, which is why all
+  // three are charged — but a reader deserves to know which they are looking
+  // at before they argue with the number.
+  const why = [
+    [m.skipped, 'left unticked at dispatch, so no run exists for them'],
+    [Math.max(0, m.hosts - m.patched), 'dispatched and not reported patched — '
+      + 'failed, rejected, or still at the gate'],
+  ].filter(([n]) => n).map(([n, t]) => `${n} ${t}`).join('; ');
+
+  const charge = left.minutes > 0 ? `<div class="roi-be">
+      <b>${esc(left.hosts)} of ${esc(m.scope)} affected host(s)</b> are not
+      patched, so that work is still waiting for a person. It is charged to the
+      console at the full manual rate — <b>${esc(fmtMin(left.minutes))}</b>,
+      ${esc(money(roi.currency, left.cost))} — rather than dropped. A CVE that
+      affects five hosts and closes two has saved you the triage on five and
+      the labour on two, and this page should say so in the same
+      number.${why ? ` Not counted as patched: ${esc(why)}.` : ''}
+    </div>` : '';
   // Live, a host still in flight has no completed_at to read, so the timings
   // cover a subset. Said out loud rather than averaged over quietly.
   const partial = m.timed < m.hosts
-    ? `<div class="note">Timings cover ${esc(m.timed)} of ${esc(m.hosts)} hosts —
-        the rest have not finished, so they have no duration to read yet. The
-        labour figures above count all ${esc(m.hosts)}.</div>` : '';
+    ? `<div class="note">Timings cover ${esc(m.timed)} of the ${esc(m.hosts)}
+        host(s) dispatched — the rest have not finished, so they have no
+        duration to read yet. The labour figures above cover all
+        ${esc(m.scope)} the CVE affects.</div>` : '';
 
-  return `<div class="stats" style="grid-template-columns:repeat(4,1fr)">
+  return `<h2 class="roi-sec">Infrastructure
+      <span>${esc(cveLabel(s.cve_id || ''))} &middot; ${esc(m.scope)} host(s)
+        &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
+
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
         <div class="k">Labour saved</div>
         <div class="roi-range">${esc(money(roi.currency, sv.cost_low))}&ndash;${esc(money(roi.currency, sv.cost_high))}
@@ -4781,21 +5468,23 @@ function roiBody(roi) {
       <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div>
         <div class="k">Engineer time saved</div></div>
       <div class="stat">${mult}</div>
-      <div class="stat"><div class="v sm">${esc(m.gated)} of ${esc(m.hosts)}</div>
-        <div class="k">Needed a person</div></div>
+      <div class="stat"><div class="v sm">${esc(m.patched)} of ${esc(m.scope)}</div>
+        <div class="k">Patched</div></div>
     </div>
 
     <div class="roi-card">
       <h3>Where the effort goes</h3>
-      <div class="sub">One CVE, ${esc(m.hosts)} host(s), ${esc(m.gated)} of them
-        through the approval gate. Both bars are on the same scale. ${m.gated
-          ? `The console's bar is not empty — it is the operator reading the
-             plan and pressing Approve, which is real time and is counted
-             against the automation here.`
-          : `Nothing on this CVE scored above the gate, so no host stopped for
-             a person and the console's bar really is empty. On a CVE that
-             does gate, the operator's review time lands here.`}</div>
-      ${roiBars(roi)}
+      <div class="sub">One CVE, ${esc(m.scope)} affected host(s),
+        ${esc(m.scope_gated)} of them through the approval gate. Both bars are
+        on the same scale. The manual bar is the whole CVE done by hand; the
+        console's bar is the operator's review time plus every host the run
+        did not close, which is the only way the comparison stays honest when
+        a plan covers more hosts than one dispatch patches.${m.scope_gated
+          ? ''
+          : ` Nothing on this CVE scored above the gate, so no host stopped
+             for a person.`}</div>
+      ${roiBars(roi, s.manual, aut)}
+      ${charge}
       ${partial}
     </div>
 
@@ -4806,7 +5495,8 @@ function roiBody(roi) {
         Machine time is not priced in: an engineer-hour and a container-second
         do not convert, and the compute would be a rounding error against the
         labour either way.</div>
-      ${roiCurve(roi)}
+      ${roiCurve(roi, s, 'hosts', m.scope, 'Hosts on one CVE',
+                 `at ${m.scope} host${m.scope === 1 ? '' : 's'} — this run`)}
     </div>
 
     <div class="roi-card">
@@ -4814,30 +5504,161 @@ function roiBody(roi) {
       <div class="sub">The margin the assumptions have before the conclusion
         changes. Nothing here is assumed — it is arithmetic on whatever the
         sliders are set to now.</div>
-      ${roiBreakeven(roi)}
+      ${roiBreakeven(roi, s)}
     </div>
 
     <div class="roi-card">
       <h3>Time to remediation</h3>
       <div class="sub">How long the host stays exploitable — the figure that
         usually matters more than the labour.</div>
-      ${roiExposure(roi)}
-    </div>
+      ${roiExposure(roi, s)}
+    </div>`;
+}
 
-    ${roiIndustry(roi)}
+// ---- the application section ----------------------------------------------
+function roiAppBody(roi) {
+  const s = roi.app, sv = s.saved, m = s.measured, left = s.left;
+
+  // The automated bar carries one segment the backend keeps separate: the
+  // work the run did not finish, priced at the manual rate. Merged in here
+  // rather than in the model because the model is right to keep it apart —
+  // it is not automation time, it is the automation's unpaid bill — but on
+  // one shared scale it has to be visible or the bar is a claim.
+  const aut = {
+    minutes: s.total_auto_minutes,
+    breakdown: Object.assign({}, s.auto.breakdown,
+      left.minutes > 0 ? { 'Still left by hand': left.minutes } : {}),
+  };
+
+  const mult = sv.effort_x
+    ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
+    : `<div class="v sm">Nothing fixed yet</div><div class="k">Operator time</div>`;
+
+  // Every repository that was planned and is not counted as fixed, and why.
+  // This is the honest version of a number that would otherwise look like a
+  // rounding problem: 3 planned, 1 fixed, and no explanation of the other 2.
+  const notCounted = [
+    [m.held_repos, 'built green and never pushed, so the repository is '
+      + 'byte-identical and nothing is fixed'],
+    [m.failed_repos, 'failed before a build completed'],
+  ].filter(([n]) => n).map(([n, why]) => `${n} ${why}`).join('; ');
+
+  const charge = left.minutes > 0 ? `<div class="roi-be">
+      <b>${esc(left.components)} component(s) across ${esc(left.repos)}
+      repositor${left.repos === 1 ? 'y' : 'ies'}</b> were found and not fixed,
+      so that work is still waiting for a person. It is charged to the console
+      at the full manual rate — <b>${esc(fmtMin(left.minutes))}</b>,
+      ${esc(money(roi.currency, left.cost))} — rather than dropped. A scan that
+      finds a hundred problems and fixes two has saved you the triage on a
+      hundred and the labour on two, and this page should say so in the same
+      number.${notCounted ? ` Not counted as fixed: ${esc(notCounted)}.` : ''}
+    </div>` : notCounted ? `<div class="note">Not counted as fixed:
+      ${esc(notCounted)}.</div>` : '';
+
+  const coverage = m.covered ? `<div class="note">Lightwell had a build for
+      <b>${esc(m.covered)}</b> of the ${esc(m.vulnerable)} vulnerable
+      component(s)${m.predisclosure ? `, ${esc(m.predisclosure)} of them before
+      the advisory was public` : ''}. Coverage is what makes the bump
+      automatable at all — the rest need a version found by hand, which is the
+      most expensive minute on the manual bar.</div>` : '';
+
+  return `<h2 class="roi-sec">Application
+      <span>${esc(m.repos)} repositor${m.repos === 1 ? 'y' : 'ies'} &middot;
+        ${esc(m.advisories)} advisor${m.advisories === 1 ? 'y' : 'ies'}
+        &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
+
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
+        <div class="k">Labour saved</div>
+        <div class="roi-range">${esc(money(roi.currency, sv.cost_low))}&ndash;${esc(money(roi.currency, sv.cost_high))}
+          at &plusmn;${esc(roi.band_pct)}%</div></div>
+      <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div>
+        <div class="k">Engineer time saved</div></div>
+      <div class="stat">${mult}</div>
+      <div class="stat"><div class="v sm">${esc(m.vulnerable)} of ${esc(m.components)}</div>
+        <div class="k">Components vulnerable</div></div>
+    </div>
 
     <div class="roi-card">
-      <h3>Across every run so far</h3>
-      <div class="sub">The same baseline over the whole run store rather than
-        this one CVE. No extra assumptions, just a larger count.</div>
-      ${roiLifetime(roi)}
+      <h3>Where the effort goes</h3>
+      <div class="sub">${esc(m.advisories)} distinct advisor${m.advisories === 1
+          ? 'y' : 'ies'} across ${esc(m.repos)} repositor${m.repos === 1
+          ? 'y' : 'ies'}, ${esc(m.fixed_repos)} of them fixed and pushed. Both
+        bars are on the same scale. The manual bar is the whole scan done by
+        hand; the console's bar is the operator's review time plus everything
+        the run did not finish, which is the only way the comparison stays
+        honest when a scan finds more than one run fixes.</div>
+      ${roiBars(roi, s.manual, aut)}
+      ${charge}
+      ${coverage}
     </div>
 
-    ${roi.payback && roi.payback.platform_cost ? `<div class="roi-card">
+    <div class="roi-card">
+      <h3>How it scales</h3>
+      <div class="sub">Labour cost at ${esc(money(roi.currency, roi.rate))}/hour
+        as the same estate grows, holding this scan's advisories and vulnerable
+        components per repository. This diverges harder than the host curve and
+        for a reason worth saying out loud: the manual side pays triage once per
+        advisory, and advisories arrive with repositories. The console pays one
+        review per repository however many advisories came with it.</div>
+      ${roiCurve(roi, s, 'repos', m.repos, 'Repositories in the estate',
+                 `at ${m.repos} repositor${m.repos === 1 ? 'y' : 'ies'} — this scan`)}
+    </div>
+
+    <div class="roi-card">
+      <h3>How wrong could this be</h3>
+      <div class="sub">The margin the assumptions have before the conclusion
+        changes. Nothing here is assumed — it is arithmetic on whatever the
+        sliders are set to now.</div>
+      ${roiBreakeven(roi, s)}
+    </div>
+
+    <div class="roi-card">
+      <h3>Time to remediation</h3>
+      <div class="sub">How long the dependency stays exploitable, and the one
+        case where that window started before the advisory did.</div>
+      ${roiAppExposure(roi, s)}
+    </div>`;
+}
+
+function roiBody(roi) {
+  const sides = roi.sides || {};
+  // Said plainly rather than left as an absence. A reader looking at an
+  // infrastructure-only page should know the other half exists and is empty
+  // because nothing ran there, not conclude the console does not do it.
+  const missing = (sides.infra && sides.app) ? '' : `<div class="roi-card">
+      <h3>${sides.infra ? 'Application' : 'Infrastructure'}</h3>
+      <div class="sub">Nothing has run on this side yet, so there is nothing to
+        compare. ${sides.infra
+          ? `Switch to <b>Application</b>, tick a repository and scan it — the
+             figures above will then include the dependency side against its
+             own baseline.`
+          : `Switch to <b>Infrastructure</b> and dispatch a patch plan — the
+             figures above will then include the host side against its own
+             baseline.`} The totals at the top are one side only until
+        then.</div>
+    </div>`;
+
+  return roiTotals(roi)
+    + (sides.infra ? roiInfraBody(roi) : '')
+    + (sides.app ? roiAppBody(roi) : '')
+    + missing
+    + `<h2 class="roi-sec">The record
+        <span>Published figures, the whole run store, and the build cost</span></h2>`
+    + roiIndustry(roi)
+    + `<div class="roi-card">
+      <h3>Across every run so far</h3>
+      <div class="sub">The same baseline over the whole run store rather than
+        this one CVE. No extra assumptions, just a larger count. Infrastructure
+        only — the scanner keeps no run store, so there is nothing of the
+        application side to total here.</div>
+      ${roiLifetime(roi)}
+    </div>`
+    + (roi.payback && roi.payback.platform_cost ? `<div class="roi-card">
       <h3>Paying for itself</h3>
       <div class="sub">What it would take to cover what this cost to build.</div>
       ${roiPayback(roi)}
-    </div>` : ''}`;
+    </div>` : '');
   // There was a read-only table of the same assumptions here, under "What this
   // assumed". Every one of them has a slider in the card at the top, so it
   // restated the page's own inputs a screen later under a heading that read as
@@ -4845,23 +5666,20 @@ function roiBody(roi) {
   // enough.
 }
 
+// Paints into #roi-pane, which is a peer of the two frames rather than a view
+// inside either: the report is about both sides at once, and rendering it into
+// the Infrastructure frame's list would have made it a thing one side owns.
+// So there is no frameHead and no back button here — the header's own button
+// closes it, the way it opened it.
 function renderRoi(roi) {
-  frameHead({
-    title: 'Return on investment',
-    sub: `<span class="cve-id">${cveLabel(roi.cve_id || '')}</span>`
-       + `<span>${esc(roi.measured.hosts)} host(s)</span>`,
-    back: BACK_PATCH,
-  });
-  renderStages(patchState || {});
-
   const edited = Object.keys(roiOverrides).length;
-  document.getElementById('list').innerHTML = `<div class="roi">
+  document.getElementById('roi-pane').innerHTML = `<div class="roi">
     ${(roi.illustrative && showSrc()) ? `<div class="roi-caveat">
       ${roi.illustrative_reason === 'simulated' ? `
-      <b>${roi.measured.simulated === roi.measured.hosts
-          ? `Nothing was patched — all ${esc(roi.measured.hosts)} host(s) were
+      <b>${roi.infra.measured.simulated === roi.infra.measured.hosts
+          ? `Nothing was patched — all ${esc(roi.infra.measured.hosts)} host(s) were
              simulated.`
-          : `${esc(roi.measured.simulated)} of ${esc(roi.measured.hosts)}
+          : `${esc(roi.infra.measured.simulated)} of ${esc(roi.infra.measured.hosts)}
              host(s) were not patched — the fallback simulated them.`}</b>
       Ansible Orchestrator was unreachable, so the fallback stood in for it.
       The clocks on this page are real wall time, unlike offline, but at least
@@ -4883,7 +5701,7 @@ function renderRoi(roi) {
         whole page follows — this is the argument, not a disclaimer attached
         to it. Nothing is saved: it changes this page for you and nobody
         else. Use the gear panel to make a value stick.</div>
-      <div class="roi-sl" id="roi-sl">${roiSliders(roi)}</div>
+      <div id="roi-sl">${roiSliders(roi)}</div>
     </div>
 
     <div id="roi-dyn">${roiBody(roi)}</div>
@@ -4920,12 +5738,8 @@ function renderRoi(roi) {
 // disagreeing about what the saving is.
 async function refreshRoi() {
   try {
-    const r = await fetch('/api/roi', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides: roiOverrides }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!(r.ok && d.ok)) return;
+    const d = await fetchRoi();
+    if (!d) return;
     const dyn = document.getElementById('roi-dyn');
     if (dyn) { dyn.innerHTML = roiBody(d.roi); roiReveal(true); }
   } catch (e) {
@@ -4934,21 +5748,28 @@ async function refreshRoi() {
   }
 }
 
+// Always a POST now, even with no sliders moved. The application counts live
+// in this document and the server has no other way to see them — the scanner
+// reports them through the frame, not over the wire — so there is a body to
+// send on every request and nothing left for the GET to do.
+async function fetchRoi() {
+  const r = await fetch('/api/roi', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrides: roiOverrides, app: appCounts }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!(r.ok && d.ok)) {
+    const e = new Error(d.error || 'failed'); e.handled = true; throw e;
+  }
+  return d;
+}
+
 async function showRoi() {
   const btn = document.getElementById('head-roi');
   btn.disabled = true;
   try {
-    const hasEdits = Object.keys(roiOverrides).length > 0;
-    const r = await fetch('/api/roi', hasEdits ? {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides: roiOverrides }),
-    } : undefined);
-    const d = await r.json().catch(() => ({}));
-    if (!(r.ok && d.ok)) {
-      toast(`Could not work out ROI — ${esc(d.error || 'failed')}`, true);
-      return;
-    }
-    renderRoi(d.roi);
+    renderRoi((await fetchRoi()).roi);
+    paneShow('roi');
   } catch (e) {
     toast(`Could not work out ROI — ${esc(e.message)}`, true);
   } finally {
@@ -4997,6 +5818,12 @@ async function showRuns() {
     const status = r.approval_pending && r.outcome === 'awaiting_approval'
       ? `<button class="btn-approve" onclick="decideRun('${esc(r.execution_id)}','approved')">Approve</button>`
         + `<button class="btn-reject" onclick="decideRun('${esc(r.execution_id)}','rejected')">Reject</button>`
+      // Same bar as the Hosts table, for the same reason: "Running" is the
+      // least useful thing to say about the one row that is still moving.
+      // Only when this row has nodes to count, though — the list endpoint does
+      // not carry steps for a real execution, and a bar pinned at 0% because
+      // nobody asked for the detail says less than the badge it replaced.
+      : r.outcome === 'running' && stepProgress(r) ? liveProgress(r, 'patching')
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     // The list endpoint carries steps for simulated runs but not for real ones,
     // which AO reports per-execution. A row without them keeps the error text.
@@ -5208,9 +6035,13 @@ async function trackRunRow(execId) {
     const badge = row.querySelector('.badge');
     const o = RUN_OUTCOME[run.outcome] || { cls: 'review', label: run.outcome };
     if (badge) { badge.className = `badge ${o.cls}`; badge.textContent = o.label; }
+    // Installed once, then left to paintProgress above. Rewriting the cell on
+    // every poll would hand the bar a new element each time, and a new element
+    // cannot animate from where the old one was — it would jump to each new
+    // percentage instead of running up to it.
     const cell = row.querySelector('.decide-cell');
-    if (cell && run.outcome === 'running') {
-      cell.innerHTML = '<span class="muted-sm">approved — patching…</span>';
+    if (cell && run.outcome === 'running' && !cell.querySelector('.prog')) {
+      cell.innerHTML = liveProgress(run, 'patching');
     }
     // Let the bar finish its run up to 100% before the counters above it jump.
     if (TERMINAL.includes(run.outcome)) { setTimeout(showRuns, 650); return; }
@@ -5222,7 +6053,9 @@ async function trackRunRow(execId) {
 // the list endpoint does not carry it.
 async function decideRun(execId, decision) {
   const row = document.querySelector(`tr[data-exec="${execId}"] .decide-cell`);
-  if (row) row.innerHTML = '<span class="muted-sm">signalling…</span>';
+  // At 0% until the first poll lands, which is the honest number: the decision
+  // has been sent and not yet answered, and nothing behind the gate has moved.
+  if (row) row.innerHTML = liveProgress(null, decision === 'approved' ? 'approved' : 'rejected');
   try {
     const det = await (await fetch(`/api/runs?execution_id=${encodeURIComponent(execId)}`)).json();
     const act = det.ok && det.run && det.run.approval_activity_id;
@@ -5258,7 +6091,8 @@ async function decideRun(execId, decision) {
 // its fetch and redrew the head and the table over it, so "← CVEs" appeared to
 // do nothing and the only way out of the runs view was Escape.
 document.getElementById('view-runs').onclick = showRuns;
-document.getElementById('head-roi').addEventListener('click', showRoi);
+// head-roi is bound with the toggle rather than here: it opens and closes a
+// destination, so it belongs with the code that owns the destinations.
 document.getElementById('head-refresh').addEventListener('click', showRuns);
 
 document.getElementById('pills').addEventListener('click', e => {
@@ -5304,6 +6138,10 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!document.getElementById('settings-scrim').hidden) return;
   if (!document.getElementById('guide-scrim').hidden) return;
+  // The frames are not on screen while the report is, so backing out of them
+  // would be a change the reader cannot see, on the press that closes the
+  // report. The report's own handler takes that press.
+  if (paneNow === 'roi') return;
   if (document.getElementById('head-back').hidden
       && document.getElementById('view-runs').textContent.startsWith('Patch')) return;
   document.getElementById('view-runs').textContent = 'Patch runs';
@@ -5680,33 +6518,11 @@ document.getElementById('settings-scrim').addEventListener('click', e => {
   if (e.target.id === 'settings-scrim') closeSettings();   // click-outside only
 });
 
-// ---- demo guide -----------------------------------------------------------
-// The guide is written for the offline demo, which is the one that is safe to
-// give. Opened in live mode it would be telling the presenter that nothing
-// gets patched while approving a host dispatches a real run, so the note at
-// the top says which script they are actually holding rather than letting
-// them find out in front of the room.
+// ---- presenter's guide ----------------------------------------------------
+// Nothing to fill in: the guide is static, and deliberately says nothing about
+// what this console is pointed at. The run of show does not change with it,
+// and the names the beats use are in the list either way.
 function openGuide() {
-  const note = document.getElementById('guide-mode');
-  // MODE starts as a default object rather than null, and that default reads
-  // as live. Only `ok` distinguishes a resolved mode from one the backend
-  // never answered — getting this wrong would tell a presenter they are
-  // pointed at a cluster when the backend is simply down.
-  if (MODE && MODE.ok && MODE.mode === 'demo') {
-    note.innerHTML = 'This console is in <strong>demo mode</strong> — the one '
-      + 'this script is written for. Every value is staged and nothing '
-      + 'will be patched. The page does not say so anywhere'
-      + (MODE.label_sources ? ', except that source labelling is on, so it does.' : '. '
-      + 'Beat 7 is where you say it.');
-  } else if (MODE && MODE.ok) {
-      note.innerHTML = '<strong>Live mode.</strong> The script below assumes the '
-        + 'demo: the two CVEs it names will not be in your list, approving a host '
-        + 'dispatches a real workflow run, and nothing falls back — an unreachable '
-        + 'service fails the run. Read <em>Do not say</em> before you present this.';
-  } else {
-    note.textContent = 'Could not reach the backend, so this guide cannot tell you '
-      + 'which mode you are in. Check that before you present.';
-  }
   document.getElementById('guide-scrim').hidden = false;
 }
 
@@ -5767,50 +6583,106 @@ renderStages({});
   btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
 })();
 
-// The two sides of the toggle. The scanner lives in an iframe that is created
-// on first use and then only hidden, so a scan in progress and its results
-// survive going back and forth.
+// Three destinations, not two. The toggle picks between the first two, which
+// are the two halves of the console; Calculate ROI is the third and is not on
+// the toggle, because the report is about both halves at once and the toggle
+// says pick one.
+//
+// The scanner lives in an iframe that is created on first use and then only
+// hidden, so a scan in progress and its results survive going anywhere else
+// and coming back.
 (() => {
   const seg = document.getElementById('patch-toggle');
-  const pane = document.getElementById('scanner-pane');
+  const scanner = document.getElementById('scanner-pane');
   const frames = document.getElementById('frames');
+  const roi = document.getElementById('roi-pane');
   const btns = [...seg.querySelectorAll('.dt-btn')];
-  const show = app => {
-    if (app && !pane.src) pane.src = seg.dataset.src;
-    pane.hidden = !app;
-    frames.hidden = app;
-    seg.dataset.pane = app ? 'app' : 'infra';
+
+  const show = where => {
+    const app = where === 'app', onRoi = where === 'roi';
+    // The side being shown, or the side to come back to. The toggle must keep
+    // reading as a side even while the report is up — it is still true that
+    // the console is on Infrastructure, you are just looking at the numbers.
+    if (!onRoi) paneSide = where;
+
+    if (app && !scanner.src) scanner.src = seg.dataset.src;
+    scanner.hidden = !app;
+    frames.hidden = app || onRoi;
+    roi.hidden = !onRoi;
+    paneNow = where;
+
+    seg.dataset.pane = paneSide;
     btns.forEach(b => b.setAttribute('aria-pressed',
-                                     String((b.dataset.pane === 'app') === app)));
-    // The strapline is the rest of the heading, so it follows the side.
-    document.getElementById('tagline').textContent = app
+                                     String(b.dataset.pane === paneSide)));
+    // The strapline is the rest of the heading, so it follows the destination.
+    document.getElementById('tagline').textContent = onRoi
+      ? 'What both sides of this console saved, against doing the same work by hand'
+      : app
       ? 'Dependency scanning, Lightwell coverage and supervised remediation'
       : 'CVE triage, risk assessment and supervised remediation';
+
     // And so does the bar under the toggle. Both are measured once they are
-    // on screen: a hidden one has no width to fit against.
+    // on screen: a hidden one has no width to fit against. Neither is drawn
+    // on the report, which is not a run and has no stages — a bar still
+    // showing the last run's progress above a page about both runs would be
+    // claiming the report belonged to one of them.
     const bars = { infra: document.getElementById('stages'),
                    app: document.getElementById('app-stages') };
-    bars.infra.hidden = app;
-    bars.app.hidden = !app;
-    fitBar(bars[app ? 'app' : 'infra']);
+    bars.infra.hidden = onRoi || app;
+    bars.app.hidden = onRoi || !app;
+    if (!onRoi) fitBar(bars[paneSide]);
+
     // The status chip counts CVEs from Insights, which is the Infrastructure
     // side's business. On the Application side it would be reporting on a
     // service this half of the console never calls — and the scanner has its
-    // own status in its own header row, so the slot is not even empty.
-    document.querySelector('.head-right .status').hidden = app;
-    history.replaceState(null, '', app ? '#scanner' : location.pathname + location.search);
+    // own status in its own header row, so the slot is not even empty. On the
+    // report it belongs to neither side.
+    document.querySelector('.head-right .status').hidden = onRoi || app;
+
+    // The button is its own way back, and says so once it is the only one.
+    const rb = document.getElementById('head-roi');
+    rb.textContent = onRoi ? 'Close' : 'Calculate ROI';
+    rb.title = onRoi
+      ? `Back to ${paneSide === 'app' ? 'Application' : 'Infrastructure'}.`
+      : 'What both sides saved, against doing the same work by hand.';
+    rb.classList.toggle('on', onRoi);
+
+    const hash = onRoi ? '#roi' : app ? '#scanner' : '';
+    history.replaceState(null, '', hash || location.pathname + location.search);
+    if (onRoi) roi.scrollTop = 0;
   };
-  btns.forEach(b => b.addEventListener('click', () => show(b.dataset.pane === 'app')));
-  // Left and right move between the two, as a radio group does.
+  paneShow = show;
+
+  btns.forEach(b => b.addEventListener('click', () => show(b.dataset.pane)));
+  // Left and right move between the two sides, as a radio group does. From
+  // the report they land on a side, which is the only sensible reading of
+  // "left" when what is on screen is not on the toggle at all.
   seg.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
     const app = e.key === 'ArrowRight';
-    show(app);
+    show(app ? 'app' : 'infra');
     btns[app ? 1 : 0].focus();
   });
-  if (location.hash === '#scanner') show(true);
+  if (location.hash === '#scanner') show('app');
 })();
+
+// Escape closes the report, the way it closes every other overlay here. It is
+// not an overlay — it is a destination — but it is the only destination with
+// a Close, and a reader who has scrolled through a page of charts reaches for
+// Escape before they reach for the header.
+// Either drawer gets the key first and keeps it: one press should undo one
+// thing, and a drawer opened over the report is the thing on top.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || paneNow !== 'roi') return;
+  if (!document.getElementById('settings-scrim').hidden) return;
+  if (!document.getElementById('guide-scrim').hidden) return;
+  paneShow(paneSide);
+});
+
+document.getElementById('head-roi').addEventListener('click', () => {
+  if (paneNow === 'roi') paneShow(paneSide); else showRoi();
+});
 
 renderMode().finally(() => loadCves(0));
 

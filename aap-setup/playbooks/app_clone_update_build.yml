@@ -22,6 +22,10 @@
 #   subdir          folder to build in, when the scan was limited to one (default: the repository root)
 #   java_version    8, 11, 17 or 21 to use that JDK; left out, the repository decides
 #   push            true to commit and push the branch; false stops after the build
+#   push_only       true to push what an earlier run already built: clone, re-apply the same change list and push,
+#                   without building again. Implies push. See "Build what was approved, unless this run is only pushing".
+#   expected_diff_sha256  with push_only, the sha256 of the diff the earlier run's build was verified against. The push
+#                   is stopped if the tree does not hash to it, so nothing is pushed that was never built. '' to skip.
 #   commit_message  one line
 #   patch_run_id    names the working directory
 #
@@ -57,6 +61,14 @@
     python_registry: "{{ registry | default([]) | selectattr('ecosystem', 'eq', 'pypi') | list }}"
 
   tasks:
+    # No STAGE prefix, so this does not show up as a step on the page: it only
+    # settles what the run is. A push-only run always pushes, whatever `push`
+    # says: pushing is the entire reason it was launched.
+    - name: Settle what this run is doing
+      ansible.builtin.set_fact:
+        only_push: "{{ push_only | default(false) | bool }}"
+        do_push: "{{ (push | default(false) | bool) or (push_only | default(false) | bool) }}"
+
     - name: "STAGE clone: Start from an empty working directory"
       ansible.builtin.file:
         path: "{{ work_dir }}"
@@ -113,221 +125,250 @@
           {{ edit_report | map(attribute='problems') | flatten | join('; ') }} {{ edit.stderr | default('') | trim }}
       when: edit.rc != 0
 
-    - name: "STAGE build: Point Maven at the Lightwell repositories"
-      # The credentials stay out of the file: Maven fills in ${env.NAME} from the job's environment.
-      ansible.builtin.copy:
-        dest: "{{ work_dir }}/settings.xml"
-        mode: "0600"
-        content: |
-          <settings>
-            <profiles>
-          {% for r in maven_registry %}
-              <profile>
-                <id>lightwell-{{ r.tier }}</id>
-                <repositories>
-                  <repository>
-                    <id>lightwell-{{ r.tier }}</id>
-                    <url>{{ registry_base }}/java/{{ r.tier }}/</url>
-                    <releases><enabled>true</enabled></releases>
-                    <snapshots><enabled>false</enabled></snapshots>
-                  </repository>
-                </repositories>
-              </profile>
-          {% endfor %}
-            </profiles>
-            <activeProfiles>
-          {% for r in maven_registry %}
-              <activeProfile>lightwell-{{ r.tier }}</activeProfile>
-          {% endfor %}
-            </activeProfiles>
-            <servers>
-          {% for r in maven_registry %}
-              <server>
-                <id>lightwell-{{ r.tier }}</id>
-                <username>${env.LIGHTWELL_REGISTRY_USER}</username>
-                <password>${env.LIGHTWELL_REGISTRY_TOKEN}</password>
-              </server>
-          {% endfor %}
-            </servers>
-          </settings>
-      when: maven_registry | length > 0
+    # Pressing Push does not build again: the build that went green is the one
+    # being pushed, and running Maven a second time only risks a different
+    # answer on the same tree. A push-only run clones and re-applies the change
+    # list -- seconds, and deterministic from the same commit -- then checks the
+    # tree against the diff the build was verified with before it commits.
+    - name: Build what was approved, unless this run is only pushing
+      when: not only_push
+      block:
+      - name: "STAGE build: Point Maven at the Lightwell repositories"
+        # The credentials stay out of the file: Maven fills in ${env.NAME} from the job's environment.
+        ansible.builtin.copy:
+          dest: "{{ work_dir }}/settings.xml"
+          mode: "0600"
+          content: |
+            <settings>
+              <profiles>
+            {% for r in maven_registry %}
+                <profile>
+                  <id>lightwell-{{ r.tier }}</id>
+                  <repositories>
+                    <repository>
+                      <id>lightwell-{{ r.tier }}</id>
+                      <url>{{ registry_base }}/java/{{ r.tier }}/</url>
+                      <releases><enabled>true</enabled></releases>
+                      <snapshots><enabled>false</enabled></snapshots>
+                    </repository>
+                  </repositories>
+                </profile>
+            {% endfor %}
+              </profiles>
+              <activeProfiles>
+            {% for r in maven_registry %}
+                <activeProfile>lightwell-{{ r.tier }}</activeProfile>
+            {% endfor %}
+              </activeProfiles>
+              <servers>
+            {% for r in maven_registry %}
+                <server>
+                  <id>lightwell-{{ r.tier }}</id>
+                  <username>${env.LIGHTWELL_REGISTRY_USER}</username>
+                  <password>${env.LIGHTWELL_REGISTRY_TOKEN}</password>
+                </server>
+            {% endfor %}
+              </servers>
+            </settings>
+        when: maven_registry | length > 0
 
-    - name: "STAGE build: Look for the build files"
-      ansible.builtin.stat:
-        path: "{{ build_dir }}/{{ item }}"
-      loop: [pom.xml, requirements.txt]
-      register: build_files
+      - name: "STAGE build: Look for the build files"
+        ansible.builtin.stat:
+          path: "{{ build_dir }}/{{ item }}"
+        loop: [pom.xml, requirements.txt]
+        register: build_files
 
-    - name: "STAGE build: Work out which Java the repository needs"
-      ansible.builtin.copy:
-        src: detect_java.py
-        dest: "{{ work_dir }}/detect_java.py"
-        mode: "0700"
-      when: build_files.results[0].stat.exists
+      - name: "STAGE build: Work out which Java the repository needs"
+        ansible.builtin.copy:
+          src: detect_java.py
+          dest: "{{ work_dir }}/detect_java.py"
+          mode: "0700"
+        when: build_files.results[0].stat.exists
 
-    - name: "STAGE build: Detect the Java version"
-      ansible.builtin.command:
-        argv: [python3, "{{ work_dir }}/detect_java.py", --root, "{{ src_dir }}"]
-      register: java_detect
-      changed_when: false
-      when: build_files.results[0].stat.exists
+      - name: "STAGE build: Detect the Java version"
+        ansible.builtin.command:
+          argv: [python3, "{{ work_dir }}/detect_java.py", --root, "{{ src_dir }}"]
+        register: java_detect
+        changed_when: false
+        when: build_files.results[0].stat.exists
 
-    - name: "STAGE build: Settle on the Java version"
+      - name: "STAGE build: Settle on the Java version"
+        ansible.builtin.set_fact:
+          java: >-
+            {{ {'version': java_version | int, 'reason': 'chosen when the run was approved'}
+                if (java_version | default('') | string) in ['8', '11', '17', '21'] else
+                {'version': (java_detect.stdout | from_json).version, 'reason': (java_detect.stdout | from_json).reason} }}
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Check the machine type"
+        ansible.builtin.command:
+          argv: [uname, -m]
+        register: machine
+        changed_when: false
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Look for an installed JDK of that version"
+        ansible.builtin.shell: |
+          for d in /usr/lib/jvm/java-{{ java.version }}-openjdk* /usr/lib/jvm/java-1.{{ java.version }}.0-openjdk*; do
+            if [ -x "$d/bin/javac" ]; then echo "$d"; exit 0; fi
+          done
+        args:
+          executable: /bin/bash
+        register: installed_jdk
+        changed_when: false
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Look for an installed Maven"
+        ansible.builtin.shell: command -v mvn || true
+        args:
+          executable: /bin/bash
+        register: installed_maven
+        changed_when: false
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Check for a cached JDK"
+        ansible.builtin.stat:
+          path: "{{ tools_dir }}/jdk-{{ java.version }}/bin/javac"
+        register: cached_jdk
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Check for a cached Maven"
+        ansible.builtin.stat:
+          path: "{{ tools_dir }}/apache-maven-{{ maven_version }}/bin/mvn"
+        register: cached_maven
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Make the tools directory"
+        ansible.builtin.file:
+          path: "{{ tools_dir }}"
+          state: directory
+          mode: "0700"
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Look up the JDK download"
+        ansible.builtin.uri:
+          url: >-
+            https://api.adoptium.net/v3/assets/latest/{{ java.version }}/hotspot?image_type=jdk&os=linux&vendor=eclipse&architecture={{
+            'aarch64' if machine.stdout | trim == 'aarch64' else 'x64' }}
+          return_content: true
+        register: jdk_assets
+        when:
+          - build_files.results[0].stat.exists
+          - installed_jdk.stdout | trim == ''
+          - not cached_jdk.stat.exists
+
+      - name: "STAGE build: Download the JDK"
+        ansible.builtin.get_url:
+          url: "{{ jdk_assets.json[0].binary.package.link }}"
+          dest: "{{ tools_dir }}/jdk-{{ java.version }}.tar.gz"
+          checksum: "sha256:{{ jdk_assets.json[0].binary.package.checksum }}"
+          mode: "0600"
+          timeout: 120
+        when: jdk_assets is not skipped
+
+      - name: "STAGE build: Unpack the JDK"
+        ansible.builtin.unarchive:
+          src: "{{ tools_dir }}/jdk-{{ java.version }}.tar.gz"
+          dest: "{{ tools_dir }}"
+          remote_src: true
+          extra_opts: ["--transform=s,^[^/]*,jdk-{{ java.version }},"]
+          creates: "{{ tools_dir }}/jdk-{{ java.version }}/bin/javac"
+        when: jdk_assets is not skipped
+
+      - name: "STAGE build: Download Maven"
+        ansible.builtin.get_url:
+          url: "{{ maven_url }}"
+          dest: "{{ tools_dir }}/apache-maven-{{ maven_version }}-bin.tar.gz"
+          checksum: "sha512:{{ maven_url }}.sha512"
+          mode: "0600"
+          timeout: 120
+        when:
+          - build_files.results[0].stat.exists
+          - installed_maven.stdout | trim == ''
+          - not cached_maven.stat.exists
+
+      - name: "STAGE build: Unpack Maven"
+        ansible.builtin.unarchive:
+          src: "{{ tools_dir }}/apache-maven-{{ maven_version }}-bin.tar.gz"
+          dest: "{{ tools_dir }}"
+          remote_src: true
+          creates: "{{ tools_dir }}/apache-maven-{{ maven_version }}/bin/mvn"
+        when:
+          - build_files.results[0].stat.exists
+          - installed_maven.stdout | trim == ''
+          - not cached_maven.stat.exists
+
+      - name: "STAGE build: Record which JDK and Maven will be used"
+        ansible.builtin.set_fact:
+          java_home: "{{ installed_jdk.stdout | trim if installed_jdk.stdout | trim != '' else tools_dir ~ '/jdk-' ~ java.version }}"
+          mvn_bin: "{{ installed_maven.stdout | trim if installed_maven.stdout | trim != '' else tools_dir ~ '/apache-maven-' ~ maven_version ~ '/bin/mvn' }}"
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Build with Maven"
+        ansible.builtin.command:
+          argv: "{{ [mvn_bin, '-B', '-ntp'] + (['-s', work_dir ~ '/settings.xml'] if maven_registry | length > 0 else []) + build_args + ['verify'] }}"
+          chdir: "{{ build_dir }}"
+        environment:
+          JAVA_HOME: "{{ java_home }}"
+          PATH: "{{ java_home }}/bin:/usr/local/bin:/usr/bin:/bin"
+          LIGHTWELL_REGISTRY_USER: "{{ lookup('env', 'LIGHTWELL_REGISTRY_USER') }}"
+          LIGHTWELL_REGISTRY_TOKEN: "{{ lookup('env', 'LIGHTWELL_REGISTRY_TOKEN') }}"
+        no_log: true
+        register: maven
+        failed_when: false
+        changed_when: true
+        when: build_files.results[0].stat.exists
+
+      - name: "STAGE build: Build with pip"
+        ansible.builtin.shell: |
+          set -e
+          python3 -m venv "{{ work_dir }}/venv"
+          "{{ work_dir }}/venv/bin/pip" install --disable-pip-version-check -r requirements.txt
+        args:
+          chdir: "{{ build_dir }}"
+          executable: /bin/bash
+        environment: "{{ {'PIP_INDEX_URL': registry_base ~ '/python/' ~ python_registry[0].tier ~ '/simple'} if python_registry | length > 0 else {} }}"
+        no_log: true
+        register: pip
+        failed_when: false
+        changed_when: true
+        when: not build_files.results[0].stat.exists and build_files.results[1].stat.exists
+
+      - name: "STAGE build: Record the build result"
+        ansible.builtin.set_fact:
+          build_run: "{{ maven if maven is not skipped else (pip if pip is not skipped else {}) }}"
+
+      - name: "STAGE build: Stop if there was nothing to build"
+        ansible.builtin.fail:
+          msg: "No pom.xml or requirements.txt in {{ subdir | default('the repository root') }}, so there is nothing to build."
+        when: build_run | length == 0
+
+    # A push-only run never ran Maven, so there is no rc to read. The build it
+    # is pushing passed, which is the only reason the scanner offers the push.
+    - name: Stand in for the build result when this run only pushes
       ansible.builtin.set_fact:
-        java: >-
-          {{ {'version': java_version | int, 'reason': 'chosen when the run was approved'}
-              if (java_version | default('') | string) in ['8', '11', '17', '21'] else
-              {'version': (java_detect.stdout | from_json).version, 'reason': (java_detect.stdout | from_json).reason} }}
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Check the machine type"
-      ansible.builtin.command:
-        argv: [uname, -m]
-      register: machine
-      changed_when: false
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Look for an installed JDK of that version"
-      ansible.builtin.shell: |
-        for d in /usr/lib/jvm/java-{{ java.version }}-openjdk* /usr/lib/jvm/java-1.{{ java.version }}.0-openjdk*; do
-          if [ -x "$d/bin/javac" ]; then echo "$d"; exit 0; fi
-        done
-      args:
-        executable: /bin/bash
-      register: installed_jdk
-      changed_when: false
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Look for an installed Maven"
-      ansible.builtin.shell: command -v mvn || true
-      args:
-        executable: /bin/bash
-      register: installed_maven
-      changed_when: false
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Check for a cached JDK"
-      ansible.builtin.stat:
-        path: "{{ tools_dir }}/jdk-{{ java.version }}/bin/javac"
-      register: cached_jdk
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Check for a cached Maven"
-      ansible.builtin.stat:
-        path: "{{ tools_dir }}/apache-maven-{{ maven_version }}/bin/mvn"
-      register: cached_maven
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Make the tools directory"
-      ansible.builtin.file:
-        path: "{{ tools_dir }}"
-        state: directory
-        mode: "0700"
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Look up the JDK download"
-      ansible.builtin.uri:
-        url: >-
-          https://api.adoptium.net/v3/assets/latest/{{ java.version }}/hotspot?image_type=jdk&os=linux&vendor=eclipse&architecture={{
-          'aarch64' if machine.stdout | trim == 'aarch64' else 'x64' }}
-        return_content: true
-      register: jdk_assets
-      when:
-        - build_files.results[0].stat.exists
-        - installed_jdk.stdout | trim == ''
-        - not cached_jdk.stat.exists
-
-    - name: "STAGE build: Download the JDK"
-      ansible.builtin.get_url:
-        url: "{{ jdk_assets.json[0].binary.package.link }}"
-        dest: "{{ tools_dir }}/jdk-{{ java.version }}.tar.gz"
-        checksum: "sha256:{{ jdk_assets.json[0].binary.package.checksum }}"
-        mode: "0600"
-        timeout: 120
-      when: jdk_assets is not skipped
-
-    - name: "STAGE build: Unpack the JDK"
-      ansible.builtin.unarchive:
-        src: "{{ tools_dir }}/jdk-{{ java.version }}.tar.gz"
-        dest: "{{ tools_dir }}"
-        remote_src: true
-        extra_opts: ["--transform=s,^[^/]*,jdk-{{ java.version }},"]
-        creates: "{{ tools_dir }}/jdk-{{ java.version }}/bin/javac"
-      when: jdk_assets is not skipped
-
-    - name: "STAGE build: Download Maven"
-      ansible.builtin.get_url:
-        url: "{{ maven_url }}"
-        dest: "{{ tools_dir }}/apache-maven-{{ maven_version }}-bin.tar.gz"
-        checksum: "sha512:{{ maven_url }}.sha512"
-        mode: "0600"
-        timeout: 120
-      when:
-        - build_files.results[0].stat.exists
-        - installed_maven.stdout | trim == ''
-        - not cached_maven.stat.exists
-
-    - name: "STAGE build: Unpack Maven"
-      ansible.builtin.unarchive:
-        src: "{{ tools_dir }}/apache-maven-{{ maven_version }}-bin.tar.gz"
-        dest: "{{ tools_dir }}"
-        remote_src: true
-        creates: "{{ tools_dir }}/apache-maven-{{ maven_version }}/bin/mvn"
-      when:
-        - build_files.results[0].stat.exists
-        - installed_maven.stdout | trim == ''
-        - not cached_maven.stat.exists
-
-    - name: "STAGE build: Record which JDK and Maven will be used"
-      ansible.builtin.set_fact:
-        java_home: "{{ installed_jdk.stdout | trim if installed_jdk.stdout | trim != '' else tools_dir ~ '/jdk-' ~ java.version }}"
-        mvn_bin: "{{ installed_maven.stdout | trim if installed_maven.stdout | trim != '' else tools_dir ~ '/apache-maven-' ~ maven_version ~ '/bin/mvn' }}"
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Build with Maven"
-      ansible.builtin.command:
-        argv: "{{ [mvn_bin, '-B', '-ntp'] + (['-s', work_dir ~ '/settings.xml'] if maven_registry | length > 0 else []) + build_args + ['verify'] }}"
-        chdir: "{{ build_dir }}"
-      environment:
-        JAVA_HOME: "{{ java_home }}"
-        PATH: "{{ java_home }}/bin:/usr/local/bin:/usr/bin:/bin"
-        LIGHTWELL_REGISTRY_USER: "{{ lookup('env', 'LIGHTWELL_REGISTRY_USER') }}"
-        LIGHTWELL_REGISTRY_TOKEN: "{{ lookup('env', 'LIGHTWELL_REGISTRY_TOKEN') }}"
-      no_log: true
-      register: maven
-      failed_when: false
-      changed_when: true
-      when: build_files.results[0].stat.exists
-
-    - name: "STAGE build: Build with pip"
-      ansible.builtin.shell: |
-        set -e
-        python3 -m venv "{{ work_dir }}/venv"
-        "{{ work_dir }}/venv/bin/pip" install --disable-pip-version-check -r requirements.txt
-      args:
-        chdir: "{{ build_dir }}"
-        executable: /bin/bash
-      environment: "{{ {'PIP_INDEX_URL': registry_base ~ '/python/' ~ python_registry[0].tier ~ '/simple'} if python_registry | length > 0 else {} }}"
-      no_log: true
-      register: pip
-      failed_when: false
-      changed_when: true
-      when: not build_files.results[0].stat.exists and build_files.results[1].stat.exists
-
-    - name: "STAGE build: Record the build result"
-      ansible.builtin.set_fact:
-        build_run: "{{ maven if maven is not skipped else (pip if pip is not skipped else {}) }}"
-
-    - name: "STAGE build: Stop if there was nothing to build"
-      ansible.builtin.fail:
-        msg: "No pom.xml or requirements.txt in {{ subdir | default('the repository root') }}, so there is nothing to build."
-      when: build_run | length == 0
+        build_run: {'rc': 0}
+      when: only_push
 
     - name: "STAGE build: Collect what changed"
       ansible.builtin.command:
         argv: [git, -C, "{{ src_dir }}", diff]
       register: tree_diff
       changed_when: false
+
+    # The edit script is deterministic from the same commit and the same change
+    # list, so this tree should be byte-identical to the one that was built. If
+    # it is not, something moved underneath us, and pushing an unbuilt tree is
+    # worse than not pushing at all.
+    - name: "STAGE push: Check the tree is the one that was built"
+      ansible.builtin.fail:
+        msg: >-
+          The working tree does not match the one the build was verified against, so nothing was pushed.
+          Run the build again and push that result.
+      when:
+        - only_push
+        - expected_diff_sha256 | default('') != ''
+        - (tree_diff.stdout[:60000] | hash('sha256')) != expected_diff_sha256
 
     - name: "STAGE push: Commit the change"
       ansible.builtin.command:
@@ -345,7 +386,7 @@
           - -m
           - "{{ commit_message }}"
       changed_when: true
-      when: push | default(false) | bool and build_run.rc == 0
+      when: do_push and build_run.rc == 0
 
     - name: "STAGE push: Push the branch"
       ansible.builtin.command:
@@ -355,7 +396,7 @@
       register: pushed
       failed_when: false
       changed_when: true
-      when: push | default(false) | bool and build_run.rc == 0
+      when: do_push and build_run.rc == 0
 
     - name: Publish the result for the scanner
       ansible.builtin.set_stats:

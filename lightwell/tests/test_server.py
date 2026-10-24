@@ -141,6 +141,34 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([s['id'] for s in self.js('GET', f'/v1/remediations/{r2["id"]}')[1]['run']['stages']], ['clone', 'edit', 'build', 'push'])
         self.assertEqual(scan['repos'][0]['status'], 'done')
 
+    def test_pushing_does_not_build_again(self):
+        _, d = self.js('POST', '/v1/scans', {'repos': ['acme/app']})
+        self.wait_done(d['id'])
+        _, built = self.js('POST', '/v1/remediations', {'scan': d['id'], 'url': 'acme/app', 'sources': ['osv']})
+        self.assertEqual(self.js('POST', '/v1/remediations', {'push_only': built['id']})[0], 400)   # still building
+        server.RUNS._runs[built['id']]['demo'].started -= 600
+        before = self.js('GET', f'/v1/remediations/{built["id"]}')[1]['run']
+        self.assertFalse(before['result']['pushed'])
+
+        code, push = self.js('POST', '/v1/remediations', {'push_only': built['id']})
+        self.assertEqual(code, 202)
+        run = self.js('GET', f'/v1/remediations/{push["id"]}')[1]['run']
+        self.assertTrue(run['push_only'])
+        self.assertEqual([s['id'] for s in run['stages']], ['clone', 'edit', 'push'])                # no second build
+        self.assertEqual([a['label'] for a in run['stages'][2]['actions']][:1], [])                  # nothing pushed yet
+        server.RUNS._runs[push['id']]['demo'].started -= 600
+        run = self.js('GET', f'/v1/remediations/{push["id"]}')[1]['run']
+        self.assertEqual([a['label'] for a in run['stages'][2]['actions']],
+                         ['Check the tree is the one that was built', 'Commit the change', 'Push the branch'])
+        # The build it pushed is carried over whole, with only the push lines its own.
+        self.assertEqual(run['result']['diff'], before['result']['diff'])
+        self.assertEqual(run['result']['java'], before['result']['java'])
+        self.assertEqual((run['result']['build_rc'], run['result']['pushed'], run['result']['push_error']), (0, True, ''))
+
+        self.assertEqual(self.js('POST', '/v1/remediations', {'push_only': push['id']})[0], 400)     # already pushed
+        self.assertEqual(self.js('POST', '/v1/remediations', {'push_only': '0' * 12})[0], 400)       # no such run
+        self.assertEqual(self.js('POST', '/v1/remediations', {'push_only': 'nope'})[0], 400)
+
     def test_remediation_rejects_bad_requests(self):
         _, d = self.js('POST', '/v1/scans', {'repos': ['acme/app']})
         self.wait_done(d['id'])

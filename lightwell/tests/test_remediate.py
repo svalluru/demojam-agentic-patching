@@ -455,6 +455,59 @@ class RunTests(unittest.TestCase):
         self.assertEqual(v['state'], 'unknown')
         self.assertIn('could not reach', v['error'])
 
+    # A rebuilt artifact can need a newer JDK than the project asks for, so the build the console just approved does
+    # not compile. The run has to end the way a real one does -- red, unpushable, and with the reason on screen.
+    MAVEN_PLAN = {'changes': [ch('commons-beanutils:commons-beanutils', '1.9.4', '1.9.4.rhlw-00001', 'pom.xml') | {'source': 'lightwell'}],
+                  'registry': [], 'skipped': [], 'offered': {}, 'sources': ['lightwell']}
+    POM_8 = ('<project><modelVersion>4.0.0</modelVersion><properties><maven.compiler.target>1.8</maven.compiler.target></properties>'
+             '<dependencies><dependency><groupId>commons-beanutils</groupId><artifactId>commons-beanutils</artifactId>'
+             '<version>1.9.4</version></dependency></dependencies></project>')
+    FAIL_LOG = 'bad class file: commons-beanutils-1.9.4.rhlw-00001.jar\n  class file has wrong version 55.0, should be 52.0\n[INFO] BUILD FAILURE'
+
+    def _maven_run(self, java=None, slug='JoyChou93/java-sec-code'):
+        runs = remediation.Runs()
+        run_id = runs.start_demo({**self.REPO, 'slug': slug}, self.MAVEN_PLAN, False, {'pom.xml': self.POM_8}, java,
+                                 '[INFO] BUILD SUCCESS', self.FAIL_LOG)
+        return runs, run_id, runs._runs[run_id]['demo']
+
+    def test_a_rebuild_that_needs_a_newer_jdk_fails_the_staged_build(self):
+        runs, run_id, run = self._maven_run()
+        with mock.patch.object(run, 'started', run.started - 200):
+            v = runs.view(run_id)
+        self.assertEqual((v['state'], v['status'], v['result']['build_rc']), ('failed', 'failed', 1))
+        self.assertEqual([(s['id'], s['state']) for s in v['stages']], [('clone', 'done'), ('edit', 'done'), ('build', 'failed')])
+        # Maven ran: the playbook records its exit code rather than failing the task, so no step is red.
+        self.assertTrue(all(a['state'] == 'ok' for s in v['stages'] for a in s['actions']))
+        self.assertEqual(v['failure'], 'The build failed (rc 1).')
+        self.assertFalse(v['result']['pushed'])
+        self.assertIn('Set "Java for the build" to 11', v['advice'])
+
+    def test_choosing_the_jdk_the_rebuild_needs_makes_the_same_run_build(self):
+        runs, run_id, run = self._maven_run(java=11)
+        with mock.patch.object(run, 'started', run.started - 200):
+            v = runs.view(run_id)
+        self.assertEqual((v['state'], v['result']['build_rc'], v['advice']), ('done', 0, ''))
+        self.assertEqual(v['result']['java'], {'version': 11, 'reason': 'chosen when the run was approved'})
+        self.assertIn('BUILD SUCCESS', v['result']['build_tail'])
+
+    def test_only_the_listed_repositories_and_only_lightwell_rebuilds_carry_a_jdk_floor(self):
+        self.assertEqual(remediation.demo_build_rc('JoyChou93/java-sec-code', self.MAVEN_PLAN, 8), 1)
+        self.assertEqual(remediation.demo_build_rc('JoyChou93/java-sec-code', self.MAVEN_PLAN, 11), 0)
+        self.assertEqual(remediation.demo_build_rc('acme/app', self.MAVEN_PLAN, 8), 0)
+        self.assertEqual(remediation.demo_build_rc('JoyChou93/java-sec-code', self.PLAN, 8), 0)
+
+    def test_the_next_step_is_read_out_of_the_build_output_and_never_guessed(self):
+        def advice(tail, java=8):
+            return remediation.build_advice({'state': 'failed', 'result': {'build_rc': 1, 'build_tail': tail, 'java': {'version': java}}})
+        self.assertIn('compiled for Java 17 and the build ran on Java 11', advice('class file has wrong version 61.0, should be 55.0', 11))
+        self.assertIn('compile for 17', advice('[ERROR] invalid target release: 17'))
+        self.assertIn('Lightwell repository credentials', advice('[ERROR] Could not resolve dependencies for project sec:java-sec-code'))
+        self.assertIn('changed an API', advice('[ERROR] /src/X.java:[4,1] cannot find symbol'))
+        self.assertEqual(advice('[ERROR] something nobody has seen before'), '')
+        # A build that went green is never given a next step, whatever its output happens to contain.
+        self.assertEqual(remediation.build_advice({'state': 'done', 'result': {'build_rc': 0, 'build_tail': 'class file has wrong version 55.0, should be 52.0'}}), '')
+        self.assertEqual(remediation.build_advice({'state': 'running', 'result': {}}), '')
+
     def test_commit_message_is_one_line(self):
         self.assertEqual(remediation.commit_message(self.PLAN), 'Clear known vulnerabilities in 1 dependency')
         plan = {'changes': [{'source': 'lightwell'}, {'source': 'osv'}]}

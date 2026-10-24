@@ -25,6 +25,7 @@ second port is needed. Run directly, it listens on port 8790 by default.
   GET  /v1/scans/{id}/findings.csv
   POST /v1/remediations/preview  {"scan", "url", "sources": ["lightwell", "another", "osv"], "allow_major": false} -> the changes that choice would make
   POST /v1/remediations          same, plus "push": true to push the branch -> 202 {"id"}; runs on AAP (live) or is staged (demo)
+                                 or {"push_only": "<run id>"} to push what that run built, without building it again
   GET  /v1/remediations/{id}     stages, the diff and the build result
 """
 from __future__ import annotations
@@ -299,6 +300,9 @@ def findings_csv(scan: dict) -> str:
 
 # ------------------------------------------------------------ remediation
 
+RUN_ID = re.compile(r'[0-9a-f]{12}')
+
+
 def remediation_status() -> dict:
     if MODE == 'demo':
         return {'ready': True, 'detail': 'Clones the repository, updates the versions and builds it.'}
@@ -326,7 +330,21 @@ def _remediation_target(body: dict) -> tuple[dict, list[str]]:
 
 def start_remediation(body: dict) -> str:
     """Starts a run for the repository and fix sources in `body` and returns its id. ValueError for a bad request,
-    UpstreamError when the controller cannot be reached."""
+    UpstreamError when the controller cannot be reached.
+
+    "push_only": "<run id>" is the second kind of request: push what that run built, without building it again."""
+    if 'push_only' in body:
+        parent = body.get('push_only')
+        if not isinstance(parent, str) or not RUN_ID.fullmatch(parent):
+            raise ValueError('"push_only" must be a run id')
+        client = None
+        if MODE != 'demo':
+            if not remediation_status()['ready']:
+                raise ValueError(remediation_status()['detail'])
+            client = remediation_client()
+        run = RUNS.start_push(client, parent)
+        log(f'push: the branch run {parent} built, with no second build')
+        return run
     repo, sources = _remediation_target(body)
     plan = preview(repo, sources, body.get('allow_major') is True)
     if not plan['changes']:
@@ -336,8 +354,12 @@ def start_remediation(body: dict) -> str:
     ref = parse_repo(repo['url'], GITLAB_HOSTS)
     if MODE == 'demo':
         manifests = dict(make_clients()[0].snapshot(ref).manifests)
-        recorded = DEMO_DIR / 'builds' / (ref.slug.replace('/', '__') + '.log')
-        return RUNS.start_demo(repo, plan, push, manifests, java, recorded.read_text(encoding='utf-8') if recorded.is_file() else '')
+        # Two recordings per repository: what Maven said when the build worked, and -- where there is one -- what it
+        # said when the JDK was too old for what had just been pinned. remediation.demo_build_rc picks between them.
+        stem = ref.slug.replace('/', '__')
+        logs = [p.read_text(encoding='utf-8') if p.is_file() else ''
+                for p in (DEMO_DIR / 'builds' / (stem + '.log'), DEMO_DIR / 'builds' / (stem + '.fail.log'))]
+        return RUNS.start_demo(repo, plan, push, manifests, java, logs[0], logs[1])
     if not remediation_status()['ready']:
         raise ValueError(remediation_status()['detail'])
     client = remediation_client()

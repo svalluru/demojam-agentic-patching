@@ -982,6 +982,13 @@ class HostAssessment:
     decision: str                       # 'review' | 'ok'
     reason: str
     history: str = ''                   # RAG summary, review hosts only
+    # The history above as numbers, when there are numbers to be had. Demo
+    # only: live, the RAG store returns a paragraph a person wrote and there
+    # is nothing to parse it into, so this stays empty and the retry panel
+    # asks the operator to read the values out of the prose themselves.
+    # Filling it from a fleet default would be the console inventing an
+    # operational recommendation and attributing it to the host's history.
+    tuning: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -1208,6 +1215,7 @@ class InfoAgent:
                 reason=(f'Risk {s:.1f} exceeds {threshold:.0f}{src} '
                         f'— requires review.' if s > threshold else
                         f'Risk {s:.1f} below {threshold:.0f}{src}.'),
+                tuning=fallbacks.history_tuning(h['host']) if demo_mode() else {},
             )
             for h, s in zip(hosts, scores)
         ]
@@ -1425,7 +1433,7 @@ class SimStore:
 
     def put(self, run: dict) -> dict:
         run.setdefault('created_at', now_iso())
-        if run.get('outcome') in ('patched', 'rejected', 'failed'):
+        if run.get('outcome') in ('patched', 'rejected', 'failed', 'not_verified'):
             run['completed_at'] = now_iso()
         with self._lock:
             self.runs[run['execution_id']] = dict(run)
@@ -1574,11 +1582,98 @@ def next_step(summary: dict) -> str:
                 f'{"" if waiting == 1 else "s"} at the gate')
     if running:
         return f'{running} host{"" if running == 1 else "s"} still patching'
+    unverified = summary.get('not_verified') or 0
+    if unverified:
+        # Ahead of 'nothing left to do', because this is the one terminal
+        # state that looks finished and is not. The run is over, every node
+        # went green, and the host is still vulnerable.
+        return (f'a retry on {unverified} host'
+                f'{"" if unverified == 1 else "s"} the patch did not take on')
     return 'nothing — all four agents are done with this CVE'
 
 
 # Maps the Info agent's per-host decision onto the workflow's routing input.
 GROUP_FOR_DECISION = {'review': 'approved_patch', 'ok': 'auto_patch'}
+
+# Node ids of the workflow's last step, on both branches. Named rather than
+# positional: 'the last one' is true today and would silently start reading
+# the wrong node the first time somebody appends to the workflow.
+VERIFY_NODES = ('verify_patch_prod', 'verify_patch')
+
+
+def remediation_params(raw: dict | None) -> dict[str, int]:
+    """Operator-set remediation parameters, clamped to their declared range.
+
+    Only keys the playbook actually declares survive, and only when they
+    differ from the default — an input sent at its default value is noise in
+    the trigger payload and noise in the trace, and it would make every
+    ordinary dispatch look like a retry.
+    """
+    out: dict[str, int] = {}
+    for key, spec in fallbacks.REMEDIATION_INPUTS.items():
+        if key not in (raw or {}):
+            continue
+        try:
+            val = int(float((raw or {})[key]))
+        except (TypeError, ValueError):
+            continue
+        val = max(spec['min'], min(spec['max'], val))
+        if val != spec['default']:
+            out[key] = val
+    return out
+
+
+def _as_bool(value: Any) -> bool | None:
+    """AAP artifacts arrive as whatever set_stats was handed.
+
+    `patched` has come back as True, as 'True' and as 1 depending on how the
+    playbook set it, and `bool('False')` is True — which would read a host
+    reporting itself unpatched as patched, the one direction that must never
+    happen silently. None means 'the node said nothing', which is different
+    again from saying no.
+    """
+    if value is None or value == '':
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ('true', 'yes', '1', 'patched', 'ok'):
+        return True
+    if text in ('false', 'no', '0', 'unpatched', 'vulnerable'):
+        return False
+    return None
+
+
+def verify_verdict(steps: list[dict]) -> dict | None:
+    """What the verify node reported, or None if it did not report.
+
+    The workflow's last node runs `dnf updateinfo list --cve` on the host and
+    publishes `patched` — and until now nothing read it. The console inferred
+    'patched' from the execution exiting cleanly, which is the inference
+    aap-setup/README.md records coming apart in both directions on this
+    project: a dnf transaction can succeed with the advisory still pending.
+    A node that goes to the machine and asks is worth nothing if its answer
+    is thrown away.
+    """
+    for step in steps or []:
+        if (step.get('name') or '') not in VERIFY_NODES:
+            continue
+        out = step.get('output') or {}
+        if not isinstance(out, dict):
+            return None
+        state = _as_bool(out.get('patched'))
+        if state is None:
+            return None
+        adv = out.get('outstanding_advisories') or []
+        if isinstance(adv, str):
+            # set_stats flattens a list to a comma-joined string often enough
+            # that splitting it is cheaper than losing the advisory ids.
+            adv = [a.strip() for a in adv.split(',') if a.strip()]
+        return {'patched': state, 'outstanding_advisories': list(adv),
+                'why': out.get('why') or '', 'remedy': out.get('remedy') or {}}
+    return None
 
 _ao_token: dict[str, Any] = {}
 
@@ -1719,7 +1814,8 @@ class PatchingAgent:
             text = text.replace(node_id, labels[node_id])
         return text
 
-    def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '') -> dict:
+    def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '',
+                   params: dict | None = None) -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
         # lab_tag is optional in the trigger schema but fetch_and_commit_prod
@@ -1732,6 +1828,17 @@ class PatchingAgent:
                   'lab_tag': LAB_TAG}
         if scheduler_date_time:
             inputs['scheduler_date_time'] = scheduler_date_time
+        # Remediation parameters, sent only when the operator set one. The
+        # lab's workflow does not read these yet, and a trigger schema that
+        # rejects unknown properties would fail the launch — so the default
+        # case sends exactly what it always sent, byte for byte, and only a
+        # deliberate retry changes the payload.
+        tuning = remediation_params(params)
+        if tuning:
+            inputs.update(tuning)
+            self._trace('supervisor', 'patching',
+                        f'{host["host"]}: retry with '
+                        + ', '.join(f'{k}={v}' for k, v in sorted(tuning.items())))
 
         note = f' (as {target})' if target != host['host'] else ''
         self._trace('supervisor', 'patching',
@@ -1755,7 +1862,8 @@ class PatchingAgent:
             # themselves from.
             demo_pause()
             run = SIM.put(fallbacks.patch_simulated(
-                cve_id, host['host'], group, str(exc.cause), SIM.new_id()))
+                cve_id, host['host'], group, str(exc.cause), SIM.new_id(),
+                inputs=tuning))
             self._trace('patching', 'supervisor',
                         f'{host["host"]}: SIMULATED {run["outcome"]} — AO unreachable')
             return run
@@ -1763,9 +1871,10 @@ class PatchingAgent:
         if not exec_id:
             raise BackendUnavailable('Ansible Orchestrator', 'no execution id returned',
                                      'check the workflow trigger accepts these inputs')
-        return self._await(exec_id, host['host'], group)
+        return self._await(exec_id, host['host'], group, tuning)
 
-    def _await(self, exec_id: str, host: str, group: str) -> dict:
+    def _await(self, exec_id: str, host: str, group: str,
+               tuning: dict | None = None) -> dict:
         """Poll until the execution settles. A pause for approval counts as settled.
 
         Never raises. By the time this is called AO has accepted the run and
@@ -1829,6 +1938,16 @@ class PatchingAgent:
                        else 'failed')
 
         steps, matched_port, approval_activity = self._activities(exec_id)
+        # The execution finishing cleanly is not the same claim as the host
+        # being patched, and the workflow's last node is there to tell the two
+        # apart. Only ever downgrades: a run that failed is not talked back up
+        # to patched by a verify node that happened to find the advisory gone.
+        verdict = verify_verdict(steps)
+        if outcome == 'patched' and verdict and not verdict['patched']:
+            outcome = 'not_verified'
+            adv = ', '.join(verdict['outstanding_advisories']) or 'advisory still listed'
+            self._trace('patching', 'supervisor',
+                        f'{host}: job succeeded but verify says not patched — {adv}')
         if unreadable is None:
             self._trace('patching', 'supervisor',
                         f'{host}: {outcome}'
@@ -1836,6 +1955,8 @@ class PatchingAgent:
         return {
             'host': host, 'group': group, 'execution_id': exec_id,
             'status': status, 'outcome': outcome,
+            'verify': verdict,
+            'inputs': dict(tuning or {}),
             'approval_pending': pending,
             # Needed to signal the approval gate; see decide().
             'approval_activity_id': approval_activity,
@@ -1921,6 +2042,11 @@ class PatchingAgent:
                 port = out.get('matched_port', '')
             if a.get('node_type') == 'approval' and a.get('status') in ('waiting', 'pending'):
                 approval = a.get('temporal_activity_id') or a.get('activity_name') or ''
+            # Only the verify node's output is carried, and only because
+            # something reads it. Attaching every node's output_data would put
+            # job stdout into every poll response and into runs/simulated.json.
+            verify_out = (dict(out) if a.get('activity_name') in VERIFY_NODES
+                          and isinstance(out, dict) else None)
             steps.append({'name': a.get('activity_name'),
                           # What a person reads. The id stays in 'name' so
                           # anything joining on it keeps working.
@@ -1942,7 +2068,8 @@ class PatchingAgent:
                           # the same figure rather than each rounding it
                           # their own way.
                           'elapsed': _elapsed(a.get('started_at'),
-                                              a.get('completed_at'))})
+                                              a.get('completed_at')),
+                          **({'output': verify_out} if verify_out else {})})
         return steps, port, approval
 
     def recent_runs(self, limit: int = 40) -> list[dict]:
@@ -2086,11 +2213,22 @@ class PatchingAgent:
             SIM.put(run)
             demo_pause(3)
 
-        run.update({'status': 'completed', 'outcome': 'patched',
-                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD)})
+        # The gated path settles here, which is where its verify node runs.
+        # The parameters were chosen at dispatch, before the approval, so the
+        # verdict is read back off the run rather than recomputed from
+        # whatever the console happens to be holding now.
+        verdict = fallbacks.verify_check(run.get('host') or '', run.get('inputs'))
+        ok = bool(verdict.get('patched'))
+        run.update({'status': 'completed',
+                    'outcome': 'patched' if ok else 'not_verified',
+                    'verify': verdict,
+                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD,
+                                                 verify=verdict)})
         SIM.put(run)
         self._trace('patching', 'console',
-                    f'{execution_id[:12]} -> SIMULATED patched')
+                    f'{execution_id[:12]} -> SIMULATED '
+                    + ('patched' if ok else
+                       'not_verified — ' + (verdict.get('why') or 'advisory still listed')))
         return {**run, 'decision': decision}
 
     def run_detail(self, execution_id: str) -> dict:
@@ -2368,10 +2506,17 @@ class Supervisor:
         self.events = list(assessment.get('events') or [])
         self.trace('console', 'supervisor', f'patch {cve_id} ({len(hosts)} host(s))')
 
+        # Remediation parameters for this dispatch, and the rows a previous
+        # one left behind. A retry sends one host; without the second of
+        # these the other four results would be dropped on the floor and the
+        # table would go from five rows to one.
+        params = assessment.get('remediation') or {}
+        prior = [dict(r) for r in (assessment.get('prior_results') or [])]
+
         results, failures = [], 0
         for h in hosts:
             try:
-                r = self.patching.patch_host(cve_id, h)
+                r = self.patching.patch_host(cve_id, h, params=params)
             except BackendUnavailable as exc:
                 # One host failing to launch must not abandon the rest.
                 #
@@ -2386,6 +2531,18 @@ class Supervisor:
             if r['outcome'] in ('failed', 'timeout'):
                 failures += 1
 
+        if prior:
+            # This dispatch wins for the hosts it covered; everything else
+            # keeps the row it had. Order follows the earlier run so a retry
+            # does not reshuffle the table under the operator — the row they
+            # pressed stays where they pressed it.
+            fresh = {r.get('host'): r for r in results}
+            merged = [fresh.pop(r.get('host'), r) for r in prior]
+            merged.extend(r for r in results if r.get('host') in fresh)
+            results = merged
+            failures = sum(1 for r in results
+                           if r.get('outcome') in ('failed', 'timeout'))
+
         summary = {
             'patched': sum(1 for r in results if r['outcome'] == 'patched'),
             'unavailable': sum(1 for r in results if r['outcome'] == 'unavailable'),
@@ -2394,9 +2551,17 @@ class Supervisor:
             # when this returns, so the counts only add up with this included.
             'running': sum(1 for r in results if r['outcome'] == 'running'),
             'failed': failures,
+            # The unattended branch runs through verify without stopping, so
+            # this is reachable straight off a dispatch — the gated hosts pick
+            # it up later, through _summarise.
+            'not_verified': sum(1 for r in results if r['outcome'] == 'not_verified'),
         }
         self.state = {
-            **assessment,
+            # Both are inputs to this call, not part of the state it
+            # produces. prior_results in particular would put a stale second
+            # copy of every row on /api/state, growing once per retry.
+            **{k: v for k, v in assessment.items()
+               if k not in ('remediation', 'prior_results')},
             'patch': {
                 'cve_id': cve_id,
                 'workflow': AO_WORKFLOW_NAME,
@@ -2430,7 +2595,18 @@ class Supervisor:
         # Publishing is the last thing and the least important: a run whose
         # outcome failed to reach the learning stores is still a completed
         # patch, so this can never raise past here.
-        self.trace('supervisor', 'results', f'publish {cve_id}')
+        #
+        # The hop is traced only when there is something to publish. publish()
+        # skips every host still at the gate, so on an all-review CVE this
+        # agent is reached at dispatch and writes nothing — and a hop traced
+        # anyway turns its box black in the architecture diagram, which reads
+        # as the learning record having been written before anybody approved
+        # anything. The condition is publish()'s own, kept here rather than
+        # read off its return value so the hop still precedes the call in the
+        # trace. _rereport traces it again when the last gate clears and the
+        # records are actually written.
+        if any(r.get('outcome') not in ('awaiting_approval', 'running') for r in results):
+            self.trace('supervisor', 'results', f'publish {cve_id}')
         try:
             self.state['published'] = self.results.publish(self.state)
         except Exception as exc:
@@ -2495,19 +2671,33 @@ def _run_seconds(run: dict) -> float | None:
 # the response is generated from this rather than written out twice — a
 # baseline that can drift from the list of what it assumed is worse than no
 # list at all.
-ROI_INPUTS: tuple[tuple[str, str, str, str], ...] = (
-    # key                 field          label                                   unit
-    ('ROI_TRIAGE_MIN',    'triage',      'Triage per CVE',                       'min'),
-    ('ROI_PREP_MIN',      'prep',        'Change prep per host',                 'min'),
-    ('ROI_EXEC_MIN',      'execute',     'Execute & verify per host',            'min'),
-    ('ROI_APPROVAL_MIN',  'approval',    'Approval paperwork per gated host',    'min'),
-    ('ROI_REWORK_PCT',    'rework_pct',  'Manual attempts needing a redo',       '%'),
-    ('ROI_REVIEW_MIN',    'review',      'Operator review per gated host',       'min'),
-    ('ROI_HOURLY_RATE',   'rate',        'Fully-loaded hourly rate',             '/h'),
-    ('ROI_LEAD_HOURS',    'lead_h',      'Manual time-to-remediation',           'h'),
-    ('ROI_SLA_HOURS',     'sla_h',       'Remediation deadline (policy)',        'h'),
-    ('ROI_BAND_PCT',      'band_pct',    'Uncertainty on the manual baseline',   '%'),
-    ('ROI_PLATFORM_COST', 'platform',    'Platform build cost',                  ''),
+#
+# `side` groups them for the page: 'infra' and 'app' each belong to one half
+# of the console, 'shared' to both. It exists because the sliders card would
+# otherwise be eighteen unlabelled rows, and because a reader arguing with the
+# dependency baseline should not have to work out which seven of them apply.
+ROI_INPUTS: tuple[tuple[str, str, str, str, str], ...] = (
+    # key                   field          label                                  unit   side
+    ('ROI_TRIAGE_MIN',      'triage',      'Triage per CVE',                      'min', 'infra'),
+    ('ROI_PREP_MIN',        'prep',        'Change prep per host',                'min', 'infra'),
+    ('ROI_EXEC_MIN',        'execute',     'Execute & verify per host',           'min', 'infra'),
+    ('ROI_APPROVAL_MIN',    'approval',    'Approval paperwork per gated host',   'min', 'infra'),
+    ('ROI_REWORK_PCT',      'rework_pct',  'Manual attempts needing a redo',      '%',   'infra'),
+    ('ROI_REVIEW_MIN',      'review',      'Operator review per gated host',      'min', 'infra'),
+    ('ROI_LEAD_HOURS',      'lead_h',      'Manual time-to-remediation, a host',  'h',   'infra'),
+
+    ('ROI_APP_TRIAGE_MIN',  'app_triage',  'Triage per advisory',                 'min', 'app'),
+    ('ROI_APP_BUMP_MIN',    'app_bump',    'Version bump per component',          'min', 'app'),
+    ('ROI_APP_BUILD_MIN',   'app_build',   'Build & test per repository',         'min', 'app'),
+    ('ROI_APP_PR_MIN',      'app_pr',      'Pull request per repository',         'min', 'app'),
+    ('ROI_APP_BREAK_PCT',   'app_break',   'Bumps that break something',          '%',   'app'),
+    ('ROI_APP_REVIEW_MIN',  'app_review',  'Operator review per repository',      'min', 'app'),
+    ('ROI_APP_LEAD_HOURS',  'app_lead_h',  'Manual time-to-fix, a dependency',    'h',   'app'),
+
+    ('ROI_HOURLY_RATE',     'rate',        'Fully-loaded hourly rate',            '/h',  'shared'),
+    ('ROI_SLA_HOURS',       'sla_h',       'Remediation deadline (policy)',       'h',   'shared'),
+    ('ROI_BAND_PCT',        'band_pct',    'Uncertainty on the manual baseline',  '%',   'shared'),
+    ('ROI_PLATFORM_COST',   'platform',    'Platform build cost',                 '',    'shared'),
 )
 
 # What a slider is allowed to send. Not cosmetic: these arrive over HTTP, and
@@ -2520,6 +2710,10 @@ ROI_LIMITS: dict[str, tuple[float, float]] = {
     'ROI_HOURLY_RATE': (0, 10000), 'ROI_LEAD_HOURS': (0, 8760),
     'ROI_SLA_HOURS': (0.01, 8760), 'ROI_BAND_PCT': (0, 100),
     'ROI_PLATFORM_COST': (0, 100_000_000),
+    'ROI_APP_TRIAGE_MIN': (0, 600), 'ROI_APP_BUMP_MIN': (0, 600),
+    'ROI_APP_BUILD_MIN': (0, 600), 'ROI_APP_PR_MIN': (0, 600),
+    'ROI_APP_REVIEW_MIN': (0, 600), 'ROI_APP_BREAK_PCT': (0, 100),
+    'ROI_APP_LEAD_HOURS': (0, 8760),
 }
 
 
@@ -2752,9 +2946,9 @@ def roi_baseline(overrides: dict | None = None) -> dict:
     one operator asking "what if", not a change to what anybody else sees, and
     this server is threaded.
     """
-    b = {field: getattr(fallbacks, key) for key, field, _, _ in ROI_INPUTS}
+    b = {field: getattr(fallbacks, key) for key, field, _, _, _ in ROI_INPUTS}
     b['currency'] = fallbacks.ROI_CURRENCY
-    for key, field, _, _ in ROI_INPUTS:
+    for key, field, _, _, _ in ROI_INPUTS:
         if not overrides or key not in overrides:
             continue
         try:
@@ -2819,7 +3013,7 @@ def roi_history(runs: list[dict], b: dict) -> dict:
                if r.get('outcome') in ('awaiting_approval', 'running')]
     lost = [r for r in runs
             if r.get('outcome') in ('failed', 'rejected', 'cancelled', 'timeout',
-                                    'unavailable')]
+                                    'unavailable', 'not_verified')]
 
     cves = {r.get('cve_id') for r in done if r.get('cve_id')}
     hosts = len(done)
@@ -2851,22 +3045,252 @@ def roi_history(runs: list[dict], b: dict) -> dict:
     }
 
 
-def roi_report(state: dict, overrides: dict | None = None,
-               runs: list[dict] | None = None) -> dict:
-    """Compare the dispatched run in `state` against the manual baseline."""
-    patch = state.get('patch') or {}
-    results = patch.get('results') or []
-    if not results:
-        raise BackendUnavailable(
-            'roi', 'nothing has been dispatched yet',
-            'assess a CVE and dispatch the plan first — this compares against '
-            'what the run actually did, so it needs a run')
+# ==========================================================================
+# ROI — the application side
+#
+# The same comparison for the other half of the console: a dependency scan
+# and the remediation that follows it, against doing that by hand.
+#
+# It is a second set of functions rather than the ones above reused, and that
+# is a decision about the arithmetic rather than about tidiness. A host patch
+# scales on one count. A dependency fix scales on two that do not move
+# together — per component, which is the version hunting and the manifest
+# edit, and per repository, which is the build, the suite and the pull
+# request however many components moved. Forcing both through roi_effort()
+# would mean passing one of them as a host and the other as nothing.
+#
+# What the page is allowed to claim is the harder half of this, and it is
+# decided here rather than in the browser. The scan finds everything; the
+# automation fixes some of it. Three things it does not fix are priced at the
+# manual rate and charged against the automated side:
+#
+#   * changes the planner skipped — no fixed version, a major-version jump,
+#     a manifest kind it will not edit. Still somebody's afternoon.
+#   * repositories that were scanned and never planned. Finding the problem
+#     is not fixing it.
+#   * builds that failed, and builds that went green and were never pushed.
+#     A branch on a build host is not a remediated repository.
+#
+# The effect is self-correcting: scan five repositories, remediate one, and
+# the leftover line eats most of the saving. That is the right answer, and it
+# is the one a customer can check against their own repository list.
+# ==========================================================================
 
-    b = roi_baseline(overrides)
+def roi_app_effort(advisories: int, components: int, repos: int,
+                   b: dict) -> tuple[dict, dict]:
+    """Manual and automated human minutes for a shape of dependency work.
+
+    `advisories` is distinct across the scan, not summed per repository — the
+    same CVE in three services is read once. Counting it three times would
+    inflate the dominant term of the manual side, which is exactly the term
+    this page's argument rests on.
+    """
+    hands_on = b['app_bump'] * components + b['app_build'] * repos
+    manual = {
+        'Triage the advisories': b['app_triage'] * advisories,
+        'Find and apply a fixed version': b['app_bump'] * components,
+        'Build & run the suite': b['app_build'] * repos,
+        'Raise and merge the pull request': b['app_pr'] * repos,
+        # A share of the hands-on work done twice, on its own line for the
+        # same reason as the host figure: a reader who thinks their bumps
+        # never break anything can see exactly what to subtract.
+        'Rework after a break': hands_on * b['app_break'] / 100.0,
+    }
+    auto = {'Review & approve': b['app_review'] * repos}
+    return manual, auto
+
+
+# Every count the scanner sends, with a ceiling. These arrive from the browser
+# over HTTP: a repository count of 1e9 would produce a confident, absurd
+# saving rather than an error, and the page would print it.
+_APP_FIELDS: tuple[tuple[str, int], ...] = (
+    ('repos', 2000), ('components', 200_000), ('vulnerable', 50_000),
+    ('advisories', 50_000), ('covered', 50_000), ('predisclosure', 50_000),
+    ('embargo_days', 3650),
+    ('planned_repos', 2000), ('changes', 50_000), ('skipped', 50_000),
+    ('fixed_repos', 2000), ('fixed_changes', 50_000),
+    ('held_repos', 2000), ('failed_repos', 2000),
+)
+
+
+def roi_app_input(raw: dict | None) -> dict | None:
+    """Sanitise the scanner's summary, or None if there is no scan to report.
+
+    Nothing here trusts the sender. The counts are clamped, the derived ones
+    are re-derived, and anything that would let a subset exceed its whole is
+    pulled back to the whole — a page that renders '12 of 7 repositories
+    remediated' has stopped being evidence of anything.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out: dict = {}
+    for name, ceiling in _APP_FIELDS:
+        try:
+            v = int(float(raw.get(name) or 0))
+        except (TypeError, ValueError):
+            v = 0
+        out[name] = min(max(v, 0), ceiling)
+    for name in ('scan_s', 'run_s'):
+        try:
+            v = float(raw.get(name) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        out[name] = min(max(v, 0.0), 86400.0) if v == v else 0.0
+    if not out['repos']:
+        return None
+    # Subsets, held to their whole.
+    out['vulnerable'] = min(out['vulnerable'], out['components'] or out['vulnerable'])
+    out['covered'] = min(out['covered'], out['vulnerable'])
+    out['predisclosure'] = min(out['predisclosure'], out['covered'])
+    for name in ('planned_repos', 'fixed_repos', 'held_repos', 'failed_repos'):
+        out[name] = min(out[name], out['repos'])
+    out['fixed_repos'] = min(out['fixed_repos'], out['planned_repos'])
+    out['fixed_changes'] = min(out['fixed_changes'], out['changes'], out['vulnerable'])
+    return out
+
+
+def roi_app(app: dict, b: dict) -> dict:
+    """The application half of the report, from one scan and its remediations."""
+    repos, comps = app['repos'], app['vulnerable']
+    advisories = app['advisories']
+    rate = b['rate']
+    cost = lambda mins: round(mins / 60.0 * rate, 2)
+
+    # The whole scope the scan covered, done by hand. Every advisory read,
+    # every vulnerable component bumped, every repository built and merged.
+    manual, auto = roi_app_effort(advisories, comps, repos, b)
+    manual_min = sum(manual.values())
+
+    # What the automation did not finish, priced the same way. fixed_* is the
+    # only thing counted as done: built green and pushed. A build that failed
+    # delivered nothing, and one that went green and was never pushed left the
+    # repository byte-identical.
+    left_comps = max(0, comps - app['fixed_changes'])
+    left_repos = max(0, repos - app['fixed_repos'])
+    left_manual, _ = roi_app_effort(0, left_comps, left_repos, b)
+    left_min = sum(left_manual.values())
+
+    # Review is charged for every repository a person actually opened, which
+    # includes the ones whose build then failed. Time spent on a run that
+    # delivered nothing is still time spent.
+    auto = {'Review & approve': b['app_review'] * app['planned_repos']}
+    auto_min = sum(auto.values())
+    total_auto = auto_min + left_min
+    saved_min = manual_min - total_auto
+
+    band = b['band_pct'] / 100.0
+    low, high = cost(manual_min * (1 - band)), cost(manual_min * (1 + band))
+
+    # How the two scale with the number of repositories, holding this scan's
+    # advisories and vulnerable components per repository. This diverges far
+    # harder than the host curve, and for a reason worth saying out loud: the
+    # manual side pays triage per advisory, and advisories arrive with
+    # repositories. The automated side pays one review per repository.
+    adv_per = advisories / repos if repos else 0
+    comp_per = comps / repos if repos else 0
+    span = max(20, repos * 5)
+    step = max(1, round(span / 8))
+    curve = []
+    for k in sorted(set(list(range(1, span + 1, step)) + [repos, span])):
+        m, a = roi_app_effort(round(k * adv_per), round(k * comp_per), k, b)
+        curve.append({'repos': k, 'manual': cost(sum(m.values())),
+                      'auto': cost(sum(a.values()))})
+
+    # Exposure: scan start to the last fix pushed. None until something is
+    # actually pushed, for the same reason the host figure is None until a
+    # host reports patched — a window that closed on nothing is not a window.
+    exposure_s = (app['scan_s'] + app['run_s']) if app['fixed_repos'] else None
+    exposure_h = exposure_s / 3600.0 if exposure_s is not None else None
+    sla = {
+        'hours': b['sla_h'],
+        'manual_within': b['app_lead_h'] <= b['sla_h'],
+        'manual_over_h': round(max(0.0, b['app_lead_h'] - b['sla_h']), 2),
+        'auto_within': (exposure_h <= b['sla_h']) if exposure_h is not None else None,
+        'headroom_pct': (round(100 * (1 - exposure_h / b['sla_h']), 2)
+                         if exposure_h is not None and b['sla_h'] else None),
+    }
+
+    # The one claim the infrastructure side cannot make. A pre-disclosure
+    # Lightwell build existed before the advisory was public, so the fix was
+    # available for `embargo_days` before the clock the rest of this page
+    # measures against had started.
+    pre = {'components': app['predisclosure'], 'days': app['embargo_days']} \
+        if app['predisclosure'] and app['embargo_days'] else None
+
+    return {
+        'measured': {
+            'repos': repos, 'components': app['components'],
+            'vulnerable': comps, 'advisories': advisories,
+            'covered': app['covered'], 'predisclosure': app['predisclosure'],
+            'planned_repos': app['planned_repos'],
+            'changes': app['changes'], 'skipped': app['skipped'],
+            'fixed_repos': app['fixed_repos'], 'fixed_changes': app['fixed_changes'],
+            # Each is a reason a repository is not counted as remediated.
+            # Published so the page can account for the difference rather than
+            # leaving a reader to work out why 5 planned produced 2 fixed.
+            'held_repos': app['held_repos'], 'failed_repos': app['failed_repos'],
+            'scan_s': round(app['scan_s'], 1), 'run_s': round(app['run_s'], 1),
+            'exposure_s': round(exposure_s, 1) if exposure_s is not None else None,
+        },
+        'manual': {'breakdown': manual, 'minutes': round(manual_min, 1),
+                   'cost': cost(manual_min), 'cost_low': low, 'cost_high': high,
+                   'lead_hours': b['app_lead_h']},
+        'auto': {'breakdown': auto, 'minutes': round(auto_min, 1),
+                 'cost': cost(auto_min),
+                 'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
+        # Charged against the automated side, not quietly dropped. This is the
+        # number that stops the page claiming a scan it did not remediate.
+        'left': {'breakdown': left_manual, 'minutes': round(left_min, 1),
+                 'cost': cost(left_min), 'components': left_comps,
+                 'repos': left_repos},
+        'saved': {
+            'minutes': round(saved_min, 1), 'cost': cost(saved_min),
+            'cost_low': round(low - cost(total_auto), 2),
+            'cost_high': round(high - cost(total_auto), 2),
+            'effort_x': round(manual_min / total_auto, 1) if total_auto else None,
+            'exposure_hours': (round(b['app_lead_h'] - exposure_h, 2)
+                               if exposure_h is not None else None),
+        },
+        'total_auto_minutes': round(total_auto, 1),
+        'total_auto_cost': cost(total_auto),
+        'curve': curve,
+        'breakeven': {
+            'shrink_pct': (round((1 - total_auto / manual_min) * 100, 1)
+                           if manual_min else None),
+            # Per-repository marginal saving, excluding triage for the same
+            # reason the host figure excludes it: the next repository does not
+            # arrive with the same advisories to read again.
+            'per_repo': (round((manual_min - b['app_triage'] * advisories - total_auto)
+                               / repos / 60.0 * rate, 2) if repos else None),
+        },
+        'sla': sla,
+        'predisclosure': pre,
+    }
+
+
+def roi_infra(state: dict, results: list[dict], b: dict) -> dict:
+    """Compare the dispatched run in `state` against the manual baseline.
+
+    Split out from roi_report() when the application side arrived, so that
+    half of the page can be absent without this half changing shape. The
+    arithmetic is exactly what it was.
+    """
+    patch = state.get('patch') or {}
     n = len(results)
     gated = sum(1 for r in results if r.get('group') == 'approved_patch')
     finished = [s for s in (_run_seconds(r) for r in results) if s is not None]
     done = sum(1 for r in results if r.get('outcome') == 'patched')
+
+    # Every host the CVE affects, not just the ones a run was dispatched for.
+    # The checkboxes let an operator send a subset, and the rest stay on the
+    # plan with no run of their own -- still vulnerable, and until now in no
+    # total on this page. _patch_async deliberately keeps the full assessed
+    # list on the state, so the number is here to be read.
+    plan_hosts = state.get('hosts') or []
+    scope = max(n, len(plan_hosts))
+    scope_gated = max(gated, min(
+        sum(1 for h in plan_hosts if h.get('decision') == 'review') if plan_hosts else gated,
+        scope))
 
     # Measured. assess_s is the Supervisor's own stopwatch over agent 1,
     # dispatch_s is agent 2 handing every host to AO.
@@ -2889,24 +3313,44 @@ def roi_report(state: dict, overrides: dict | None = None,
     # engineer, here they ran at once.
     serial_s = assess_s + sum(finished) if finished else None
 
-    manual, auto = roi_effort(1, n, gated, b)
+    # The whole CVE done by hand, which is the scope every host on the plan
+    # belongs to -- not the subset that happened to be ticked.
+    manual, auto = roi_effort(1, scope, scope_gated, b)
     manual_min, auto_min = sum(manual.values()), sum(auto.values())
     rate = b['rate']
     cost = lambda mins: round(mins / 60.0 * rate, 2)
-    saved_min = manual_min - auto_min
+
+    # What the run did not finish, priced at the manual rate -- the same rule
+    # the application side applies to a repository it planned and never
+    # pushed. A host counts as done only when it reports patched: one never
+    # dispatched, one that failed and one that was rejected all leave the
+    # machine exactly as exposed as it was. Charging none of them let this
+    # page quote the saving for five hosts after patching two, which is the
+    # one claim on here that would be caught later rather than in the room.
+    left_hosts = max(0, scope - done)
+    left_gated = min(left_hosts,
+                     sum(1 for r in results if r.get('outcome') != 'patched'
+                         and r.get('group') == 'approved_patch')
+                     + max(0, scope_gated - gated))
+    # cves=0: the triage was paid once, by the run, and the hosts it left
+    # behind do not arrive with the advisory to read again.
+    left_manual, _ = roi_effort(0, left_hosts, left_gated, b)
+    left_min = sum(left_manual.values())
+    total_auto = auto_min + left_min
+    saved_min = manual_min - total_auto
 
     # How the two scale. The manual line climbs with every host; the
     # automated one climbs only with the hosts that stop for a person, and
     # the per-CVE triage is paid once by a machine instead of once by a
     # person. That divergence is the actual argument, and it is worth more
     # than the single-run number above it.
-    ratio = gated / n if n else 0
-    span = max(25, n * 5)
+    ratio = scope_gated / scope if scope else 0
+    span = max(25, scope * 5)
     step = max(1, round(span / 8))
-    # n is forced into the series so the console can anchor the projection to
-    # the run actually on screen rather than interpolating near it.
+    # scope is forced into the series so the console can anchor the projection
+    # to the run actually on screen rather than interpolating near it.
     curve = []
-    for k in sorted(set(list(range(1, span + 1, step)) + [n, span])):
+    for k in sorted(set(list(range(1, span + 1, step)) + [scope, span])):
         m, a = roi_effort(1, k, round(k * ratio), b)
         curve.append({'hosts': k, 'manual': cost(sum(m.values())),
                       'auto': cost(sum(a.values()))})
@@ -2921,18 +3365,21 @@ def roi_report(state: dict, overrides: dict | None = None,
     # the money and never the verdict. Offering a rate slider as though it
     # might change the answer would be theatre.
     per_host = (b['prep'] + b['execute']) * (1 + b['rework_pct'] / 100.0)
-    headroom = auto_min - b['triage'] - b['approval'] * gated
+    # Against the automated side's full bill, the unpaid part included. A
+    # break-even computed on review time alone would be answering a question
+    # about a run that patched everything, which this one may not have.
+    headroom = total_auto - b['triage'] - b['approval'] * scope_gated
     breakeven = {
         # Shrink the whole manual baseline by this much and the two paths cost
         # the same. Usually a number in the high nineties, which is the point.
-        'shrink_pct': (round((1 - auto_min / manual_min) * 100, 1)
+        'shrink_pct': (round((1 - total_auto / manual_min) * 100, 1)
                        if manual_min else None),
         # Per-host handling time at which doing it by hand breaks even,
         # everything else held. Often negative — meaning no value of it works,
         # because the per-CVE triage alone already costs more than the whole
         # automated path. The page says so in words rather than printing a
         # negative number of minutes.
-        'handling_min': (round(headroom / n, 2) if n and headroom > 0 else None),
+        'handling_min': (round(headroom / scope, 2) if scope and headroom > 0 else None),
         'handling_now': round(per_host, 2),
         'rate_independent': True,
     }
@@ -2958,23 +3405,12 @@ def roi_report(state: dict, overrides: dict | None = None,
         'hosts': n,
     }
 
-    # The budget question. Marginal saving per host excludes the per-CVE
-    # triage, because the next host does not come with another advisory to
-    # read — amortising triage across hosts would flatter the figure on
-    # exactly the estates where it matters least.
-    marginal = (manual_min - b['triage'] - auto_min) / n if n else 0
+    # Marginal saving per host, for the payback card roi_report() assembles.
+    # It excludes the per-CVE triage, because the next host does not come with
+    # another advisory to read — amortising triage across hosts would flatter
+    # the figure on exactly the estates where it matters least.
+    marginal = (manual_min - b['triage'] - total_auto) / scope if scope else 0
     marginal_cost = marginal / 60.0 * rate
-    lifetime = roi_history(runs, b) if runs else None
-    recovered = (lifetime or {}).get('cost') or 0
-    payback = {
-        'platform_cost': b['platform'],
-        'per_host': round(marginal_cost, 2),
-        'hosts': (math.ceil(b['platform'] / marginal_cost)
-                  if marginal_cost > 0 and b['platform'] > 0 else None),
-        'recovered': round(recovered, 2),
-        'recovered_pct': (round(min(100.0, recovered / b['platform'] * 100), 1)
-                          if b['platform'] > 0 else None),
-    }
 
     # Whether the measured half of this page describes patching. There are two
     # ways it does not, and they are different enough that the console has to
@@ -3002,6 +3438,12 @@ def roi_report(state: dict, overrides: dict | None = None,
         'illustrative_reason': reason,
         'measured': {
             'hosts': n, 'gated': gated, 'auto_branch': n - gated, 'patched': done,
+            # Every affected host, against the subset a run was dispatched
+            # for. Published so the page can account for the difference
+            # rather than leaving a reader to work out why a plan of five
+            # produced two runs.
+            'scope': scope, 'scope_gated': scope_gated, 'skipped': scope - n,
+            'left': left_hosts,
             'assess_s': round(assess_s, 1),
             'dispatch_s': round(dispatch_s, 1),
             'exposure_s': round(exposure_s, 1) if exposure_s is not None else None,
@@ -3026,14 +3468,20 @@ def roi_report(state: dict, overrides: dict | None = None,
         'auto': {'breakdown': auto, 'minutes': round(auto_min, 1),
                  'cost': cost(auto_min),
                  'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
+        # Charged against the automated side, not quietly dropped. This is the
+        # number that stops the page claiming a CVE it did not finish.
+        'left': {'breakdown': left_manual, 'minutes': round(left_min, 1),
+                 'cost': cost(left_min), 'hosts': left_hosts,
+                 'skipped': scope - n, 'gated': left_gated},
         'saved': {
             'minutes': round(saved_min, 1),
             'cost': cost(saved_min),
-            'cost_low': round(low_cost - cost(auto_min), 2),
-            'cost_high': round(high_cost - cost(auto_min), 2),
-            # Guarded: every host on the unattended branch makes auto_min 0,
-            # and that is the good case, not a divide-by-zero.
-            'effort_x': round(manual_min / auto_min, 1) if auto_min else None,
+            'cost_low': round(low_cost - cost(total_auto), 2),
+            'cost_high': round(high_cost - cost(total_auto), 2),
+            # Guarded: every host unattended and every one patched makes the
+            # automated bill 0, and that is the good case, not a
+            # divide-by-zero.
+            'effort_x': round(manual_min / total_auto, 1) if total_auto else None,
             # No exposure multiplier is published on purpose. Seconds against
             # a three-day baseline divides out to five figures, which is a
             # number nobody can sanity-check and which rests entirely on the
@@ -3042,28 +3490,105 @@ def roi_report(state: dict, overrides: dict | None = None,
             'exposure_hours': (round(b['lead_h'] - exposure_h, 2)
                                if exposure_h is not None else None),
         },
+        'total_auto_minutes': round(total_auto, 1),
+        'total_auto_cost': cost(total_auto),
         'curve': curve,
         'breakeven': breakeven,
         'sla': sla,
+        'exposure_h': exposure_h,
+        'marginal_cost': round(marginal_cost, 2),
+    }
+
+
+def roi_report(state: dict, overrides: dict | None = None,
+               runs: list[dict] | None = None,
+               app_raw: dict | None = None) -> dict:
+    """Both halves of the console, against the manual baseline for each.
+
+    Either half may be absent and the page copes: someone who has dispatched
+    a patch run and never opened the scanner gets the infrastructure side and
+    an application section that says so. Only the empty case is an error —
+    there is nothing to compare when nothing has run anywhere.
+
+    The two are kept apart to the last line. They are added in hours and in
+    money, which add, and never in counts, which do not: a host and a
+    repository are different things and a total of eleven of them would mean
+    nothing. `combined` holds the two that are legitimate.
+    """
+    b = roi_baseline(overrides)
+    app_in = roi_app_input(app_raw)
+    results = (state.get('patch') or {}).get('results') or []
+    if not results and not app_in:
+        raise BackendUnavailable(
+            'roi', 'nothing has run yet',
+            'dispatch a patch plan on the Infrastructure side, or scan a '
+            'repository on the Application side — this compares against what '
+            'a run actually did, so it needs a run')
+
+    infra = roi_infra(state, results, b) if results else None
+    app = roi_app(app_in, b) if app_in else None
+
+    # Hours and money, from whichever sides are present. Deliberately not a
+    # count of anything.
+    parts = [(infra or {}).get('saved'), (app or {}).get('saved')]
+    parts = [p for p in parts if p]
+    combined = {
+        'minutes': round(sum(p['minutes'] for p in parts), 1),
+        'cost': round(sum(p['cost'] for p in parts), 2),
+        'cost_low': round(sum(p['cost_low'] for p in parts), 2),
+        'cost_high': round(sum(p['cost_high'] for p in parts), 2),
+        'both': bool(infra and app),
+    }
+
+    # The payback card is the one place combining the two sides changes the
+    # answer rather than just the presentation: it is one platform, built
+    # once, and recovering its cost from two use cases halves the time it
+    # takes. So it is assembled here rather than inside either half.
+    lifetime = roi_history(runs, b) if runs else None
+    recovered = ((lifetime or {}).get('cost') or 0) + ((app or {}).get('saved') or {}).get('cost', 0)
+    per_host = (infra or {}).get('marginal_cost') or 0
+    payback = {
+        'platform_cost': b['platform'],
+        'per_host': round(per_host, 2) if infra else None,
+        'per_repo': ((app or {}).get('breakeven') or {}).get('per_repo') if app else None,
+        'hosts': (math.ceil(b['platform'] / per_host)
+                  if per_host > 0 and b['platform'] > 0 else None),
+        'recovered': round(recovered, 2),
+        'recovered_pct': (round(min(100.0, recovered / b['platform'] * 100), 1)
+                          if b['platform'] > 0 else None),
+        'both': bool(infra and app),
+    }
+
+    return {
+        'sides': {'infra': bool(infra), 'app': bool(app)},
+        'infra': infra,
+        'app': app,
+        'combined': combined,
+        # Hoisted out of the infrastructure half because the caveat is about
+        # this console's clocks, and the page leads with it above both
+        # sections. None of it applies to the counts on either side.
+        'illustrative': bool(infra and infra['illustrative']),
+        'illustrative_reason': (infra or {}).get('illustrative_reason'),
         # Recomputed per request rather than attached once, because two of its
         # comparisons read the sliders: move the manual baseline and the
         # "against the published median" line has to move with it.
-        'industry': roi_industry(b, exposure_h),
+        'industry': roi_industry(b, (infra or {}).get('exposure_h')),
         'payback': payback,
         'lifetime': lifetime,
         'band_pct': b['band_pct'],
         'currency': b['currency'],
-        'rate': rate,
+        'rate': b['rate'],
         # Itemised from ROI_INPUTS so the page can show what it assumed rather
-        # than asserting a total. Each carries its settings key and its limits,
-        # which is what lets the sliders exist at all: 'change it and look
-        # again' is a real offer and not a figure of speech.
+        # than asserting a total. Each carries its settings key, its limits and
+        # which side it belongs to, which is what lets the sliders exist at
+        # all: 'change it and look again' is a real offer and not a figure of
+        # speech.
         'assumptions': [
-            {'key': key, 'label': label, 'value': b[field],
+            {'key': key, 'label': label, 'value': b[field], 'side': side,
              'unit': b['currency'] if unit == '' else
                      b['currency'] + unit if unit == '/h' else unit,
              'min': ROI_LIMITS[key][0], 'max': ROI_LIMITS[key][1]}
-            for key, field, label, unit in ROI_INPUTS
+            for key, field, label, unit, side in ROI_INPUTS
         ],
     }
 
@@ -3176,6 +3701,51 @@ SETTINGS: tuple[Setting, ...] = (
             'weakest assumption here, and the first question anyone with a '
             'budget asks. Set it to 0 to hide the payback card.',
             binds='fallbacks.ROI_PLATFORM_COST'),
+
+    # --- ROI, the application side -----------------------------------------
+    # A separate baseline because it is separate work, scaling on two counts
+    # that do not move together: per component and per repository. The rate,
+    # the deadline, the uncertainty band and the platform cost above are
+    # shared — those are properties of the organisation, not of the half of
+    # the console you are looking at.
+    Setting('ROI_APP_TRIAGE_MIN', 'ROI baseline (application)',
+            'Manual triage per advisory', 'float', '20',
+            'Read the advisory, work out whether the vulnerable code path is '
+            'reachable from yours. Once per distinct advisory across the '
+            'whole scan, not once per repository it appears in.',
+            binds='fallbacks.ROI_APP_TRIAGE_MIN'),
+    Setting('ROI_APP_BUMP_MIN', 'ROI baseline (application)',
+            'Manual version bump per component', 'float', '12',
+            'Find a fixed version that exists, check it drags no transitive '
+            'conflict in behind it, edit the manifest, re-lock.',
+            binds='fallbacks.ROI_APP_BUMP_MIN'),
+    Setting('ROI_APP_BUILD_MIN', 'ROI baseline (application)',
+            'Manual build & test per repository', 'float', '25',
+            'Per repository, not per component: one build covers every change '
+            'in it. That is why this is a separate line from the bump above.',
+            binds='fallbacks.ROI_APP_BUILD_MIN'),
+    Setting('ROI_APP_PR_MIN', 'ROI baseline (application)',
+            'Manual pull request per repository', 'float', '15',
+            'Raise it, find a reviewer, answer them, merge.',
+            binds='fallbacks.ROI_APP_PR_MIN'),
+    Setting('ROI_APP_BREAK_PCT', 'ROI baseline (application)',
+            'Bumps that break something', 'float', '18',
+            'Share of the hands-on work that has to be done twice. Higher '
+            'than the host figure on purpose: a package upgrade changes code '
+            'that runs, where a patched RPM usually does not.',
+            binds='fallbacks.ROI_APP_BREAK_PCT'),
+    Setting('ROI_APP_REVIEW_MIN', 'ROI baseline (application)',
+            'Operator review per repository', 'float', '6',
+            'What the automated path still costs a person: read the change '
+            'list, press Approve and run, read the diff. Counted against the '
+            'automation, and charged for repositories whose build then failed.',
+            binds='fallbacks.ROI_APP_REVIEW_MIN'),
+    Setting('ROI_APP_LEAD_HOURS', 'ROI baseline (application)',
+            'Manual time-to-fix, a dependency', 'float', '240',
+            'Elapsed hours from an advisory being published to the fix being '
+            'merged, by hand. Wall clock, not effort — mostly the advisory '
+            'queueing behind feature work.',
+            binds='fallbacks.ROI_APP_LEAD_HOURS'),
 
     # --- triage -----------------------------------------------------------
     Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold', 'float', '30',
@@ -3598,8 +4168,26 @@ def _summarise(results: list[dict]) -> dict:
         'running': n('running'),
         'rejected': n('rejected'),
         'failed': n('failed', 'timeout'),
+        # Its own count, not folded into failed. The run did not fail — every
+        # node went green — and a host filed under 'failed' is one an operator
+        # goes looking for a stack trace for. This one needs a different
+        # action, so it gets a different number.
+        'not_verified': n('not_verified'),
         'unavailable': n('unavailable'),
     }
+
+
+def _run_trace(src: str, dst: str, message: str) -> None:
+    """Append a hop to the stored run's log, from outside a Supervisor.
+
+    The architecture diagram and the trace panel are both built from
+    _RUN['events'], so work done after dispatch — agents 3 and 4 re-running
+    behind a decision — has to land here or it happens invisibly. Takes the
+    lock itself, so never call it from inside a `with _RUN_LOCK` block.
+    """
+    with _RUN_LOCK:
+        _RUN.setdefault('events', []).append(
+            {'time': now_iso(), 'from': src, 'to': dst, 'message': message})
 
 
 def _rereport(state: dict) -> dict | None:
@@ -3628,19 +4216,33 @@ def _rereport(state: dict) -> dict | None:
     if summary['awaiting_approval'] > 0:
         return {'next': nxt}
 
+    # Both hops are logged, because this is where the two agents do the work
+    # the operator is waiting on: the final PDF, and the learning record that
+    # could not be written while hosts were still at the gate. Without these
+    # the diagram lit them at dispatch and then said nothing at the one moment
+    # they actually had something to say.
+    cve_id = state.get('cve_id', 'unknown')
     agent = communication.CommunicationAgent(
         REPORTS_DIR, simulated=any(r.get('simulated') for r in results))
+    _run_trace('supervisor', 'communication', f'final report for {cve_id}')
     try:
         report = agent.report(state)
     except Exception as exc:                 # never fail a decision over a PDF
+        _run_trace('communication', 'supervisor', f'report failed — {exc}')
         report = {'error': str(exc)}
 
     # Agent 4 runs at the same point: only now are the hosts settled, so only
     # now is there an outcome worth feeding back.
+    _run_trace('supervisor', 'results', f'publish {cve_id}')
     try:
         published = results_mod.ResultsAgent(RAG_DATA_DIR, TRAINING_DIR).publish(state)
     except Exception as exc:
+        _run_trace('results', 'supervisor', f'publish failed — {exc}')
         published = {'error': str(exc)}
+    else:
+        _run_trace('results', 'console',
+                   f'{len(published.get("records") or [])} record(s), '
+                   f'{published.get("rows", 0)} training row(s)')
 
     with _RUN_LOCK:
         _RUN['report'] = report
@@ -3717,6 +4319,10 @@ class Handler(BaseHTTPRequestHandler):
                 'strict': fallbacks.strict(),
                 'label_sources': label_sources(),
                 'workflow': AO_WORKFLOW_NAME,
+                # The remediation parameters a retry can set, so the panel
+                # renders from the playbook's own declaration rather than
+                # from a copy of it in JavaScript that nothing keeps in step.
+                'remediation_inputs': fallbacks.REMEDIATION_INPUTS,
             })
         elif path == '/api/settings':
             self._send(200, {'ok': True, 'settings': settings_state(),
@@ -3761,12 +4367,19 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {'ok': False, 'error': 'not found'})
 
-    def _roi(self, overrides: dict | None = None) -> None:
+    def _roi(self, overrides: dict | None = None,
+             app: dict | None = None) -> None:
         """The ROI report, for GET and for the sliders alike.
 
         Computed on demand rather than stored on the run: the baseline is
         settings-driven, so the answer has to track the assumptions as they
         are now, not as they were when the run was dispatched.
+
+        `app` is the dependency scanner's own summary, which this process
+        never sees otherwise — the scanner has its own store, and the console
+        serves it same-origin, so the browser carries the counts across rather
+        than this server reaching into another one. Everything in it is
+        clamped by roi_app_input() before it reaches the arithmetic.
         """
         with _RUN_LOCK:
             snapshot = dict(_RUN)
@@ -3781,7 +4394,7 @@ class Handler(BaseHTTPRequestHandler):
         except BackendUnavailable as exc:
             runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
         try:
-            report = roi_report(snapshot, overrides, runs)
+            report = roi_report(snapshot, overrides, runs, app)
         except BackendUnavailable as exc:
             self._send(409, {'ok': False, 'error': str(exc.cause),
                              'detail': exc.fix})
@@ -3811,7 +4424,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length) or b'{}')
             except Exception:
                 payload = {}
-            self._roi(payload.get('overrides') or {})
+            self._roi(payload.get('overrides') or {}, payload.get('app'))
             return
 
         if path == '/api/patch':
@@ -3875,6 +4488,13 @@ class Handler(BaseHTTPRequestHandler):
                                 hosts=[h for h in snapshot['hosts']
                                        if h.get('system_uuid') in set(chosen)])
 
+            # A retry: the same assessment, one host, different parameters.
+            # The rows the earlier dispatch produced are handed back in so
+            # patch() can merge rather than start the table over.
+            snapshot['remediation'] = remediation_params(body.get('inputs'))
+            snapshot['prior_results'] = (
+                (snapshot.get('patch') or {}).get('results') or [])
+
             with _RUN_LOCK:
                 _RUN.update(status='running', phase='patching', error=None)
             threading.Thread(target=_patch_async, args=(snapshot,),
@@ -3924,10 +4544,7 @@ class Handler(BaseHTTPRequestHandler):
             # the single most consequential hop in the whole flow and it was
             # the one the console had no record of.
             def trace(src: str, dst: str, message: str) -> None:
-                with _RUN_LOCK:
-                    _RUN.setdefault('events', []).append(
-                        {'time': now_iso(), 'from': src, 'to': dst,
-                         'message': message})
+                _run_trace(src, dst, message)
 
             # The row the operator just approved, updated while the run is
             # still going rather than only when it ends. /api/decide blocks

@@ -44,6 +44,19 @@ so a step is done when every ticked repository is past it. The remediation
 half follows whichever repository you pressed **Plan a fix** on, and sits
 pending until you press it somewhere.
 
+**Push branch** does not build again. The build that went green is the one
+it pushes, so that press is quick — it clones, re-applies the same change
+list, checks the tree is the one that was verified, and pushes. The diff and
+the build output stay on the card while it runs.
+
+A build can also not go green. Remediating **JoyChou93/java-sec-code** fails
+the first time: the Lightwell rebuilds keep the version number and the API but
+are compiled to a supported Java baseline, and that project still compiles for
+8. There is no **Push branch** to press, and under the red failure is an amber
+line naming the fix — read out of Maven's own output, not out of anything the
+console knew in advance. Press **Change the choices and run again**, set
+**Java for the build** to 11, approve it, and it builds.
+
 That is the whole setup. Do **not** create a `.env` — fallback mode does not
 read one, and it is not needed unless you are connecting to the real cluster.
 
@@ -82,12 +95,17 @@ browser, and it changes nothing on the server or for anyone else.
 **1 — A CVE that needs human approval**
 
 1. Hit **Assess** on the **CVE-2024-3094** row (CVSS 10.0, 5 affected hosts).
-   You get a patch plan: a risk score per host, that host's past patch
-   history, the maintenance window, and a verdict. All five hosts score above
-   the review threshold, so the verdict is *manual review required*.
+   You get a patch plan: the maintenance window, the counts, and a risk score
+   per host against the gate. All five hosts score above the review threshold,
+   so the verdict is *manual review required*. The per-host verdict and that
+   host's past patch history are not here — they appear in the next step,
+   beside the Approve button, which is where they are acted on.
 2. Click **Send 5 for approval**. The button says that, and not "patch",
    because on this path it patches nothing — each host gets its own workflow
-   run and every one of them stops at the approval gate.
+   run and every one of them stops at the approval gate. Untick a host and the
+   button counts down with you; the ones you leave out get no run at all, and
+   the **Not sent** tile above the table keeps the count so the six tiles
+   always add up to the rows beneath them.
    Wandering off to **Patch runs** or the CVE list at this point does not lose
    the plan. A red **Patch plan: CVE-…** button appears at the top of the right
    panel, and that CVE's row offers **Resume** instead of **Assess** — either
@@ -96,6 +114,14 @@ browser, and it changes nothing on the server or for anyone else.
    as the workflow works through its nodes behind the gate — the count beside
    it is nodes finished, not elapsed time, so a bar that stops moving means the
    run stopped moving. It reaches 7/7 and the outcome flips to *Patched*.
+4. One host comes back **Not verified** instead. Every node went green and the
+   host is still vulnerable: the workflow's last node goes back to the machine,
+   reads it, and finds the advisory still listed. That is not a failure and it
+   is not filed as one — it needs a retry, not a postmortem. Press **Fix &
+   retry** on the row. The panel says what the verify step found, and its fields
+   come pre-filled from *that host's own* patch history, the same record the
+   plan scored it from. Press **Retry this host**, approve it again, and it
+   verifies. The other four rows stay exactly where they were.
 
 Watch the left column as you go. **Agent architecture** is the whole system as
 a diagram — the Supervisor, the two agents it drives, the services behind them,
@@ -112,15 +138,26 @@ below the threshold, so there is no approval gate anywhere downstream of them.
 The button reads **Patch 2 hosts** and stays red, because that press is the
 only human check these hosts get — nothing stops to ask again.
 
-Watch the diagram on this one: **RAG STORE** stays grey the whole way through.
+Watch the diagram on this one: **RECOMMENDATION** stays grey the whole way through.
 No host needed review, so nothing ever asked it — and a box that was never
 called is not a box that answered.
 
 **3 — What the run saved**
 
-With either walkthrough still on screen, click **Calculate ROI**. It takes this
-run's own numbers — how many hosts, how many stopped for a person, how long
-each one took — and costs the same work out by hand.
+Click **Calculate ROI**, top right of the header. It takes this run's own
+numbers — how many hosts, how many stopped for a person, how long each one
+took — and costs the same work out by hand.
+
+The button is in the header rather than in the frame because the report covers
+**both** halves of the console. It appears as soon as either side has run
+something, so you can press it after the first walkthrough; if you have also
+scanned a repository on the Application side, the report gains a second
+section costing that against its own baseline. The two are added in hours and
+in money and in nothing else — there is no total of hosts and repositories on
+the page, because they are different units of work.
+
+It opens full width. **Close** in the header, or `Esc`, goes back to whichever
+side you came from; nothing stops running while it is up.
 
 Know before you read the big numbers: offline, the timings come from
 `DEMO_LATENCY` rather than from patching anything, so the speed figures are
@@ -130,15 +167,27 @@ loud instead. The labour and cost comparison does not depend on those timings.
 The manual side is not measured either and never can be from here — the manual
 run never happened, so there is no clock to read it off. So the first card on
 the page is **Assumptions**: a slider for every assumption behind the
-comparison. If you think 15 minutes of change prep per host is generous, drag
-it down and watch the whole page follow. Nothing is saved and nobody else's
-view changes; use the gear panel if you want a value to stick.
+comparison, grouped by side. If you think 15 minutes of change prep per host is
+generous, drag it down and watch the whole page follow. Nothing is saved and
+nobody else's view changes; use the gear panel if you want a value to stick.
 
-Below that, *How wrong could this be* tells you how far those assumptions have
-to move before the conclusion flips, *Time to remediation* checks the run
-against a 48 hour deadline, and *Across every run so far* runs the same
-arithmetic over everything in the run store rather than this one CVE — so it
-grows as you work through both walkthroughs.
+Below that, each side gets the same four cards. *How wrong could this be* tells
+you how far those assumptions have to move before the conclusion flips, and
+*Time to remediation* checks the run against a 48 hour deadline. Then a shared
+record: the published figures, *Across every run so far* — the same arithmetic
+over everything in the run store rather than this one CVE, so it grows as you
+work through both walkthroughs — and the payback card.
+
+On both sides, *Where the effort goes* has a segment worth pointing at:
+**Still left by hand**. The manual bar costs the whole job — every repository
+scanned, every host the CVE affects — so anything the run did not actually
+finish is priced at the manual rate and charged back against the console. A
+scan that finds thirty problems and fixes six should not claim the saving on
+thirty, and neither should a CVE that affects five hosts and closes two. On
+the Infrastructure side a host counts as finished only when it reports
+*Patched*: one you never ticked, one that failed and one somebody rejected all
+leave the machine exactly as exposed as it was, and all three are charged. The
+card says which is which underneath.
 
 Three cards near the bottom are the ones to show a customer, and they are the
 only part of the page that is neither measured here nor assumed here. Eight

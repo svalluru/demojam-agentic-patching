@@ -16,6 +16,8 @@
     --red-hi:#ff2f2f;
     --tint-n:rgba(0,0,0,.05);
     --tint-r:rgba(204,0,0,.07);
+    /* For the one thing on a failed card that is still actionable. Red is already spoken for by the failure itself. */
+    --amber:#9a6b00; --tint-a:rgba(154,107,0,.09);
     --green:#15803d;
     --stripe:#f0f0f2; --stripe-hi:#ffd9d2; --stripe-hi-text:#44444c; --line:rgba(11,11,12,.16);
 
@@ -416,6 +418,13 @@
   .rem-opt .hint { margin-top: 2px; }
   .rem-java { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 6px 0 12px; }
   .rem-java select { padding: 6px 10px; }
+  /* The line under a failed build that says what to change. Amber rather than red: the run is over, but this is the
+     one thing on the card that is still actionable, and a second red block beneath the first reads as more bad news
+     rather than as the way out of it. */
+  .rem-advice { margin: 8px 0 2px; padding: 9px 12px; border-left: 3px solid var(--amber);
+                background: var(--tint-a); border-radius: 0 var(--r-xs) var(--r-xs) 0;
+                font-size: calc(12px * var(--ts)); line-height: 1.5; }
+  .rem-advice b { color: var(--amber); }
   .rem-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
   .rem-stages { display: grid; gap: 7px; margin: 12px 0; }
   .rem-stage { display: flex; align-items: center; gap: 9px; font-size: calc(12px * var(--ts)); }
@@ -896,6 +905,10 @@ function remRollup() {
   if (!v) { st.build = 'active'; return st; }
   var byId = {};
   (v.stages || []).forEach(function (x) { byId[x.id] = x.state; });
+  // A push-only run has no build stage, because it does not build: the build
+  // it is pushing is the one that already went green, so the bar keeps that
+  // answer rather than reading a stage that is absent as one not yet started.
+  if (v.push_only && !byId.build) byId.build = 'done';
   // Clone, edit and build only. The run as a whole failing is not enough to
   // call this failed — a push that is rejected fails the run with the build
   // already behind it, and marking the build failed because of that is a lie
@@ -917,6 +930,93 @@ function remRollup() {
   return st;
 }
 
+/* ---- the console's ROI page ----
+   Calculate ROI costs both halves of the console, and the application half
+   is this scan. The console cannot read it: the scanner keeps its own store
+   and the console only serves this page. So the counts travel the same way
+   the stage bar does -- a call up to the parent, same origin.
+
+   Counts only, never minutes or money. The baseline and the arithmetic live
+   in one place on the server so the page and the API cannot drift into
+   disagreeing about what the saving is, and everything below is clamped
+   again at the other end: a number that has been through a browser is an
+   input, not a measurement.
+
+   Which repositories count as remediated is the careful part, and it is
+   stricter than it first looks. Pushed, or it does not count. A build that
+   went green and was never pushed leaves the repository byte-identical, and
+   a build that failed delivered nothing at all -- the ROI page charges both
+   back to the manual side, along with every repository that was scanned and
+   never planned. */
+function roiSummary(scan) {
+  if (!scan || !scan.repos) return null;
+  var t = totals(scan);
+
+  // Deduplicated across repositories, which is the whole reason this is
+  // counted here rather than summed from the per-repo summaries. The same
+  // CVE in three services is read once by whoever is doing this by hand, and
+  // advisory triage is the dominant term of the manual baseline -- counting
+  // it three times would inflate the one number the argument rests on.
+  var seen = {}, advisories = 0;
+  scan.repos.forEach(function (r) {
+    if (r.status !== 'done') return;
+    (r.findings || []).forEach(function (f) {
+      (f.vulns || []).forEach(function (v) {
+        if (v.id && !seen[v.id]) { seen[v.id] = 1; advisories++; }
+      });
+    });
+  });
+
+  var out = {
+    repos: t.repos, components: t.components, vulnerable: t.vulnerable,
+    advisories: advisories, covered: t.remediated + t.predisclosure,
+    predisclosure: t.predisclosure,
+    // The longest head start a pre-disclosure build gave: the fix existed
+    // this many days before the advisory was public. The one figure on the
+    // ROI page the infrastructure side has no way to produce.
+    embargo_days: t.leads.length ? Math.max.apply(null, t.leads) : 0,
+    scan_s: 0, run_s: 0,
+    planned_repos: 0, changes: 0, skipped: 0,
+    fixed_repos: 0, fixed_changes: 0, held_repos: 0, failed_repos: 0
+  };
+  if (scan.created && scan.finished) {
+    var ms = new Date(scan.finished) - new Date(scan.created);
+    if (ms > 0) out.scan_s = ms / 1000;
+  }
+
+  scan.repos.forEach(function (r) {
+    var s = REM[scan.id + ' ' + r.url];
+    if (!s) return;
+    if (s.plan) { out.changes += s.plan.changes.length; out.skipped += s.plan.skipped.length; }
+    if (!s.run) return;
+    // Opened and approved, so the operator's review time is owed whatever
+    // the job then did with it.
+    out.planned_repos++;
+    if (s.startedAt) out.run_s += ((s.endedAt || Date.now()) - s.startedAt) / 1000;
+    var v = s.view;
+    if (!v) return;
+    var byId = {};
+    (v.stages || []).forEach(function (x) { byId[x.id] = x.state; });
+    // The push run has no build stage of its own -- it is pushing one that
+    // already passed -- so the absent stage is the earlier run's green build,
+    // not a repository that never got built. Same reading as remRollup().
+    if (v.push_only && !byId.build) byId.build = 'done';
+    var built = ['clone', 'edit', 'build'].every(function (k) { return byId[k] === 'done'; });
+    var res = v.result || {};
+    if (built && res.pushed) {
+      out.fixed_repos++;
+      // The edits the job reports as actually applied, not the ones it was
+      // asked for. apply_dependency_changes.py reports what it could not do
+      // and why, and a change it could not make did not fix anything.
+      out.fixed_changes += res.changes
+        ? res.changes.filter(function (c) { return (c.applied || []).length; }).length
+        : (s.plan ? s.plan.changes.length : 0);
+    } else if (built) out.held_repos++;
+    else if (v.state === 'failed') out.failed_repos++;
+  });
+  return out;
+}
+
 // Never allowed to break a scan: the console is a separate document and may
 // be an older build, or not there at all when this page runs standalone.
 function reportProgress(scan) {
@@ -928,6 +1028,12 @@ function reportProgress(scan) {
       window.parent.appStages(st);
     }
   } catch (e) { /* different origin, or no console: the bar is not essential */ }
+  // Separate try: a console old enough to draw the bar but not to cost it is
+  // a real case while this is being rolled out, and the bar must not be lost
+  // to a missing function next to it.
+  try {
+    if (typeof window.parent.appRoi === 'function') window.parent.appRoi(roiSummary(scan));
+  } catch (e) { /* as above */ }
 }
 
 function syncHead(scan) {
@@ -1667,7 +1773,7 @@ var REM_SOURCES = [
   ['osv', 'OSV', 'The lowest version OSV.dev lists as fixed. This is an upgrade.']];
 var REM_SRC_LABEL = {lightwell: 'Lightwell', another: 'Lightwell, another build', osv: 'OSV'};
 
-function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], major: false, java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}}; }
+function remState(url) { var key = (current ? current.id : '') + ' ' + url; return REM[key] = REM[key] || {sources: ['lightwell'], major: false, java: '', open: false, plan: null, run: null, view: null, timer: null, error: '', node: null, details: {}, startedAt: 0, endedAt: 0, pushing: false}; }
 
 // A scan covers every repository ticked; a remediation is one of them. The
 // console's bar has to pick one for its second half, and the one you just
@@ -1791,7 +1897,7 @@ function paintRem(r) {
   if (!locked) {
     var go = el('button', {class: 'primary', type: 'button', text: 'Approve and run'});
     go.disabled = !REM_READY.ready || !plan || !plan.changes.length;
-    go.onclick = function () { remStart(r, false); };
+    go.onclick = function () { remStart(r); };
     box.appendChild(el('div', {class: 'rem-actions'}, [go, el('span', {class: 'hint', style: 'margin:0', text: 'Nothing is pushed. The result is built on the build host and the diff is shown here.'})]));
   } else if (v) {
     box.appendChild(el('div', {class: 'rem-sub', text: 'Run'}));
@@ -1811,6 +1917,10 @@ function paintRem(r) {
     box.appendChild(st);
     if (v.error) box.appendChild(el('div', {class: 'err', text: v.error}));
     if (v.failure) box.appendChild(el('div', {class: 'err', text: v.failure}));
+    // What to change before running it again, worked out from the build's own output rather than from anything the
+    // page knows about this repository. It sits under the failure and above the diff because that is the order the
+    // question arrives in: it broke, now what.
+    if (v.advice) box.appendChild(el('div', {class: 'rem-advice'}, [el('b', {text: 'Next: '}), v.advice]));
     var res = v.result || {};
     if (res.java && res.java.version) box.appendChild(el('div', {class: 'hint', text: 'Built with Java ' + res.java.version + ' (' + res.java.reason + ').'}));
     var notApplied = (res.changes || []).filter(function (c) { return !c.applied.length; });
@@ -1819,9 +1929,10 @@ function paintRem(r) {
     if (res.build_tail) box.appendChild(remDetails(s, 'build', 'Build output' + (Number(res.build_rc) === 0 ? ' (succeeded)' : res.build_rc != null && res.build_rc !== '' ? ' (failed, exit ' + res.build_rc + ')' : ''), [el('pre', {class: 'code', text: res.build_tail})]));
     else if (v.state === 'failed' && v.log) box.appendChild(remDetails(s, 'log', 'Job output', [el('pre', {class: 'code', text: v.log.slice(-4000)})]));
     var acts = el('div', {class: 'rem-actions'});
-    if (v.state === 'done' && Number(res.build_rc) === 0 && !res.pushed && !v.push) {
+    if (s.pushing) acts.appendChild(el('span', {class: 'hint', style: 'margin:0', text: 'Pushing ' + v.branch + '...'}));
+    else if (v.state === 'done' && Number(res.build_rc) === 0 && !res.pushed && !v.push) {
       var push = el('button', {class: 'primary', type: 'button', text: 'Push branch ' + v.branch});
-      push.onclick = function () { if (confirm('Push the branch ' + v.branch + ' to ' + (r.slug || r.url) + '?\n\nThis runs the job again with the push step on, so it needs a token that can write to the repository.')) remStart(r, true); };
+      push.onclick = function () { if (confirm('Push the branch ' + v.branch + ' to ' + (r.slug || r.url) + '?\n\nIt pushes the build above rather than building again, so it needs a token that can write to the repository.')) remPush(r); };
       acts.appendChild(push);
     }
     if (res.pushed) {
@@ -1831,8 +1942,13 @@ function paintRem(r) {
     if (res.push_error) acts.appendChild(el('span', {class: 'err', text: 'Push failed: ' + res.push_error}));
     if (res.diff) { var dl = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Download diff'}); dl.onclick = function () { download('remediation-' + (r.slug || 'repository').replace(/[^\w.\-]+/g, '-') + '.diff', res.diff); }; acts.appendChild(dl); }
     if (v.state !== 'running') {
-      var again = el('button', {class: 'ghost-btn sm', type: 'button', text: 'Change the choices'});
-      again.onclick = function () { s.run = null; s.view = null; remPreview(r); };
+      // The way out of a failed build is this button, so on a failed build it is the only primary one on the card.
+      // It reopens the panel with the sources, the major-version switch and the Java selector -- the three things the
+      // advice above can ask for -- and nothing is lost: the run just finished is replaced, not undone.
+      var broke = v.state === 'failed' || (res.build_rc != null && res.build_rc !== '' && Number(res.build_rc) !== 0);
+      var again = el('button', {class: broke ? 'primary' : 'ghost-btn sm', type: 'button',
+                                text: broke ? 'Change the choices and run again' : 'Change the choices'});
+      again.onclick = function () { s.run = null; s.view = null; s.pushing = false; s.startedAt = 0; s.endedAt = 0; remPreview(r); };
       acts.appendChild(again);
     }
     box.appendChild(acts);
@@ -1840,18 +1956,46 @@ function paintRem(r) {
   slot.appendChild(outer);
 }
 
-async function remStart(r, push) {
+// Approve and run: clone, apply the change list and build. It never pushes
+// -- pushing is a separate press, and a separate run, further down.
+async function remStart(r) {
   var s = remState(r.url);
   clearTimeout(s.timer);
   // Approving a run makes it the one the bar is about, whatever else is open.
   REM_FOCUS = r.url;
-  s.error = ''; s.view = null; s.run = 'starting';
+  s.error = ''; s.view = null; s.run = 'starting'; s.pushing = false;
+  // Nothing else needs these, but the console's ROI page does: a remediation
+  // that is still going has to read as elapsed-so-far rather than as zero,
+  // and the job itself reports stages rather than a clock.
+  s.startedAt = Date.now(); s.endedAt = 0;
   paintRem(r);
   try {
-    var d = await api('POST', 'v1/remediations', {scan: current.id, url: r.url, sources: s.sources, allow_major: s.major, push: push, java: s.java});
+    var d = await api('POST', 'v1/remediations', {scan: current.id, url: r.url, sources: s.sources, allow_major: s.major, push: false, java: s.java});
     s.run = d.id;
     remPoll(r, 0);
   } catch (e) { s.run = null; s.error = e.message; paintRem(r); }
+}
+
+/* Push is a second run, but it is not a second build. The build that went
+   green is the one being pushed, so the job clones, re-applies the same
+   change list and pushes -- seconds rather than minutes, and it cannot come
+   back with a different answer about a tree it never compiled.
+
+   The card does not start over either. s.view is left alone until the push
+   run reports, so the diff and the build output stay on screen, and the
+   server hands the push run the built one's result with only the push lines
+   its own. The clock reopens: a push takes time the run has not counted. */
+async function remPush(r) {
+  var s = remState(r.url), built = s.run;
+  clearTimeout(s.timer);
+  REM_FOCUS = r.url;
+  s.error = ''; s.pushing = true; s.endedAt = 0;
+  paintRem(r);
+  try {
+    var d = await api('POST', 'v1/remediations', {push_only: built});
+    s.run = d.id;
+    remPoll(r, 0);
+  } catch (e) { s.run = built; s.pushing = false; s.error = e.message; paintRem(r); }
 }
 
 async function remPoll(r, misses) {
@@ -1859,7 +2003,13 @@ async function remPoll(r, misses) {
   try {
     var d = await api('GET', 'v1/remediations/' + id);
     if (s.run !== id) return;
-    s.view = d.run; paintRem(r);
+    s.view = d.run;
+    // The push run is reporting for itself now, so the holding line comes down.
+    s.pushing = false;
+    // Stop the ROI page's clock the moment the job stops, rather than on the
+    // next poll: a run that finished 1.4s ago did not take 1.4s longer.
+    if (d.run.state !== 'running' && d.run.state !== 'unknown' && !s.endedAt) s.endedAt = Date.now();
+    paintRem(r);
     if (d.run.state === 'running' || (d.run.state === 'unknown' && misses < 20)) s.timer = setTimeout(function () { remPoll(r, d.run.state === 'unknown' ? misses + 1 : 0); }, 1500);
   } catch (e) {
     if (s.run !== id) return;

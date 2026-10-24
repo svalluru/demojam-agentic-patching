@@ -142,6 +142,118 @@ def history(host: str) -> str:
     return NO_HISTORY
 
 
+# ------------------------------------------------- remediation parameters
+
+# The knobs the remediation playbook takes, with the value it uses when the
+# console sends nothing. These are the defaults a first attempt runs with, so
+# they are deliberately the unsafe ones -- the whole point of the history
+# above is that some hosts need more than the default and the fleet-wide
+# default cannot know which.
+REMEDIATION_INPUTS: dict[str, dict[str, Any]] = {
+    'drain_timeout': {
+        'label': 'Application drain timeout',
+        'unit': 's', 'default': 30, 'min': 0, 'max': 600,
+        'help': 'How long to wait for in-flight connections to close before '
+                'the package transaction starts.',
+    },
+    'min_free_gb': {
+        'label': 'Free space pre-check',
+        'unit': 'GB', 'default': 0, 'min': 0, 'max': 50,
+        'help': 'Abort before downloading if /var has less than this free. '
+                '0 skips the check.',
+    },
+    'restart_grace': {
+        'label': 'Post-restart grace',
+        'unit': 's', 'default': 0, 'min': 0, 'max': 600,
+        'help': 'Settle time after the service comes back, before verify '
+                'reads the host.',
+    },
+}
+
+
+def remediation_defaults() -> dict[str, int]:
+    return {k: v['default'] for k, v in REMEDIATION_INPUTS.items()}
+
+
+# The structured form of the prose in HISTORY above, for the hosts whose
+# history actually prescribes something. Only the demo has this: live, the RAG
+# store returns a paragraph written by a person and there is nothing to parse
+# it into, so the console shows the paragraph and the operator reads the
+# numbers out of it themselves. That asymmetry is why the retry panel renders
+# its fields either way and only pre-fills them when there is something to
+# pre-fill -- a pre-filled box that quietly held a default would be the
+# console inventing an operational recommendation, which is worse than a
+# blank one.
+HISTORY_TUNING: dict[str, dict[str, int]] = {
+    'pay-app-07': {'drain_timeout': 120, 'min_free_gb': 2, 'restart_grace': 90},
+    'pay-app-03': {'drain_timeout': 120},
+    'pay-app-05': {'drain_timeout': 120},
+}
+
+
+def history_tuning(host: str) -> dict[str, int]:
+    for key, vals in HISTORY_TUNING.items():
+        if key in host:
+            return dict(vals)
+    return {}
+
+
+# ------------------------------------------------------- the verify verdict
+
+# Hosts where the first attempt does not actually clear the advisory, and what
+# it takes to make it. This is the case the real workflow's last node exists
+# for: `dnf` exits 0, every node goes green, and the advisory is still listed.
+# aap-setup/README.md records it happening on this project in both directions.
+#
+# Keyed by hostname substring like HISTORY, and deliberately deterministic --
+# a failure that lands on a different host each run cannot be rehearsed, and a
+# presenter who cannot rehearse it will not show it.
+VERIFY_REQUIRES: dict[str, dict[str, Any]] = {
+    'pay-app-07': {
+        'input': 'drain_timeout',
+        'at_least': 120,
+        'advisory': 'RHSA-2024:2456',
+        'why': ('the 30 second drain expired with connections still open, so '
+                'the remediation skipped the package transaction and left the '
+                'advisory outstanding'),
+    },
+}
+
+
+def verify_check(host: str, inputs: dict[str, Any] | None) -> dict[str, Any]:
+    """What the verify node would report for this host at these settings.
+
+    Shaped like the playbook's own artifacts (`patched`,
+    `outstanding_advisories`, `dnf_rc`) so the console reads the simulated
+    verdict through exactly the same code path as a real one. A host with no
+    entry here verifies clean, which is every host but one.
+    """
+    vals = dict(remediation_defaults(), **{
+        k: v for k, v in (inputs or {}).items() if k in REMEDIATION_INPUTS})
+    for key, rule in VERIFY_REQUIRES.items():
+        if key not in host:
+            continue
+        try:
+            got = float(vals.get(rule['input']) or 0)
+        except (TypeError, ValueError):
+            got = 0.0
+        if got >= rule['at_least']:
+            break
+        return {
+            'patched': False,
+            'outstanding_advisories': [rule['advisory']],
+            'dnf_rc': 0,
+            'verified_host': host,
+            # Not an error string: the job did not fail. This is the verify
+            # node reporting a clean run that did not achieve anything, and
+            # the distinction is the entire point of the node.
+            'why': rule['why'],
+            'remedy': {'input': rule['input'], 'at_least': rule['at_least']},
+        }
+    return {'patched': True, 'outstanding_advisories': [], 'dnf_rc': 0,
+            'verified_host': host}
+
+
 # ---------------------------------------------------------------- step 5-10
 
 # Agent 2 hands steps 5-10 to Ansible Orchestrator. When AO is down there are
@@ -187,40 +299,62 @@ SIM_LAST_DEV = SIM_STEPS_DEV[-1][0]
 
 
 def sim_steps(up_to: str, *, status: str = 'completed',
-              prod: bool = True) -> list[dict[str, Any]]:
-    """Step list ending at `up_to`; nodes after it stay pending."""
+              prod: bool = True,
+              verify: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Step list ending at `up_to`; nodes after it stay pending.
+
+    `verify` is the verdict the verify node published, attached to that node
+    as `output` so the console reads it off a step exactly as it reads a real
+    execution's `output_data`. Note that a failed verdict still leaves the
+    node `completed`: the node did its job, and what it found is in the
+    output. A node coloured red here would be describing the wrong failure.
+    """
     out, reached = [], False
     for name, label in (SIM_STEPS_PROD if prod else SIM_STEPS_DEV):
         if reached:
             out.append({'name': name, 'label': label, 'status': 'pending', 'error': None})
             continue
-        out.append({'name': name, 'label': label,
-                    'status': status if name == up_to else 'completed',
-                    'error': None})
+        step = {'name': name, 'label': label,
+                'status': status if name == up_to else 'completed',
+                'error': None}
+        if verify is not None and name.startswith('verify_patch'):
+            step['output'] = dict(verify)
+        out.append(step)
         reached = name == up_to
     return out
 
 
 def patch_simulated(cve_id: str, host: str, group: str, reason: str,
-                    execution_id: str) -> dict[str, Any]:
+                    execution_id: str,
+                    inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     """A workflow run that did not happen, shaped like one that did.
 
     approved_patch pauses at the approval gate exactly as the real workflow
     does, so Approve / Reject stay exercisable with AO down. auto_patch runs
-    straight through.
+    straight through -- and runs all the way through verify, which is where
+    an unattended host can still come back unpatched.
+
+    `inputs` are the remediation parameters the console dispatched with. They
+    are kept on the run because the gated path settles later, in _decide_sim,
+    and by then the only record of what this run was asked to do is here.
     """
     pending = group == 'approved_patch'
+    verdict = verify_check(host, inputs)
+    ok = bool(verdict.get('patched'))
     return {
         'host': host, 'group': group, 'cve_id': cve_id,
         'execution_id': execution_id,
         'status': 'waiting' if pending else 'completed',
-        'outcome': 'awaiting_approval' if pending else 'patched',
+        'outcome': ('awaiting_approval' if pending
+                    else 'patched' if ok else 'not_verified'),
         'approval_pending': pending,
         'approval_activity_id': SIM_GATE if pending else '',
         'matched_port': group,
         'steps': (sim_steps(SIM_GATE, status='waiting') if pending
-                  else sim_steps(SIM_LAST_DEV, prod=False)),
+                  else sim_steps(SIM_LAST_DEV, prod=False, verify=verdict)),
         'error': None,
+        'inputs': dict(inputs or {}),
+        'verify': None if pending else verdict,
         'degraded': True, 'source': 'fallback', 'simulated': True,
         'reason': f'Ansible Orchestrator unreachable: {reason}',
         'url': '',
@@ -339,6 +473,64 @@ ROI_SLA_HOURS = float(os.environ.get('ROI_SLA_HOURS', '48') or 48)
 # leaves them to assume a number, and the one they assume is usually worse.
 # Set it to 0 to drop the payback card entirely.
 ROI_PLATFORM_COST = float(os.environ.get('ROI_PLATFORM_COST', '25000') or 25000)
+
+
+# ------------------------------------------------- ROI, the application side
+#
+# The same idea for the other half of the console: what it costs by hand to
+# get a vulnerable dependency out of a repository. A separate baseline rather
+# than the one above reused, because it is not the same work and the counts it
+# scales on are not the same counts.
+#
+# A host patch is one unit of work per host. A dependency fix is two: per
+# component — find a fixed version, edit the manifest, re-lock — and per
+# repository, which is where the build, the test suite and the pull request
+# live however many components moved. Folding both into a per-host figure
+# would misprice every estate that is not one component per repository, which
+# is all of them.
+#
+# The other difference is the count that drives it. Infrastructure triage is
+# paid once per CVE; here it is paid once per advisory, and a single scan of a
+# handful of repositories routinely returns dozens. That is the application
+# side's whole argument and it is why the triage figure below is smaller than
+# the one above and still dominates the total.
+
+# Per distinct advisory, once: read it, work out whether the vulnerable code
+# path is reachable from yours, decide whether it matters. Smaller than a CVE
+# triage because there is no affected-host list to assemble — and paid far
+# more often, which is the point.
+ROI_APP_TRIAGE_MIN = float(os.environ.get('ROI_APP_TRIAGE_MIN', '20') or 20)
+
+# Per vulnerable component: find a fixed version that actually exists, check it
+# does not drag a transitive conflict in behind it, edit the manifest, re-lock.
+ROI_APP_BUMP_MIN = float(os.environ.get('ROI_APP_BUMP_MIN', '12') or 12)
+
+# Per repository: build it and run the suite once the bumps are in, then read
+# whatever broke. Per repository and not per component, because one build
+# covers every change in it — which is precisely why the two are separate
+# lines here.
+ROI_APP_BUILD_MIN = float(os.environ.get('ROI_APP_BUILD_MIN', '25') or 25)
+
+# Per repository: raise the pull request, find a reviewer, answer them, merge.
+# The analogue of the approval paperwork on the infrastructure side.
+ROI_APP_PR_MIN = float(os.environ.get('ROI_APP_PR_MIN', '15') or 15)
+
+# Share of bumps that break something and have to be redone or backed out.
+# Higher than the host figure above, deliberately: a package upgrade changes
+# code that runs, where a patched RPM usually does not.
+ROI_APP_BREAK_PCT = float(os.environ.get('ROI_APP_BREAK_PCT', '18') or 18)
+
+# What the operator still spends per repository on the automated path: reading
+# the change list, pressing Approve and run, reading the diff that comes back.
+# Larger than the two minutes a host plan takes, because a diff across several
+# manifests is more to look at than one risk score.
+ROI_APP_REVIEW_MIN = float(os.environ.get('ROI_APP_REVIEW_MIN', '6') or 6)
+
+# Elapsed hours from an advisory being published to the fix being merged, by
+# hand. Wall clock rather than effort, like ROI_LEAD_HOURS above: mostly it is
+# the advisory sitting in a queue behind feature work. Ten days is generous to
+# the manual path against what the dependency-management literature reports.
+ROI_APP_LEAD_HOURS = float(os.environ.get('ROI_APP_LEAD_HOURS', '240') or 240)
 
 
 # -------------------------------------------------------------------- mode

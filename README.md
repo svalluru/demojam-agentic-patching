@@ -312,9 +312,39 @@ actually do rather than what the plan as a whole says.
 Hosts on the approval branch show Approve / Reject, and once approved the row
 tracks its execution through the remaining workflow nodes to *Patched*.
 
-**Calculate ROI** costs that run out against doing the same work by hand.
+**A green run is not the same claim as a patched host.** The workflow's last
+node goes back to the machine, runs `dnf updateinfo list --cve` and publishes
+`patched` and `outstanding_advisories` as job artifacts; the console reads
+them. When the execution exits cleanly and that node says the advisory is
+still listed, the outcome is ***Not verified*** — its own tile and its own
+badge, not a kind of *Failed*. Nothing failed, and an operator who reads it as
+a failure goes looking for a stack trace that does not exist. A `dnf`
+transaction can succeed without clearing the advisory, so inferring *patched*
+from exit code 0 is a guess the console no longer makes. The correction only
+runs one way: a run that failed is never talked back up to *Patched* by a
+verify node that happened to find the advisory gone.
+
+*Not verified* is the one terminal state with an action still attached, so the
+row carries **Fix & retry**. It opens a panel with what the verify node found
+and a field for each parameter the remediation playbook declares — drain
+timeout, free-space pre-check, post-restart grace. The fields are pre-filled
+from *that host's* patch history where the history prescribes something, and
+from the playbook's own defaults where it does not. They are never filled from
+a fleet default: a number the console invented, sitting under a heading that
+says the history recommends it, would be the page lying about its own
+provenance on the one screen built to catch exactly that. **Retry this host**
+re-dispatches that host alone with the values on screen and merges the result
+into the table in place, so the other rows keep their outcome and their order.
+Only parameters that differ from the default reach the trigger payload, so an
+ordinary dispatch sends byte for byte what it always sent.
+
 **Patch runs** lists past executions, read live from AO. **Details** on any
 row opens that execution: its nodes, their status, and how long each took.
+
+**Calculate ROI** is in the page header rather than on this view, because the
+report covers both halves of the console. It appears as soon as *either* side
+has run something and opens a third full-width destination; the toggle still
+reads as the side you came from, and **Close** or `Esc` goes back to it.
 
 **Elapsed is workflow time, not wall clock.** Any wait at the approval gate
 is subtracted, because that measures how long an operator took to look at
@@ -486,13 +516,13 @@ Every row below is also a row in the settings panel.
 
 ## ROI report
 
-**Calculate ROI** (`GET /api/roi`) compares the run on screen against doing the
-same work by hand. Two kinds of number meet there, and the page keeps them
-apart because they carry very different warranties.
+**Calculate ROI** (`POST /api/roi`) compares what the console actually did
+against doing the same work by hand. Two kinds of number meet there, and the
+page keeps them apart because they carry very different warranties.
 
 | | |
 |---|---|
-| **Measured** | Host count, how many stopped at the gate, assessment duration, execution durations. This run's own clock — but a clock only measures patching if something was patched. Demo mode times `DEMO_LATENCY`; live mode with AO unreachable times a failover. Either way the report sets `illustrative` and `illustrative_reason` (`offline` or `simulated`). |
+| **Measured** | Host count, how many stopped at the gate, assessment duration, execution durations; on the other side, repository and component counts, distinct advisories, and the scan and remediation clocks. This run's own clock — but a clock only measures patching if something was patched. Demo mode times `DEMO_LATENCY`; live mode with AO unreachable times a failover. Either way the report sets `illustrative` and `illustrative_reason` (`offline` or `simulated`). |
 | **Assumed** | The manual baseline, all of it. The manual run never happened, so there is no clock to read it off. It lives in `fallbacks.py`, is itemised in the response, and is listed on the page with the setting key beside each figure. |
 
 The comparison counts the operator's review time **against** the automated side.
@@ -500,21 +530,67 @@ An approval gate is not free, and a chart that treats it as free is a sales
 slide. Machine time is not priced at all — an engineer-hour and a
 container-second do not convert.
 
+### Both sides, one report
+
+The report has an **Infrastructure** section and an **Application** section,
+each against its own baseline, plus a shared record below them. Either may be
+absent and the page says so; only the empty case is an error.
+
+The two are kept apart to the last line. They are added **in hours and in
+money, which add, and never in counts, which do not** — a host and a
+repository are different units of work, and a combined total of eleven of them
+would mean nothing. `combined` in the response holds only the two that are
+legitimate. The one place the merge changes the answer rather than the
+presentation is **Paying for itself**: one platform, built once, recovering its
+cost from two use cases.
+
+The application counts never touch the wire. The scanner is served
+same-origin, so it hands a whole-scan summary to the console through
+`window.parent.appRoi()` on each poll and the browser carries it to
+`POST /api/roi` as `app`. `roi_app_input()` re-clamps every field on arrival
+and holds each subset to its whole — nothing trusts the sender. The scanner
+sends **counts only**, never minutes or money: the server owns the baseline
+and the arithmetic, so there is one implementation of it.
+
+**The honest denominator.** Both halves are costed over the *whole job*, not
+over the part the automation got to. On the application side that is the whole
+scan scope — every advisory read, every vulnerable component bumped, every
+repository built and merged. On the infrastructure side it is every host the
+CVE affects, read off the assessed plan rather than off the subset an operator
+ticked at dispatch. Everything the automation did not finish is then priced at
+the manual rate and charged **against** the automated side, itemised on the
+page as *Still left by hand*.
+
+The test for "finished" is deliberately strict on both sides, because the
+machine does not care why it is still vulnerable. Only a repository that built
+green **and was pushed** counts as fixed: a failed build delivered nothing, and
+a green build that was never pushed left the repository byte-identical. Only a
+host reporting **patched** counts as done: one never dispatched, one that
+failed and one that was rejected all leave the host exactly as exposed as it
+was, and the page names which is which beneath the bar.
+
+A scan of three repositories that remediated one therefore reads about 4×, and
+the same scan with all three fixed reads about 48×. A five-host CVE with two
+dispatched and one patched reads about 1.4×, against the 35× the same run would
+have shown when the baseline was drawn over the dispatched subset. The figure
+corrects itself as the work gets done, which is the point.
+
 ### The cards
 
 | Card | What it answers |
 |---|---|
-| **Assumptions** | A slider per assumption. Move one and everything below recomputes. |
-| Headline | Labour saved, engineer time saved, the effort ratio, how many hosts needed a person. |
-| Where the effort goes | Both paths broken down by activity, on one scale. |
-| How it scales | The same CVE across more hosts, at this run's approval rate. |
-| How wrong could this be | Break-even: how far the assumptions must move before the conclusion flips. |
-| Time to remediation | Exposure window, measured, stated against the policy deadline. |
+| **Assumptions** | A slider per assumption, grouped by side. Move one and everything below recomputes. A group whose side has not run is dropped, not greyed. |
+| Headline | Labour and engineer time saved across both sides, and what the report ran against. |
+| *Per side* — Headline | Labour saved, engineer time saved, the effort ratio, and how much needed a person. |
+| *Per side* — Where the effort goes | Both paths broken down by activity, on one scale. On either side the automated bar carries the work the run did not finish, as *Still left by hand*. |
+| *Per side* — How it scales | More hosts on one CVE; or more repositories at this scan's advisories and components per repository. |
+| *Per side* — How wrong could this be | Break-even: how far the assumptions must move before the conclusion flips. |
+| *Per side* — Time to remediation | Exposure window, measured, stated against the policy deadline. On the application side this is also where pre-disclosure coverage is reported — the only figure on the page that can go negative, and the one the infrastructure side cannot produce at all. |
 | What this is up against | The remediation clock to scale, and the day-7 ceiling as a hundred dots. The one inverted card — nothing on it is ours. |
 | Measured, not modelled | The published record, each figure chipped with who measured it, plus the sliders scored against it. |
 | How the industry sees this | Where supervised agentic remediation sits, including the case against it. |
-| Across every run so far | The same arithmetic over the whole run store, not just this CVE. |
-| Paying for itself | Hosts needed to cover `ROI_PLATFORM_COST`, and how much is recovered. |
+| Across every run so far | The same arithmetic over the whole run store. Infrastructure only — the scanner keeps no run store. |
+| Paying for itself | What it takes to cover `ROI_PLATFORM_COST`, and how much both sides together have recovered. |
 
 ### How it is kept honest
 
@@ -558,9 +634,32 @@ container-second do not convert.
 | `ROI_APPROVAL_MIN` | 20 | Per gated host: assemble the request, chase the approver |
 | `ROI_REWORK_PCT` | 12 | Share of hosts done twice by hand |
 | `ROI_REVIEW_MIN` | 2 | Per gated host, charged to the **automated** side: read the plan, press Approve |
+| `ROI_LEAD_HOURS` | 72 | Elapsed hours to remediation by hand — wall clock, mostly queueing |
+
+A separate baseline for the application side, because it is not the same work
+and it does not scale on the same count. A host patch is one unit of work per
+host; a dependency fix is paid **twice** — per component, to find a fixed
+version and edit the manifest, and again per repository, where the build, the
+test suite and the pull request live however many components moved. And where
+infrastructure triage is paid once per CVE, this is paid once per **advisory**,
+and one scan of a handful of repositories routinely returns dozens.
+
+| Variable | Default | Manual baseline |
+|---|---|---|
+| `ROI_APP_TRIAGE_MIN` | 20 | Read one advisory and work out whether it applies — once per distinct advisory across the scan, not per repository |
+| `ROI_APP_BUMP_MIN` | 12 | Per vulnerable component: find a fixed version, edit the manifest, re-lock |
+| `ROI_APP_BUILD_MIN` | 25 | Per repository: build and run the suite, however many components moved |
+| `ROI_APP_PR_MIN` | 15 | Per repository: raise the pull request, get it reviewed, merge it |
+| `ROI_APP_BREAK_PCT` | 18 | Share of hands-on time spent again after a bump breaks something |
+| `ROI_APP_REVIEW_MIN` | 6 | Per repository, charged to the **automated** side: read the change plan, press Approve and run |
+| `ROI_APP_LEAD_HOURS` | 240 | Elapsed hours from advisory to merged fix by hand |
+
+Shared by both:
+
+| Variable | Default | Manual baseline |
+|---|---|---|
 | `ROI_HOURLY_RATE` | 85 | Fully loaded, not salary |
 | `ROI_CURRENCY` | `$` | Display only, no conversion |
-| `ROI_LEAD_HOURS` | 72 | Elapsed hours to remediation by hand — wall clock, mostly queueing |
 | `ROI_SLA_HOURS` | 48 | The remediation deadline to report exposure against |
 | `ROI_BAND_PCT` | 30 | How wrong the manual baseline might be, either way |
 | `ROI_PLATFORM_COST` | 25000 | One-off build cost for the payback card; `0` drops the card |

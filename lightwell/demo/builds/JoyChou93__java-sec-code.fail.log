@@ -1,0 +1,41 @@
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -------------------------< sec:java-sec-code >--------------------------
+[INFO] Building java-sec-code 1.0.0
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- resources:2.6:resources (default-resources) @ java-sec-code ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 1 resource
+[INFO] Copying 14 resources
+[INFO]
+[INFO] --- compiler:3.1:compile (default-compile) @ java-sec-code ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 78 source files to /tmp/app-patch/7c41bd90e2a4/src/target/classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR :
+[INFO] -------------------------------------------------------------
+[ERROR] /tmp/app-patch/7c41bd90e2a4/src/src/main/java/org/joychou/controller/Upload.java:[31,8] cannot access org.apache.commons.beanutils.BeanUtils
+  bad class file: /root/.m2/repository/commons-beanutils/commons-beanutils/1.9.4.rhlw-00001/commons-beanutils-1.9.4.rhlw-00001.jar(org/apache/commons/beanutils/BeanUtils.class)
+    class file has wrong version 55.0, should be 52.0
+    Please remove or make sure it appears in the correct subdirectory of the classpath.
+[ERROR] /tmp/app-patch/7c41bd90e2a4/src/src/main/java/org/joychou/controller/FileUpload.java:[27,8] cannot access org.apache.commons.beanutils.PropertyUtils
+  bad class file: /root/.m2/repository/commons-beanutils/commons-beanutils/1.9.4.rhlw-00001/commons-beanutils-1.9.4.rhlw-00001.jar(org/apache/commons/beanutils/PropertyUtils.class)
+    class file has wrong version 55.0, should be 52.0
+    Please remove or make sure it appears in the correct subdirectory of the classpath.
+[ERROR] /tmp/app-patch/7c41bd90e2a4/src/src/main/java/org/joychou/controller/XStream.java:[22,8] cannot access com.thoughtworks.xstream.XStream
+  bad class file: /root/.m2/repository/com/thoughtworks/xstream/xstream/1.4.20.rhlw-00001/xstream-1.4.20.rhlw-00001.jar(com/thoughtworks/xstream/XStream.class)
+    class file has wrong version 55.0, should be 52.0
+    Please remove or make sure it appears in the correct subdirectory of the classpath.
+[INFO] 3 errors
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  41.208 s
+[INFO] Finished at: 2026-10-23T21:01:52Z
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.1:compile (default-compile) on project java-sec-code: Compilation failure
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
