@@ -164,11 +164,13 @@ def overview(scan: dict) -> dict:
 
 
 MAX_LOG = 200
+DEMO_DELAY = float(env('LIGHTWELL_DEMO_DELAY', '0.6'))
 
 
 def progress_writer(entry: dict):
     """Returns the callback scan_repository reports to. It keeps the latest state of each step and a capped activity log on the
-    entry, in memory only: the finished result replaces the entry, so none of this is stored with the scan."""
+    entry, in memory only: the finished result replaces the entry, so none of this is stored with the scan. Recorded data answers
+    at once, so in demo mode each step is paced to be seen, as a live scan would be (LIGHTWELL_DEMO_DELAY seconds, 0 turns it off)."""
     prog = entry['progress'] = {'started': time.time(), 'steps': {}, 'log': []}
 
     def report(step: str, state: str, detail: str = '', done: int | None = None, total: int | None = None) -> None:
@@ -180,6 +182,8 @@ def progress_writer(entry: dict):
             s.update({'state': state, 'detail': detail, 'done': done, 'total': total})
             if len(prog['log']) < MAX_LOG:
                 prog['log'].append({'t': round(now - prog['started'], 1), 'step': step, 'state': state, 'text': detail})
+        if MODE == 'demo' and state == 'running':
+            time.sleep(DEMO_DELAY if done is None else DEMO_DELAY / 8)
     return report
 
 
@@ -332,7 +336,8 @@ def start_remediation(body: dict) -> str:
     ref = parse_repo(repo['url'], GITLAB_HOSTS)
     if MODE == 'demo':
         manifests = dict(make_clients()[0].snapshot(ref).manifests)
-        return RUNS.start_demo(repo, plan, push, manifests, java)
+        recorded = DEMO_DIR / 'builds' / (ref.slug.replace('/', '__') + '.log')
+        return RUNS.start_demo(repo, plan, push, manifests, java, recorded.read_text(encoding='utf-8') if recorded.is_file() else '')
     if not remediation_status()['ready']:
         raise ValueError(remediation_status()['detail'])
     client = remediation_client()

@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server                                                              # noqa: E402
 from store import Store                                                    # noqa: E402
 
+server.DEMO_DELAY = 0
+
 OSV = {'queries': {'PyPI|django|2.2': ['GHSA-1']},
        'vulns': {'GHSA-1': {'id': 'GHSA-1', 'aliases': ['CVE-2020-1'], 'summary': '=cmd|calc', 'database_specific': {'severity': 'HIGH'},
                             'affected': [{'package': {'ecosystem': 'PyPI', 'name': 'django'}, 'ranges': [
@@ -95,6 +97,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(ok['summary']['lightwell']['not_covered'], 1)         # temp catalog is empty, so nothing is covered
         self.assertIn(d['id'], [x['id'] for x in self.js('GET', '/v1/scans')[1]['scans']])
 
+    def test_a_demo_scan_is_paced_so_its_progress_can_be_seen(self):
+        with mock.patch.object(server, 'DEMO_DELAY', 0.15):
+            _, d = self.js('POST', '/v1/scans', {'repos': ['acme/app']})
+            lines = 0
+            for _ in range(100):
+                r = self.js('GET', f'/v1/scans/{d["id"]}')[1]['scan']['repos'][0]
+                lines = max(lines, len((r.get('progress') or {}).get('log', [])))
+                if r['status'] == 'done':
+                    break
+                time.sleep(0.03)
+        self.assertGreater(lines, 0)
+
     def test_remediation_in_demo_mode(self):
         _, d = self.js('POST', '/v1/scans', {'repos': ['acme/app']})
         scan = self.wait_done(d['id'])
@@ -111,13 +125,15 @@ class ServerTests(unittest.TestCase):
         code, r = self.js('POST', '/v1/remediations', body)
         self.assertEqual(code, 202)
         code, run = self.js('GET', f'/v1/remediations/{r["id"]}')
-        self.assertEqual(code, 200)
-        run = run['run']
+        self.assertEqual((code, run['run']['result']), (200, {}))                                           # nothing to show until the build is done
+        server.RUNS._runs[r['id']]['demo'].started -= 600
+        run = self.js('GET', f'/v1/remediations/{r["id"]}')[1]['run']
         self.assertEqual((run['mode'], run['push'], run['branch']), ('demo', False, 'fix/dependency-vulnerabilities'))
         self.assertIn('+django==2.2.28', run['result']['diff'])
         self.assertEqual([s['id'] for s in run['stages']], ['clone', 'edit', 'build'])
         self.assertEqual(run['result']['java']['version'], 17)                                              # nothing in the recorded files, so the default
         _, r3 = self.js('POST', '/v1/remediations', {**body, 'java': 11})
+        server.RUNS._runs[r3['id']]['demo'].started -= 600
         self.assertEqual(self.js('GET', f'/v1/remediations/{r3["id"]}')[1]['run']['result']['java'], {'version': 11, 'reason': 'chosen when the run was approved'})
         self.assertEqual(self.js('POST', '/v1/remediations', {**body, 'java': 12})[0], 400)
         self.assertEqual(self.js('POST', '/v1/remediations', {**body, 'java': 'abc'})[0], 400)

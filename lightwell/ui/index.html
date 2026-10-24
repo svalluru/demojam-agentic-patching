@@ -1628,10 +1628,10 @@ function paintRem(r) {
     var notApplied = (res.changes || []).filter(function (c) { return !c.applied.length; });
     if (res.changes) box.appendChild(el('div', {class: 'hint', text: (res.changes.length - notApplied.length) + ' of ' + res.changes.length + ' changes applied.' + (notApplied.length ? ' Not applied: ' + notApplied.map(function (c) { return c.name + ' (' + c.problems.join('; ') + ')'; }).join(', ') : '')}));
     if (res.diff) { box.appendChild(el('div', {class: 'rem-sub', text: 'Diff'})); box.appendChild(diffNode(res.diff)); }
-    if (res.build_tail) box.appendChild(remDetails(s, 'build', 'Build output' + (res.build_rc === 0 ? ' (succeeded)' : res.build_rc != null ? ' (failed, exit ' + res.build_rc + ')' : ''), [el('pre', {class: 'code', text: res.build_tail})]));
+    if (res.build_tail) box.appendChild(remDetails(s, 'build', 'Build output' + (Number(res.build_rc) === 0 ? ' (succeeded)' : res.build_rc != null && res.build_rc !== '' ? ' (failed, exit ' + res.build_rc + ')' : ''), [el('pre', {class: 'code', text: res.build_tail})]));
     else if (v.state === 'failed' && v.log) box.appendChild(remDetails(s, 'log', 'Job output', [el('pre', {class: 'code', text: v.log.slice(-4000)})]));
     var acts = el('div', {class: 'rem-actions'});
-    if (v.state === 'done' && res.build_rc === 0 && !res.pushed && !v.push) {
+    if (v.state === 'done' && Number(res.build_rc) === 0 && !res.pushed && !v.push) {
       var push = el('button', {class: 'primary', type: 'button', text: 'Push branch ' + v.branch});
       push.onclick = function () { if (confirm('Push the branch ' + v.branch + ' to ' + (r.slug || r.url) + '?\n\nThis runs the job again with the push step on, so it needs a token that can write to the repository.')) remStart(r, true); };
       acts.appendChild(push);

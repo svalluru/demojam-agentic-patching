@@ -105,9 +105,9 @@ class Runs:
                 del self._runs[old]
         return run_id
 
-    def start_demo(self, repo: dict, plan: dict, push: bool, manifests: dict[str, str], java: int | None = None) -> str:
+    def start_demo(self, repo: dict, plan: dict, push: bool, manifests: dict[str, str], java: int | None = None, build_log: str = '') -> str:
         diff, report, chosen = demo_diff(plan, manifests, java)
-        return self._add({'mode': 'demo', 'url': repo['url'], 'plan': plan, 'push': push, 'demo': DemoRun(push, diff, report, java=chosen, branch=BRANCH,
+        return self._add({'mode': 'demo', 'url': repo['url'], 'plan': plan, 'push': push, 'demo': DemoRun(push, diff, report, java=chosen, branch=BRANCH, build_log=build_log,
                                                                                                            maven=any(m.endswith('pom.xml') for m in manifests))})
 
     def start_live(self, client: AapClient, repo: dict, ref: RepoRef, plan: dict, push: bool, java: int | None = None) -> str:

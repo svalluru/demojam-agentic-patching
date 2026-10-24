@@ -1,0 +1,38 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------------< sec:java-sec-code >--------------------------
+[INFO] Building java-sec-code 1.0.0
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:2.6:resources (default-resources) @ java-sec-code ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 1 resource
+[INFO] Copying 14 resources
+[INFO] 
+[INFO] --- compiler:3.1:compile (default-compile) @ java-sec-code ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 78 source files to /tmp/app-patch/381a5ff101ff/src/target/classes
+[WARNING] /tmp/app-patch/381a5ff101ff/src/src/main/java/org/joychou/config/TomcatFilterMemShell.java: /tmp/app-patch/381a5ff101ff/src/src/main/java/org/joychou/config/TomcatFilterMemShell.java uses unchecked or unsafe operations.
+[WARNING] /tmp/app-patch/381a5ff101ff/src/src/main/java/org/joychou/config/TomcatFilterMemShell.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- resources:2.6:testResources (default-testResources) @ java-sec-code ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /tmp/app-patch/381a5ff101ff/src/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.1:testCompile (default-testCompile) @ java-sec-code ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] --- surefire:2.18.1:test (default-test) @ java-sec-code ---
+[INFO] No tests to run.
+[INFO] 
+[INFO] --- jar:2.6:jar (default-jar) @ java-sec-code ---
+[INFO] Building jar: /tmp/app-patch/381a5ff101ff/src/target/java-sec-code-1.0.0.jar
+[INFO] 
+[INFO] --- spring-boot:1.5.1.RELEASE:repackage (default) @ java-sec-code ---
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  02:38 min
+[INFO] Finished at: 2026-10-23T21:06:20Z
+[INFO] ------------------------------------------------------------------------

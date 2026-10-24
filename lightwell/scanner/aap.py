@@ -141,6 +141,8 @@ def view(job: dict, events: list[dict], push: bool) -> dict:
             if st['state'] == 'running':
                 st['state'] = 'failed'
     result = (job.get('artifacts') or {}).get('app_patch') if isinstance(job.get('artifacts'), dict) else None
+    if result and str(result.get('build_rc', '')).lstrip('-').isdigit():
+        result = {**result, 'build_rc': int(result['build_rc'])}
     if state == 'done':
         for st in stages:
             st['state'] = 'done'
@@ -170,12 +172,13 @@ class DemoRun:
     SKIPPED = {'clone': 1, 'edit': 1, 'build': 3}
 
     def __init__(self, push: bool, diff: str, report: list[dict], started: float | None = None, java: dict | None = None,
-                 maven: bool = True, branch: str = ''):
+                 maven: bool = True, branch: str = '', build_log: str = ''):
         self.push = push
         self.diff = diff
         self.report = report
         self.java = java or {}
         self.branch = branch
+        self.build_log = build_log.rstrip('\n')
         self.steps = {'clone': self.CLONE, 'edit': self.EDIT, 'build': self.JAVA if maven else self.PIP, 'push': self.PUSH}
         self.started = time.monotonic() if started is None else started
 
@@ -195,8 +198,8 @@ class DemoRun:
                            'actions': actions, 'skipped': skipped if t >= cursor else 0})
             cursor = at
         finished = t >= cursor
-        log: list[str] = []
-        result = {'changes': self.report, 'java': self.java, 'diff': self.diff, 'build_rc': 0 if finished else None,
-                  'pushed': finished and self.push, 'push_error': '', 'branch': self.branch, 'build_tail': '\n'.join(log)}
+        log = self.build_log.splitlines() if finished else []
+        result = {'changes': self.report, 'java': self.java, 'diff': self.diff, 'build_rc': 0, 'pushed': self.push, 'push_error': '',
+                  'branch': self.branch, 'build_tail': '\n'.join(log)} if finished else {}
         return {'state': 'done' if finished else 'running', 'status': 'successful' if finished else 'running', 'stages': stages, 'result': result, 'failure': '',
                 'log': '\n'.join(log)}

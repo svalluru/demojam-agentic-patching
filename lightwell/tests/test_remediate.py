@@ -383,13 +383,14 @@ class RunTests(unittest.TestCase):
         run_id = runs.start_demo(self.REPO, self.PLAN, False, {'requirements.txt': 'django==2.2\nflask==1.0\n'})
         first = runs.view(run_id)
         self.assertEqual(first['state'], 'running')
-        self.assertIn('-django==2.2\n+django==2.2.28', first['result']['diff'])
+        self.assertEqual(first['result'], {})
         run = runs._runs[run_id]['demo']
         later = run.view(run.started + 60)
         self.assertEqual((later['state'], {s['state'] for s in later['stages']}), ('done', {'done'}))
         self.assertTrue(all(a['state'] == 'ok' for s in later['stages'] for a in s['actions']))
         self.assertEqual([a['state'] for a in first['stages'][0]['actions']], ['running'])
         self.assertEqual(later['result']['build_rc'], 0)
+        self.assertIn('-django==2.2\n+django==2.2.28', later['result']['diff'])
 
     def test_demo_run_follows_the_playbook_and_ends_a_push_like_a_real_one(self):
         runs = remediation.Runs()
@@ -398,11 +399,22 @@ class RunTests(unittest.TestCase):
         mid = run.view(run.started + 22)
         self.assertEqual([s['state'] for s in mid['stages']], ['done', 'done', 'running', 'pending'])
         self.assertIn('Download the JDK', [a['label'] for a in mid['stages'][2]['actions']])
-        self.assertFalse(mid['result']['pushed'])
+        self.assertEqual(mid['result'], {})
         later = run.view(run.started + 120)
         self.assertEqual([s['id'] for s in later['stages']], ['clone', 'edit', 'build', 'push'])
         self.assertEqual((later['state'], later['result']['pushed'], later['result']['branch']), ('done', True, remediation.BRANCH))
         self.assertEqual(later['stages'][3]['skipped'], 0)
+
+    def test_demo_run_shows_the_recorded_build_output_when_the_build_is_done(self):
+        run = aap.DemoRun(False, 'd', [], started=0.0, build_log='[INFO] BUILD SUCCESS\n')
+        self.assertEqual(run.view(now=1)['log'], '')
+        done = run.view(now=500)
+        self.assertEqual((done['result']['build_tail'], done['result']['build_rc'], done['log']), ('[INFO] BUILD SUCCESS',) * 1 + (0, '[INFO] BUILD SUCCESS'))
+        self.assertEqual(aap.DemoRun(False, 'd', [], started=0.0).view(now=500)['result']['build_tail'], '')
+
+    def test_the_job_result_reports_the_build_exit_code_as_a_number(self):
+        job = {'status': 'successful', 'artifacts': {'app_patch': {'build_rc': '0'}}}
+        self.assertEqual(aap.view(job, [], False)['result']['build_rc'], 0)
 
     def test_demo_run_builds_python_with_pip_and_not_pushing_stays_unpushed(self):
         runs = remediation.Runs()
