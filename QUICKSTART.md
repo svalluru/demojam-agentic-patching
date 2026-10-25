@@ -90,12 +90,30 @@ it does not disturb a run, so you can reopen it mid-demo.
 
 The **flow icon** between the book and the gear draws the whole thing: one
 diagram per side of the toggle, with the stages down the middle, the named
-product each one calls on the right, the approval gate in red, and the
+product each one calls on the right, the approval gate, and the
 recovery arc that side takes when something goes wrong. Every box says who
 does it — the Supervisor, one of the four agents, a piece of common code, or
 you — and every arrow is numbered, so the room can follow a run with a finger
-rather than take your word for the order. It opens on the side you are
-already on. Static, so it works with every backend down.
+rather than take your word for the order. The boxes carry names and nothing
+else; each numbered step is written out underneath the drawing, which keeps
+the picture legible on a projector and the detail to hand when somebody asks
+for it. It opens on the side you are already on. Static, so it works with
+every backend down.
+
+It is colour coded, with the key printed under the drawing: **red** is a Red
+Hat product, **blue** is an agent this repo runs, **amber** is the one stage a
+person decides, and grey is everything else — common code, the third parties
+and the console itself. A stage box takes the colour of whoever *runs* it
+rather than of what it calls, which is why Score stays blue while the two
+boxes it reaches are red. On Infrastructure that reads as one story at a
+glance: the blue spine is ours, the red is Red Hat underneath it, and there
+is a single amber box between them. Application has no blue, because there
+are no agents on that side, but its spine is red end to end — Lightwell runs
+stages 1 to 5 and an AAP job template runs 7 and 8, and the only grey left is
+the code hosts and OSV.dev. The colours are decoration on top of the labels,
+never instead of them:
+every box is named and every step is written out, so the drawing still works
+printed in black and white.
 
 If anyone is reading this off a projector, open the **gear** next to it and set
 **Text size** to Large. It applies immediately, it is remembered in your
@@ -147,7 +165,7 @@ below the threshold, so there is no approval gate anywhere downstream of them.
 The button reads **Patch 2 hosts** and stays red, because that press is the
 only human check these hosts get — nothing stops to ask again.
 
-Watch the diagram on this one: **RECOMMENDATION** stays grey the whole way through.
+Watch the diagram on this one: **REASONING** stays grey the whole way through.
 No host needed review, so nothing ever asked it — and a box that was never
 called is not a box that answered.
 
