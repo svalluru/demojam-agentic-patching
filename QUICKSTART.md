@@ -88,6 +88,15 @@ If you are going to show this to somebody rather than just read it, open the
 what to say, what you will be asked, and what not to claim. `Esc` closes it and
 it does not disturb a run, so you can reopen it mid-demo.
 
+The **flow icon** between the book and the gear draws the whole thing: one
+diagram per side of the toggle, with the stages down the middle, the named
+product each one calls on the right, the approval gate in red, and the
+recovery arc that side takes when something goes wrong. Every box says who
+does it — the Supervisor, one of the four agents, a piece of common code, or
+you — and every arrow is numbered, so the room can follow a run with a finger
+rather than take your word for the order. It opens on the side you are
+already on. Static, so it works with every backend down.
+
 If anyone is reading this off a projector, open the **gear** next to it and set
 **Text size** to Large. It applies immediately, it is remembered in your
 browser, and it changes nothing on the server or for anyone else.

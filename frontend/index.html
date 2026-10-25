@@ -54,7 +54,7 @@
        diagram and the ROI chart draw their labels in SVG user units, where px
        is a share of the viewBox rather than a size on screen, so scaling them
        pushes text out of boxes that stayed the same width. Verified: at Large
-       the diagram's ANSIBLE ORCH overflows its node. Both drawings already
+       the diagram's AUTOMATION ORCH overflows its node. Both drawings already
        grow with the panel they sit in. */
     --ts: 1.1;                        /* medium — the default */
 
@@ -1475,6 +1475,74 @@
   .arch-legend .q { opacity: .45; }
   .arch-legend .q i { border-top-style: dashed; }
 
+  /* ---- how it works ----
+     Two static drawings, one per side of the toggle, behind the header's flow
+     icon. Deliberately not the architecture panel above: that one draws what
+     *this run* has done so far, in the Supervisor's own vocabulary, and it
+     only exists on the Infrastructure side. This draws what the demo does,
+     both sides, before anything has run — which is the thing a presenter
+     wants on screen while answering "so what is actually happening here".
+
+     Own class namespace rather than reusing .nd/.eg. Those carry run state
+     (on, now, bad) that a static drawing has no business having, and anything
+     added here would leak into the live panel.
+
+     Sizes are in SVG user units and opt out of --ts, for the same reason the
+     architecture diagram does: px here is a share of the viewBox, not a size
+     on screen, so scaling the type pushes it out of boxes that stayed the
+     same width. The drawing grows with the drawer instead. */
+  .fd { display: block; width: 100%; height: auto; }
+  .fd .b rect { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+  .fd .b .t { font-size: 11px; font-weight: 800; letter-spacing: .4px;
+              fill: var(--text); }
+  .fd .b .s { font-size: 9.2px; fill: var(--muted); }
+  /* Who does this stage — an agent, a piece of common code, or you. Set in
+     the corner opposite the stage name and in the muted grey, because it
+     answers a second question: you read the column first and come back for
+     the names. Tracked out and small rather than big and bold, which is what
+     keeps nine of them from competing with the nine titles beside them. */
+  .fd .b .k { font-size: 8.2px; font-weight: 700; letter-spacing: .6px;
+              fill: var(--muted); }
+  /* Backing services — the things this repo does not own. Same tint the
+     architecture panel gives them, so the two diagrams agree about which
+     boxes are ours. Two lines now: the product's actual name, and one line
+     saying what it is for, because "RECOMMENDATION" tells a room nothing and
+     "Llama Stack + Milvus" tells them everything. */
+  .fd .b.svc rect { fill: var(--surface); }
+  .fd .b.svc .t { font-size: 9.5px; letter-spacing: .45px; fill: var(--muted); }
+  .fd .b.svc .s { font-size: 8px; }
+  /* The approval gate, and nothing else. Red is the page's one colour and it
+     means a person acts here; on a diagram whose whole point is where the
+     human is, spending it anywhere else would waste it. The actor chip on
+     that box reads YOU, so it is red too — same claim, same colour. */
+  .fd .b.gate rect { fill: var(--tint-r); stroke: var(--red); stroke-width: 1.4; }
+  .fd .b.gate .t, .fd .b.gate .k { fill: var(--red); }
+
+  /* Step numbers. Filled with the panel colour rather than left transparent:
+     the badge sits on the connector it numbers, and a line running visibly
+     through a digit is the one thing on this drawing that has to stay
+     legible from the back of a room. */
+  .fd .n circle { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+  .fd .n text { font-size: 8.5px; font-weight: 800; fill: var(--text); }
+  .fd .n.alt circle { fill: var(--tint-r); stroke: var(--red); }
+  .fd .n.alt text { fill: var(--red); }
+
+  .fd .e { fill: none; stroke: var(--text); stroke-width: 1.25; opacity: .72;
+           stroke-linecap: round; stroke-linejoin: round; }
+  /* The recovery arc: dashed because it is the path a run takes only when
+     something went wrong, red because taking it is a person pressing a
+     button. Both sides have exactly one. */
+  .fd .e.alt { stroke: var(--red); stroke-dasharray: 4 3; opacity: .9; }
+  .fd .lbl { font-size: 8.6px; fill: var(--red); }
+
+  .fd-wrap { border: 1px solid var(--border); border-radius: var(--r);
+             background: var(--panel); box-shadow: var(--sh-1); padding: 14px; }
+  .fd-tabs { display: flex; justify-content: center; margin: 2px 0 16px; }
+  .fd-cap { margin-top: 13px; font-size: calc(11.5px * var(--ts));
+            line-height: 1.55; color: var(--muted); }
+  .fd-cap + .fd-cap { margin-top: 7px; }
+  .fd-cap strong { color: var(--text); font-weight: 700; }
+
   /* ---- agent trace ----
      Who called whom, in order. It sits under the stage bar's own column: the
      header says which stage, this says what the agents actually said while
@@ -1560,6 +1628,10 @@
   #open-settings svg { transition: transform .4s var(--ease); }
   #open-guide svg { transition: transform .3s var(--spring); }
   #open-guide:hover svg { transform: translateY(-1.5px); }
+  /* The flow icon moves the way its own arrow points, which is the only
+     hover on this row that says anything about what the button opens. */
+  #open-flow svg { transition: transform .3s var(--spring); }
+  #open-flow:hover svg { transform: translateX(1.5px); }
   .drawer-scrim {
     position: fixed; inset: 0; z-index: 40;
     background: rgba(11,11,12,.34); display: flex; justify-content: flex-end;
@@ -1952,6 +2024,17 @@
       <path d="M22 4h-6a3.5 3.5 0 0 0-3.5 3.5V21a3 3 0 0 1 3-2.5H22z"></path>
     </svg>
   </button>
+  <button class="icon-btn" id="open-flow" title="How the demo works" aria-label="How the demo works">
+    <!-- two boxes and the hop between them. Drawn here like every other icon:
+         no network offline. Reads as a flow at 18px, which a fuller sitemap
+         glyph does not — at this size the extra nodes turn into grey mush. -->
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="8" height="8" rx="2"></rect>
+      <rect x="13" y="13" width="8" height="8" rx="2"></rect>
+      <path d="M7 11v3a3 3 0 0 0 3 3h3"></path>
+    </svg>
+  </button>
   <button class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">
     <!-- gear, drawn rather than pulled from an icon font: no network in offline mode -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -2005,6 +2088,14 @@
                 anybody.</li>
             <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-run — it
                 does not disturb anything.</li>
+            <li>The <strong>flow icon</strong> between this book and the gear is one diagram
+                per side of the toggle: the stages down the middle, the product each one
+                calls on the right, the approval gate, and the recovery arc. Every box
+                names who does it — the Supervisor, one of the four agents, common code,
+                or you — and every arrow carries its step number, so you can walk a run
+                with a finger. It opens on the side you are already on. That is the
+                picture to put up when somebody asks what is actually happening, rather
+                than drawing it on a whiteboard mid-demo.</li>
             <li>On a projector, set <strong>Text size</strong> to Large in the gear panel.
                 It is a browser setting — nothing is sent to the server and nobody
                 else's view changes.</li>
@@ -2355,6 +2446,39 @@
 </div>
 
 <!-- Settings drawer. Every tunable this process reads, grouped. -->
+<!-- How the demo works. Two drawings, one per side of the toggle, and it opens
+     on whichever side you are already looking at — a diagram of the other half
+     is the one thing nobody wants when they press this.
+
+     Static, like the presenter's guide and for the same reason: it has to be
+     readable with every backend down, and somebody who opens it to answer a
+     question in the room cannot be waiting on a fetch. It is also the only
+     view here that is true before a run rather than because of one. -->
+<div class="drawer-scrim" id="flow-scrim" hidden>
+  <aside class="drawer wide" role="dialog" aria-modal="true" aria-labelledby="flow-title">
+    <div class="drawer-head">
+      <h2 id="flow-title">How the demo works</h2>
+      <button class="icon-btn" id="close-flow" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <!-- The header's own toggle, reused rather than reinvented: it is the
+           same choice, and a second control for it that looked different
+           would read as a different choice. -->
+      <div class="fd-tabs">
+        <span class="domain-toggle" id="flow-toggle" role="group"
+              aria-label="Which side of the demo" data-pane="infra">
+          <span class="dt-thumb" aria-hidden="true"></span>
+          <button type="button" class="dt-btn" data-pane="infra" aria-pressed="true"
+                  >Infra<span class="wide-only">structure</span></button>
+          <button type="button" class="dt-btn" data-pane="app" aria-pressed="false"
+                  >App<span class="wide-only">lication</span></button>
+        </span>
+      </div>
+      <div id="flow-body"></div>
+    </div>
+  </aside>
+</div>
+
 <div class="drawer-scrim" id="settings-scrim" hidden>
   <aside class="drawer" id="settings-drawer" role="dialog" aria-modal="true"
          aria-labelledby="settings-title">
@@ -3240,7 +3364,7 @@ const NODES = [
   { id: 'patching',   x: 52,  y: 214, w: 164, h: 38,
     t: '2 · PATCHING AGENT', s: 'one AO workflow run per host' },
   { id: 'ao',         x: 230, y: 216, w: 100, h: 22, ext: 1, mid: 1,
-    t: 'ANSIBLE ORCH' },
+    t: 'AUTOMATION ORCH' },
   { id: 'communication', x: 52, y: 266, w: 164, h: 38,
     t: '3 · COMMUNICATION', s: 'PDF report · Slack/SNOW pending' },
   { id: 'results',    x: 52,  y: 316, w: 164, h: 38,
@@ -6132,12 +6256,13 @@ qBox.addEventListener('keydown', e => {
 qClear.addEventListener('click', () => {
   qBox.value = ''; clearTimeout(qTimer); applySearch(''); qBox.focus();
 });
-// Escape backs out of whatever the right frame is showing. Either drawer gets
-// it first — see the handler next to closeSettings().
+// Escape backs out of whatever the right frame is showing. Any open drawer
+// gets it first — see the handler next to closeSettings().
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!document.getElementById('settings-scrim').hidden) return;
   if (!document.getElementById('guide-scrim').hidden) return;
+  if (!document.getElementById('flow-scrim').hidden) return;
   // The frames are not on screen while the report is, so backing out of them
   // would be a change the reader cannot see, on the press that closes the
   // report. The report's own handler takes that press.
@@ -6536,10 +6661,321 @@ document.getElementById('guide-scrim').addEventListener('click', e => {
   if (e.target.id === 'guide-scrim') closeGuide();         // click-outside only
 });
 
-// One handler for both, so Escape closes whichever is on top rather than
-// racing two listeners that each think they own the key.
+// ---- how it works: the two flow diagrams ----------------------------------
+// One drawing per side of the toggle. The centre column is the stages, named
+// character for character as the bar under the header names them — a diagram
+// that invents its own vocabulary for the same seven boxes is a second thing
+// to learn rather than an explanation of the first. The right-hand column is
+// the services, and the single red box is the one place a person acts.
+//
+// Static data, not derived from STAGES/APP_STAGES. Those carry the tooltips
+// and the icons and nothing about layout, and the two diagrams are not the
+// same shape as each other, let alone as a horizontal bar: Infrastructure
+// forks at the end and Application does not, and each has one recovery arc
+// that the bars cannot show at all. Generating these from the bars would mean
+// a layout engine to save nine lines of coordinates. The cost of keeping them
+// in step is a label, and the label is in the same file.
+//
+// Coordinates are the SVG's own viewBox and the drawing scales to the drawer,
+// so the numbers are a layout, not pixel positions on screen. Every string
+// here was measured against its box before it was written; the widest
+// subtitle lands at 266 of the 306 available, which is the margin that lets
+// this survive a font fallback.
+const FLOW_INFRA = {
+  // The viewBox is cropped to what is drawn — 60 to 686, against content that
+  // runs 67 to 678 — rather than starting at 0. An origin of 0 spent a tenth
+  // of the width on blank left margin, which on a 760px drawer is the
+  // difference between type you can read from the back of the room and type
+  // you cannot. Both sides share the crop so the tab switch does not resize
+  // a single box.
+  vb: '60 0 626 612',
+  boxes: [
+    { x: 102, y: 10,  w: 320, h: 30, t: 'CONSOLE', k: 'YOU',
+      s: 'you pick a CVE and press Assess' },
+    { x: 102, y: 62,  w: 320, h: 46, t: 'SUPERVISOR AGENT',
+      s: 'owns the control flow and the per-CVE state. Calls each',
+      s2: 'specialist agent in turn — the agents are stateless.' },
+    { x: 102, y: 130, w: 320, h: 44, t: '1 · ASSESS', k: 'COMMON CODE',
+      s: 'the CVE and every host behind on it, from Insights' },
+    { x: 102, y: 196, w: 320, h: 60, t: '2 · SCORE', k: 'AGENT 1 · CVE-GATHER-INFO',
+      s: 'every affected host scored in one call to the model, and',
+      s2: 'a read of what happened the last time each one was',
+      s3: 'patched. Scores land either side of the risk gate.' },
+    { x: 102, y: 278, w: 320, h: 44, t: '3 · PLAN', k: 'AGENT 1 · CVE-GATHER-INFO',
+      s: 'score against the gate, the maintenance window, and a',
+      s2: 'verdict per host — the thing you are about to approve' },
+    { x: 102, y: 344, w: 320, h: 44, t: '4 · APPROVAL', k: 'YOU', cls: 'gate',
+      s: 'above the gate the run stops here and waits for a person.',
+      s2: 'Below it nothing stops — the dispatch was the only check.' },
+    { x: 102, y: 410, w: 320, h: 44, t: '5 · PATCH', k: 'AGENT 2 · PATCHING AGENT',
+      s: 'one workflow run per host. Agent 2 is a client of the',
+      s2: 'orchestrator, not the thing that runs the playbook.' },
+    { x: 102, y: 476, w: 320, h: 56, t: 'VERIFY', k: 'THE AO WORKFLOW',
+      s: "the workflow's last node, not a stage of its own. It goes",
+      s2: 'back to the machine and re-reads it: a job that went green',
+      s3: 'against a host still listed comes back Not verified.' },
+    { x: 102, y: 554, w: 155, h: 46, t: 'NOTIFY',
+      s: 'agent 3 · communication', s2: 'the PDF status report' },
+    { x: 267, y: 554, w: 155, h: 46, t: 'LEARN',
+      s: 'agent 4 · results', s2: 'RAG record + training row' },
+    { x: 462, y: 138, w: 216, h: 28, cls: 'svc', t: 'RED HAT INSIGHTS',
+      s: 'the CVE, and the hosts behind on it' },
+    { x: 462, y: 198, w: 216, h: 28, cls: 'svc', t: 'RISK MODEL',
+      s: 'XGBoost on Red Hat OpenShift' },
+    { x: 462, y: 230, w: 216, h: 28, cls: 'svc', t: 'RECOMMENDATION',
+      s: 'Llama Stack + Milvus vector store' },
+    { x: 462, y: 418, w: 216, h: 28, cls: 'svc', t: 'AUTOMATION ORCHESTRATOR',
+      s: 'the remediation workflow, steps 5–10' },
+    { x: 462, y: 464, w: 216, h: 28, cls: 'svc', t: 'RED HAT AAP',
+      s: 'Ansible Automation Platform · the playbook' },
+    { x: 462, y: 510, w: 216, h: 28, cls: 'svc', t: 'RED HAT ENTERPRISE LINUX',
+      s: 'the host being patched' },
+  ],
+  // Numbered in the order the hops actually happen, service calls included —
+  // the point of the numbers is that somebody can follow the run with a
+  // finger, and a diagram that numbers only the spine leaves them guessing
+  // when the model was asked. The recovery arc is R rather than 15: it is not
+  // the fifteenth thing that happens, it is the thing that happens instead.
+  edges: [
+    { d: 'M262,40 L262,57',    n: '1',  nx: 238, ny: 51 },
+    { d: 'M262,108 L262,125',  n: '2',  nx: 238, ny: 117 },
+    { d: 'M422,152 L457,152',  n: '3',  nx: 440, ny: 138 },
+    { d: 'M262,174 L262,191',  n: '4',  nx: 238, ny: 183 },
+    { d: 'M422,212 L457,212',  n: '5',  nx: 440, ny: 198 },
+    { d: 'M422,244 L457,244',  n: '6',  nx: 440, ny: 230 },
+    { d: 'M262,256 L262,273',  n: '7',  nx: 238, ny: 265 },
+    { d: 'M262,322 L262,339',  n: '8',  nx: 238, ny: 331 },
+    { d: 'M262,388 L262,405',  n: '9',  nx: 238, ny: 397 },
+    { d: 'M422,432 L457,432',  n: '10', nx: 440, ny: 418 },
+    // These two hops happen inside the service column, between products we do
+    // not own. Their badges go beside the connector rather than on it, at the
+    // same 24-unit offset the spine uses: the hop is only 13 units long, and a
+    // badge centred on it would cover its own arrowhead.
+    { d: 'M570,446 L570,459',  n: '11', nx: 546, ny: 455 },
+    { d: 'M570,492 L570,505',  n: '12', nx: 546, ny: 501 },
+    { d: 'M457,524 L427,524',  n: '13', nx: 440, ny: 510 },
+    // The fork, as two whole paths down a shared stem rather than a tee and
+    // two stubs: each needs its own arrowhead, and a marker only lands on the
+    // end of a path.
+    { d: 'M262,532 L262,544 L180,544 L180,549', n: '14', nx: 221, ny: 544 },
+    { d: 'M262,532 L262,544 L344,544 L344,549', n: '15', nx: 303, ny: 544 },
+    // Back to the gate, not back to Patch: a retry is approved again.
+    { d: 'M102,518 L88,518 L88,366 L98,366', alt: 1, n: 'R', nx: 88, ny: 500 },
+  ],
+  // Rotated to read bottom-to-top, which is the direction the arc travels.
+  labels: [{ x: 72, y: 428, t: 'not verified → Fix & retry' }],
+  caps: [
+    '<strong>Read it top to bottom, and follow the numbers.</strong> The centre '
+    + 'column is the run, stage by stage, named exactly as the bar under the '
+    + 'header names them. On the right of each box is who does it — an agent, a '
+    + 'piece of common code, or you. On the right of the diagram is what it '
+    + 'calls, and none of that is ours.',
+    'The <strong>Supervisor</strong> owns the control flow and the per-CVE '
+    + 'state; the four specialist agents are stateless and each one fronts a '
+    + 'product. Agent 1 is the only one that thinks — scoring and history. '
+    + 'Agent 2 is a client of the Automation Orchestrator workflow, not the '
+    + 'thing that runs the playbook, which is why steps 11 to 13 happen outside '
+    + 'this repo entirely.',
+    'The red box is the only one a person is inside. Above the risk threshold '
+    + 'the workflow stops there and waits; below it there is nothing to wait '
+    + 'for, and pressing <strong>Patch</strong> was the only human check those '
+    + 'hosts get.',
+    '<strong>Verify is not a sixth stage.</strong> It is the last node of the '
+    + 'patch workflow, and it goes back to the machine rather than reading the '
+    + "job's exit code. A job that went green against a host still carrying the "
+    + 'advisory comes back <strong>Not verified</strong> — a retry, not a '
+    + 'postmortem. That is arc <strong>R</strong>, and the demo takes it once.',
+    'Steps 14 and 15 fork rather than queue. Neither agent waits on the other, '
+    + 'and agent 4 has nothing worth publishing until the last host is off the '
+    + 'gate — which is why it writes at the final approval, not at dispatch.',
+  ],
+};
+
+const FLOW_APP = {
+  vb: '60 0 626 588',          // same crop and the same width as FLOW_INFRA,
+                               // so the boxes do not resize under the tabs
+  boxes: [
+    { x: 102, y: 10,  w: 320, h: 30, t: 'CONSOLE', k: 'YOU',
+      s: 'you tick repositories and press Scan' },
+    { x: 102, y: 62,  w: 320, h: 44, t: '1 · FETCH', k: 'LIGHTWELL SCANNER',
+      s: 'each ticked repository read at one commit, every file listed' },
+    { x: 102, y: 128, w: 320, h: 44, t: '2 · MANIFESTS', k: 'LIGHTWELL SCANNER',
+      s: 'pom.xml, requirements.txt, package.json, the lock files —',
+      s2: 'resolved to the exact version each project actually uses' },
+    { x: 102, y: 194, w: 320, h: 44, t: '3 · OSV.DEV', k: 'LIGHTWELL SCANNER',
+      s: 'one batch query for every component, then each advisory',
+      s2: 'fetched once. Severity, and the version that fixes it.' },
+    { x: 102, y: 260, w: 320, h: 52, t: '4 · LIGHTWELL', k: 'LIGHTWELL SCANNER',
+      s: 'is there a remediated build of the version already in use?',
+      s2: 'Four answers: Remediated, Pre-disclosure, Nearest build,',
+      s3: 'Not covered. The fix moves no version numbers.' },
+    { x: 102, y: 334, w: 320, h: 44, t: '5 · PLAN', k: 'LIGHTWELL REMEDIATION',
+      s: 'the change list: what moves to which version, from which',
+      s2: 'source, and what is deliberately left alone' },
+    { x: 102, y: 400, w: 320, h: 44, t: '6 · APPROVAL', k: 'YOU', cls: 'gate',
+      s: 'nothing is cloned and nothing is built until somebody has',
+      s2: 'read the list. Unlike the other side, this gate is never skipped.' },
+    { x: 102, y: 466, w: 320, h: 44, t: '7 · BUILD', k: 'AAP JOB TEMPLATE',
+      s: 'clone, rewrite the manifests, build — and stop. Nothing',
+      s2: 'leaves the build host. A green build is the test.' },
+    { x: 102, y: 532, w: 320, h: 44, t: '8 · PUSH', k: 'AAP JOB TEMPLATE',
+      s: 'a second press, and only if you want it. It does not build',
+      s2: 'again; it pushes the tree that already went green.' },
+    { x: 462, y: 70,  w: 216, h: 28, cls: 'svc', t: 'GITHUB · GITLAB',
+      s: 'the repository, at one commit' },
+    { x: 462, y: 202, w: 216, h: 28, cls: 'svc', t: 'OSV.DEV',
+      s: 'the open source vulnerability database' },
+    { x: 462, y: 272, w: 216, h: 28, cls: 'svc', t: 'LIGHTWELL NETWORK',
+      s: 'remediated builds of versions in use' },
+    { x: 462, y: 474, w: 216, h: 28, cls: 'svc', t: 'RED HAT AAP',
+      s: 'the job template, on a build host' },
+    { x: 462, y: 540, w: 216, h: 28, cls: 'svc', t: 'A FIX BRANCH',
+      s: 'pushed back to the repository' },
+  ],
+  edges: [
+    { d: 'M262,40 L262,57',   n: '1',  nx: 238, ny: 51 },
+    { d: 'M422,84 L457,84',   n: '2',  nx: 440, ny: 70 },
+    { d: 'M262,106 L262,123', n: '3',  nx: 238, ny: 115 },
+    { d: 'M262,172 L262,189', n: '4',  nx: 238, ny: 181 },
+    { d: 'M422,216 L457,216', n: '5',  nx: 440, ny: 202 },
+    { d: 'M262,238 L262,255', n: '6',  nx: 238, ny: 247 },
+    { d: 'M422,286 L457,286', n: '7',  nx: 440, ny: 272 },
+    { d: 'M262,312 L262,329', n: '8',  nx: 238, ny: 321 },
+    { d: 'M262,378 L262,395', n: '9',  nx: 238, ny: 387 },
+    { d: 'M262,444 L262,461', n: '10', nx: 238, ny: 453 },
+    { d: 'M422,488 L457,488', n: '11', nx: 440, ny: 474 },
+    { d: 'M262,510 L262,527', n: '12', nx: 238, ny: 519 },
+    { d: 'M422,554 L457,554', n: '13', nx: 440, ny: 540 },
+    // Back to the plan, because what changes on a retry is the change list.
+    { d: 'M102,500 L88,500 L88,346 L98,346', alt: 1, n: 'R', nx: 88, ny: 482 },
+  ],
+  labels: [{ x: 72, y: 410, t: 'build failed → run it again' }],
+  caps: [
+    '<strong>Same spine, different surface.</strong> Eight stages, named as the '
+    + 'bar under the header names them, and the same single red gate — except '
+    + 'that here it is never skipped. Nothing is cloned and nothing is built '
+    + 'until somebody has read the change list.',
+    '<strong>No agents on this side.</strong> The chips on the right of each box '
+    + 'say so: one scanner does stages 1 to 4, Lightwell’s own remediation '
+    + 'writes the plan at 5, and one Ansible job template does 7 and 8. That is '
+    + 'worth saying out loud — the supervisor-and-four-agents '
+    + 'shape is the Infrastructure side’s answer to a fleet of hosts, not a '
+    + 'house style applied to everything.',
+    "<strong>Lightwell's answer is the unusual part.</strong> It supplies a "
+    + 'remediated build of the <em>version already in use</em> — same '
+    + 'coordinates, same API — so the fix moves no version numbers and breaks no '
+    + 'callers. Every package comes back Remediated, Pre-disclosure, Nearest '
+    + 'build, or Not covered.',
+    '<strong>The build is the test.</strong> Step 11 clones, rewrites the '
+    + 'manifests, builds, and stops. Nothing leaves the build host until you '
+    + 'press Push, and Push does not build again — it pushes the tree that '
+    + 'already went green.',
+    'Arc <strong>R</strong> is the one failure the demo takes: a rebuild '
+    + 'compiled to a newer Java baseline, against a project that still compiles '
+    + "for 8. The advice under the red bar is read out of Maven's own output, "
+    + 'not out of anything the console knew in advance.',
+  ],
+};
+
+// Services get a product name and one line saying what it is. A stage gets its
+// name, who does it, and what actually happens — the body left-aligned so a
+// column of them reads as a list rather than as nine unrelated signs, and the
+// whole block optically centred however many lines it has.
+function flowBox(b) {
+  const mid = b.y + b.h / 2;
+  const rect = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"
+                      rx="${b.cls === 'svc' ? 6 : 7}"></rect>`;
+  if (b.cls === 'svc') {
+    const cx = b.x + b.w / 2;
+    return `<g class="b svc">${rect}
+      <text class="t" x="${cx}" y="${mid - 2}" text-anchor="middle">${esc(b.t)}</text>
+      <text class="s" x="${cx}" y="${mid + 9}" text-anchor="middle">${esc(b.s)}</text>
+    </g>`;
+  }
+  const x = b.x + 14, lines = [b.s, b.s2, b.s3].filter(Boolean);
+  const ty = mid - [0, 3, 6, 14][lines.length];
+  return `<g class="b ${b.cls || ''}">${rect}
+    <text class="t" x="${x}" y="${ty}">${esc(b.t)}</text>
+    ${b.k ? `<text class="k" x="${b.x + b.w - 14}" y="${ty}"
+              text-anchor="end">${esc(b.k)}</text>` : ''}
+    ${lines.map((s, i) => `<text class="s" x="${x}" y="${ty + 12 + i * 10.5}"
+        >${esc(s)}</text>`).join('')}
+  </g>`;
+}
+
+function flowSVG(f) {
+  const arrow = (id, fill, op) =>
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5"
+       markerHeight="5" orient="auto"><path d="M0,1 L7.2,4 L0,7 Z"
+       fill="${fill}" fill-opacity="${op}"></path></marker>`;
+  // Edges, then boxes over them so a box always covers the line that reaches
+  // it, then the numbers over everything: a step number half under a
+  // connector is the one element here that has to be legible at a glance.
+  return `<div class="fd-wrap">
+    <svg class="fd" viewBox="${f.vb}" role="img"
+         aria-label="How a run moves through the console, numbered stage by stage">
+      <defs>${arrow('fd-a', '#111', .72)}${arrow('fd-r', '#cc0000', .9)}</defs>
+      ${f.edges.map(e => `<path class="e ${e.alt ? 'alt' : ''}" d="${e.d}"
+          marker-end="url(#${e.alt ? 'fd-r' : 'fd-a'})"></path>`).join('')}
+      ${f.boxes.map(flowBox).join('')}
+      ${f.labels.map(l => `<text class="lbl" x="${l.x}" y="${l.y}"
+          text-anchor="middle" transform="rotate(-90 ${l.x} ${l.y})"
+          >${esc(l.t)}</text>`).join('')}
+      ${f.edges.filter(e => e.n).map(e => `<g class="n ${e.alt ? 'alt' : ''}">
+          <circle cx="${e.nx}" cy="${e.ny}" r="8"></circle>
+          <text x="${e.nx}" y="${e.ny + 3}" text-anchor="middle">${esc(e.n)}</text>
+        </g>`).join('')}
+    </svg>
+  </div>
+  ${f.caps.map(c => `<p class="fd-cap">${c}</p>`).join('')}`;
+}
+
+// The drawer's own side, which starts as the side you are on and then stops
+// following it: once you have pressed a tab in here, the toggle behind the
+// scrim moving under you would be the drawer arguing with itself.
+let flowSide = 'infra';
+
+function renderFlow() {
+  const seg = document.getElementById('flow-toggle');
+  seg.dataset.pane = flowSide;
+  seg.querySelectorAll('.dt-btn').forEach(
+    b => b.setAttribute('aria-pressed', String(b.dataset.pane === flowSide)));
+  document.getElementById('flow-body').innerHTML =
+    flowSVG(flowSide === 'app' ? FLOW_APP : FLOW_INFRA);
+}
+
+function openFlow() {
+  // paneSide, not paneNow: from the ROI report, which is neither side, open
+  // on the side the reader will go back to.
+  flowSide = paneSide === 'app' ? 'app' : 'infra';
+  renderFlow();
+  document.getElementById('flow-scrim').hidden = false;
+}
+
+function closeFlow() {
+  document.getElementById('flow-scrim').hidden = true;
+}
+
+document.getElementById('open-flow').addEventListener('click', openFlow);
+document.getElementById('close-flow').addEventListener('click', closeFlow);
+document.getElementById('flow-scrim').addEventListener('click', e => {
+  if (e.target.id === 'flow-scrim') closeFlow();           // click-outside only
+});
+document.getElementById('flow-toggle').addEventListener('click', e => {
+  const b = e.target.closest('.dt-btn');
+  if (!b || b.dataset.pane === flowSide) return;
+  flowSide = b.dataset.pane;
+  // Scroll back to the top: the two drawings are different heights, and
+  // landing halfway down the other one looks like a broken page.
+  renderFlow();
+  document.querySelector('#flow-scrim .drawer-body').scrollTop = 0;
+});
+
+// One handler for all three, so Escape closes whichever is on top rather than
+// racing listeners that each think they own the key.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (!document.getElementById('flow-scrim').hidden) { closeFlow(); return; }
   if (!document.getElementById('guide-scrim').hidden) { closeGuide(); return; }
   if (!document.getElementById('settings-scrim').hidden) closeSettings();
 });
@@ -6671,12 +7107,13 @@ renderStages({});
 // not an overlay — it is a destination — but it is the only destination with
 // a Close, and a reader who has scrolled through a page of charts reaches for
 // Escape before they reach for the header.
-// Either drawer gets the key first and keeps it: one press should undo one
+// Any open drawer gets the key first and keeps it: one press should undo one
 // thing, and a drawer opened over the report is the thing on top.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || paneNow !== 'roi') return;
   if (!document.getElementById('settings-scrim').hidden) return;
   if (!document.getElementById('guide-scrim').hidden) return;
+  if (!document.getElementById('flow-scrim').hidden) return;
   paneShow(paneSide);
 });
 
