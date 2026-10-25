@@ -4,7 +4,7 @@
 #   ./demo.sh            demo — staged data for every step, no endpoint is
 #                        contacted. No cluster, no .env, no network. Nothing
 #                        is patched: approving a host resolves a simulated
-#                        run that exists in no Ansible Orchestrator.
+#                        run that exists in no Automation Orchestrator.
 #
 #   ./demo.sh --live     live — real endpoints only, no fallback anywhere. An
 #                        unreachable service fails the run and names it.

@@ -100,7 +100,7 @@ class CommunicationAgent:
 
         if self.simulated:
             doc.banner('Simulated run — nothing was patched',
-                       'Ansible Orchestrator was not reachable, so remediation ran in '
+                       'Automation Orchestrator was not reachable, so remediation ran in '
                        'the local simulator. No host was changed and these executions '
                        'exist in no AO instance. This report is for demonstration only.',
                        AMBER)

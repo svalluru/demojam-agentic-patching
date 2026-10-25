@@ -2,7 +2,7 @@
 
 A **Supervisor agent** orchestrating specialist agents per CVE: a console UI, an
 XGBoost risk model on OpenShift, a Milvus + Llama Stack RAG store, and
-remediation executed by an Ansible Orchestrator workflow.
+remediation executed by an Automation Orchestrator workflow.
 
 > **New here?** Start with **[QUICKSTART.md](QUICKSTART.md)** — clone to running
 > in about a minute, no cluster and no credentials, with a walkthrough of both
@@ -19,7 +19,7 @@ Both open <http://127.0.0.1:8788>.
 
 | | |
 |---|---|
-| [Architecture](#architecture) | The agents, what is built, what lives in Ansible Orchestrator |
+| [Architecture](#architecture) | The agents, what is built, what lives in Automation Orchestrator |
 | [Demo mode](#demo-mode) | Run it with nothing installed. What is staged, what is not real |
 | [Live mode](#live-mode) | Prerequisites, one-command setup, and running it on your laptop or on the cluster |
 | [Using the console](#using-the-console) | The flow, the left panel, the settings panel, the CLI |
@@ -47,7 +47,7 @@ four specialist agents in turn. The agents are stateless.
 | 4 | Results Agent | RAG record + risk-model training row | Done |
 
 Steps 5–10 of the diagram (env gate, playbook, git, AAP sync, schedule,
-remediation) are **not** in this repo. They are an Ansible Orchestrator
+remediation) are **not** in this repo. They are an Automation Orchestrator
 workflow; agent 2 is a client of it, resolved by name from
 `AO_WORKFLOW_NAME`.
 
@@ -82,7 +82,7 @@ Every step serves stored defaults from one file,
 | C2 affected hosts | Insights | 5 hosts for CVE-2024-3094, 2 for CVE-2024-1086 |
 | 1 patch history | Llama Stack / Milvus | Canned per-host summaries |
 | 3 risk score | XGBoost on OpenShift | Heuristic, gated at 55 rather than the model's 30 — the two are not on the same scale |
-| 5–10 remediation | Ansible Orchestrator | Simulated run, local to this console |
+| 5–10 remediation | Automation Orchestrator | Simulated run, local to this console |
 
 The two CVEs route differently on purpose, so one sitting covers both branches:
 
@@ -361,7 +361,7 @@ progress bar cannot tell you which.
 
 ### Checking on the host itself
 
-The console reports what Ansible Orchestrator reports. Worth confirming on
+The console reports what Automation Orchestrator reports. Worth confirming on
 the machine at least once, and worth doing in front of an audience, because
 it is the only step nothing in this repo can fake.
 
@@ -426,7 +426,7 @@ direction *as it happens* rather than after the fact.
 
 **Every lit edge is a logged hop.** The diagram reads `state.events`, the same
 list the trace prints, so it cannot draw a conversation that did not take place.
-One edge is derived — Patching → Ansible Orchestrator, lit from the patch result
+One edge is derived — Patching → Automation Orchestrator, lit from the patch result
 existing, because AO is the only backing service the Supervisor does not trace a
 hop to.
 

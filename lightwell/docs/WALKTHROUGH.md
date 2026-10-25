@@ -138,7 +138,7 @@ MODE=demo BACKEND_PORT=8787 FRONTEND_PORT=8788 \
   CVE_CONSOLE_BACKEND=http://127.0.0.1:8787 python3 server.py &
 ```
 
-Live mode (`./demo.sh --live`) needs a filled-in `.env` with real Insights, risk model, RAG and Ansible Orchestrator settings. See the main README.
+Live mode (`./demo.sh --live`) needs a filled-in `.env` with real Insights, risk model, RAG and Automation Orchestrator settings. See the main README.
 
 ## Checking that it is running
 

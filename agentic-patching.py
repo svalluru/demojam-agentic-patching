@@ -264,7 +264,7 @@ def degraded_reset() -> None:
 #
 #   demo   staged data throughout, no endpoint is contacted. Someone can show
 #          the whole flow without standing up Insights, the risk model, the
-#          RAG store or Ansible Orchestrator.
+#          RAG store or Automation Orchestrator.
 #   live   real endpoints only. No step falls back; an unreachable service
 #          fails the run and says which one. A patch plan built partly from
 #          stored defaults is not something to approve a production change
@@ -1340,7 +1340,7 @@ class InfoAgent:
 # ==========================================================================
 # AGENT 2 — Patching Agent              APPROVE · BUILD · EXECUTE
 #
-# Steps 5-10 live inside the Ansible Orchestrator workflow "DemoJam Agentic
+# Steps 5-10 live inside the Automation Orchestrator workflow "DemoJam Agentic
 # Patching", not in this file. This agent is a client: it triggers that
 # workflow once per affected host and reports what came back.
 #
@@ -1683,25 +1683,25 @@ def ao_login() -> str:
     # Before the cache, not after. A token minted in live mode outlives the
     # switch to demo, and returning it here skipped the guard entirely and
     # let the caller open a real connection to AO.
-    circuit('Ansible Orchestrator')
+    circuit('Automation Orchestrator')
     if _ao_token.get('value') and _ao_token['expires'] > time.time() + 30:
         return _ao_token['value']
     if not (AO_URL and AO_USERNAME and AO_PASSWORD):
         raise BackendUnavailable(
-            'Ansible Orchestrator', 'AO_URL / AO_USERNAME / AO_PASSWORD not set',
+            'Automation Orchestrator', 'AO_URL / AO_USERNAME / AO_PASSWORD not set',
             'add them to .env')
     try:
         payload = http_json(f'{AO_URL}/api/v1/auth/login', method='POST',
                             body={'username': AO_USERNAME, 'password': AO_PASSWORD},
                             verify=False, timeout=AO_TIMEOUT)
     except Exception as exc:
-        down = BackendUnavailable('Ansible Orchestrator', exc,
+        down = BackendUnavailable('Automation Orchestrator', exc,
                                   f'check AO_URL is reachable: {AO_URL}')
-        trip('Ansible Orchestrator', down)
+        trip('Automation Orchestrator', down)
         raise down from exc
     token = (payload or {}).get('access_token')
     if not token:
-        raise BackendUnavailable('Ansible Orchestrator', 'no access_token in login response',
+        raise BackendUnavailable('Automation Orchestrator', 'no access_token in login response',
                                  'check AO_USERNAME / AO_PASSWORD')
     _ao_token['value'] = token
     _ao_token['expires'] = time.time() + int((payload or {}).get('expires_in', 900))
@@ -1722,14 +1722,14 @@ def ao_call(path: str, method: str = 'GET', body: Any = None,
             detail = json.loads(exc.read().decode()).get('detail', '')
         except Exception:
             pass
-        raise BackendUnavailable('Ansible Orchestrator', detail or exc,
+        raise BackendUnavailable('Automation Orchestrator', detail or exc,
                                  f'{method} {path} was rejected') from exc
     except Exception as exc:
         # A transport-level failure means the whole service is down, not just
         # this path, so trip the breaker and spare the remaining hosts.
-        down = BackendUnavailable('Ansible Orchestrator', exc,
+        down = BackendUnavailable('Automation Orchestrator', exc,
                                   f'{method} {path} failed')
-        trip('Ansible Orchestrator', down)
+        trip('Automation Orchestrator', down)
         raise down from exc
 
 
@@ -1759,7 +1759,7 @@ class PatchingAgent:
                 return self._workflow_id
         names = [w.get('name') for w in (found or {}).get('resources', [])]
         raise BackendUnavailable(
-            'Ansible Orchestrator', f'workflow {AO_WORKFLOW_NAME!r} not found',
+            'Automation Orchestrator', f'workflow {AO_WORKFLOW_NAME!r} not found',
             f'set AO_WORKFLOW_NAME to one of: {", ".join(filter(None, names))}')
 
     # Node id -> the name the workflow gives it. Class-level because it
@@ -1869,7 +1869,7 @@ class PatchingAgent:
             return run
         exec_id = (created or {}).get('id')
         if not exec_id:
-            raise BackendUnavailable('Ansible Orchestrator', 'no execution id returned',
+            raise BackendUnavailable('Automation Orchestrator', 'no execution id returned',
                                      'check the workflow trigger accepts these inputs')
         return self._await(exec_id, host['host'], group, tuning)
 
@@ -2290,7 +2290,7 @@ class PatchingAgent:
         """
         if decision not in ('approved', 'rejected'):
             raise BackendUnavailable(
-                'Ansible Orchestrator', f'invalid decision {decision!r}',
+                'Automation Orchestrator', f'invalid decision {decision!r}',
                 "decision must be 'approved' or 'rejected'")
 
         # Above the branch: the operator issued the decision whichever side
@@ -3634,7 +3634,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting('MODE', 'Mode', 'Mode', 'choice', 'demo',
             'demo: every step runs on staged data and no endpoint is '
             'contacted, so the whole flow can be shown without Insights, the '
-            'risk model, the RAG store or Ansible Orchestrator. '
+            'risk model, the RAG store or Automation Orchestrator. '
             'live: real endpoints only, with no fallback anywhere — if a '
             'service cannot be reached the run fails and names it, because a '
             'patch plan is what a human approves a production change '
@@ -3812,7 +3812,7 @@ SETTINGS: tuple[Setting, ...] = (
             'it if assessments are slow and the model server has headroom; '
             'lower it to 1 for one-at-a-time behaviour.',
             binds='RAG_WORKERS'),
-    Setting('AO_TIMEOUT', 'Timeouts', 'Ansible Orchestrator read', 'int', '10',
+    Setting('AO_TIMEOUT', 'Timeouts', 'Automation Orchestrator read', 'int', '10',
             '', binds='AO_TIMEOUT'),
     Setting('HTTP_TIMEOUT', 'Timeouts', 'Global HTTP ceiling', 'int', '120',
             'Upper bound; the per-service budgets above sit well below it.',
@@ -3858,20 +3858,20 @@ SETTINGS: tuple[Setting, ...] = (
     Setting('DEFAULT_LLM_MODEL', 'RAG', 'Summarisation model', 'str',
             'vllm-inference/deepseek-r1-distill-qwen-14b', '', binds='LLM_MODEL'),
 
-    # --- Ansible Orchestrator --------------------------------------------
-    Setting('AO_URL', 'Ansible Orchestrator', 'Base URL', 'str', '',
+    # --- Automation Orchestrator --------------------------------------------
+    Setting('AO_URL', 'Automation Orchestrator', 'Base URL', 'str', '',
             '', binds='AO_URL'),
-    Setting('AO_USERNAME', 'Ansible Orchestrator', 'Username', 'str', '',
+    Setting('AO_USERNAME', 'Automation Orchestrator', 'Username', 'str', '',
             '', binds='AO_USERNAME'),
-    Setting('AO_PASSWORD', 'Ansible Orchestrator', 'Password', 'str', '',
+    Setting('AO_PASSWORD', 'Automation Orchestrator', 'Password', 'str', '',
             'Write-only. Leave blank to keep the current value.',
             secret=True, binds='AO_PASSWORD'),
-    Setting('AO_WORKFLOW_NAME', 'Ansible Orchestrator', 'Workflow name', 'str',
+    Setting('AO_WORKFLOW_NAME', 'Automation Orchestrator', 'Workflow name', 'str',
             'RHEL CVE Remediation - Intelligent Patching - Demo Jam',
             'The workflow that owns steps 5-10.', binds='AO_WORKFLOW_NAME'),
-    Setting('AO_TRIGGER_NODE', 'Ansible Orchestrator', 'Trigger node', 'str',
+    Setting('AO_TRIGGER_NODE', 'Automation Orchestrator', 'Trigger node', 'str',
             'trigger_manual', '', binds='AO_TRIGGER_NODE'),
-    Setting('WARM_AFFECTED', 'Ansible Orchestrator', 'Warm the CVE cache',
+    Setting('WARM_AFFECTED', 'Automation Orchestrator', 'Warm the CVE cache',
             'bool', 'true',
             'After an assessment, quietly ask Insights for the CVE\'s '
             'affected systems. Nothing here needs the answer: the lab MCP '
@@ -3879,9 +3879,9 @@ SETTINGS: tuple[Setting, ...] = (
             '20s cold against 0.2s warm — longer than the MCP client waits. '
             'Warming it during the assessment spends that time while the '
             'operator is reading the plan.', binds='WARM_AFFECTED'),
-    Setting('LAB_TAG', 'Ansible Orchestrator', 'Lab tag', 'str', '',
+    Setting('LAB_TAG', 'Automation Orchestrator', 'Lab tag', 'str', '',
             'Passed to the workflow as lab_tag.', binds='LAB_TAG'),
-    Setting('AO_HOST_SHORTNAME', 'Ansible Orchestrator',
+    Setting('AO_HOST_SHORTNAME', 'Automation Orchestrator',
             'Send short hostname', 'bool', 'true',
             'Send the first label of the Insights display name to the '
             'workflow, so an FQDN still matches an AAP inventory host named '

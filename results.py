@@ -107,13 +107,13 @@ class ResultsAgent:
             f'CVE: {cve} ({state.get("description", "")[:120].rstrip()}'
             f'{", CVSS " + str(state.get("cvss")) if state.get("cvss") else ""})',
             f'Change type: {result.get("group", "unknown")} via '
-            f'{(state.get("patch") or {}).get("workflow", "Ansible Orchestrator")}',
+            f'{(state.get("patch") or {}).get("workflow", "Automation Orchestrator")}',
             f'Result: {verdict}',
             '',
         ]
         if result.get('simulated'):
             lines += [
-                'NOTE: simulated run. Ansible Orchestrator was unreachable, so this',
+                'NOTE: simulated run. Automation Orchestrator was unreachable, so this',
                 'outcome was produced by the local simulator. No change was made to',
                 'the host. Do not treat this record as evidence of a real patch.',
                 '',

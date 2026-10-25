@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create (or update) the patching workflow in Ansible Orchestrator from
+# Create (or update) the patching workflow in Automation Orchestrator from
 # demojam_lab_workflow.json, and publish it.
 #
 #   ./ao-setup/create-ao-workflow.sh

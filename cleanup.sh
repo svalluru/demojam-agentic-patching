@@ -134,7 +134,7 @@ fi
 # ---------------------------------------------------------------------- ao
 
 if ! $SKIP_AO; then
-  step "Ansible Orchestrator"
+  step "Automation Orchestrator"
   # Workflow first: it references the credential and integration, and they
   # cannot be removed while something still uses them.
   "$ROOT/ao-setup/create-ao-workflow.sh" --delete || FAILED=$((FAILED+1))

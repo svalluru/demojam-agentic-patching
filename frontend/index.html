@@ -2320,7 +2320,7 @@
                 there — claim the branch, not the release.</li>
             <li><strong>Do not promise the infrastructure workflow against a controller nobody
                 has set up.</strong> Two of the three job templates it calls belong to the lab
-                and exist nowhere else, so pointing it at a customer's own Ansible Orchestrator
+                and exist nowhere else, so pointing it at a customer's own Automation Orchestrator
                 fails part way through an approved run. Check what is there before you offer
                 it.</li>
             <li><strong>Do not present agents 3 and 4 as coming soon with a date.</strong> They
@@ -2912,7 +2912,7 @@ const STAGES = [
   { key: 'approve', label: 'Approval', icon: ICON.approve,
     tip: 'The human gate. Skipped entirely when no host crosses the threshold.' },
   { key: 'patch',   label: 'Patch',    icon: ICON.patch,
-    tip: 'Steps 5–10, one Ansible Orchestrator workflow run per host.' },
+    tip: 'Steps 5–10, one Automation Orchestrator workflow run per host.' },
 ];
 
 // Agents 3 and 4 branch off Patch rather than queueing behind it. Neither
@@ -3591,7 +3591,7 @@ function simNotice(n) {
   if (!n || !showSrc()) return '';
   return `<div class="degraded">
     <div class="deg-title">${n} simulated run${n > 1 ? 's' : ''} &mdash; nothing was patched</div>
-    <div class="deg-sub">Ansible Orchestrator was unreachable, so steps 5&ndash;10 ran in the
+    <div class="deg-sub">Automation Orchestrator was unreachable, so steps 5&ndash;10 ran in the
       local simulator. These executions do not exist in AO and no host was changed.
       Set <code>FALLBACK_PATCH=unavailable</code> to stop instead of simulating.</div>
   </div>`;
@@ -4508,7 +4508,7 @@ function renderPatch(s) {
 }
 
 // Hands the approved plan to the Patching Agent, which triggers the
-// Ansible Orchestrator workflow once per host.
+// Automation Orchestrator workflow once per host.
 async function startRemediation(cveId) {
   const el = document.getElementById('patch-result');
   const btn = document.getElementById('head-patch');
@@ -4671,7 +4671,7 @@ async function startPatch(from) {
 }
 
 // ---- Patch runs view -----------------------------------------------------
-// Read live from Ansible Orchestrator, so a run that failed after the console
+// Read live from Automation Orchestrator, so a run that failed after the console
 // stopped polling shows its real status here rather than a stale one.
 
 // 'approved_patch' and 'auto_patch' are the AO workflow's routing input —
@@ -5681,7 +5681,7 @@ function renderRoi(roi) {
              simulated.`
           : `${esc(roi.infra.measured.simulated)} of ${esc(roi.infra.measured.hosts)}
              host(s) were not patched — the fallback simulated them.`}</b>
-      Ansible Orchestrator was unreachable, so the fallback stood in for it.
+      Automation Orchestrator was unreachable, so the fallback stood in for it.
       The clocks on this page are real wall time, unlike offline, but at least
       part of what they timed is this console failing over rather than a host
       being patched — so the speed figures are not a benchmark either.` : `
@@ -5869,7 +5869,7 @@ async function showRuns() {
   });
   el.innerHTML = `
     ${(d.degraded && showSrc()) ? `<div class="degraded">
-      <div class="deg-title">Ansible Orchestrator unreachable &mdash; simulated runs only</div>
+      <div class="deg-title">Automation Orchestrator unreachable &mdash; simulated runs only</div>
       <div class="deg-sub">This list is the local simulator's history. Real AO executions are
         missing from it, so do not read it as the full record.
         <span class="deg-fix">${esc(d.degraded)}</span></div></div>` : ''}
@@ -5894,8 +5894,8 @@ async function showRuns() {
     : emptyState('No patch runs yet',
                  'Assess a CVE and start a patch — runs appear here, newest first.')}
     <div class="note">${(MODE.mode === 'demo' && showSrc())
-      ? 'Simulated runs from this console only — no Ansible Orchestrator was contacted and no host was changed.'
-      : 'Read live from Ansible Orchestrator — includes runs started outside this console.'}
+      ? 'Simulated runs from this console only — no Automation Orchestrator was contacted and no host was changed.'
+      : 'Read live from Automation Orchestrator — includes runs started outside this console.'}
       ${reports.length ? `Reports are written by the Communication Agent when a run pauses
       for approval and again when it completes; one covers every host of that CVE's run.`
       : 'No reports written yet.'}</div>
@@ -5939,7 +5939,7 @@ async function showRunDetail(execId) {
     host.innerHTML = `<div class="sev-title high" style="margin-top:18px">Execution
       <span class="c">${esc(execId.slice(0, 8))}</span></div>
       ${emptyState('Could not read this execution',
-                   'Ansible Orchestrator did not return it. It may have been cancelled, '
+                   'Automation Orchestrator did not return it. It may have been cancelled, '
                    + 'or the orchestrator may be unreachable.')}`;
     return;
   }
@@ -6280,7 +6280,7 @@ function settingField(s) {
 // own behaviour, and sits behind Advanced so the pane someone opens to check
 // a URL is not fifteen rows of timeouts first.
 const ENDPOINT_GROUPS = new Set(
-  ['Insights', 'Risk model', 'RAG', 'Ansible Orchestrator']);
+  ['Insights', 'Risk model', 'RAG', 'Automation Orchestrator']);
 
 function renderSettings() {
   const ends = document.getElementById('settings-endpoints');

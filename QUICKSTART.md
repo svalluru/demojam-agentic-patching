@@ -231,7 +231,7 @@ thing and, by default, says nothing on the page to the contrary.
 | Not real | The CVEs, the hostnames, the risk scores, the patch history text, the workflow executions, the manual baseline the ROI page compares against |
 
 **Nothing is patched and no host exists.** The workflow runs are resolved
-inside this process. They do not appear in Ansible Orchestrator and never
+inside this process. They do not appear in Automation Orchestrator and never
 touch a machine.
 
 The run history is stored in `runs/simulated.json`. Delete that file to reset

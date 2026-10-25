@@ -314,7 +314,7 @@ fi
 # ---------------------------------------------------------------------- ao
 
 if ! $SKIP_AO; then
-  step "Ansible Orchestrator — credentials, integrations, workflow"
+  step "Automation Orchestrator — credentials, integrations, workflow"
   run "'$ROOT/ao-setup/create-ao-objects.sh'"
   # The workflow the console actually dispatches to. This used to create a
   # one-node test workflow instead, so setup.sh finished successfully and

@@ -256,7 +256,7 @@ def verify_check(host: str, inputs: dict[str, Any] | None) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- step 5-10
 
-# Agent 2 hands steps 5-10 to Ansible Orchestrator. When AO is down there are
+# Agent 2 hands steps 5-10 to Automation Orchestrator. When AO is down there are
 # two possible fallbacks and the choice is a policy one:
 #
 # Demo mode runs the workflow locally so the console can be demonstrated end
@@ -356,7 +356,7 @@ def patch_simulated(cve_id: str, host: str, group: str, reason: str,
         'inputs': dict(inputs or {}),
         'verify': None if pending else verdict,
         'degraded': True, 'source': 'fallback', 'simulated': True,
-        'reason': f'Ansible Orchestrator unreachable: {reason}',
+        'reason': f'Automation Orchestrator unreachable: {reason}',
         'url': '',
     }
 
@@ -367,7 +367,7 @@ def patch_unavailable(host: str, group: str, reason: str) -> dict[str, Any]:
         'status': 'not_dispatched', 'outcome': 'unavailable',
         'approval_pending': False, 'approval_activity_id': '',
         'matched_port': '', 'steps': [],
-        'error': f'Ansible Orchestrator unreachable: {reason}',
+        'error': f'Automation Orchestrator unreachable: {reason}',
         'degraded': True, 'source': 'fallback', 'simulated': True, 'url': '',
     }
 
@@ -392,7 +392,7 @@ def simulate_patch() -> bool:
 #
 # The automated side is the opposite — it comes from this run's own clock.
 # That clock only measures patching if something was patched: offline it is
-# DEMO_LATENCY rather than work, and live with Ansible Orchestrator down it is
+# DEMO_LATENCY rather than work, and live with Automation Orchestrator down it is
 # real time spent failing over to patch_simulated() below. The report marks
 # itself illustrative in both cases and says which.
 #
