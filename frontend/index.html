@@ -1529,7 +1529,7 @@
      architecture panel gives them, so the two diagrams agree about which
      boxes are ours. Two lines now: the product's actual name, and one line
      saying what it is for, because "REASONING" tells a room nothing and
-     "Llama Stack + Milvus" tells them everything. */
+     "OGX + Milvus" tells them everything. */
   /* A platform two of the services are served off, not a service itself:
      dashed and unfilled so it reads as an enclosure, and no arrow ever ends
      on it. Same treatment as the live architecture panel's group, so the two
@@ -2492,7 +2492,7 @@
             front of them is more convincing than any claim about where it sits.</span></div>
 
           <div class="g-qa"><b>“Where does the patch history come from?”</b>
-            <span>A vector store — Milvus with Llama Stack in front of it — queried per host, and
+            <span>A vector store — Milvus with OGX in front of it — queried per host, and
             only for hosts that need review. The model is XGBoost, served on OpenShift.</span></div>
 
           <div class="g-qa"><b>“How do we know the agent did what you say it did?”</b>
@@ -6935,7 +6935,7 @@ const FLOW_INFRA = {
 
     { c: 2, lane: 1, cls: 'svc rh', t: 'RED HAT INSIGHTS' },
     { c: 3, lane: 1, cls: 'svc rh', t: 'RISK MODEL', s: 'XGBoost · KServe' },
-    { c: 4, lane: 1, cls: 'svc rh', t: 'REASONING', s: 'Llama Stack · Milvus' },
+    { c: 4, lane: 1, cls: 'svc rh', t: 'REASONING', s: 'OGX · Milvus' },
     { c: 6, lane: 1, cls: 'svc rh', t: 'ORCHESTRATOR',
       s: 'Automation Orchestrator' },
     { c: 7, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
@@ -6972,7 +6972,7 @@ const FLOW_INFRA = {
       ny: (FDG.spineY + FDG.vcY) / 2, cx: fcx(4),
       from: 'Score', to: 'Reasoning',
       s: 'The same agent reads what happened the last time each host was '
-       + 'patched. Llama Stack over a Milvus store.' },
+       + 'patched. OGX over a Milvus store.' },
     hop(3, 4, '7', 'Score', 'Plan',
       'Scores land either side of the risk gate, which decides whether a '
       + 'person is involved at all.'),
