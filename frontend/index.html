@@ -2800,6 +2800,9 @@ const esc = v => {
   if (v === null || v === undefined || v === '') return '—';
   const d = document.createElement('span'); d.textContent = String(v); return d.innerHTML;
 };
+// The workflow's display name. AO resolves it by its full name, which ends in
+// "- Demo Jam" on the lab; that suffix is ours, not something to put on screen.
+const wfLabel = n => String(n || '').replace(/\s*-\s*Demo Jam\s*$/i, '');
 const severity = cvss => {
   const n = parseFloat(cvss);
   if (isNaN(n)) return 'low';
@@ -4743,7 +4746,7 @@ function renderPatch(s) {
   // stale one silently stopped updating.
   document.getElementById('patch-stats').innerHTML = `
     <div class="sev-title high" style="margin-top:18px">
-      Patching Agent &mdash; ${esc(p.workflow)}<span class="c">${(p.results||[]).length}</span>
+      Patching Agent &mdash; ${esc(wfLabel(p.workflow))}<span class="c">${(p.results||[]).length}</span>
     </div>
     <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(92px,1fr))">
       <div class="stat"><div class="v">${esc(sum.patched)}</div><div class="k">Patched</div></div>
@@ -6127,7 +6130,7 @@ async function showRuns() {
   // how the way back to a parked plan disappeared the moment the runs loaded.
   frameHead({
     title: 'Patch runs',
-    sub: `<span>${esc(d.workflow)}</span><span>last ${runs.length} run(s)</span>`,
+    sub: `<span>${esc(wfLabel(d.workflow))}</span><span>last ${runs.length} run(s)</span>`,
     refresh: true, resume: true,
   });
   el.innerHTML = `
