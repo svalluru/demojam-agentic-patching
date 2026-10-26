@@ -4746,7 +4746,7 @@ function renderPatch(s) {
   // stale one silently stopped updating.
   document.getElementById('patch-stats').innerHTML = `
     <div class="sev-title high" style="margin-top:18px">
-      Patching Agent &mdash; ${esc(wfLabel(p.workflow))}<span class="c">${(p.results||[]).length}</span>
+      ${esc(wfLabel(p.workflow))}<span class="c">${(p.results||[]).length}</span>
     </div>
     <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(92px,1fr))">
       <div class="stat"><div class="v">${esc(sum.patched)}</div><div class="k">Patched</div></div>
