@@ -89,16 +89,17 @@ what to say, what you will be asked, and what not to claim. `Esc` closes it and
 it does not disturb a run, so you can reopen it mid-demo.
 
 The **flow icon** between the book and the gear draws the whole thing: one
-diagram per side of the toggle, with the stages down the middle, the named
-product each one calls on the right, the approval gate, and the
-recovery arc that side takes when something goes wrong. Every box says who
-does it — the Supervisor, one of the four agents, a piece of common code, or
-you — and every arrow is numbered, so the room can follow a run with a finger
-rather than take your word for the order. The boxes carry names and nothing
-else; each numbered step is written out underneath the drawing, which keeps
-the picture legible on a projector and the detail to hand when somebody asks
-for it. It opens on the side you are already on. Static, so it works with
-every backend down.
+diagram per side of the toggle, read left to right in the order a run
+happens. The stages run across the middle, the named product each one calls
+sits in the lane above it, and the recovery arc that side takes when
+something goes wrong loops back over the top. Every box says who does it —
+the Supervisor, one of the four agents, a piece of common code, or you — and
+every arrow carries its step number on one side of the line and what happens
+at that step on the other, so the room can follow a run with a finger rather
+than take your word for the order, and you can point at one arrow instead of
+counting down a list. It takes the whole window, which is what ten columns of
+boxes and captions need to stay legible on a projector. It opens on the side
+you are already on. Static, so it works with every backend down.
 
 It is colour coded, with the key printed under the drawing: **red** is a Red
 Hat product, **blue** is an agent this repo runs, **amber** is the one stage a

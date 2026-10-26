@@ -1514,16 +1514,16 @@
      on screen, so scaling the type pushes it out of boxes that stayed the
      same width. The drawing grows with the drawer instead. */
   .fd { display: block; width: 100%; height: auto; }
-  .fd .b rect { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
-  .fd .b .t { font-size: 11px; font-weight: 800; letter-spacing: .4px;
+  .fd .b rect { fill: var(--panel); stroke: var(--border); stroke-width: 1.8; }
+  .fd .b .t { font-size: 17px; font-weight: 800; letter-spacing: .5px;
               fill: var(--text); }
-  .fd .b .s { font-size: 9.2px; fill: var(--muted); }
+  .fd .b .s { font-size: 13px; fill: var(--muted); }
   /* Who does this stage — an agent, a piece of common code, or you. Set in
      the corner opposite the stage name and in the muted grey, because it
      answers a second question: you read the column first and come back for
      the names. Tracked out and small rather than big and bold, which is what
      keeps nine of them from competing with the nine titles beside them. */
-  .fd .b .k { font-size: 8.2px; font-weight: 700; letter-spacing: .6px;
+  .fd .b .k { font-size: 12px; font-weight: 700; letter-spacing: .8px;
               fill: var(--muted); }
   /* Backing services — the things this repo does not own. Same tint the
      architecture panel gives them, so the two diagrams agree about which
@@ -1534,13 +1534,13 @@
      dashed and unfilled so it reads as an enclosure, and no arrow ever ends
      on it. Same treatment as the live architecture panel's group, so the two
      diagrams keep agreeing with each other. */
-  .fd .gp rect { fill: none; stroke: var(--border); stroke-width: 1.2;
-                 stroke-dasharray: 3.5 3; }
-  .fd .gp .t { font-size: 8.2px; font-weight: 700; letter-spacing: .6px;
+  .fd .gp rect { fill: none; stroke: var(--border); stroke-width: 1.8;
+                 stroke-dasharray: 5.5 4.5; }
+  .fd .gp .t { font-size: 12px; font-weight: 700; letter-spacing: .8px;
                fill: var(--muted); opacity: .85; }
   .fd .b.svc rect { fill: var(--surface); }
-  .fd .b.svc .t { font-size: 9.5px; letter-spacing: .45px; fill: var(--muted); }
-  .fd .b.svc .s { font-size: 8px; }
+  .fd .b.svc .t { font-size: 14px; letter-spacing: .6px; fill: var(--muted); }
+  .fd .b.svc .s { font-size: 11.5px; }
 
   /* ---- the three colours, and the one rule behind them ----
      A box is coloured by who or what it is, never by how it is going:
@@ -1569,7 +1569,7 @@
   /* The approval gate. Heavier than the other two because it is the one box
      the run stops inside, and the chip reads YOU, so it takes the colour as
      well — same claim, same colour. */
-  .fd .b.gate rect { fill: var(--tint-a); stroke: var(--amber); stroke-width: 1.6; }
+  .fd .b.gate rect { fill: var(--tint-a); stroke: var(--amber); stroke-width: 2.4; }
   .fd .b.gate .t, .fd .b.gate .k { fill: var(--amber); }
   /* The platform is a Red Hat product too; it just happens to be drawn as an
      enclosure rather than a box. Dashed either way. */
@@ -1580,12 +1580,12 @@
      the badge sits on the connector it numbers, and a line running visibly
      through a digit is the one thing on this drawing that has to stay
      legible from the back of a room. */
-  .fd .n circle { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
-  .fd .n text { font-size: 8.5px; font-weight: 800; fill: var(--text); }
+  .fd .n circle { fill: var(--panel); stroke: var(--border); stroke-width: 1.8; }
+  .fd .n text { font-size: 13px; font-weight: 800; fill: var(--text); }
   .fd .n.alt circle { fill: var(--tint-a); stroke: var(--amber); }
   .fd .n.alt text { fill: var(--amber); }
 
-  .fd .e { fill: none; stroke: var(--text); stroke-width: 1.25; opacity: .72;
+  .fd .e { fill: none; stroke: var(--text); stroke-width: 1.9; opacity: .72;
            stroke-linecap: round; stroke-linejoin: round; }
   /* The recovery arc: dashed because it is the path a run takes only when
      something went wrong, amber because taking it is a person pressing a
@@ -1593,8 +1593,7 @@
      story of that arc in one colour. It was red until red was spent on Red
      Hat products; an arc that stayed red would now be claiming to be one.
      Both sides have exactly one. */
-  .fd .e.alt { stroke: var(--amber); stroke-dasharray: 4 3; opacity: .9; }
-  .fd .lbl { font-size: 8.6px; fill: var(--amber); }
+  .fd .e.alt { stroke: var(--amber); stroke-dasharray: 6 4.5; opacity: .9; }
 
   .fd-wrap { border: 1px solid var(--border); border-radius: var(--r);
              background: var(--panel); box-shadow: var(--sh-1); padding: 14px; }
@@ -1623,33 +1622,28 @@
   .fd-key i.gp   { border-style: dashed; border-color: var(--red);
                    background: none; }
 
-  /* The step list, under the drawing rather than inside its boxes. Nine boxes
-     each holding three lines of prose was a wall of text at the size the
-     drawing renders, and what a room needs off a picture is the shape. The
-     number is the only index between the two, so it is drawn the same in both
-     places — same circle, same border, same red for the recovery arc — and
-     both come off one array, so a number cannot come to mean two different
-     things. Unlike the drawing this text does scale with --ts: it is real
-     HTML and it reflows. */
-  .fd-steps { list-style: none; margin: 18px 0 0; padding: 0;
-              display: grid; gap: 9px; }
-  .fd-steps li { display: grid; grid-template-columns: 20px 1fr; gap: 11px;
-                 align-items: start; font-size: calc(11.5px * var(--ts));
-                 line-height: 1.5; color: var(--muted); }
-  .fd-steps .sn { display: grid; place-items: center; width: 20px; height: 20px;
-                  border-radius: 50%; border: 1px solid var(--border);
-                  background: var(--panel); font-size: calc(10px * var(--ts));
-                  font-weight: 800; color: var(--text); }
-  .fd-steps li.alt .sn { border-color: var(--amber); background: var(--tint-a);
-                         color: var(--amber); }
-  .fd-steps b { color: var(--text); font-weight: 700; }
+  /* Each step's description, under the arrow it belongs to. It used to be a
+     numbered list below the whole picture; it is here now because the thing a
+     room wants to know is what *this* arrow does, and a list makes them count
+     down to find out.
+
+     foreignObject rather than <text> so the prose wraps and keeps its
+     <strong> and <em>. That means it scales with the drawing rather than with
+     --ts — the price of living inside the viewBox — so it is set a touch
+     larger than it would be as page copy. Two descriptions a half-column
+     apart would print on top of each other, which layoutCaps() prevents by
+     dropping the second one to the next row; nothing here needs to know. */
+  .fd-c { font: 400 13.5px/1.46 var(--sans); color: var(--muted); }
+  .fd-c b { display: block; color: var(--text); font-weight: 700;
+            letter-spacing: .1px; margin-bottom: 2px; }
   /* The arrow between the two ends of a hop stays grey while the names go
      black, so the pair reads as two things rather than one long name. */
-  .fd-steps .ar { color: var(--muted); font-weight: 400; }
+  .fd-c b i { color: var(--muted); font-style: normal; font-weight: 400; }
+  .fd-c.alt b { color: var(--amber); }
+  .fd-c strong { color: var(--text); font-weight: 700; }
 
-  .fd-cap { margin-top: 13px; font-size: calc(11.5px * var(--ts));
+  .fd-cap { margin-top: 15px; font-size: calc(11.5px * var(--ts));
             line-height: 1.55; color: var(--muted); }
-  .fd-steps + .fd-cap { margin-top: 18px; }
   .fd-cap + .fd-cap { margin-top: 7px; }
   .fd-cap strong { color: var(--text); font-weight: 700; }
 
@@ -1753,6 +1747,13 @@
   /* The guide is read, not filled in, so it gets a reading measure rather
      than the settings drawer's two-column width. */
   .drawer.wide { width: min(760px, 100%); }
+  /* The flow drawer takes the whole window. A diagram that runs left to right
+     across ten columns has a width it needs, and the choice is between giving
+     it the screen or shrinking it until the labels stop being readable. It is
+     a drawing you open, look at and close — nothing underneath it is being
+     referred to while it is up — so there is nothing to lose by covering the
+     page. The left border goes with the gutter. */
+  .drawer.full { width: 100%; border-left: 0; }
   .drawer {
     width: min(620px, 100%); height: 100%;
     background: var(--panel); border-left: 1px solid var(--border);
@@ -2199,13 +2200,14 @@
             <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-run — it
                 does not disturb anything.</li>
             <li>The <strong>flow icon</strong> between this book and the gear is one diagram
-                per side of the toggle: the stages down the middle, the product each one
-                calls on the right, the approval gate, and the recovery arc. Every box
-                names who does it — the Supervisor, one of the four agents, common code,
-                or you — and every arrow carries its step number. The boxes hold nothing
-                but names: each numbered step is written out in full underneath, so the
-                picture stays readable across a room and the detail is there when
-                somebody asks for it. It opens on the side you are already on. That is
+                per side of the toggle, and it reads left to right the way the run
+                happens: the stages across the middle, the product each one calls in the
+                lane above, the approval gate, and the recovery arc over the top. Every
+                box names who does it — the Supervisor, one of the four agents, common
+                code, or you — and every arrow carries its step number on one side of the
+                line and what happens at that step on the other, so you can put a finger
+                on one arrow and read only that. It takes the whole window, because ten
+                columns of this need the room, and it opens on the side you are already on. That is
                 the thing to put up when somebody asks what is actually happening,
                 rather than drawing it on a whiteboard mid-demo.</li>
             <li><strong>The colours are a second slide inside the first one.</strong>
@@ -2578,7 +2580,7 @@
      question in the room cannot be waiting on a fetch. It is also the only
      view here that is true before a run rather than because of one. -->
 <div class="drawer-scrim" id="flow-scrim" hidden>
-  <aside class="drawer wide" role="dialog" aria-modal="true" aria-labelledby="flow-title">
+  <aside class="drawer full" role="dialog" aria-modal="true" aria-labelledby="flow-title">
     <div class="drawer-head">
       <h2 id="flow-title">How the demo works</h2>
       <button class="icon-btn" id="close-flow" title="Close" aria-label="Close">✕</button>
@@ -3652,8 +3654,8 @@ function renderArch(s) {
   }
 
   const arrow = (id, fill, op) =>
-    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5"
-       markerHeight="5" orient="auto"><path d="M0,1 L7.2,4 L0,7 Z"
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5"
+       markerHeight="6.5" orient="auto"><path d="M0,1 L7.2,4 L0,7 Z"
        fill="${fill}" fill-opacity="${op}"></path></marker>`;
 
   return `<div>
@@ -6818,277 +6820,283 @@ document.getElementById('guide-scrim').addEventListener('click', e => {
 // here was measured against its box before it was written; the widest
 // subtitle lands at 266 of the 306 available, which is the margin that lets
 // this survive a font fallback.
+/* ---- flow diagram geometry ------------------------------------------------
+
+   Left to right, because that is the order a run happens in and the order a
+   room reads. The spine crosses the page, the products each stage calls sit
+   in a lane above it, and every arrow carries its number and its description.
+
+   Where that description goes depends on which way the arrow points. A hop
+   along the spine is horizontal, so its text hangs underneath it in a band at
+   the foot of the drawing. A call up into the product lane is vertical, and
+   text under a vertical arrow would be text under the box it points away
+   from — so those sit beside the line instead, with the number on the other
+   side of it. The arrow always has its number on one hand and its sentence on
+   the other, whichever way it is pointing.
+
+   Nothing is hand-placed. Boxes are given a column, the pitch does the rest,
+   and the edge helpers read their endpoints back out of the same geometry —
+   which is what keeps sixteen arrows landing on the right edges when a width
+   changes, instead of sixteen numbers needing to be found and nudged.        */
+const FDG = {
+  x0: 30,          // left margin
+  bw: 150, bh: 64, // a spine box: title, then up to two lines of actor chip
+  gap: 70,         // the space an arrow crosses
+  svcY: 56, svcH: 46,
+  // The spine sits well below the product lane, and the distance between them
+  // is not slack: it is the column a vertical arrow's description stands in.
+  spineY: 288,
+  // The description beside a vertical arrow. It starts below the deepest
+  // thing in the product lane — the dashed platform, not the boxes — because
+  // a sentence with an enclosure's border ruled through its first line is a
+  // sentence nobody reads twice.
+  vcY: 122, vcH: 158, vcW: 170,
+  capW: 196,                      // the band of descriptions under the spine
+  lh: 20,                         // one line of caption, in viewBox units
+  arcY: 16,        // the recovery arc, routed over the top of everything
+};
+const FDP = FDG.bw + FDG.gap;              // column pitch
+const fx  = c => FDG.x0 + c * FDP;         // left edge of column c
+const fcx = c => fx(c) + FDG.bw / 2;       // its centre line
+const FDM = FDG.spineY + FDG.bh / 2;       // the spine's own midline
+// The band starts below the spine *and* below the recovery arc's return leg,
+// which passes under the last two boxes on its way out to the right.
+FDG.arcRet = FDG.spineY + FDG.bh + 34;
+FDG.capY = FDG.arcRet + 24;
+
+// A hop along the spine. Number above the line, description below it.
+function hop(a, b, n, from, to, s) {
+  const x = (fx(a) + FDG.bw + fx(b)) / 2;
+  return { d: `M${fx(a) + FDG.bw},${FDM} L${fx(b) - 9},${FDM}`,
+           n, nx: x, ny: FDM - 23, cx: x, from, to, s };
+}
+
+// A hop between two products, inside the lane above the spine. Same shape,
+// one lane up, and its description still goes to the band at the foot: it is
+// horizontal, so the rule does not change.
+function lane(a, b, n, from, to, s) {
+  const y = FDG.svcY + FDG.svcH / 2, x = (fx(a) + FDG.bw + fx(b)) / 2;
+  return { d: `M${fx(a) + FDG.bw},${y} L${fx(b) - 9},${y}`,
+           n, nx: x, ny: y - 23, cx: x, from, to, s };
+}
+
+// A call up into the product lane. `side` is which hand the description
+// stands on, +1 right and -1 left; the number takes the other. Left exists
+// for the two risers that sit a half-column apart under OpenShift AI, where
+// everything wants the same strip of white space.
+function up(c, n, from, to, s, side = 1) {
+  const x = fcx(c);
+  return { d: `M${x},${FDG.spineY} L${x},${FDG.svcY + FDG.svcH + 9}`,
+           vert: 1, side, n, nx: x - 22 * side, ny: FDG.spineY - 28,
+           cx: x, from, to, s };
+}
+
+// The one call that comes back the other way: the host is re-read, and the
+// answer lands on Verify.
+function down(c, n, from, to, s, side = 1) {
+  const x = fcx(c);
+  return { d: `M${x},${FDG.svcY + FDG.svcH} L${x},${FDG.spineY - 9}`,
+           vert: 1, side, n, nx: x - 22 * side, ny: FDG.spineY - 28,
+           cx: x, from, to, s };
+}
+
+// The recovery arc: out of the stage that can go wrong, over the top of the
+// whole drawing — the only lane with nothing in it — and down into the gate,
+// because a retry is approved again. It is vertical where it lands, so its
+// description stands beside that descent like any other vertical arrow.
+function arc(from_c, to_c, lastCol, from, to, s) {
+  const turn = fx(lastCol) + FDG.bw + 30, x = fcx(to_c);
+  return { d: `M${fcx(from_c)},${FDG.spineY + FDG.bh} `
+            + `L${fcx(from_c)},${FDG.arcRet} L${turn},${FDG.arcRet} `
+            + `L${turn},${FDG.arcY} L${x},${FDG.arcY} L${x},${FDG.spineY - 9}`,
+           vert: 1, side: 1, alt: 1, n: 'R', nx: x - 22, ny: FDG.arcY + 40,
+           cx: x, from, to, s };
+}
+
 const FLOW_INFRA = {
-  // Cropped to what is drawn — 60 to 686, against content that runs 68 to
-  // 678 — rather than starting at 0, which spent a tenth of the width on
-  // blank left margin. Both sides share the width so the tab switch does not
-  // resize a single box; only the height differs.
-  vb: '60 0 626 518',
-  // Boxes carry names and nothing else: the stage, and a chip saying who does
-  // it. Nine boxes each holding three lines of prose was a wall of text, and
-  // what a room needs off the picture is the shape — the prose is the
-  // numbered list underneath, and the step number is the index between them.
-  //
-  // `cls` is what the box *is*, which is also what colours it: 'ag' an agent
-  // this repo runs, 'rh' a Red Hat product, 'gate' the one box a person is
-  // inside, and nothing at all for everything else. The key under the drawing
-  // prints exactly that list.
-  //
-  // One rule decides a stage box, and it is "who runs this", not "what does
-  // this call": agents stay blue even where the thing they call is red, which
-  // is why SCORE is blue while the two boxes it reaches are not. Products
-  // take red wherever they run a stage, not only where they are drawn as a
-  // service — a chip reading THE AO WORKFLOW on a grey box beside a red
-  // ORCHESTRATOR would just make the key look unreliable.
-  //
-  // ASSESS is the one that stays deliberately plain. It is common code: not
-  // an agent, not a product, and colouring it either would overclaim, which
-  // is the one thing a diagram in front of a customer must not do.
+  cols: 10,
+  // Column 7 is deliberately empty. Between the dispatch and the verify the
+  // run is not in this repo at all — it is inside somebody else's workflow,
+  // which is drawn in the lane above — and a spine that quietly continues
+  // through that stretch would be claiming otherwise.
   boxes: [
-    { x: 102, y: 10,  w: 296, h: 30, t: 'CONSOLE', k: 'YOU' },
-    { x: 102, y: 62,  w: 296, h: 30, t: 'SUPERVISOR AGENT', cls: 'ag' },
-    { x: 102, y: 114, w: 296, h: 30, t: '1 · ASSESS',   k: 'COMMON CODE' },
-    { x: 102, y: 166, w: 296, h: 30, t: '2 · SCORE',    k: 'AGENT 1 · CVE-GATHER-INFO', cls: 'ag' },
-    { x: 102, y: 218, w: 296, h: 30, t: '3 · PLAN',     k: 'AGENT 1 · CVE-GATHER-INFO', cls: 'ag' },
-    { x: 102, y: 270, w: 296, h: 30, t: '4 · APPROVAL', k: 'YOU', cls: 'gate' },
-    { x: 102, y: 322, w: 296, h: 30, t: '5 · PATCH',    k: 'AGENT 2 · PATCHING AGENT', cls: 'ag' },
-    // Red for the same reason the box it names is: the Automation
-    // Orchestrator is a Red Hat product, so a stage whose chip reads THE AO
-    // WORKFLOW cannot sit grey next to a red ORCHESTRATOR and leave the room
-    // wondering which of the two the key meant.
-    { x: 102, y: 422, w: 296, h: 30, t: 'VERIFY', k: 'THE AO WORKFLOW', cls: 'rh' },
-    { x: 102, y: 478, w: 143, h: 30, t: 'NOTIFY',       k: 'AGENT 3', cls: 'ag' },
-    { x: 255, y: 478, w: 143, h: 30, t: 'LEARN',        k: 'AGENT 4', cls: 'ag' },
-    // A second line only where the product's own name differs from the label
-    // this console gives it. RED HAT INSIGHTS is both, and repeating it would
-    // be noise.
-    { x: 462, y: 116, w: 216, h: 26, cls: 'svc rh', t: 'RED HAT INSIGHTS' },
-    // Both of these are served off the same platform, so they sit inside one
-    // box that says so. Inset rather than full-width: a group that shares its
-    // left and right edges with its members does not read as containing them.
-    { x: 472, y: 174, w: 196, h: 32, cls: 'svc rh', t: 'RISK MODEL',
-      s: 'XGBoost, served through KServe' },
-    { x: 472, y: 212, w: 196, h: 32, cls: 'svc rh', t: 'REASONING',
-      s: 'Llama Stack + Milvus vector store' },
-    { x: 462, y: 324, w: 216, h: 26, cls: 'svc rh', t: 'AUTOMATION ORCHESTRATOR' },
-    { x: 462, y: 370, w: 216, h: 32, cls: 'svc rh', t: 'RED HAT AAP',
+    { c: 0, t: 'CONSOLE', k: 'YOU' },
+    { c: 1, t: 'SUPERVISOR', k: 'AGENT', k2: 'OWNS THE RUN', cls: 'ag' },
+    { c: 2, t: '1 · ASSESS', k: 'COMMON CODE' },
+    { c: 3, t: '2 · SCORE', k: 'AGENT 1', k2: 'CVE-GATHER-INFO', cls: 'ag' },
+    { c: 4, t: '3 · PLAN', k: 'AGENT 1', k2: 'CVE-GATHER-INFO', cls: 'ag' },
+    { c: 5, t: '4 · APPROVAL', k: 'YOU', cls: 'gate' },
+    { c: 6, t: '5 · PATCH', k: 'AGENT 2', k2: 'PATCHING AGENT', cls: 'ag' },
+    { c: 8, t: 'VERIFY', k: 'THE AO WORKFLOW', cls: 'rh' },
+    // The fork, stacked in one column rather than given two: neither waits on
+    // the other, so they are the same step of the run, not two more of them.
+    { c: 9, t: 'NOTIFY', k: 'AGENT 3', cls: 'ag', h: 30 },
+    { c: 9, t: 'LEARN',  k: 'AGENT 4', cls: 'ag', h: 30, dy: 34 },
+
+    { c: 2, lane: 1, cls: 'svc rh', t: 'RED HAT INSIGHTS' },
+    { c: 3, lane: 1, cls: 'svc rh', t: 'RISK MODEL', s: 'XGBoost · KServe' },
+    { c: 4, lane: 1, cls: 'svc rh', t: 'REASONING', s: 'Llama Stack · Milvus' },
+    { c: 6, lane: 1, cls: 'svc rh', t: 'ORCHESTRATOR',
+      s: 'Automation Orchestrator' },
+    { c: 7, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
       s: 'Ansible Automation Platform' },
-    { x: 462, y: 424, w: 216, h: 26, cls: 'svc rh', t: 'RED HAT ENTERPRISE LINUX' },
+    { c: 8, lane: 1, cls: 'svc rh', t: 'RHEL',
+      s: 'Red Hat Enterprise Linux' },
   ],
-  // The platform behind two of the boxes rather than a box of its own: it
-  // answers no call and appears in no step, which is exactly why drawing it
-  // as a seventh service would be a lie. Agent 1 makes two calls and they
-  // both land on the same cluster.
-  groups: [{ x: 462, y: 152, w: 216, h: 102, t: 'RED HAT OPENSHIFT AI',
-             cls: 'rh' }],
-  // One array drives both the badges on the drawing and the list under it, so
-  // a number can never come to mean two different things. Numbered in the
-  // order the hops happen, service calls included — the point of numbering at
-  // all is that somebody can follow a run with a finger, and a diagram that
-  // numbers only the spine leaves them guessing when the model was asked.
-  // The recovery arc is R rather than 16: it is not the sixteenth thing that
-  // happens, it is the thing that happens instead.
+  // One platform under both of agent 1's calls. Spans two columns now that
+  // the drawing runs sideways, which says the same thing the stacked box said
+  // before: these two are served off one cluster.
+  groups: [{ c: 3, span: 2, t: 'RED HAT OPENSHIFT AI' }],
   edges: [
-    { d: 'M250,40 L250,57', n: '1', nx: 226, ny: 51,
-      from: 'Console', to: 'Supervisor',
-      s: 'You pick a CVE off the list and press <strong>Assess</strong>. '
-       + 'Nothing upstream of this is automatic.' },
-    { d: 'M250,92 L250,109', n: '2', nx: 226, ny: 103,
-      from: 'Supervisor', to: 'Assess',
-      s: 'The Supervisor owns the control flow and the per-CVE state, and '
-       + 'calls each specialist in turn. The specialists are stateless — '
-       + 'everything they need arrives in the call.' },
-    { d: 'M398,129 L457,129', n: '3', nx: 424, ny: 115,
-      from: 'Assess', to: 'Red Hat Insights',
-      s: 'Assess is common code rather than an agent. It asks Insights for '
-       + 'the CVE and for every host still behind on it.' },
-    { d: 'M250,144 L250,161', n: '4', nx: 226, ny: 155,
-      from: 'Assess', to: 'Score',
-      s: 'The host list goes to agent 1, <em>cve-gather-info</em> — the only '
-       + 'agent in the run that thinks.' },
-    { d: 'M398,181 L428,181 L428,190 L467,190', n: '5', nx: 447, ny: 176,
-      from: 'Score', to: 'Risk model',
-      s: 'Every affected host scored in <em>one</em> call, not one call per '
-       + 'host. An XGBoost model, served on Red Hat OpenShift AI through a '
-       + 'KServe custom predictor.' },
-    { d: 'M398,181 L428,181 L428,228 L467,228', n: '6', nx: 447, ny: 214,
+    hop(0, 1, '1', 'Console', 'Supervisor',
+      'You pick a CVE and press <strong>Assess</strong>.'),
+    hop(1, 2, '2', 'Supervisor', 'Assess',
+      'The Supervisor owns the control flow and the per-CVE state, and calls '
+      + 'each specialist in turn. They are stateless.'),
+    up(2, '3', 'Assess', 'Red Hat Insights',
+      'Common code, not an agent. It asks Insights for the CVE and every host '
+      + 'still behind on it.', -1),
+    hop(2, 3, '4', 'Assess', 'Score',
+      'The host list goes to agent 1, <em>cve-gather-info</em> — the only '
+      + 'agent in the run that thinks.'),
+    up(3, '5', 'Score', 'Risk model',
+      'Every affected host scored in <em>one</em> call, not one per host. '
+      + 'XGBoost on OpenShift AI, through KServe.', -1),
+    // Agent 1's second call. An elbow out of the same box rather than a
+    // second straight riser, so it reads as one agent making two calls rather
+    // than two stages that happen to sit side by side. The long leg is under
+    // Reasoning, which is where its number and its sentence go.
+    { d: `M${fcx(3) + 52},${FDG.spineY} L${fcx(3) + 52},${FDG.spineY - 22} `
+       + `L${fcx(4)},${FDG.spineY - 22} L${fcx(4)},${FDG.svcY + FDG.svcH + 9}`,
+      vert: 1, side: 1, n: '6', nx: fcx(4) - 22,
+      ny: (FDG.spineY + FDG.vcY) / 2, cx: fcx(4),
       from: 'Score', to: 'Reasoning',
       s: 'The same agent reads what happened the last time each host was '
-       + 'patched, and reasons over it: a Llama Stack retrieval across a '
-       + 'Milvus vector store, on the same cluster as the risk model. One '
-       + 'platform serves both calls, which is what the outer box is saying.' },
-    { d: 'M250,196 L250,213', n: '7', nx: 226, ny: 207,
-      from: 'Score', to: 'Plan',
-      s: 'Scores land either side of the risk gate, which is the thing that '
-       + 'decides whether a person is involved at all.' },
-    { d: 'M250,248 L250,265', n: '8', nx: 226, ny: 259,
-      from: 'Plan', to: 'Approval',
-      s: 'The plan is score against gate, the maintenance window, and a '
-       + 'verdict per host — the thing you are about to approve.' },
-    { d: 'M250,300 L250,317', n: '9', nx: 226, ny: 311,
-      from: 'Approval', to: 'Patch',
-      s: 'Above the gate the run stops here and waits for a person. Below it '
-       + 'nothing stops: the dispatch was the only check those hosts get.' },
-    { d: 'M398,337 L457,337', n: '10', nx: 424, ny: 323,
-      from: 'Patch', to: 'Automation Orchestrator',
-      s: 'Agent 2 opens one workflow run per host. It is a <em>client</em> of '
-       + 'the orchestrator, not the thing that runs the playbook.' },
-    // These two hops happen between products we do not own. Their badges go
-    // beside the connector rather than on it, at the same 24-unit offset the
-    // spine uses: the hop is 15 units long and a badge centred on it would
-    // cover its own arrowhead.
-    { d: 'M570,350 L570,365', n: '11', nx: 546, ny: 360,
-      from: 'Orchestrator', to: 'Red Hat AAP',
-      s: 'Steps 5 to 10 of the remediation live in the orchestrator’s own '
-       + 'workflow, outside this repo. It calls AAP to do the work.' },
-    { d: 'M570,402 L570,419', n: '12', nx: 546, ny: 413,
-      from: 'Red Hat AAP', to: 'The host',
-      s: 'The playbook runs against the machine. This is the only step in the '
-       + 'whole diagram that changes anything.' },
-    { d: 'M457,437 L403,437', n: '13', nx: 424, ny: 423,
-      from: 'The host', to: 'Verify',
-      s: 'Verify is the workflow’s last node, not a stage of its own. It goes '
-       + 'back to the machine and re-reads it rather than trusting the job’s '
-       + 'exit code.' },
-    // The fork, as two whole paths down a shared stem rather than a tee and
-    // two stubs: each needs its own arrowhead, and a marker only lands on the
-    // end of a path.
-    { d: 'M250,452 L250,468 L173,468 L173,473', n: '14', nx: 211, ny: 468,
-      from: 'Verify', to: 'Notify',
-      s: 'Agent 3, communication: the PDF status report.' },
-    { d: 'M250,452 L250,468 L327,468 L327,473', n: '15', nx: 289, ny: 468,
+       + 'patched. Llama Stack over a Milvus store.' },
+    hop(3, 4, '7', 'Score', 'Plan',
+      'Scores land either side of the risk gate, which decides whether a '
+      + 'person is involved at all.'),
+    hop(4, 5, '8', 'Plan', 'Approval',
+      'Score against the gate, the maintenance window, and a verdict per host.'),
+    hop(5, 6, '9', 'Approval', 'Patch',
+      'Above the gate the run waits for a person. Below it nothing stops — the '
+      + 'dispatch is the only check.'),
+    up(6, '10', 'Patch', 'Automation Orchestrator',
+      'Agent 2 opens one workflow run per host — a <em>client</em> of the '
+      + 'orchestrator, not the thing that runs the playbook.'),
+    lane(6, 7, '11', 'Orchestrator', 'Red Hat AAP',
+      'Steps 5 to 10 live in the orchestrator’s own workflow, outside this '
+      + 'repo. It calls AAP.'),
+    lane(7, 8, '12', 'Red Hat AAP', 'The host',
+      'The playbook runs. The only step in the diagram that changes anything.'),
+    down(8, '13', 'The host', 'Verify',
+      'The workflow’s last node re-reads the machine rather than trusting the '
+      + 'job’s exit code.'),
+    { d: `M${fx(8) + FDG.bw},${FDG.spineY + 15} L${fx(9) - 9},${FDG.spineY + 15}`,
+      n: '14', nx: (fx(8) + FDG.bw + fx(9)) / 2, ny: FDG.spineY - 10,
+      cx: (fx(8) + FDG.bw + fx(9)) / 2,
+      from: 'Verify', to: 'Notify', s: 'Agent 3: the PDF status report.' },
+    { d: `M${fx(8) + FDG.bw},${FDG.spineY + 49} L${fx(9) - 9},${FDG.spineY + 49}`,
+      n: '15', nx: (fx(8) + FDG.bw + fx(9)) / 2, ny: FDG.spineY + 68,
+      cx: (fx(8) + FDG.bw + fx(9)) / 2,
       from: 'Verify', to: 'Learn',
-      s: 'Agent 4, results: the RAG record and a training row for the next '
-       + 'scoring run. The two fork rather than queue — neither waits on the '
-       + 'other, and agent 4 writes at the final approval, not at dispatch.' },
-    // Back to the gate, not back to Patch: a retry is approved again.
-    { d: 'M102,437 L88,437 L88,285 L98,285', alt: 1, n: 'R', nx: 88, ny: 420,
-      from: 'Verify', to: 'Approval',
-      s: 'A job can go green against a host that is still listed. That is '
-       + '<strong>Not verified</strong> — a retry, not a postmortem — and the '
-       + 'retry goes back through the gate. The demo takes this arc once.' },
+      s: 'Agent 4: the RAG record, and a training row for next time. The two '
+       + 'fork — neither waits.' },
+    arc(8, 5, 9, 'Verify', 'Approval',
+      'A green job against a host still listed is <strong>Not verified</strong> '
+      + '— a retry, not a postmortem. It goes back through the gate.'),
   ],
-  // Rotated to read bottom-to-top, which is the direction the arc travels.
-  labels: [{ x: 72, y: 361, t: 'not verified → Fix & retry' }],
   caps: [
     '<strong>One Supervisor, four stateless specialists, and one gate.</strong> '
-    + 'The chip on each box says who does that stage — an agent, a piece of '
-    + 'common code, or you. The column on the right is what it calls, and none '
-    + 'of that is ours: steps 11 to 13 happen inside an Automation Orchestrator '
-    + 'workflow, outside this repo entirely.',
-    'The amber box is the only one a person is inside, which is the whole '
-    + 'claim the diagram is making. Everything above it is the system deciding '
+    + 'The chip on each box says who does that stage. The lane above the spine '
+    + 'is what it calls, and none of that is ours: steps 11 to 13 happen inside '
+    + 'an Automation Orchestrator workflow, outside this repo entirely — which '
+    + 'is why the spine has a gap under them.',
+    'The amber box is the only one a person is inside, which is the whole claim '
+    + 'the diagram is making. Everything left of it is the system deciding '
     + 'whether to ask. Read the colours the other way and you get the second '
-    + 'claim: blue is what we built, red is Red Hat underneath it, and the '
-    + 'only grey left on the page is one box of common code.',
+    + 'claim: blue is what we built, red is Red Hat underneath it, and the only '
+    + 'grey left is one box of common code.',
   ],
 };
 
 const FLOW_APP = {
-  vb: '60 0 626 466',          // same crop width as FLOW_INFRA, so the tab
-                               // switch does not resize a single box
-  groups: [],                  // nothing on this side shares a platform
-  // Every stage on this side is run by a Red Hat product — Lightwell does 1
-  // to 5, an AAP job template does 7 and 8 — so the spine is red the whole
-  // way down bar the console you are sitting in and the gate you stand in.
-  // That is not the colour coding failing to discriminate; it is the finding.
-  // The grey is in the right-hand column, and it is the honest half: the code
-  // hosts and OSV.dev are the two things here nobody at Red Hat owns.
+  // Nine boxes, ten columns. The last one is empty on purpose: Push calls a
+  // branch, and that call's sentence has to stand somewhere. Everywhere else
+  // there is a column's worth of air between one riser and the next, and
+  // here there would not be. It also leaves both tabs the same width, so the
+  // picture does not jump when you flip between them.
+  cols: 10,
   boxes: [
-    { x: 102, y: 10,  w: 296, h: 30, t: 'CONSOLE',      k: 'YOU' },
-    { x: 102, y: 62,  w: 296, h: 30, t: '1 · FETCH',     k: 'LIGHTWELL SCANNER', cls: 'rh' },
-    { x: 102, y: 114, w: 296, h: 30, t: '2 · MANIFESTS', k: 'LIGHTWELL SCANNER', cls: 'rh' },
-    { x: 102, y: 166, w: 296, h: 30, t: '3 · OSV.DEV',   k: 'LIGHTWELL SCANNER', cls: 'rh' },
-    { x: 102, y: 218, w: 296, h: 30, t: '4 · LIGHTWELL', k: 'LIGHTWELL SCANNER', cls: 'rh' },
-    { x: 102, y: 270, w: 296, h: 30, t: '5 · PLAN',      k: 'LIGHTWELL REMEDIATION', cls: 'rh' },
-    { x: 102, y: 322, w: 296, h: 30, t: '6 · APPROVAL',  k: 'YOU', cls: 'gate' },
-    { x: 102, y: 374, w: 296, h: 30, t: '7 · BUILD',     k: 'AAP JOB TEMPLATE', cls: 'rh' },
-    { x: 102, y: 426, w: 296, h: 30, t: '8 · PUSH',      k: 'AAP JOB TEMPLATE', cls: 'rh' },
-    { x: 462, y: 64,  w: 216, h: 26, cls: 'svc', t: 'GITHUB · GITLAB' },
-    { x: 462, y: 168, w: 216, h: 26, cls: 'svc', t: 'OSV.DEV' },
-    { x: 462, y: 220, w: 216, h: 26, cls: 'svc rh', t: 'LIGHTWELL NETWORK' },
-    { x: 462, y: 373, w: 216, h: 32, cls: 'svc rh', t: 'RED HAT AAP',
+    { c: 0, t: 'CONSOLE',      k: 'YOU' },
+    { c: 1, t: '1 · FETCH',     k: 'LIGHTWELL', k2: 'SCANNER', cls: 'rh' },
+    { c: 2, t: '2 · MANIFESTS', k: 'LIGHTWELL', k2: 'SCANNER', cls: 'rh' },
+    { c: 3, t: '3 · OSV.DEV',   k: 'LIGHTWELL', k2: 'SCANNER', cls: 'rh' },
+    { c: 4, t: '4 · LIGHTWELL', k: 'LIGHTWELL', k2: 'SCANNER', cls: 'rh' },
+    { c: 5, t: '5 · PLAN',      k: 'LIGHTWELL', k2: 'REMEDIATION', cls: 'rh' },
+    { c: 6, t: '6 · APPROVAL',  k: 'YOU', cls: 'gate' },
+    { c: 7, t: '7 · BUILD',     k: 'AAP JOB', k2: 'TEMPLATE', cls: 'rh' },
+    { c: 8, t: '8 · PUSH',      k: 'AAP JOB', k2: 'TEMPLATE', cls: 'rh' },
+
+    { c: 1, lane: 1, cls: 'svc', t: 'GITHUB · GITLAB' },
+    { c: 3, lane: 1, cls: 'svc', t: 'OSV.DEV' },
+    { c: 4, lane: 1, cls: 'svc rh', t: 'LIGHTWELL NETWORK' },
+    { c: 7, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
       s: 'Ansible Automation Platform' },
-    { x: 462, y: 428, w: 216, h: 26, cls: 'svc', t: 'A FIX BRANCH' },
+    { c: 8, lane: 1, cls: 'svc', t: 'A FIX BRANCH' },
   ],
+  groups: [],
   edges: [
-    { d: 'M250,40 L250,57', n: '1', nx: 226, ny: 51,
-      from: 'Console', to: 'Fetch',
-      s: 'You tick repositories and press <strong>Scan</strong>. Everything '
-       + 'after this is one pipeline — there are no agents on this side.' },
-    { d: 'M398,77 L457,77', n: '2', nx: 424, ny: 63,
-      from: 'Fetch', to: 'GitHub · GitLab',
-      s: 'Each ticked repository read at a single commit, over the provider’s '
-       + 'API. Nothing is cloned at this point.' },
-    { d: 'M250,92 L250,109', n: '3', nx: 226, ny: 103,
-      from: 'Fetch', to: 'Manifests',
-      s: 'The file list goes to the manifest parsers.' },
-    { d: 'M250,144 L250,161', n: '4', nx: 226, ny: 155,
-      from: 'Manifests', to: 'OSV.dev',
-      s: 'pom.xml, requirements.txt, package.json and the lock files, resolved '
-       + 'to the exact version each project actually uses — not the range it '
-       + 'asks for.' },
-    { d: 'M398,181 L457,181', n: '5', nx: 424, ny: 167,
-      // The stage is named after the service it calls, so this one hop is
-      // labelled by the thing doing the calling rather than repeating OSV.dev
-      // on both sides of the arrow.
-      from: 'The scanner', to: 'OSV.dev',
-      s: 'One batch query for every component at once, then each advisory '
-       + 'fetched once. Severity, and the version that fixes it.' },
-    { d: 'M250,196 L250,213', n: '6', nx: 226, ny: 207,
-      from: 'OSV.dev', to: 'Lightwell',
-      s: 'The known-vulnerable components go to the coverage check.' },
-    { d: 'M398,233 L457,233', n: '7', nx: 424, ny: 219,
-      from: 'Lightwell', to: 'Lightwell Network',
-      s: 'The unusual question, and the reason this side exists: is there a '
-       + 'remediated build of the version <em>already in use</em>? Four '
-       + 'answers — Remediated, Pre-disclosure, Nearest build, Not covered. A '
-       + 'remediated build keeps the coordinates and the API, so the fix moves '
-       + 'no version numbers and breaks no callers.' },
-    { d: 'M250,248 L250,265', n: '8', nx: 226, ny: 259,
-      from: 'Lightwell', to: 'Plan',
-      s: 'Coverage becomes a change list.' },
-    { d: 'M250,300 L250,317', n: '9', nx: 226, ny: 311,
-      from: 'Plan', to: 'Approval',
-      s: 'What moves to which version, from which source, and what is '
-       + 'deliberately left alone.' },
-    { d: 'M250,352 L250,369', n: '10', nx: 226, ny: 363,
-      from: 'Approval', to: 'Build',
-      s: 'Nothing is cloned and nothing is built until somebody has read that '
-       + 'list. Unlike the other side, this gate is never skipped.' },
-    { d: 'M398,389 L457,389', n: '11', nx: 424, ny: 375,
-      from: 'Build', to: 'Red Hat AAP',
-      s: 'One Ansible job template: clone, rewrite the manifests, build — and '
-       + 'stop. Nothing leaves the build host. The green build is the test.' },
-    { d: 'M250,404 L250,421', n: '12', nx: 226, ny: 415,
-      from: 'Build', to: 'Push',
-      s: 'Push is a second press, and only if you want it.' },
-    { d: 'M398,441 L457,441', n: '13', nx: 424, ny: 427,
-      from: 'Push', to: 'A fix branch',
-      s: 'It does not build again. It pushes the tree that already went green, '
-       + 'to a branch on the repository it came from.' },
-    // Back to the plan, because what changes on a retry is the change list.
-    { d: 'M102,392 L88,392 L88,285 L98,285', alt: 1, n: 'R', nx: 88, ny: 375,
-      from: 'Build', to: 'Plan',
-      s: 'A build can fail: a rebuild compiled to a newer Java baseline, '
-       + 'against a project that still compiles for 8. The advice under the '
-       + 'red bar is read out of Maven’s own output, not out of anything the '
-       + 'console knew in advance. Change the choices and the plan runs again.' },
+    hop(0, 1, '1', 'Console', 'Fetch',
+      'You tick repositories and press <strong>Scan</strong>. One pipeline, '
+      + 'and no agents.'),
+    up(1, '2', 'Fetch', 'GitHub · GitLab',
+      'Each ticked repository read at a single commit, over the provider’s '
+      + 'API. Nothing is cloned yet.'),
+    hop(1, 2, '3', 'Fetch', 'Manifests',
+      'The file list goes to the manifest parsers.'),
+    hop(2, 3, '4', 'Manifests', 'OSV.dev',
+      'pom.xml, requirements.txt, package.json and the lock files, resolved to '
+      + 'the version each project actually uses.'),
+    up(3, '5', 'The scanner', 'OSV.dev',
+      'One batch query for every component at once. Severity, and the version '
+      + 'that fixes it.'),
+    hop(3, 4, '6', 'OSV.dev', 'Lightwell',
+      'The known-vulnerable components go to the coverage check.'),
+    up(4, '7', 'Lightwell', 'Lightwell Network',
+      'The unusual question: is there a remediated build of the version '
+      + '<em>already in use</em>? Same coordinates, same API, so no caller '
+      + 'breaks.'),
+    hop(4, 5, '8', 'Lightwell', 'Plan', 'Coverage becomes a change list.'),
+    hop(5, 6, '9', 'Plan', 'Approval',
+      'What moves to which version, from which source, and what is left alone.'),
+    hop(6, 7, '10', 'Approval', 'Build',
+      'Nothing is cloned or built until somebody has read that list. This gate '
+      + 'is never skipped.'),
+    // Left-handed, because Push's riser is the very next one along and its
+    // sentence wants this side of the gap.
+    up(7, '11', 'Build', 'Red Hat AAP',
+      'One Ansible job template: clone, rewrite the manifests, build — and '
+      + 'stop. The green build is the test.', -1),
+    hop(7, 8, '12', 'Build', 'Push',
+      'A second press, and only if you want it.'),
+    up(8, '13', 'Push', 'A fix branch',
+      'It does not build again. It pushes the tree that already went green, to '
+      + 'a branch on the repo it came from.'),
+    arc(7, 5, 9, 'Build', 'Plan',
+      'A build can fail: rebuilt for a newer Java baseline, against a project '
+      + 'that still compiles for 8. The fix is read out of Maven’s own output.'),
   ],
-  labels: [{ x: 72, y: 338, t: 'build failed → run it again' }],
   caps: [
-    '<strong>Same spine, different surface — and no agents.</strong> One '
-    + 'scanner does stages 1 to 4, Lightwell’s own remediation writes the plan '
-    + 'at 5, and one Ansible job template does 7 and 8. The '
-    + 'supervisor-and-four-agents shape on the other side is its answer to a '
-    + 'fleet of hosts, not a house style applied to everything.',
-    'The gate is in the same place and means the same thing, which is the '
-    + 'point of showing the two drawings side by side: two completely '
-    + 'different kinds of patching, one rule about where the person goes. No '
-    + 'blue on this side — there are no agents to colour — but the spine is '
-    + 'red the whole way down: Lightwell runs stages 1 to 5 and an AAP job '
-    + 'template runs 7 and 8. The only grey is the two things nobody here '
-    + 'owns, the code hosts and OSV.dev.',
+    '<strong>Same spine, different surface — and no agents.</strong> One scanner '
+    + 'does stages 1 to 4, Lightwell’s own remediation writes the plan at 5, and '
+    + 'one Ansible job template does 7 and 8. The supervisor-and-four-agents '
+    + 'shape on the other side is its answer to a fleet of hosts, not a house '
+    + 'style applied to everything.',
+    'The gate is in the same place and means the same thing, which is the point '
+    + 'of showing the two drawings side by side: two completely different kinds '
+    + 'of patching, one rule about where the person goes. No blue on this side — '
+    + 'there are no agents to colour — but the spine is red the whole way across.',
   ],
 };
 
@@ -7097,37 +7105,34 @@ const FLOW_APP = {
 // token rather than compare the whole string.
 const hasCls = (b, c) => (b.cls || '').split(' ').includes(c);
 
-// Names only. Stage boxes get the stage and a chip saying who does it;
-// service boxes get a second line only where the product's own name differs
-// from the label this console gives it.
 function flowBox(b) {
-  const mid = b.y + b.h / 2;
   const svc = hasCls(b, 'svc');
-  const rect = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"
+  const x = fx(b.c), w = b.w || FDG.bw;
+  const y = svc ? FDG.svcY : FDG.spineY + (b.dy || 0);
+  const h = b.h || (svc ? FDG.svcH : FDG.bh);
+  const cx = x + w / 2, mid = y + h / 2;
+  const rect = `<rect x="${x}" y="${y}" width="${w}" height="${h}"
                       rx="${svc ? 6 : 7}"></rect>`;
   if (svc) {
-    const cx = b.x + b.w / 2;
     return `<g class="b ${b.cls}">${rect}
-      <text class="t" x="${cx}" y="${mid + (b.s ? -1.5 : 3.2)}"
-            text-anchor="middle">${esc(b.t)}</text>
-      ${b.s ? `<text class="s" x="${cx}" y="${mid + 9}"
+      <text class="t" x="${cx}" y="${mid + (b.s ? -2 : 5)}"
+            text-anchor="middle" data-fit="${w - 16}">${esc(b.t)}</text>
+      ${b.s ? `<text class="s" x="${cx}" y="${mid + 13}" data-fit="${w - 16}"
                 text-anchor="middle">${esc(b.s)}</text>` : ''}
     </g>`;
   }
+  // Sideways, the actor chip goes under the stage name rather than opposite
+  // it: a 150-unit box has no second end to put it at.
+  const lines = [b.k, b.k2].filter(Boolean);
+  const top = mid + 5 - 8 * lines.length;
   return `<g class="b ${b.cls || ''}">${rect}
-    <text class="t" x="${b.x + 14}" y="${mid + 3.8}">${esc(b.t)}</text>
-    ${b.k ? `<text class="k" x="${b.x + b.w - 14}" y="${mid + 3.5}"
-              text-anchor="end">${esc(b.k)}</text>` : ''}
+    <text class="t" x="${cx}" y="${top}" text-anchor="middle"
+          data-fit="${w - 14}">${esc(b.t)}</text>
+    ${lines.map((l, i) => `<text class="k" x="${cx}" y="${top + 15 + i * 14}"
+        text-anchor="middle" data-fit="${w - 14}">${esc(l)}</text>`).join('')}
   </g>`;
 }
 
-// The key, in the order the eye should take the colours: whose product, who
-// built the thing running, where the person is, then everything that is none
-// of those. Each row is printed only if the side being shown actually uses
-// it — the Application drawing has no agents, and a key entry pointing at a
-// colour that appears nowhere teaches a room to stop trusting the key.
-// `has` is given the enclosures as well as the boxes, so the dashed platform
-// row survives on the Infrastructure side and disappears on the other.
 const FLOW_KEY = [
   { c: 'rh',   t: 'Red Hat product' },
   { c: 'ag',   t: 'An agent, running here' },
@@ -7147,45 +7152,121 @@ function flowKey(f) {
     .map(k => `<span><i class="${k.c}"></i>${esc(k.t)}</span>`).join('')}</div>`;
 }
 
+// A foreignObject has to be told its height, and text that overruns it is
+// silently clipped — the worst failure mode available, because the drawing
+// still looks finished. So guess the wrap: strip the markup, divide by how
+// many characters fit a line at this width, and add the heading. The guess
+// only has to be a slight over-estimate, and the band is sized from it rather
+// than from a constant, so the drawing is exactly as tall as its longest
+// caption needs and no taller.
+function capLines(e, w) {
+  const cpl = Math.floor(w / 8);
+  const body = e.s.replace(/<[^>]+>/g, '');
+  return Math.ceil((e.from.length + e.to.length + 3) / cpl)
+       + Math.ceil(body.length / cpl);
+}
+
+// Horizontal arrows only — the vertical ones stand beside their line and are
+// never in this band. Two descriptions a half-column apart would print on top
+// of each other, so each one drops to the first row that has space for it at
+// its x. With the verticals out of the way almost everything lands in row 0.
+function layoutCaps(edges) {
+  const rows = [];
+  edges.filter(e => !e.vert).forEach(e => {
+    e.lines = capLines(e, FDG.capW);
+    let r = 0;
+    while (rows[r] && rows[r].xs.some(x => Math.abs(x - e.cx) < FDG.capW + 12)) r++;
+    rows[r] = rows[r] || { xs: [], lines: 0 };
+    rows[r].xs.push(e.cx);
+    rows[r].lines = Math.max(rows[r].lines, e.lines);
+    e.row = r;
+  });
+  let y = FDG.capY;
+  return rows.map(r => {
+    const o = y; y += r.lines * FDG.lh + 16;
+    return { y: o, h: r.lines * FDG.lh + 4 };
+  });
+}
+
+// Labels are set at a size chosen for the longest one anybody had written
+// when the drawing was built, which lasts exactly until somebody writes a
+// longer one — and an SVG does not wrap or ellipsise, it just lets the words
+// run out through the sides of the box. So after the markup is in the
+// document, ask each label how wide it actually came out and shrink the ones
+// that overran. getComputedTextLength() answers in viewBox units, so this is
+// the real font, the real tracking, and no estimate to drift out of date.
+//
+// It has to run with the drawer already visible: a label inside display:none
+// measures zero, and zero is not an overrun, so every one of them would be
+// left alone.
+function flowFit(root) {
+  root.querySelectorAll('[data-fit]').forEach(el => {
+    const max = +el.dataset.fit;
+    let len = 0;
+    try { len = el.getComputedTextLength(); } catch (e) { return; }
+    if (!len || len <= max) return;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    // style, not setAttribute: font-size as an SVG presentation attribute sits
+    // below the stylesheet in the cascade, so `.fd .b.svc .s { font-size }`
+    // would win and the shrink would be thrown away silently.
+    el.style.fontSize = (size * max / len).toFixed(2) + 'px';
+  });
+}
+
 function flowSVG(f) {
   const arrow = (id, fill, op) =>
-    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5"
-       markerHeight="5" orient="auto"><path d="M0,1 L7.2,4 L0,7 Z"
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5"
+       markerHeight="6.5" orient="auto"><path d="M0,1 L7.2,4 L0,7 Z"
        fill="${fill}" fill-opacity="${op}"></path></marker>`;
+  const rows = layoutCaps(f.edges);
+  const last = rows[rows.length - 1];
+  const w = fx(f.cols - 1) + FDG.bw + FDG.x0 + 40;   // 40 clears the arc's turn
+  const h = last.y + last.h + 10;
+  // A description, wherever it goes. foreignObject rather than <text> so the
+  // prose wraps and keeps its <strong> and <em>.
+  const cap = e => {
+    const box = e.vert
+      ? { x: e.side > 0 ? e.cx + 24 : e.cx - 24 - FDG.vcW,
+          y: FDG.vcY, w: FDG.vcW, h: FDG.vcH }
+      : { x: e.cx - FDG.capW / 2, y: rows[e.row].y,
+          w: FDG.capW, h: rows[e.row].h };
+    return `<foreignObject x="${box.x}" y="${box.y}" width="${box.w}"
+                           height="${box.h}">
+      <div xmlns="http://www.w3.org/1999/xhtml" class="fd-c${e.alt ? ' alt' : ''}">
+        <b>${esc(e.from)}<i> → </i>${esc(e.to)}</b>${e.s}</div>
+    </foreignObject>`;
+  };
   // Edges, then boxes over them so a box always covers the line that reaches
   // it, then the numbers over everything: a step number half under a
   // connector is the one element here that has to be legible at a glance.
   return `<div class="fd-wrap">
-    <svg class="fd" viewBox="${f.vb}" role="img"
-         aria-label="How a run moves through the console, numbered stage by stage.
-                     Boxes are coloured red for a Red Hat product, blue for an
-                     agent, and amber for the one stage a person decides. Every
-                     step is written out in the list below, and nothing in the
-                     drawing is carried by colour alone.">
+    <svg class="fd" viewBox="0 0 ${w} ${h}" role="img"
+         aria-label="How a run moves through the console, left to right, numbered
+                     stage by stage. Each arrow carries its number on one side and
+                     what happens at that step on the other. Boxes are coloured
+                     red for a Red Hat product, blue for an agent, and amber for
+                     the one stage a person decides; nothing is carried by colour
+                     alone.">
       <defs>${arrow('fd-a', '#111', .72)}${arrow('fd-r', '#9a6300', .9)}</defs>
-      ${f.groups.map(g => `<g class="gp ${g.cls || ''}">
-          <rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="8"></rect>
-          <text class="t" x="${g.x + g.w / 2}" y="${g.y + 14}"
-                text-anchor="middle">${esc(g.t)}</text></g>`).join('')}
+      ${f.groups.map(g => {
+        const gx = fx(g.c) - 13, gw = (g.span - 1) * FDP + FDG.bw + 26;
+        return `<g class="gp rh">
+          <rect x="${gx}" y="${FDG.svcY - 26}" width="${gw}"
+                height="${FDG.svcH + 39}" rx="9"></rect>
+          <text class="t" x="${gx + gw / 2}" y="${FDG.svcY - 11}"
+                text-anchor="middle" data-fit="${gw - 20}">${esc(g.t)}</text>
+          </g>`; }).join('')}
       ${f.edges.map(e => `<path class="e ${e.alt ? 'alt' : ''}" d="${e.d}"
           marker-end="url(#${e.alt ? 'fd-r' : 'fd-a'})"></path>`).join('')}
       ${f.boxes.map(flowBox).join('')}
-      ${f.labels.map(l => `<text class="lbl" x="${l.x}" y="${l.y}"
-          text-anchor="middle" transform="rotate(-90 ${l.x} ${l.y})"
-          >${esc(l.t)}</text>`).join('')}
-      ${f.edges.filter(e => e.n).map(e => `<g class="n ${e.alt ? 'alt' : ''}">
-          <circle cx="${e.nx}" cy="${e.ny}" r="8"></circle>
-          <text x="${e.nx}" y="${e.ny + 3}" text-anchor="middle">${esc(e.n)}</text>
-        </g>`).join('')}
+      ${f.edges.map(e => `<g class="n ${e.alt ? 'alt' : ''}">
+          <circle cx="${e.nx}" cy="${e.ny}" r="13"></circle>
+          <text x="${e.nx}" y="${e.ny + 4.6}" text-anchor="middle"
+                >${esc(e.n)}</text></g>`).join('')}
+      ${f.edges.map(cap).join('')}
     </svg>
     ${flowKey(f)}
   </div>
-  <ol class="fd-steps">
-    ${f.edges.filter(e => e.s).map(e => `<li class="${e.alt ? 'alt' : ''}">
-        <span class="sn">${esc(e.n)}</span>
-        <div><b>${esc(e.from)}<span class="ar"> → </span>${esc(e.to)}</b>
-          ${e.s}</div></li>`).join('')}
-  </ol>
   ${f.caps.map(c => `<p class="fd-cap">${c}</p>`).join('')}`;
 }
 
@@ -7199,16 +7280,19 @@ function renderFlow() {
   seg.dataset.pane = flowSide;
   seg.querySelectorAll('.dt-btn').forEach(
     b => b.setAttribute('aria-pressed', String(b.dataset.pane === flowSide)));
-  document.getElementById('flow-body').innerHTML =
-    flowSVG(flowSide === 'app' ? FLOW_APP : FLOW_INFRA);
+  const body = document.getElementById('flow-body');
+  body.innerHTML = flowSVG(flowSide === 'app' ? FLOW_APP : FLOW_INFRA);
+  flowFit(body);
 }
 
 function openFlow() {
   // paneSide, not paneNow: from the ROI report, which is neither side, open
   // on the side the reader will go back to.
   flowSide = paneSide === 'app' ? 'app' : 'infra';
-  renderFlow();
+  // Unhidden first, then drawn: renderFlow measures its own labels, and
+  // nothing inside a hidden subtree has a width to measure.
   document.getElementById('flow-scrim').hidden = false;
+  renderFlow();
 }
 
 function closeFlow() {
