@@ -3471,7 +3471,7 @@ const NODES = [
   { id: 'console',    x: 26,  y: 4,   w: 304, h: 28,
     t: 'CONSOLE', s: 'the operator — you' },
   { id: 'insights',   x: 52,  y: 52,  w: 164, h: 28, ext: 1,
-    t: 'RED HAT INSIGHTS', s: 'common code · CVE + affected hosts' },
+    t: 'RED HAT LIGHTSPEED', s: 'common code · CVE + affected hosts' },
   { id: 'supervisor', x: 26,  y: 98,  w: 304, h: 36, hero: 1,
     t: 'SUPERVISOR AGENT', s: 'owns control flow and per-CVE state' },
   { id: 'info',       x: 52,  y: 154, w: 164, h: 38,
@@ -6933,7 +6933,7 @@ const FLOW_INFRA = {
     { c: 9, t: 'NOTIFY', k: 'AGENT 3', cls: 'ag', h: 30 },
     { c: 9, t: 'LEARN',  k: 'AGENT 4', cls: 'ag', h: 30, dy: 34 },
 
-    { c: 2, lane: 1, cls: 'svc rh', t: 'RED HAT INSIGHTS' },
+    { c: 2, lane: 1, cls: 'svc rh', t: 'RED HAT LIGHTSPEED' },
     { c: 3, lane: 1, cls: 'svc rh', t: 'RISK MODEL', s: 'XGBoost · KServe' },
     { c: 4, lane: 1, cls: 'svc rh', t: 'REASONING', s: 'OGX · Milvus' },
     { c: 6, lane: 1, cls: 'svc rh', t: 'ORCHESTRATOR',
@@ -6953,9 +6953,9 @@ const FLOW_INFRA = {
     hop(1, 2, '2', 'Supervisor', 'Assess',
       'The Supervisor owns the control flow and the per-CVE state, and calls '
       + 'each specialist in turn. They are stateless.'),
-    up(2, '3', 'Assess', 'Red Hat Insights',
-      'Common code, not an agent. It asks Insights for the CVE and every host '
-      + 'still behind on it.', -1),
+    up(2, '3', 'Assess', 'Red Hat Lightspeed',
+      'Common code, not an agent. It asks Lightspeed for the CVE and every '
+      + 'host still behind on it.', -1),
     hop(2, 3, '4', 'Assess', 'Score',
       'The host list goes to agent 1, <em>cve-gather-info</em> — the only '
       + 'agent in the run that thinks.'),
@@ -6995,16 +6995,28 @@ const FLOW_INFRA = {
     { d: `M${fx(8) + FDG.bw},${FDG.spineY + 15} L${fx(9) - 9},${FDG.spineY + 15}`,
       n: '14', nx: (fx(8) + FDG.bw + fx(9)) / 2, ny: FDG.spineY - 10,
       cx: (fx(8) + FDG.bw + fx(9)) / 2,
-      from: 'Verify', to: 'Notify', s: 'Agent 3: the PDF status report.' },
+      from: 'Verify', to: 'Notify',
+      s: 'Agent 3: the status report — a PDF today, a Slack message once '
+       + 'that channel is wired up.' },
     { d: `M${fx(8) + FDG.bw},${FDG.spineY + 49} L${fx(9) - 9},${FDG.spineY + 49}`,
       n: '15', nx: (fx(8) + FDG.bw + fx(9)) / 2, ny: FDG.spineY + 68,
       cx: (fx(8) + FDG.bw + fx(9)) / 2,
       from: 'Verify', to: 'Learn',
       s: 'Agent 4: the RAG record, and a training row for next time. The two '
        + 'fork — neither waits.' },
-    arc(8, 5, 9, 'Verify', 'Approval',
-      'A green job against a host still listed is <strong>Not verified</strong> '
-      + '— a retry, not a postmortem. It goes back through the gate.'),
+    // The gate is a node inside the orchestrator's workflow, not something
+    // this repo holds the run at — so the arrow into it comes out of the
+    // Orchestrator box, not out of Verify at the far end. An elbow left and
+    // then down rather than a loop over the top: it only crosses one column,
+    // and a path that goes the long way round would imply the run travels
+    // that far. Amber and dashed like the other arrow a person is inside.
+    { d: `M${fx(6)},${FDG.svcY + FDG.svcH / 2} `
+       + `L${fcx(5)},${FDG.svcY + FDG.svcH / 2} L${fcx(5)},${FDG.spineY - 9}`,
+      vert: 1, side: 1, alt: 1, n: 'R', nx: fcx(5) - 22,
+      ny: FDG.spineY - 28, cx: fcx(5),
+      from: 'Orchestrator', to: 'Approval',
+      s: 'The run stops here for a person. Approve, and 11, 12 and 13 follow. '
+       + 'A retry re-enters here.' },
   ],
   caps: [
     '<strong>One Supervisor, four stateless specialists, and one gate.</strong> '
