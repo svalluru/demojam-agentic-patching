@@ -5723,7 +5723,7 @@ function roiInfraBody(roi) {
         ${esc(m.scope)} the CVE affects.</div>` : '';
 
   return `<h2 class="roi-sec">Infrastructure
-      <span>${esc(cveLabel(s.cve_id || ''))} &middot; ${esc(m.scope)} host(s)
+      <span>${cveLabel(s.cve_id || '')} &middot; ${esc(m.scope)} host(s)
         &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
 
     <div class="stats" style="grid-template-columns:repeat(4,1fr)">
