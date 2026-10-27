@@ -1663,6 +1663,11 @@ def verify_verdict(steps: list[dict]) -> dict | None:
         out = step.get('output') or {}
         if not isinstance(out, dict):
             return None
+        # AO nests the job's set_stats under 'artifacts', next to job_id and
+        # job_url. Read at the top level, live mode never saw a verdict: every
+        # completed run read as patched whatever verify found on the host.
+        if isinstance(out.get('artifacts'), dict):
+            out = out['artifacts']
         state = _as_bool(out.get('patched'))
         if state is None:
             return None
