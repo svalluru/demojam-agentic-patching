@@ -34,3 +34,6 @@ risk_score/training/data.csv
 # in offline mode every row is simulated, and committing those would put fake
 # observations in front of whoever next builds a training set.
 risk_score/training/observed/
+
+# editor settings
+.vscode/
