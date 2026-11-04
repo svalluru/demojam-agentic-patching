@@ -1,6 +1,6 @@
 # Running the console on OpenShift
 
-Builds the image and deploys both halves of the console as one pod, with
+Builds the image and deploys the console as one pod, one container, with
 `.env` as the only source of configuration.
 
 ```bash
@@ -19,21 +19,21 @@ by `OCP_API_URL` — it refuses to deploy anywhere else — and a namespace
 
 ```
 Route (edge TLS, 1200s) ──▶ Service :8788 ──▶ pod
-                                               ├─ frontend  server.py            :8788
-                                               └─ backend   agentic-patching.py  :8787
-                                                            (127.0.0.1 only)
+                                               └─ console  agentic-patching.py  :8788
+                                                           page · /api/* · /lightwell/
 ```
 
-Two containers in one pod rather than two Deployments, for one reason:
-**the backend has no authentication and it can patch real machines.** On
-localhost only the frontend can reach it; behind a Service, anything in the
-namespace could drive it. It also matches how `demo.sh` runs the pair, so
-`CVE_CONSOLE_BACKEND` needs no change.
+One process, the same one `demo.sh` runs. There used to be a second
+container serving the page and proxying `/api/*` to a backend bound to
+127.0.0.1. That looked like it kept the API private, but the proxy forwarded
+every route, approval included, so it protected nothing and cost a port, a
+process and a proxy timeout. The API has no authentication either way — see
+*Not covered here*.
 
 | | |
 |---|---|
 | `Containerfile` | UBI9 python-311. No `pip install` — the app is standard library only |
-| `manifests/deployment.yaml` | the two containers, probes, resources, volume |
+| `manifests/deployment.yaml` | the container, probes, resources, volume |
 | `manifests/service-route-pvc.yaml` | Service, Route, and a 1Gi PVC for `runs/` and `reports/` |
 
 ## Configuration
@@ -60,9 +60,8 @@ RISK_URL         →  http://risk-score:8080/v1/models/risk-score:predict
 
 `--external` keeps whatever `.env` says.
 
-Two more are set regardless: `FRONTEND_HOST=0.0.0.0`, because the default of
-`127.0.0.1` answers nothing from a Service, and `BACKEND_HOST=127.0.0.1`,
-which is the point above.
+One more is set regardless: `CONSOLE_HOST=0.0.0.0`, because the default of
+`127.0.0.1` answers nothing from a Service.
 
 ## After changing .env
 
@@ -83,7 +82,6 @@ fresh Assess. Do not redeploy mid-demo.
 
 ```
 AO_DECIDE_WAIT   900    the console waiting for an approved chain
-PROXY_TIMEOUT    960    frontend proxy
 Route           1200s   haproxy
 ```
 
@@ -105,12 +103,11 @@ build and the pod sat in ImagePullBackOff pulling a tag that had never been
 pushed.
 
 **`httpGet` probes do not work against a `127.0.0.1` bind.** The kubelet
-probes the pod IP, so every probe against the backend failed and the
-liveness one restarted a process that was serving its sibling perfectly
-well. They are `exec` probes, run inside the container where that address
-means something.
+probes the pod IP. The old backend container bound 127.0.0.1 and needed
+`exec` probes; the console now binds 0.0.0.0, so plain `httpGet /healthz`
+works. Keep `CONSOLE_HOST=0.0.0.0` or the probes fail again.
 
-**`Recreate`, not `RollingUpdate`.** Both containers write to one RWO volume;
+**`Recreate`, not `RollingUpdate`.** The pod writes to one RWO volume;
 a rolling update would need two pods holding it at once, and the new one
 stays Pending forever.
 

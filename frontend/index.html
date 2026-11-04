@@ -2194,7 +2194,7 @@
                 depends on the diagram still being grey.</li>
             <li>Know what is under the page before you are asked. The <strong>Agent trace</strong>
                 in the left column names every service the run called and every one that did not
-                answer, and <code>/tmp/demo-backend.log</code> carries the same record. Read it
+                answer, and <code>/tmp/demo-console.log</code> carries the same record. Read it
                 once beforehand so you are not reading it for the first time in front of
                 anybody.</li>
             <li>Close this drawer with <strong>Esc</strong>. You can reopen it mid-run — it
@@ -4922,7 +4922,8 @@ async function startPatch(from) {
     if (r.ok && d.ok) {
       await poll(cve);
     } else if (r.status === 502) {
-      // frontend/server.py proxies /api/start to the backend on :8787.
+      // A proxy in front of the console (the OpenShift router) answers 502
+      // when the console process behind it is not there.
       show('No backend reachable — this page is in <strong>CVE-only mode</strong>. '
          + 'Start it with <code>./agentic-patching.py serve</code>.', 'err');
     } else {

@@ -100,7 +100,7 @@ instance.
 **By default the page does not say any of this.** No banner, no `SIMULATED`
 chips, no `(heuristic)` beside a risk score — a banner reading *running on
 fallback data* is the thing a room fixates on. Nothing is suppressed, only
-moved: every substitution is logged to `/tmp/demo-backend.log`, named in the
+moved: every substitution is logged to `/tmp/demo-console.log`, named in the
 agent trace on screen, and carried on the API as `degraded` / `source` /
 `simulated`. Set `LABEL_SOURCES=1` to put the marks back on the page.
 
@@ -444,7 +444,7 @@ the built-in default, is on hover over the setting's key.
 Changes take effect on the next assessment and are **in-memory only** — they are
 lost on restart, and `.env` stays the durable place. The two passwords are
 write-only: the panel never reads them back, and leaving one blank keeps the
-current value. `BACKEND_HOST` / `BACKEND_PORT` are shown but not editable; the
+current value. `CONSOLE_HOST` / `CONSOLE_PORT` are shown but not editable; the
 socket is already open by the time the panel can reach the process.
 
 ### Demo guide
@@ -470,16 +470,14 @@ one. A backend it cannot reach reads as *unknown*, never as live.
 ```
 
 <details>
-<summary>Running the two processes without <code>demo.sh</code></summary>
+<summary>Running the console without <code>demo.sh</code></summary>
 
-The backend holds the agents; the frontend serves the UI and proxies to it.
+One process serves the page, the API and the scanner under `/lightwell/`.
 
 ```bash
-# terminal 1 — agents + API on :8787
-./agentic-patching.py serve
-
-# terminal 2 — UI on :8788
-cd frontend && python3 server.py --env ../.env
+./agentic-patching.py serve                 # demo, http://127.0.0.1:8788
+MODE=live ./agentic-patching.py serve       # live
+./agentic-patching.py serve --port 9000     # or CONSOLE_PORT=9000
 ```
 
 </details>
@@ -805,14 +803,14 @@ setup.sh                   everything between a filled-in .env and working live 
 cleanup.sh                 removes what setup.sh created, and nothing else
 discover-hosts.py          what AAP can patch, found in Insights — uuids and tags
 agentic-patching.py        everything server-side: common code, Supervisor,
-                           Info agent, Patching agent, HTTP backend
+                           Info agent, Patching agent, and the HTTP server
+                           (page, API, /lightwell/ on :8788)
 fallbacks.py               every stored default, in one editable file
 communication.py           agent 3 — renders the patch status report
 results.py                 agent 4 — feeds outcomes back to RAG + training data
 pdf.py                     minimal stdlib PDF writer (no reportlab)
 frontend/
   index.html               two-frame console: assess a CVE · CVE list · patch runs
-  server.py                dev server — serves the UI, proxies /api/* to :8787
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
   create-ao-workflow.sh    imports the workflow below and publishes it

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import html
 import json
 import math
 import os
@@ -3829,8 +3830,8 @@ SETTINGS: tuple[Setting, ...] = (
             'approve or reject. An approved chain on the lab workflow runs '
             'six to seven minutes, so the old 90 and the 300 setup.sh wrote '
             'both expired mid-remediation and left the row saying "running". '
-            'Must stay under the frontend PROXY_TIMEOUT and the Route '
-            'timeout, which the request is held open against.'),
+            'Must stay under the Route timeout, which the request is held '
+            'open against.'),
     Setting('DEMO_LATENCY', 'Timeouts', 'Demo pause per step', 'float', '0.35',
             'Offline only. Answering instantly renders as "complete in 0s" and '
             'reads as broken. 0 disables.', binds='DEMO_LATENCY'),
@@ -3894,9 +3895,9 @@ SETTINGS: tuple[Setting, ...] = (
             'qualified.', binds='AO_HOST_SHORTNAME'),
 
     # --- server -----------------------------------------------------------
-    Setting('BACKEND_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
+    Setting('CONSOLE_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
             'Set on the command line; the socket is already open.', readonly=True),
-    Setting('BACKEND_PORT', 'Server', 'Bind port', 'int', '8787',
+    Setting('CONSOLE_PORT', 'Server', 'Bind port', 'int', '8788',
             'Set on the command line; the socket is already open.', readonly=True),
 )
 
@@ -4052,13 +4053,48 @@ def settings_revert() -> list[str]:
 # ==========================================================================
 # HTTP server — what the console UI talks to
 #
-# frontend/server.py proxies /api/start and /api/state here, so the UI can
-# drive the Supervisor. A run takes ~20s, which is longer than that proxy's
-# read timeout, so /api/start returns immediately and the UI polls /api/state.
+# One process, one port: the page (frontend/index.html), the API it calls,
+# and the dependency scanner under /lightwell/. There used to be a second
+# server in front of this one that served the page and proxied /api/* here;
+# it added a port, a process and a proxy timeout to keep above every backend
+# wait, and bought nothing — it forwarded the whole API anyway.
+#
+# A run takes ~20s, so /api/start returns immediately and the UI polls
+# /api/state.
 # ==========================================================================
 
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+FRONTEND_DIR = ROOT / 'frontend'
+LIGHTWELL_DIR = ROOT / 'lightwell'
+LIGHTWELL_PREFIX = '/lightwell'
+_LIGHTWELL: dict[str, Any] = {}
+_LIGHTWELL_LOCK = threading.Lock()
+
+
+def lightwell_handler() -> Any:
+    """The scanner's request handler class, loaded on first use. A string is
+    returned instead when it cannot be loaded, so a problem in lightwell/
+    shows on its own page and never stops the console."""
+    with _LIGHTWELL_LOCK:
+        if 'handler' not in _LIGHTWELL:
+            try:
+                import importlib.util
+                # It puts its own directory on sys.path. Its module names
+                # (store, remediation, scanner) overlap none of this file's
+                # (communication, results, fallbacks, pdf), which are already
+                # imported by now in any case.
+                os.environ.setdefault('LIGHTWELL_MODE', 'demo' if demo_mode() else 'live')
+                spec = importlib.util.spec_from_file_location(
+                    'lightwell_server', LIGHTWELL_DIR / 'server.py')
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                _LIGHTWELL['handler'] = module.Handler
+            except BaseException as exc:     # includes its sys.exit on a bad mode
+                print(f'  dependency scanner could not be loaded: {exc}', file=sys.stderr)
+                _LIGHTWELL['handler'] = f'The dependency scanner could not be loaded: {exc}'
+        return _LIGHTWELL['handler']
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4272,9 +4308,58 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _send_raw(self, code: int, ctype: str, body: bytes,
+                  headers: dict | None = None) -> None:
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _lightwell(self, method: str) -> bool:
+        """Hand anything under /lightwell/ to the scanner's own handler, with
+        the prefix stripped. False when the path is not the scanner's."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != LIGHTWELL_PREFIX and not parsed.path.startswith(LIGHTWELL_PREFIX + '/'):
+            return False
+        query = f'?{parsed.query}' if parsed.query else ''
+        if parsed.path == LIGHTWELL_PREFIX:
+            self._send_raw(301, 'text/plain', b'', {'Location': LIGHTWELL_PREFIX + '/' + query})
+            return True
+        handler = lightwell_handler()
+        if isinstance(handler, str):
+            if parsed.path == LIGHTWELL_PREFIX + '/':
+                page = (f'<!doctype html><meta charset="utf-8"><title>Lightwell Scanner</title>'
+                        f'<p>{html.escape(handler)}</p><p><a href="/">Back to the console</a></p>')
+                self._send_raw(503, 'text/html; charset=utf-8', page.encode())
+            else:
+                self._send(503, {'ok': False, 'error': handler})
+            return True
+        # Same connection, same request already parsed: borrow this handler's
+        # state rather than letting BaseHTTPRequestHandler read it again.
+        h = handler.__new__(handler)
+        h.__dict__.update(self.__dict__)
+        h.path = parsed.path[len(LIGHTWELL_PREFIX):] + query
+        getattr(h, 'do_' + method)()
+        return True
+
+    def do_PUT(self):
+        if not self._lightwell('PUT'):
+            self._send(404, {'ok': False, 'error': 'not found'})
+
     def do_GET(self):
+        if self._lightwell('GET'):
+            return
         path = urllib.parse.urlparse(self.path).path.rstrip('/') or '/'
-        if path == '/healthz':
+        if path in ('/', '/index.html'):
+            self._send_raw(200, 'text/html; charset=utf-8',
+                           (FRONTEND_DIR / 'index.html').read_bytes())
+        elif path == '/healthz':
             self._send(200, {'ok': True})
         elif path == '/api/state':
             with _RUN_LOCK:
@@ -4417,6 +4502,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {'ok': True, 'roi': report})
 
     def do_POST(self):
+        if self._lightwell('POST'):
+            return
         path = urllib.parse.urlparse(self.path).path.rstrip('/') or '/'
 
         if path == '/api/roi':
@@ -4711,9 +4798,9 @@ def main() -> None:
     p_patch.add_argument('--limit', type=int, default=0, help='cap host count')
     p_patch.add_argument('--json', action='store_true')
 
-    p_serve = sub.add_parser('serve', help='HTTP backend for the console UI')
-    p_serve.add_argument('--host', default=env('BACKEND_HOST', '127.0.0.1'))
-    p_serve.add_argument('--port', type=int, default=int(env('BACKEND_PORT', '8787')))
+    p_serve = sub.add_parser('serve', help='the console: page, API and /lightwell/ on one port')
+    p_serve.add_argument('--host', default=env('CONSOLE_HOST', '127.0.0.1'))
+    p_serve.add_argument('--port', type=int, default=int(env('CONSOLE_PORT', '8788')))
 
     args = ap.parse_args()
 

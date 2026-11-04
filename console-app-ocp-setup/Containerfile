@@ -1,4 +1,4 @@
-# The console, as one image running either half of it.
+# The console: page, API and dependency scanner, one image, one process.
 #
 # No pip install and no requirements.txt, because there are no dependencies:
 # the whole application is Python standard library, verified by walking its
@@ -11,6 +11,15 @@ WORKDIR /opt/app-root/src
 
 COPY agentic-patching.py communication.py results.py fallbacks.py pdf.py ./
 COPY frontend/ ./frontend/
+# The dependency scanner, served under /lightwell/. Named file by file rather
+# than COPY lightwell/: the build context is this whole checkout, and a
+# lightwell/.env with a GitHub or AAP token in it would otherwise be baked
+# into the image. remediation.py loads its two helpers from aap-setup/.
+COPY lightwell/server.py lightwell/remediation.py lightwell/store.py ./lightwell/
+COPY lightwell/scanner/ ./lightwell/scanner/
+COPY lightwell/ui/ ./lightwell/ui/
+COPY lightwell/demo/ ./lightwell/demo/
+COPY aap-setup/playbooks/files/ ./aap-setup/playbooks/files/
 
 # OpenShift runs the container as an arbitrary uid in group 0, not as the
 # user named here, so anything written at runtime has to be group-writable.
@@ -23,8 +32,7 @@ RUN mkdir -p runs reports \
  && chmod -R g+w runs reports
 
 USER 1001
-EXPOSE 8787 8788
+EXPOSE 8788
 
-# Overridden per container in the Deployment: one runs the backend, the
-# other the frontend. Named here so `podman run` does something sensible.
+# The page, the API and /lightwell/, one process.
 CMD ["./agentic-patching.py", "serve"]

@@ -120,10 +120,8 @@ if in_cluster:
     if cm.get('RISK_URL'):
         cm['RISK_URL'] = 'http://risk-score:8080/v1/models/risk-score:predict'
 
-# The frontend defaults to 127.0.0.1, which answers nothing from a Service.
-cm['FRONTEND_HOST'] = '0.0.0.0'
-# The backend deliberately does not: only the sibling container may reach it.
-cm['BACKEND_HOST'] = '127.0.0.1'
+# The console defaults to 127.0.0.1, which answers nothing from a Service.
+cm['CONSOLE_HOST'] = '0.0.0.0'
 
 for path, data in ((os.environ['CM_OUT'], cm), (os.environ['SEC_OUT'], sec)):
     pathlib.Path(path).write_text(

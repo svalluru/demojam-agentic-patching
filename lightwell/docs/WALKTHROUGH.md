@@ -12,7 +12,7 @@ Two programs. They share no code, no state and no data. The console's server loa
 
 | Program | What it is | Port | Where it lives |
 |---------|-----------|------|----------------|
-| Patching console | The existing agentic OS-patching demo. Picks a CVE, scores risk, asks for approval, patches hosts through Ansible | 8788 (UI), 8787 (API) | Repository root |
+| Patching console | The existing agentic OS-patching demo. Picks a CVE, scores risk, asks for approval, patches hosts through Ansible | 8788 (page and API) | Repository root |
 | Lightwell scanner | New. Takes GitHub repositories, finds vulnerable dependencies, shows whether Lightwell has a fix | 8788, at `/lightwell/` (8790 only when run on its own) | `lightwell/` |
 
 The scanner tells you what is wrong and what could fix it. From a finished scan, **Plan a fix** on a repository card works out which dependency versions would change and where each fix comes from — Lightwell builds, a nearby Lightwell build, or OSV upgrades, as you choose. That is a preview: nothing is cloned and nothing is built. **Approve and run**, inside the panel, dispatches the AAP job that clones the repository, applies exactly that list and builds it; pushing the branch is a further press again. See the Remediation section of the README.
@@ -127,15 +127,12 @@ From the repository root:
 ./demo.sh             # demo mode: staged data, nothing is patched
 ```
 
-Open <http://127.0.0.1:8788>. It starts a backend on port 8787 and the page on port 8788. Pick a CVE, assess it, dispatch the plan, then approve. In demo mode no host is touched.
+Open <http://127.0.0.1:8788>. One process serves the page, its API and the scanner on that port. Pick a CVE, assess it, dispatch the plan, then approve. In demo mode no host is touched.
 
-**Windows checkout caveat.** If the checkout has Windows line endings, `./demo.sh` fails with `bash\r: No such file or directory`. That is a local git setting, not a bug, and it also affects `./agentic-patching.py`. Either convert the files (`git config core.autocrlf input` and re-checkout, or `dos2unix`), or start the two processes by hand, which needs no file changes:
+**Windows checkout caveat.** If the checkout has Windows line endings, `./demo.sh` fails with `bash\r: No such file or directory`. That is a local git setting, not a bug, and it also affects `./agentic-patching.py`. Either convert the files (`git config core.autocrlf input` and re-checkout, or `dos2unix`), or start the console by hand, which needs no file changes:
 
 ```bash
-MODE=demo BACKEND_PORT=8787 FRONTEND_PORT=8788 python3 agentic-patching.py serve &
-cd frontend
-MODE=demo BACKEND_PORT=8787 FRONTEND_PORT=8788 \
-  CVE_CONSOLE_BACKEND=http://127.0.0.1:8787 python3 server.py &
+MODE=demo python3 agentic-patching.py serve &
 ```
 
 Live mode (`./demo.sh --live`) needs a filled-in `.env` with real Insights, risk model, RAG and Automation Orchestrator settings. See the main README.
@@ -146,12 +143,12 @@ Live mode (`./demo.sh --live`) needs a filled-in `.env` with real Insights, risk
 curl -s localhost:8790/healthz        # {"ok": true}
 curl -s localhost:8790/v1/mode        # mode, recorded repositories, which Lightwell source is in use
 curl -s localhost:8788/api/mode       # the patching console's mode
-ss -ltn | grep -E ':878[78]|:8790'    # which of the three ports are listening
+ss -ltn | grep -E ':8788|:8790'       # which of the two ports are listening
 ```
 
 ## Stopping everything
 
-If you started a program in the foreground, press Ctrl-C in its terminal. The scanner prints `stopped`. `demo.sh` stops both of its processes and prints that it stopped.
+If you started a program in the foreground, press Ctrl-C in its terminal. The scanner prints `stopped`. `demo.sh` stops the console and prints that it stopped.
 
 If you started them in the background, stop them by port:
 
@@ -159,14 +156,14 @@ If you started them in the background, stop them by port:
 # Lightwell scanner
 kill $(lsof -ti :8790)
 
-# patching console (backend and frontend)
-kill $(lsof -ti :8787) $(lsof -ti :8788)
+# patching console
+kill $(lsof -ti :8788)
 ```
 
 Confirm nothing is left:
 
 ```bash
-ss -ltn | grep -E ':878[78]|:8790' || echo "all stopped"
+ss -ltn | grep -E ':8788|:8790' || echo "all stopped"
 ```
 
 To clear the scanner's saved results and repository list, delete the folder `lightwell/data/`. Nothing else keeps state. Recorded demo data lives in `lightwell/demo/` and is not touched by stopping or clearing.

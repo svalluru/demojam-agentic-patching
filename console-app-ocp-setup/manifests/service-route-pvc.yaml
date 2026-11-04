@@ -17,8 +17,6 @@ metadata:
   labels:
     app: cve-console
 spec:
-  # The frontend only. The backend port is deliberately absent — see the
-  # comment on the backend container.
   selector:
     app: cve-console
   ports:

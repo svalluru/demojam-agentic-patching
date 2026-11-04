@@ -7,7 +7,7 @@ dependencies. From a finished scan it can also run a remediation: clone the repo
 approved, build, and optionally push a branch, as an AAP job (see remediation.py).
 
 Standard library only, like the rest of this repository. Shares no code and no state with the console. The
-console's server (frontend/server.py) loads this module and hands it every request under /lightwell/, so no
+console's server (agentic-patching.py serve) loads this module and hands it every request under /lightwell/, so no
 second port is needed. Run directly, it listens on port 8790 by default.
 
     ./start.sh                       demo mode: recorded data, no network

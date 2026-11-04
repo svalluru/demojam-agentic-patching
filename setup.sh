@@ -406,7 +406,7 @@ PY
     [[ -n "$CVE" ]] || die "no CVE with an advisory on $HOSTS_FILTER to test with"
     ok "assessing $CVE on $HOSTS_FILTER"
     pkill -f "demo.sh" 2>/dev/null || true
-    for prt in 8787 8788; do
+    for prt in 8788 8787; do   # 8787: a console from before the single-port change
       pid="$(lsof -t -nP -iTCP:$prt -sTCP:LISTEN 2>/dev/null || true)"
       [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     done

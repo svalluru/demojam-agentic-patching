@@ -18,8 +18,8 @@ There are **no pip packages to install.** The whole thing is Python standard
 library. If you find yourself running `pip install`, something has gone wrong —
 tell Sai.
 
-Ports **8787** and **8788** need to be free. The start script will stop
-anything it finds already listening on them.
+Port **8788** needs to be free. The start script will stop anything it finds
+already listening on it.
 
 ## Steps
 
@@ -278,19 +278,18 @@ already have.
 **`error: 'lsof' is required`** — on a minimal Linux image, install it
 (`sudo dnf install lsof` / `sudo apt install lsof`).
 
-**Page loads but the CVE list is empty** — the backend did not start. Look at
-`/tmp/demo-backend.log`.
+**Page loads but the CVE list is empty** — look at `/tmp/demo-console.log`.
 
-**Port already in use** — the script stops anything on 8787/8788 before
-starting, but if that fails:
+**Port already in use** — the script stops anything on 8788 before starting,
+but if that fails:
 
 ```bash
-lsof -i :8787 -i :8788      # find it
+lsof -i :8788               # find it
 kill <pid>
 ```
 
-**Anything else** — the two logs are `/tmp/demo-backend.log` and
-`/tmp/demo-frontend.log`. Send those along with what you clicked.
+**Anything else** — the log is `/tmp/demo-console.log`. Send it along with
+what you clicked.
 
 ## Connecting to the real thing
 
@@ -328,7 +327,7 @@ in the architecture diagram turns red, and simulated rows are chipped
 substituted. With it off you are reading an unmarked mix of the two, which is
 fine for a demo and not fine for a patch plan someone is about to approve.
 
-Without it, the record is still in `/tmp/demo-backend.log` and the **Agent
+Without it, the record is still in `/tmp/demo-console.log` and the **Agent
 trace** panel. It is just not on the page.
 
 See [README.md](README.md) for the architecture and the full set of switches.
