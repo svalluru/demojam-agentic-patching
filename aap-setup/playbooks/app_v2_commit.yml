@@ -10,7 +10,7 @@
 #      against Red Hat's PNC Provenance Signing Key 1 (Configure Lightwell Network, "Verify provenance for Java
 #      artifacts"). A build that does not verify is not committed, so it can never reach the gate.
 #   3. The playbook, and the fixed runner app_v2_run.yml that the Sync and Run job imports it through, are committed to
-#      the Gitea repository and pushed.
+#      the Gitea repository through its contents API (the same way the lab's own Fetch and Commit job writes to Gitea).
 #
 # Variables (from the AO trigger):
 #   playbook_b64, playbook_sha256, playbook_filename   the generated playbook and where it goes in the repository
@@ -21,8 +21,8 @@
 #                                                      this once, so the Sync and Run template has a playbook to name)
 #
 # Gitea access comes from the environment, injected by the credential attached to the template (the lab's own Gitea
-# credential where create-app-v2-objects.py can reuse it): GITEA_URL, GITEA_USERNAME and GITEA_TOKEN (or
-# GITEA_PASSWORD). The token is never printed.
+# "Gitea API" credential, which create-app-v2-objects.py reuses): GITEA_URL and GITEA_TOKEN. The token is never
+# printed.
 #
 # Reports with set_stats: playbook_filename, commit_sha, commit_url, jar_sha256, provenance_verified.
 - name: App Patch v2 - verify the build and commit the playbook
@@ -32,7 +32,6 @@
   vars:
     gitea_repo: lab-user/app_v2_playbooks
     gitea_url: "{{ lookup('ansible.builtin.env', 'GITEA_URL') | default('', true) }}"
-    gitea_user: "{{ lookup('ansible.builtin.env', 'GITEA_USERNAME') | default(lookup('ansible.builtin.env', 'GITEA_USER'), true) }}"
     gitea_token: "{{ lookup('ansible.builtin.env', 'GITEA_TOKEN') | default(lookup('ansible.builtin.env', 'GITEA_PASSWORD'), true) }}"
     work: "/tmp/app-v2-{{ run_id | default('run') }}-{{ app | default('app') }}"
     cosign_version: v3.1.4
@@ -93,8 +92,8 @@
             dest: "{{ work }}/build.provenance.sigstore.json"
             mode: "0644"
           register: prov_dl
-          failed_when: require_provenance and prov_dl is failed
-          ignore_errors: "{{ not require_provenance }}"
+          failed_when: require_provenance | bool and prov_dl is failed
+          ignore_errors: "{{ not (require_provenance | bool) }}"
 
         - name: Look for cosign
           ansible.builtin.command: cosign version
@@ -131,7 +130,7 @@
               - "{{ work }}/build.jar"
           register: provenance
           changed_when: false
-          failed_when: require_provenance and provenance.rc != 0
+          failed_when: require_provenance | bool and provenance.rc != 0
           when: prov_dl is succeeded
 
         - name: Checksum of the verified jar
@@ -140,49 +139,56 @@
             checksum_algorithm: sha256
           register: jar
 
-    - name: Clone the playbooks repository
-      ansible.builtin.command:
-        argv: [git, clone, --depth, "1", "{{ gitea_url | regex_replace('^(https?://)', '\\1' ~ (gitea_user | urlencode) ~ ':' ~ (gitea_token | urlencode) ~ '@') }}/{{ gitea_repo }}.git", "{{ work }}/repo"]
+    # Gitea's contents API, as the lab's own Fetch and Commit job does: a token header, no username, no git binary
+    # and no credentials in a clone URL. One commit per file; the runner is only rewritten when it changed.
+    - name: Files to commit
+      ansible.builtin.set_fact:
+        to_commit: >-
+          {{ ([{'path': 'app_v2_run.yml', 'content': lookup('ansible.builtin.file', 'files/app_v2_run.yml') ~ '\n'}])
+             + ([] if init_only | default(false) | bool else
+                [{'path': playbook_filename, 'content': playbook_b64 | b64decode}]) }}
+
+    - name: Read what the repository holds now
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ gitea_repo }}/contents/{{ item.path }}"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        status_code: [200, 404]
+        validate_certs: false
+      loop: "{{ to_commit }}"
+      loop_control: { label: "{{ item.path }}" }
+      register: current
       no_log: true
-      changed_when: false
 
-    - name: Make the folder for generated playbooks
-      ansible.builtin.file:
-        path: "{{ work }}/repo/app-v2"
-        state: directory
-        mode: "0755"
-
-    - name: Place the playbook
-      ansible.builtin.copy:
-        src: "{{ work }}/playbook.yml"
-        dest: "{{ work }}/repo/{{ playbook_filename }}"
-        remote_src: true
-        mode: "0644"
-      when: not (init_only | default(false) | bool)
-
-    - name: Place the runner the Sync and Run job imports it through
-      ansible.builtin.copy:
-        src: files/app_v2_run.yml
-        dest: "{{ work }}/repo/app_v2_run.yml"
-        mode: "0644"
-
-    - name: Commit and push
-      ansible.builtin.shell: |
-        set -e
-        cd "{{ work }}/repo"
-        git config user.name "App Patch v2"
-        git config user.email "app-patch-v2@localhost"
-        git add -A
-        if ! git diff --cached --quiet; then
-          git commit -q -m "App Patch v2: {{ 'add the runner' if init_only | default(false) | bool else (app | default('app')) ~ ' run ' ~ (run_id | default('')) ~ ' (' ~ playbook_filename ~ ')' }}"
-          git push -q origin HEAD
-        fi
-        git rev-parse HEAD
-      args:
-        executable: /bin/bash
-      register: pushed
+    - name: Commit each file that is new or changed
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ gitea_repo }}/contents/{{ item.item.path }}"
+        method: "{{ 'PUT' if item.status == 200 else 'POST' }}"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        body_format: json
+        body: >-
+          {{ {'content': item.item.content | b64encode,
+              'message': 'App Patch v2: ' ~ ('add the runner' if item.item.path == 'app_v2_run.yml'
+                         else (app | default('app')) ~ ' run ' ~ (run_id | default('')) ~ ' (' ~ item.item.path ~ ')')}
+             | combine({'sha': item.json.sha} if item.status == 200 else {}) }}
+        status_code: [200, 201]
+        validate_certs: false
+      loop: "{{ current.results }}"
+      loop_control: { label: "{{ item.item.path }}" }
+      when: item.status == 404 or (item.json.content | default('') | b64decode) != item.item.content
+      register: committed
       no_log: true
-      changed_when: true
+
+    - name: The commit that holds the playbook
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ gitea_repo }}/commits?limit=1&path={{ to_commit[-1].path | urlencode }}"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        validate_certs: false
+      register: last
+      no_log: true
+
+    - name: Note it
+      ansible.builtin.set_fact:
+        pushed: { stdout_lines: ["{{ last.json[0].sha }}"] }
 
     - name: Report the commit
       ansible.builtin.set_stats:
@@ -194,7 +200,7 @@
           provenance_verified: "{{ provenance.rc | default(1) == 0 }}"
 
   post_tasks:
-    - name: Remove the working directory, which held a clone with credentials in its remote
+    - name: Remove the working directory
       ansible.builtin.file:
         path: "{{ work }}"
         state: absent
