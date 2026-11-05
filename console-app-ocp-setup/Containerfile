@@ -9,7 +9,7 @@ FROM registry.access.redhat.com/ubi9/python-311:latest
 USER 0
 WORKDIR /opt/app-root/src
 
-COPY agentic-patching.py communication.py results.py fallbacks.py pdf.py ./
+COPY agentic-patching.py appv2.py communication.py results.py fallbacks.py pdf.py ./
 COPY frontend/ ./frontend/
 # The dependency scanner, served under /lightwell/. Named file by file rather
 # than COPY lightwell/: the build context is this whole checkout, and a

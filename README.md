@@ -447,6 +447,37 @@ write-only: the panel never reads them back, and leaving one blank keeps the
 current value. `CONSOLE_HOST` / `CONSOLE_PORT` are shown but not editable; the
 socket is already open by the time the panel can reach the process.
 
+### Applications v2
+
+The third option on the header toggle. Where **Applications** scans a
+repository and rebuilds it, v2 starts from the other end: a Lightwell build
+lands in Nexus, and the console patches the servers already running the
+version it replaces.
+
+1. **Intake.** Nexus calls `POST /api/v2/webhook` when its
+   `lightwell-remediated` proxy caches a new `.rhlw-` build. The signature
+   (`X-Nexus-Webhook-Signature`, HMAC-SHA1 of `NEXUS_WEBHOOK_SECRET`) is
+   checked, and the CVEs the build fixes come from the Lightwell advisories
+   API (`LIGHTWELL_CLIENT_ID` / `_SECRET`).
+2. **Impact.** The app BOMs (`rag-setup/data/bom/*.json`) say which apps, on
+   which servers, run that exact upstream version. Other versions of the same
+   library are listed as left alone.
+3. **Playbook.** The LLM drafts it; `check_playbook()` allows only a short list
+   of modules (no shell or command), and requires a pinned sha256, a health
+   check and a rollback. A draft that fails is replaced by the checked
+   template, and the page says so.
+4. **AO workflow `App Patch v2`.** Per server: commit the playbook to Gitea and
+   verify the build's provenance with cosign, hold Prod at the approval gate,
+   then have AAP sync the project at that commit and run it. The console never
+   touches git.
+5. **Learn.** An app whose servers were all patched gets the new version in its
+   BOM; one with a rolled-back server keeps the old one.
+
+Demo mode stages all of it, with real Lightwell builds (`log4j-core
+2.24.3.rhlw-00004`, `commons-io 2.11.0.rhlw-00009`) and one Prod server that
+fails its health check and is rolled back. All of it lives in `appv2.py`;
+tests are in `tests/test_appv2.py`.
+
 ### Demo guide
 
 The book icon beside the gear opens the run of show: a seven-beat script with
@@ -805,6 +836,9 @@ discover-hosts.py          what AAP can patch, found in Insights — uuids and t
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, and the HTTP server
                            (page, API, /lightwell/ on :8788)
+appv2.py                   Applications v2: Nexus intake, BOM impact, playbook
+                           agent and its checks, the App Patch v2 run
+tests/test_appv2.py        python3 -m unittest discover -s tests
 fallbacks.py               every stored default, in one editable file
 communication.py           agent 3 — renders the patch status report
 results.py                 agent 4 — feeds outcomes back to RAG + training data

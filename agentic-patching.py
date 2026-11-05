@@ -225,6 +225,7 @@ def _elapsed_secs(secs: int) -> str:
 # errors + http
 # --------------------------------------------------------------------------
 
+import appv2
 import communication
 import fallbacks
 import results as results_mod
@@ -1159,31 +1160,7 @@ class InfoAgent:
             f'retrieval or chunks. Begin with the finding itself — no '
             f'preamble, and do not restate the question.\n\n{excerpt}'
         )
-        try:
-            result = http_json(
-                f'{LLAMA_URL}/v1/responses', method='POST',
-                body={'model': LLM_MODEL,
-                      'input': [{'role': 'user', 'content': prompt}],
-                      'stream': False},
-                verify=False)
-        except Exception as exc:
-            raise BackendUnavailable('Llama Stack (LLM)', exc,
-                                     f'check model {LLM_MODEL!r} is served') from exc
-
-        # A reasoning model (deepseek-r1) also returns its thinking, as a
-        # 'reasoning' item or inside <think> tags. Only the message is the
-        # answer.
-        for item in (result or {}).get('output', []):
-            if item.get('type', 'message') != 'message':
-                continue
-            for content in item.get('content', []):
-                if content.get('type', 'output_text') != 'output_text':
-                    continue
-                text = re.sub(r'(?s)^.*</think>', '', content.get('text', '')).strip()
-                if text:
-                    return strip_preamble(text)
-        raise BackendUnavailable('Llama Stack (LLM)', 'empty response',
-                                 f'check model {LLM_MODEL!r} is served')
+        return llm_answer(prompt)
 
     # -- steps 1-4 ---------------------------------------------------------
 
@@ -1506,6 +1483,37 @@ _PREAMBLE = re.compile(
     r'here(?:\'s|’s| is| are)\b[^\n:]{0,200}'
     r'\bsummar(?:y|ies|ising|izing)\b[^\n:]{0,200}:[ \t]*\n*',
     re.IGNORECASE)
+
+
+def llm_answer(prompt: str) -> str:
+    """One prompt to the LLM through Llama Stack, the answer text back.
+
+    Shared by the Info agent's history summary and the Applications v2 agents."""
+    try:
+        result = http_json(
+            f'{LLAMA_URL}/v1/responses', method='POST',
+            body={'model': LLM_MODEL,
+                  'input': [{'role': 'user', 'content': prompt}],
+                  'stream': False},
+            verify=False)
+    except Exception as exc:
+        raise BackendUnavailable('Llama Stack (LLM)', exc,
+                                 f'check model {LLM_MODEL!r} is served') from exc
+
+    # A reasoning model (deepseek-r1) also returns its thinking, as a
+    # 'reasoning' item or inside <think> tags. Only the message is the
+    # answer.
+    for item in (result or {}).get('output', []):
+        if item.get('type', 'message') != 'message':
+            continue
+        for content in item.get('content', []):
+            if content.get('type', 'output_text') != 'output_text':
+                continue
+            text = re.sub(r'(?s)^.*</think>', '', content.get('text', '')).strip()
+            if text:
+                return strip_preamble(text)
+    raise BackendUnavailable('Llama Stack (LLM)', 'empty response',
+                             f'check model {LLM_MODEL!r} is served')
 
 
 def strip_preamble(text: str) -> str:
@@ -4016,6 +4024,8 @@ def settings_update(changes: dict[str, Any]) -> list[str]:
     changed = [s.key for s, _ in staged]
     if any(k in ('MODE', 'AO_URL', 'INSIGHTS_API') for k in changed):
         forget_credentials()
+    if 'MODE' in changed:
+        appv2.reset()            # a demo inbox must not carry over into live
     return changed
 
 
@@ -4095,6 +4105,38 @@ def lightwell_handler() -> Any:
                 print(f'  dependency scanner could not be loaded: {exc}', file=sys.stderr)
                 _LIGHTWELL['handler'] = f'The dependency scanner could not be loaded: {exc}'
         return _LIGHTWELL['handler']
+
+
+_LW_CATALOG: dict[str, Any] = {}
+
+
+def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
+    """The CVEs Lightwell says this exact build fixes, from its /advisories API.
+
+    Asked by the upstream version (2.24.3), then filtered to advisories naming
+    this build (2.24.3.rhlw-00004) as a fixed version: an advisory fixed only in
+    a newer build does not belong to this one. Reuses the scanner's client,
+    which owns the SSO token and the paging."""
+    with _LIGHTWELL_LOCK:
+        if 'catalog' not in _LW_CATALOG:
+            if str(LIGHTWELL_DIR) not in sys.path:
+                sys.path.append(str(LIGHTWELL_DIR))
+            from scanner.lightwell import LightwellApiCatalog
+            cid, secret = env('LIGHTWELL_CLIENT_ID'), env('LIGHTWELL_CLIENT_SECRET')
+            if not (cid and secret):
+                raise RuntimeError('LIGHTWELL_CLIENT_ID / LIGHTWELL_CLIENT_SECRET not set')
+            _LW_CATALOG['catalog'] = LightwellApiCatalog(cid, secret)
+        cat = _LW_CATALOG['catalog']
+    out: set[str] = set()
+    for adv in cat._advisory_rows('maven', f'{group}:{artifact}', appv2.upstream(version)):
+        if version in (adv.get('fixed_versions') or []):
+            ids = [adv.get('advisory_id', '')] + list(adv.get('aliases') or [])
+            out.update(i for i in ids if str(i).startswith('CVE-'))
+    return sorted(out)
+
+
+appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
+                llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4361,6 +4403,11 @@ class Handler(BaseHTTPRequestHandler):
                            (FRONTEND_DIR / 'index.html').read_bytes())
         elif path == '/healthz':
             self._send(200, {'ok': True})
+        elif path == '/api/v2/events':
+            self._send(200, {'ok': True, 'events': appv2.events().all(),
+                             'mode': 'demo' if demo_mode() else 'live'})
+        elif path == '/api/v2/state':
+            self._send(200, {'ok': True, **appv2.state()})
         elif path == '/api/state':
             with _RUN_LOCK:
                 self._send(200, dict(_RUN))
@@ -4505,6 +4552,10 @@ class Handler(BaseHTTPRequestHandler):
         if self._lightwell('POST'):
             return
         path = urllib.parse.urlparse(self.path).path.rstrip('/') or '/'
+
+        if path.startswith('/api/v2/'):
+            self._appv2(path)
+            return
 
         if path == '/api/roi':
             # Same report, with this operator's sliders applied for this
@@ -4706,6 +4757,39 @@ class Handler(BaseHTTPRequestHandler):
             daemon=True, name=f'supervisor-{cve}').start()
         self._send(200, {'ok': True, 'cve': cve, 'mode': 'supervisor',
                          'status': 'running'})
+
+    def _appv2(self, path: str) -> None:
+        """Applications v2. The webhook reads the raw body, because the
+        signature is over the exact bytes Nexus sent."""
+        length = int(self.headers.get('Content-Length', '0') or '0')
+        if length > 1_000_000:
+            self._send(413, {'ok': False, 'error': 'body too large'})
+            return
+        raw = self.rfile.read(length) if length else b''
+        if path == '/api/v2/webhook':
+            code, body = appv2.accept_webhook(
+                raw, self.headers.get('X-Nexus-Webhook-Signature', ''))
+            self._send(code, body)
+            return
+        try:
+            payload = json.loads(raw or b'{}')
+        except ValueError:
+            payload = {}
+        if path == '/api/v2/assess':
+            code, body = appv2.start_assess(str(payload.get('event_id', '')))
+        elif path == '/api/v2/generate':
+            code, body = appv2.start_generate()
+        elif path == '/api/v2/dispatch':
+            code, body = appv2.start_dispatch()
+        elif path == '/api/v2/decide':
+            code, body = appv2.decide(str(payload.get('host', '')),
+                                      str(payload.get('decision', '')))
+        elif path == '/api/v2/reset':
+            appv2.reset()
+            code, body = 200, {'ok': True}
+        else:
+            code, body = 404, {'ok': False, 'error': 'not found'}
+        self._send(code, body)
 
     def log_message(self, fmt, *args):
         pass                      # the agent trace is the useful log
