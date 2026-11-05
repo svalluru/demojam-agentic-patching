@@ -39,10 +39,12 @@ process and a proxy timeout. The API has no authentication either way — see
 ## Configuration
 
 `deploy.sh` reads `.env` and splits it, so there is no second copy to keep
-in step. Four keys go to a Secret by an explicit allowlist:
+in step. These keys go to a Secret by an explicit allowlist:
 
 ```
 LIGHTSPEED_CLIENT_SECRET   AO_PASSWORD   AAP_TOKEN   VLLM_API_TOKEN
+LIGHTWELL_CLIENT_SECRET    LIGHTWELL_REGISTRY_TOKEN   NEXUS_WEBHOOK_SECRET
+NEXUS_ADMIN_PASSWORD       GITEA_TOKEN
 ```
 
 Everything else goes to a ConfigMap. The list is written out rather than

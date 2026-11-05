@@ -1,0 +1,97 @@
+---
+# Deploy the Applications v2 sample app to the lab hosts, on the vulnerable log4j 2.24.3 that the Lightwell build
+# 2.24.3.rhlw-00004 replaces. Run once, by aap-setup/create-app-v2-objects.py --deploy-sample (job template
+# "App Patch v2 - Deploy Sample App"), or by hand:
+#
+#   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e target_hosts=node1,node2,node3
+#
+# The layout matches rag-setup/data/bom/sample-app.json, which is what the inventory agent reads:
+#   /opt/apps/sample-app/HealthServer.java      the app (source launcher, nothing to build)
+#   /opt/apps/sample-app/lib/*.jar              its dependencies, swapped by the generated playbooks
+#   /opt/apps/sample-app/backup/                where a generated playbook keeps the jar it replaced
+#   systemd unit sample-app, GET http://localhost:8080/health
+- name: Deploy the Applications v2 sample app
+  hosts: "{{ target_hosts | default('node1,node2,node3') }}"
+  become: true
+  gather_facts: false
+  vars:
+    app_dir: /opt/apps/sample-app
+    central: https://repo1.maven.org/maven2
+    jars:
+      - { path: org/apache/logging/log4j/log4j-api/2.24.3/log4j-api-2.24.3.jar }
+      - { path: org/apache/logging/log4j/log4j-core/2.24.3/log4j-core-2.24.3.jar }
+      - { path: commons-io/commons-io/2.11.0/commons-io-2.11.0.jar }
+  tasks:
+    - name: Install a JDK (the source launcher needs javac's compiler, which the headless JRE lacks)
+      ansible.builtin.dnf:
+        name: java-17-openjdk-devel
+        state: present
+
+    - name: Create the app layout
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: ["{{ app_dir }}", "{{ app_dir }}/lib", "{{ app_dir }}/backup"]
+
+    - name: Fetch the published checksums from Maven Central
+      ansible.builtin.uri:
+        url: "{{ central }}/{{ item.path }}.sha1"
+        return_content: true
+      loop: "{{ jars }}"
+      register: sums
+      delegate_to: localhost
+      become: false
+
+    - name: Download the dependencies, checked against those checksums
+      ansible.builtin.get_url:
+        url: "{{ central }}/{{ item.item.path }}"
+        dest: "{{ app_dir }}/lib/{{ item.item.path | basename }}"
+        checksum: "sha1:{{ item.content | trim | split(' ') | first }}"
+        mode: "0644"
+      loop: "{{ sums.results }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+
+    - name: Install the app
+      ansible.builtin.copy:
+        src: files/HealthServer.java
+        dest: "{{ app_dir }}/HealthServer.java"
+        mode: "0644"
+
+    - name: Install the systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sample-app.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Applications v2 sample app
+          After=network.target
+
+          [Service]
+          Environment=PORT=8080
+          ExecStart=/usr/bin/java -cp '{{ app_dir }}/lib/*' {{ app_dir }}/HealthServer.java
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start it
+      ansible.builtin.systemd_service:
+        name: sample-app
+        state: restarted
+        enabled: true
+        daemon_reload: true
+
+    - name: Check it answers
+      ansible.builtin.uri:
+        url: http://localhost:8080/health
+        return_content: true
+      register: health
+      until: health.status == 200
+      retries: 20
+      delay: 3
+
+    - name: Show which log4j-core it loaded
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ health.json.log4j_core }}"

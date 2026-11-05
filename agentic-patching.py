@@ -3902,6 +3902,28 @@ SETTINGS: tuple[Setting, ...] = (
             'short. Turn off only if your inventory host names are fully '
             'qualified.', binds='AO_HOST_SHORTNAME'),
 
+    # --- applications v2 ---------------------------------------------------
+    # Read per call by appv2.py, so nothing to rebind.
+    Setting('NEXUS_URL', 'Applications v2', 'Nexus URL', 'str', '',
+            'The Nexus that proxies Lightwell. Written by nexus-setup/deploy.sh. '
+            'Hosts download the build from here, never from packages.redhat.com.'),
+    Setting('NEXUS_REPOSITORY', 'Applications v2', 'Nexus repository', 'str',
+            'lightwell-remediated', 'The Maven2 proxy of the Lightwell remediated tier.'),
+    Setting('NEXUS_WEBHOOK_SECRET', 'Applications v2', 'Webhook secret', 'str', '',
+            'Nexus signs each webhook with it (X-Nexus-Webhook-Signature). In live '
+            'mode a webhook is refused while this is unset.', secret=True),
+    Setting('NEXUS_POLL_SECONDS', 'Applications v2', 'Poll Nexus every', 'int', '0',
+            'Seconds between asking Nexus for new Lightwell builds of what the '
+            'apps run. 0 relies on the webhook alone. Read at startup.'),
+    Setting('NEXUS_EVENTS', 'Applications v2', 'Events from', 'choice', 'webhook',
+            'webhook: the Nexus webhook records events. poller: the poller records '
+            'them itself, for a Nexus without webhooks.', choices=('webhook', 'poller')),
+    Setting('GITEA_REPO', 'Applications v2', 'Playbooks repository', 'str',
+            'lab-user/app_v2_playbooks', 'owner/name in the lab Gitea. The AO '
+            'workflow commits the generated playbooks here.'),
+    Setting('AO_APP_V2_WORKFLOW', 'Applications v2', 'AO workflow', 'str',
+            'App Patch v2', 'Imported from ao-setup/app_v2_workflow.json.'),
+
     # --- server -----------------------------------------------------------
     Setting('CONSOLE_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
             'Set on the command line; the socket is already open.', readonly=True),
@@ -4806,6 +4828,10 @@ def serve(host: str, port: int) -> None:
             print('  WARNING: neither HOSTS_FILTER nor HOSTS_TAG is set — every '
                   'assessment will be refused until one is. '
                   'Run ./discover-hosts.py --write.')
+    if int(env('NEXUS_POLL_SECONDS', '0') or 0) > 0:
+        # Applications v2: ask Nexus for new Lightwell builds of what the apps run.
+        threading.Thread(target=appv2.poller_loop, daemon=True, name='nexus-poller').start()
+        print(f'  nexus poller: every {env("NEXUS_POLL_SECONDS")}s against {env("NEXUS_URL") or "(NEXUS_URL unset)"}')
     print(f'  listening on http://{host}:{port}')
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

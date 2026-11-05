@@ -37,8 +37,11 @@ ROOT = Path(__file__).resolve().parent
 # The nine stages of a v2 run, in order. The console's stage bar is drawn from the same keys.
 STAGES = ('intake', 'impact', 'generate', 'commit', 'approval', 'sync', 'remediate', 'verify', 'learn')
 
-# Node ids in ao-setup/app_v2_workflow.json. The console reads each one's outcome by id.
-NODE_COMMIT, NODE_APPROVAL, NODE_SYNC, NODE_VERIFY = 'commit_to_gitea', 'approval_prod', 'sync_and_run', 'verify_app'
+# Node ids in ao-setup/app_v2_workflow.json. The console reads each one's outcome by id. Sync and Run exists once per
+# branch (AO nodes do not join), and its own set_stats (patched / rolled_back, from the generated playbook) is the
+# verify result: the playbook checks health and checksum itself and rolls back on failure.
+NODE_COMMIT, NODE_APPROVAL = 'commit_to_gitea', 'approval_prod'
+NODES_RUN = ('run_app_patch', 'run_app_patch_prod')
 
 RHLW = re.compile(r'^(?P<upstream>.+?)\.rhlw-(?P<build>\d+)(?:-n\d+)?$')
 
@@ -215,6 +218,74 @@ class EventStore:
                 if e['id'] == event_id:
                     e.update(fields)
             self._save()
+
+
+# ---------------------------------------------------------------------------- new builds (Nexus poller)
+#
+# Lightwell does not announce a new build (its webhook is "TBD" on the diagram), and a Nexus proxy only learns of a
+# build when something asks for it. So this asks: for every library in the app BOMs, read maven-metadata.xml through
+# the proxy, and request the jar of any Lightwell build of an installed version that has not been seen before. Nexus
+# caches it, and its repository webhook calls /api/v2/webhook. With NEXUS_EVENTS=poller (for a Nexus without
+# webhooks) the poller records the event itself.
+
+def _versions(xml: str) -> list[str]:
+    return re.findall(r'<version>([^<]+)</version>', xml or '')
+
+
+def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] | None = None) -> list[dict]:
+    """One pass. fetch(url) -> bytes (raises on HTTP errors). Returns the builds requested this pass; adds them to seen."""
+    base = env('NEXUS_URL').rstrip('/')
+    repo = env('NEXUS_REPOSITORY', 'lightwell-remediated')
+    if not base:
+        return []
+    wanted: dict[tuple[str, str], set[str]] = {}
+    for app in (apps if apps is not None else load_bom()):
+        for dep in app.get('dependencies', []):
+            wanted.setdefault((dep['group'], dep['artifact']), set()).add(dep.get('version', ''))
+    found = []
+    for (group, artifact), installed in sorted(wanted.items()):
+        path = f"{base}/repository/{repo}/{group.replace('.', '/')}/{artifact}"
+        try:
+            versions = _versions(fetch(f'{path}/maven-metadata.xml').decode('utf-8', 'replace'))
+        except Exception:
+            continue                       # not in Lightwell, or Nexus is down; next pass tries again
+        for v in versions:
+            key = f'{group}:{artifact}:{v}'
+            if key in seen or not is_lightwell(v) or upstream(v) not in installed:
+                continue
+            try:
+                fetch(f'{path}/{v}/{jar_name(artifact, v)}')       # this is what makes Nexus cache it
+            except Exception:
+                continue
+            seen.add(key)
+            ev = {'id': f'evt-{uuid.uuid4().hex[:10]}', 'source': 'nexus-poller', 'repository': repo,
+                  'format': 'maven2', 'group': group, 'artifact': artifact, 'version': v,
+                  'received_at': now_iso(), 'cves': [], 'cves_source': 'pending'}
+            if env('NEXUS_EVENTS', 'webhook') == 'poller':
+                enrich(events().add(ev))
+            found.append(ev)
+    return found
+
+
+def poller_loop() -> None:
+    """Live mode only, started by the console when NEXUS_POLL_SECONDS > 0."""
+    import urllib.request
+    state_file = ROOT / 'runs' / 'nexus-poller.json'
+    try:
+        seen = set(json.loads(state_file.read_text()))
+    except (OSError, ValueError):
+        seen = set()
+
+    def fetch(url: str) -> bytes:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            return r.read()
+
+    while True:
+        if not H.demo_mode():
+            if poll_nexus(fetch, seen):
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                state_file.write_text(json.dumps(sorted(seen)))
+        time.sleep(max(30, int(env('NEXUS_POLL_SECONDS', '300') or 300)))
 
 
 # ---------------------------------------------------------------------------- inventory (app BOMs)
@@ -870,7 +941,7 @@ def _out(a: dict | None) -> dict:
     return out if isinstance(out, dict) else {}
 
 
-STEP_OF = {NODE_COMMIT: 'commit', NODE_APPROVAL: 'approval', NODE_SYNC: 'sync', NODE_VERIFY: 'verify'}
+STEP_OF = {NODE_COMMIT: 'commit', NODE_APPROVAL: 'approval', NODES_RUN[0]: 'sync', NODES_RUN[1]: 'sync'}
 AO_STATE = {'completed': 'done', 'succeeded': 'done', 'failed': 'failed', 'running': 'active',
             'waiting': 'waiting', 'pending': 'waiting', 'skipped': 'skipped', 'cancelled': 'failed'}
 
@@ -889,17 +960,24 @@ def _follow_live(h: dict) -> None:
         steps = {}
         for node, step in STEP_OF.items():
             a = acts.get(node)
-            if a:
+            if a and a.get('status'):
                 s = AO_STATE.get(str(a.get('status', '')).lower(), 'active')
-                if step == 'approval' and s == 'waiting' and a.get('started_at') is None and h['env'] == 'qa':
-                    s = 'skipped'
+                if s == 'waiting' and not a.get('started_at') and step != 'approval':
+                    continue                      # a node the run has not reached, not a gate
                 steps[step] = s
-        if steps.get('sync') == 'done':
-            steps['remediate'] = 'done'
-        elif steps.get('sync') == 'active':
+        if h['env'] == 'qa':
+            steps['approval'] = 'skipped'
+        run_node = next((acts[n] for n in NODES_RUN if n in acts and acts[n].get('started_at')), None)
+        verify = _out(run_node)
+        run_state = steps.get('sync')
+        if run_state in ('done', 'failed'):
+            steps['sync'] = 'done'                # the project synced and the playbook started
+            steps['remediate'] = 'done' if verify else run_state
+            steps['verify'] = ('done' if verify.get('patched') in (True, 'true', 'True')
+                               else 'failed')
+        elif run_state == 'active':
             steps['remediate'] = 'active'
         commit = _out(acts.get(NODE_COMMIT))
-        verify = _out(acts.get(NODE_VERIFY)) or _out(acts.get(NODE_SYNC))
         extra = {}
         if commit.get('commit_sha'):
             extra.update(commit_sha=commit['commit_sha'], commit_url=commit.get('commit_url', ''),

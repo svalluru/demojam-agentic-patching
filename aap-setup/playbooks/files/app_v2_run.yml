@@ -1,0 +1,29 @@
+---
+# Applications v2 runner, committed to the playbooks repository by app_v2_commit.yml. Job template
+# "App Patch v2 - Sync and Run" points at this file; the project syncs on launch, so the generated playbook committed
+# moments earlier is on disk.
+#
+# It runs a generated playbook only if its sha256 is the one the console generated and the reviewer approved. A file
+# changed in the repository after the commit fails here instead of reaching a server.
+#
+# Extra vars (from the AO workflow): playbook_filename, playbook_sha256, target_hosts, nexus_jar_url, verified_sha256.
+- name: Check the playbook is the one that was approved
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read it
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/{{ playbook_filename }}"
+        checksum_algorithm: sha256
+      register: pb
+
+    - name: Compare
+      ansible.builtin.assert:
+        that:
+          - pb.stat.exists
+          - pb.stat.checksum == playbook_sha256
+        fail_msg: "{{ playbook_filename }} is not the approved playbook (sha256 {{ pb.stat.checksum | default('missing') }})"
+
+- name: Run the generated playbook
+  ansible.builtin.import_playbook: "{{ playbook_filename }}"

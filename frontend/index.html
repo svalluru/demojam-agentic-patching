@@ -2001,6 +2001,8 @@
   .v2-steps i.failed { border-color: var(--red); background: var(--tint-r); }
   .v2-steps i.skipped { opacity: .35; }
   #appv2-pane tbody tr { cursor: default; }
+  /* Several short tables in one scrolling body: a sticky header from one would sit over the rows of the next. */
+  #appv2-pane th { position: static; }
   #appv2-pane a { color: var(--red); text-decoration: none; font-weight: 700; }
   #appv2-pane a:hover { text-decoration: underline; }
   #appv2-pane tbody tr.pick { cursor: pointer; }

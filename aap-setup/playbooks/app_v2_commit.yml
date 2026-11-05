@@ -1,0 +1,200 @@
+---
+# Applications v2, first node of the AO workflow "App Patch v2": verify the Lightwell build, then commit the generated
+# playbook to Gitea. Job template "App Patch v2 - Commit to Gitea" (aap-setup/create-app-v2-objects.py).
+#
+# Runs on the controller's execution environment (localhost). Nothing here touches an application server.
+#
+#   1. The playbook the console generated arrives base64-encoded; its sha256 must match the one the console computed,
+#      so a playbook altered on the way is never committed.
+#   2. The jar and its provenance bundle are downloaded through Nexus, and the provenance is verified with cosign
+#      against Red Hat's PNC Provenance Signing Key 1 (Configure Lightwell Network, "Verify provenance for Java
+#      artifacts"). A build that does not verify is not committed, so it can never reach the gate.
+#   3. The playbook, and the fixed runner app_v2_run.yml that the Sync and Run job imports it through, are committed to
+#      the Gitea repository and pushed.
+#
+# Variables (from the AO trigger):
+#   playbook_b64, playbook_sha256, playbook_filename   the generated playbook and where it goes in the repository
+#   gitea_repo                                         owner/name, default lab-user/app_v2_playbooks
+#   jar_url, provenance_url                            the build in Nexus
+#   app, run_id                                        for the commit message
+#   init_only                                          true: commit only app_v2_run.yml (create-app-v2-objects.py runs
+#                                                      this once, so the Sync and Run template has a playbook to name)
+#
+# Gitea access comes from the environment, injected by the credential attached to the template (the lab's own Gitea
+# credential where create-app-v2-objects.py can reuse it): GITEA_URL, GITEA_USERNAME and GITEA_TOKEN (or
+# GITEA_PASSWORD). The token is never printed.
+#
+# Reports with set_stats: playbook_filename, commit_sha, commit_url, jar_sha256, provenance_verified.
+- name: App Patch v2 - verify the build and commit the playbook
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    gitea_repo: lab-user/app_v2_playbooks
+    gitea_url: "{{ lookup('ansible.builtin.env', 'GITEA_URL') | default('', true) }}"
+    gitea_user: "{{ lookup('ansible.builtin.env', 'GITEA_USERNAME') | default(lookup('ansible.builtin.env', 'GITEA_USER'), true) }}"
+    gitea_token: "{{ lookup('ansible.builtin.env', 'GITEA_TOKEN') | default(lookup('ansible.builtin.env', 'GITEA_PASSWORD'), true) }}"
+    work: "/tmp/app-v2-{{ run_id | default('run') }}-{{ app | default('app') }}"
+    cosign_version: v3.1.4
+    cosign_sha256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+    require_provenance: true
+  tasks:
+    - name: Check the Gitea credential
+      ansible.builtin.assert:
+        that: [gitea_url | length > 0, gitea_token | length > 0]
+        fail_msg: The template needs a credential that injects GITEA_URL and GITEA_TOKEN (or GITEA_PASSWORD).
+
+    - name: Check the inputs
+      ansible.builtin.assert:
+        that:
+          - playbook_b64 | default('') | length > 0
+          - playbook_sha256 | default('') | length == 64
+          - playbook_filename is match('^app-v2/[A-Za-z0-9._-]+\.yml$')
+          - jar_url | default('') | length > 0
+        fail_msg: The trigger must send the playbook, its sha256, its filename and the jar URL.
+      when: not (init_only | default(false) | bool)
+
+    - name: Start from a clean working directory
+      ansible.builtin.file:
+        path: "{{ work }}"
+        state: "{{ item }}"
+        mode: "0700"
+      loop: [absent, directory]
+
+    - name: Verify the playbook and the build
+      when: not (init_only | default(false) | bool)
+      block:
+        - name: Write the generated playbook
+          ansible.builtin.copy:
+            content: "{{ playbook_b64 | b64decode }}"
+            dest: "{{ work }}/playbook.yml"
+            mode: "0644"
+
+        - name: Read its checksum
+          ansible.builtin.stat:
+            path: "{{ work }}/playbook.yml"
+            checksum_algorithm: sha256
+          register: pb
+
+        - name: The playbook is the one the console generated
+          ansible.builtin.assert:
+            that: pb.stat.checksum == playbook_sha256
+            fail_msg: "playbook sha256 {{ pb.stat.checksum }} does not match {{ playbook_sha256 }}; not committing it"
+
+        - name: Download the Lightwell build through Nexus
+          ansible.builtin.get_url:
+            url: "{{ jar_url }}"
+            dest: "{{ work }}/build.jar"
+            mode: "0644"
+
+        - name: Download its provenance bundle
+          ansible.builtin.get_url:
+            url: "{{ provenance_url }}"
+            dest: "{{ work }}/build.provenance.sigstore.json"
+            mode: "0644"
+          register: prov_dl
+          failed_when: require_provenance and prov_dl is failed
+          ignore_errors: "{{ not require_provenance }}"
+
+        - name: Look for cosign
+          ansible.builtin.command: cosign version
+          register: cosign_present
+          changed_when: false
+          failed_when: false
+
+        - name: Fetch cosign, pinned to its published checksum
+          ansible.builtin.get_url:
+            url: "https://github.com/sigstore/cosign/releases/download/{{ cosign_version }}/cosign-linux-amd64"
+            dest: "{{ work }}/cosign"
+            checksum: "sha256:{{ cosign_sha256 }}"
+            mode: "0755"
+          when: cosign_present.rc != 0
+
+        - name: Write Red Hat's PNC Provenance Signing Key 1
+          ansible.builtin.copy:
+            src: files/pnc-provenance-signing-key-1.pub
+            dest: "{{ work }}/pnc.pub"
+            mode: "0644"
+
+        # Sigstore bundle v0.3 (dsseEnvelope), which cosign 3 reads by default; 2.4 could not parse it.
+        - name: Verify the build's SLSA provenance
+          ansible.builtin.command:
+            argv:
+              - "{{ 'cosign' if cosign_present.rc == 0 else work ~ '/cosign' }}"
+              - verify-blob-attestation
+              - --type
+              - https://slsa.dev/provenance/v1
+              - --key
+              - "{{ work }}/pnc.pub"
+              - --bundle
+              - "{{ work }}/build.provenance.sigstore.json"
+              - "{{ work }}/build.jar"
+          register: provenance
+          changed_when: false
+          failed_when: require_provenance and provenance.rc != 0
+          when: prov_dl is succeeded
+
+        - name: Checksum of the verified jar
+          ansible.builtin.stat:
+            path: "{{ work }}/build.jar"
+            checksum_algorithm: sha256
+          register: jar
+
+    - name: Clone the playbooks repository
+      ansible.builtin.command:
+        argv: [git, clone, --depth, "1", "{{ gitea_url | regex_replace('^(https?://)', '\\1' ~ (gitea_user | urlencode) ~ ':' ~ (gitea_token | urlencode) ~ '@') }}/{{ gitea_repo }}.git", "{{ work }}/repo"]
+      no_log: true
+      changed_when: false
+
+    - name: Make the folder for generated playbooks
+      ansible.builtin.file:
+        path: "{{ work }}/repo/app-v2"
+        state: directory
+        mode: "0755"
+
+    - name: Place the playbook
+      ansible.builtin.copy:
+        src: "{{ work }}/playbook.yml"
+        dest: "{{ work }}/repo/{{ playbook_filename }}"
+        remote_src: true
+        mode: "0644"
+      when: not (init_only | default(false) | bool)
+
+    - name: Place the runner the Sync and Run job imports it through
+      ansible.builtin.copy:
+        src: files/app_v2_run.yml
+        dest: "{{ work }}/repo/app_v2_run.yml"
+        mode: "0644"
+
+    - name: Commit and push
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ work }}/repo"
+        git config user.name "App Patch v2"
+        git config user.email "app-patch-v2@localhost"
+        git add -A
+        if ! git diff --cached --quiet; then
+          git commit -q -m "App Patch v2: {{ 'add the runner' if init_only | default(false) | bool else (app | default('app')) ~ ' run ' ~ (run_id | default('')) ~ ' (' ~ playbook_filename ~ ')' }}"
+          git push -q origin HEAD
+        fi
+        git rev-parse HEAD
+      args:
+        executable: /bin/bash
+      register: pushed
+      no_log: true
+      changed_when: true
+
+    - name: Report the commit
+      ansible.builtin.set_stats:
+        data:
+          playbook_filename: "{{ playbook_filename | default('') }}"
+          commit_sha: "{{ pushed.stdout_lines[-1] }}"
+          commit_url: "{{ gitea_url }}/{{ gitea_repo }}/src/commit/{{ pushed.stdout_lines[-1] }}/{{ playbook_filename | default('app_v2_run.yml') }}"
+          jar_sha256: "{{ jar.stat.checksum | default('') }}"
+          provenance_verified: "{{ provenance.rc | default(1) == 0 }}"
+
+  post_tasks:
+    - name: Remove the working directory, which held a clone with credentials in its remote
+      ansible.builtin.file:
+        path: "{{ work }}"
+        state: absent

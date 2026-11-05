@@ -1,0 +1,17 @@
+{
+  "app": "sample-app",
+  "owner": "demojam",
+  "path": "/opt/apps/sample-app",
+  "service": "sample-app",
+  "health_url": "http://localhost:8080/health",
+  "servers": [
+    {"host": "node1", "env": "qa"},
+    {"host": "node2", "env": "prod"},
+    {"host": "node3", "env": "prod"}
+  ],
+  "dependencies": [
+    {"group": "org.apache.logging.log4j", "artifact": "log4j-api", "version": "2.24.3"},
+    {"group": "org.apache.logging.log4j", "artifact": "log4j-core", "version": "2.24.3"},
+    {"group": "commons-io", "artifact": "commons-io", "version": "2.11.0"}
+  ]
+}

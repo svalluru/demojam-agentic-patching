@@ -20,6 +20,8 @@ COPY lightwell/scanner/ ./lightwell/scanner/
 COPY lightwell/ui/ ./lightwell/ui/
 COPY lightwell/demo/ ./lightwell/demo/
 COPY aap-setup/playbooks/files/ ./aap-setup/playbooks/files/
+# Applications v2: the app BOMs the inventory agent reads (BOM_DIR).
+COPY rag-setup/data/bom/ ./rag-setup/data/bom/
 
 # OpenShift runs the container as an arbitrary uid in group 0, not as the
 # user named here, so anything written at runtime has to be group-writable.

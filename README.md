@@ -478,6 +478,22 @@ Demo mode stages all of it, with real Lightwell builds (`log4j-core
 fails its health check and is rolled back. All of it lives in `appv2.py`;
 tests are in `tests/test_appv2.py`.
 
+**Live setup**, after `./setup.sh` and the console on OpenShift
+(`./console-app-ocp-setup/deploy.sh`), in this order:
+
+```bash
+./nexus-setup/deploy.sh                       # Nexus + lightwell-remediated proxy + webhook
+git push                                      # the AAP setup project reads the v2 playbooks from GitHub
+./aap-setup/create-app-v2-objects.py --deploy-sample   # templates, Gitea project, sample app on node1-3
+DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
+./console-app-ocp-setup/deploy.sh --config-only      # pick up the NEXUS_* keys
+```
+
+The BOM for the sample app is `rag-setup/data/bom/sample-app.json` (node1 QA,
+node2–3 Prod). The provenance check uses cosign 3 (`verify-blob-attestation`
+reads the Sigstore v0.3 bundles Lightwell publishes; cosign 2.4 cannot), and
+Red Hat's public PNC key in `aap-setup/playbooks/files/`.
+
 ### Demo guide
 
 The book icon beside the gear opens the run of show: a seven-beat script with

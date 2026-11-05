@@ -7,6 +7,7 @@ import hmac
 import json
 import sys
 import time
+import types
 import unittest
 from pathlib import Path
 
@@ -172,6 +173,99 @@ class DemoRun(unittest.TestCase):
         self.assertEqual(appv2.start_generate()[0], 409)
         self.assertEqual(appv2.start_dispatch()[0], 409)
         self.assertEqual(appv2.start_assess('no-such-event')[0], 404)
+
+
+class Poller(unittest.TestCase):
+    META = ('<metadata><versioning><versions><version>2.24.3.rhlw-00004</version>'
+            '<version>2.25.1.rhlw-00002</version><version>2.24.3</version></versions></versioning></metadata>')
+
+    def test_requests_only_builds_of_installed_versions(self):
+        demo(NEXUS_URL='https://nexus.lab', NEXUS_EVENTS='poller')
+        asked = []
+
+        def fetch(url):
+            asked.append(url)
+            if url.endswith('log4j-core/maven-metadata.xml'):
+                return self.META.encode()
+            if url.endswith('.jar'):
+                return b'jar'
+            raise OSError('404')
+
+        apps = [{'app': 'a', 'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'}]}]
+        seen = set()
+        found = appv2.poll_nexus(fetch, seen, apps)
+        self.assertEqual([f['version'] for f in found], ['2.24.3.rhlw-00004'])   # not 2.25.1: nothing runs it
+        self.assertTrue(any(u.endswith('log4j-core-2.24.3.rhlw-00004.jar') for u in asked))
+        self.assertTrue(any(e['version'] == '2.24.3.rhlw-00004' for e in appv2.events().all()))
+        self.assertEqual(appv2.poll_nexus(fetch, seen, apps), [])                 # seen: not requested twice
+
+
+class LiveFollow(unittest.TestCase):
+    """The live path against a fake AO that walks one Prod execution through the App Patch v2 nodes."""
+
+    def test_prod_host_stops_at_gate_then_patches(self):
+        demo()
+        phase = {'n': 'gate'}
+        signals = []
+
+        def ao(path, method='GET', body=None):
+            if path == '/api/v1/workflows':
+                return {'resources': [{'id': 'wf1', 'name': 'App Patch v2'}]}
+            if path == '/api/v1/executions' and method == 'POST':
+                return {'id': 'ex1'}
+            if path.endswith('/signal'):
+                signals.append((path, body))
+                phase['n'] = 'done'
+                return {}
+            if path == '/api/v1/executions/ex1':
+                return {'status': 'running' if phase['n'] == 'gate' else 'completed'}
+            if path == '/api/v1/executions/ex1/activities':
+                commit = {'temporal_activity_id': 'commit_to_gitea', 'status': 'completed', 'started_at': 't',
+                          'output_data': {'artifacts': {'commit_sha': 'abc123', 'jar_sha256': 'f' * 64,
+                                                        'provenance_verified': True, 'commit_url': 'https://g/c'}}}
+                gate = {'temporal_activity_id': 'approval_prod', 'node_type': 'approval', 'started_at': 't',
+                        'status': 'waiting' if phase['n'] == 'gate' else 'completed'}
+                run = {'temporal_activity_id': 'run_app_patch_prod', 'status': 'completed', 'started_at': 't',
+                       'output_data': {'artifacts': {'patched': True, 'version': 'x.jar'}}}
+                return {'resources': [commit, gate] + ([run] if phase['n'] == 'done' else [])}
+            raise AssertionError(path)
+
+        appv2.configure(demo_mode=lambda: False, ao_call=ao)
+        # Only appv2's clock: its poll interval goes to zero, the test's own waits stay real.
+        appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
+        try:
+            appv2.EVENTS = appv2.EventStore(None)
+            ev = dict(appv2.DEMO_EVENTS[0])
+            target = {'app': 'billing-api', 'host': 'billing-prod-01', 'env': 'prod', 'installed': '2.24.3',
+                      'path': '/opt/apps/billing-api', 'service': 'billing-api', 'health_url': 'http://x'}
+            with appv2._LOCK:
+                appv2._RUN.clear()
+                appv2._RUN.update(status='generated', run_id='r1', event=ev, events=[],
+                                  stages={k: 'pending' for k in appv2.STAGES},
+                                  impact={'targets': [target], 'apps': ['billing-api'], 'other': []},
+                                  playbooks=[{'app': 'billing-api', 'filename': 'app-v2/b.yml', 'text': 'x',
+                                              'sha256': '0' * 64, 'ok': True}])
+            appv2.start_dispatch()
+            for _ in range(200):
+                if appv2.state()['hosts'][0]['outcome'] == 'awaiting_approval':
+                    break
+                time.sleep(0.01)
+            h = appv2.state()['hosts'][0]
+            self.assertEqual(h['outcome'], 'awaiting_approval')
+            self.assertEqual(h['commit_sha'], 'abc123')
+            self.assertEqual(h['provenance'], 'verified')
+            self.assertEqual(appv2.decide('billing-prod-01', 'approved')[0], 200)
+            self.assertEqual(signals[0][1], {'signal_data': {'decision': 'approved'}})
+            for _ in range(200):
+                if appv2.state().get('status') == 'complete':
+                    break
+                time.sleep(0.01)
+            st = appv2.state()
+            self.assertEqual(st['status'], 'complete')
+            self.assertEqual(st['hosts'][0]['outcome'], 'patched')
+            self.assertEqual(st['hosts'][0]['steps']['verify'], 'done')
+        finally:
+            appv2.time = time
 
 
 if __name__ == '__main__':
