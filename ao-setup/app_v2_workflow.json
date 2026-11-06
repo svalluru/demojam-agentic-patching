@@ -119,6 +119,6 @@
     {"from": "commit_to_gitea", "to": "route_switch"},
     {"from": "route_switch", "to": "run_app_patch", "from_port": "case_0"},
     {"from": "route_switch", "to": "approval_prod", "from_port": "case_1"},
-    {"from": "approval_prod", "to": "run_app_patch_prod"}
+    {"from": "approval_prod", "to": "run_app_patch_prod", "from_port": "approved"}
   ]
 }

@@ -7,6 +7,7 @@ Configure a fresh (or existing) Nexus for Applications v2 through its REST API. 
   2. repository lightwell-remediated: Maven2 proxy of the Lightwell Network Java repository, Layout Policy Strict,
      authenticated with the registry service account (Red Hat's "Configure Nexus to use the Lightwell Network
      repository").
+  2b. the Community Edition EULA, accepted only with NEXUS_ACCEPT_EULA=true (it serves nothing until then).
   3. anonymous read, so the commit job and the hosts can fetch the build without a Nexus credential. This makes the
      cached Lightwell builds readable by anyone who can reach the Route: acceptable in a lab, not elsewhere.
   4. a repository webhook (capability "webhook.repository") for component events on that repository, to
@@ -122,6 +123,21 @@ def main() -> None:
         print('  using NEXUS_ADMIN_PASSWORD from .env')
     nx = Nexus(base, 'admin', password, verify)
     write_env(env_path, updates)                       # keep the password even if a later step fails
+
+    # Community Edition serves nothing, not even to admin, until its EULA is accepted (HTTP 403 "You must accept the
+    # End User License Agreement"). Accepting a licence is the operator's call, so it is done only when asked.
+    print('EULA')
+    code, eula = nx.call('GET', '/service/rest/v1/system/eula', ok=(200,))
+    if code == 200 and isinstance(eula, dict) and not eula.get('accepted'):
+        if env.get('NEXUS_ACCEPT_EULA', '').lower() not in ('1', 'true', 'yes'):
+            sys.exit('  Nexus Community Edition needs its EULA accepted before it serves anything:\n'
+                     f'  {eula.get("disclaimer", "")}\n'
+                     '  Set NEXUS_ACCEPT_EULA=true in .env to accept it, then run this again.')
+        code, err = nx.call('POST', '/service/rest/v1/system/eula',
+                            {'accepted': True, 'disclaimer': eula.get('disclaimer', '')})
+        print('  accepted (NEXUS_ACCEPT_EULA=true)' if code in (200, 204) else f'  could not accept: HTTP {code} {err}')
+    else:
+        print('  already accepted' if code == 200 else f'  no EULA endpoint (HTTP {code})')
 
     print(f'Repository {REPO}')
     code, existing = nx.call('GET', f'/service/rest/v1/repositories/maven/proxy/{REPO}', ok=(200,))
