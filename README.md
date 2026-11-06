@@ -452,7 +452,7 @@ socket is already open by the time the panel can reach the process.
 The third option on the header toggle. Where **Applications** scans a
 repository and rebuilds it, v2 starts from the other end: a Lightwell build
 lands in Nexus, and the console patches the servers already running the
-version it replaces. **How the demo works** (the flow icon in the header) has a
+version it replaces. **How to run** (the flow icon in the header) has a
 v2 tab with the numbered diagram; this is the same thing in text.
 
 ```
@@ -473,10 +473,15 @@ v2 tab with the numbered diagram; this is the same thing in text.
    (`X-Nexus-Webhook-Signature`, HMAC-SHA1 of `NEXUS_WEBHOOK_SECRET`) is
    checked before anything else, and a redelivery is the same event. The CVEs
    come from the Lightwell advisories API for that exact build.
-2. **Impact.** The app BOMs (`rag-setup/data/bom/*.json`) say which apps, on
+2. **Impact.** The app BOMs (`app-data/bom/*.json`) say which apps, on
    which servers, run the upstream version the build replaces. Exact match
    only: an app on another version is listed as left alone, with the reason.
-   The LLM writes a short note for the reviewer.
+   Each app and server gets a **Reasoning** line: the agent searches the app
+   history store (`APP_VECTOR_DB_ID`, from `app-data/history/`) for past
+   changes to that app on that server, and the LLM writes one line per row. A
+   row with no history says so. The LLM also writes a short note for the
+   reviewer. **Untick rows** to leave them out of the run; they are recorded
+   as not selected, and Prod still waits for approval.
 3. **Playbook.** The LLM drafts it, and `check_playbook()` decides whether the
    draft can be used: a play for `{{ target_hosts }}` with `become`, every
    path, jar name and checksum variable exactly as the system set them,
@@ -501,6 +506,14 @@ v2 tab with the numbered diagram; this is the same thing in text.
 checks (step 3), provenance before commit (step 4), and the runner's sha256
 (step 6). The console never touches git or a server; the AO workflow does.
 
+**The three views** in the right frame: **Incoming fixes** (builds that have
+arrived in Nexus), **Lightwell catalog** (remediated builds Lightwell
+publishes; "Only builds my apps need" asks Lightwell per library version in
+the BOMs, unticked it pages through the whole catalog), and **Runs** (every
+finished run, newest first; open one to see it as the reviewer did). The left
+column draws the agent architecture, lit from the run's trace: which agent is
+calling which service, on OpenShift AI or Ansible Automation Platform.
+
 **Demo mode** stages all of it, with real Lightwell builds (`log4j-core
 2.24.3.rhlw-00004`, `commons-io 2.11.0.rhlw-00009`) and one Prod server that
 fails its health check and is rolled back. Code: `appv2.py`; tests:
@@ -515,7 +528,8 @@ fails its health check and is rolled back. Code: `appv2.py`; tests:
 | Generated playbooks and the runner | lab Gitea `lab-user/app_v2_playbooks`, AAP project **App Patch v2 Playbooks**. Written by the workflow, never by hand |
 | AO workflow | `ao-setup/app_v2_workflow.json` |
 | Nexus | `nexus-setup/` (`deploy.sh`, `configure.py`) |
-| App inventory | `rag-setup/data/bom/sample-app.json`: node1 QA, node2–3 Prod |
+| App inventory | `app-data/bom/`: `sample-app` (node1 QA, node2–3 Prod) and `orders-api` (node1 QA, port 8081). Not under `rag-setup/data/`, which is ingested into the infra history store |
+| App history (synthetic) | `app-data/history/*.md`, ingested by `setup.sh` into the `app_patch_history` store |
 
 #### Live setup
 
@@ -528,6 +542,8 @@ On a fresh lab, in this order. Each step is idempotent.
 ./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy, the webhook
 git push                                          # AAP reads the v2 setup playbooks from GitHub
 ./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates, runner, sample app
+# the second QA app: launch "App Patch v2 - Deploy Sample App" with
+#   app_name=orders-api app_port=8081 target_hosts=node1
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
 ./console-app-ocp-setup/deploy.sh --config-only   # the console picks up NEXUS_* from .env
 ```

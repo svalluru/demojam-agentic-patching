@@ -283,16 +283,24 @@ if ! $SKIP_OPENSHIFT; then
            | grep -oE 'VECTOR_DB_ID=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)"
     [[ -n "$VEC" ]] || die "ingest did not report a VECTOR_DB_ID"
     ok "vector store $VEC"
-    python3 - "$ENV_FILE" "$LS" "$RS" "$VEC" <<'PY'
+    # Applications v2: past changes per app and server, for the Reasoning column. A store of its own: in the
+    # infra store these records would turn up in a host's patch history.
+    APPVEC="$("$ROOT/rag-setup/ingest.py" --route "$LS" --name app_patch_history \
+             --dir "$ROOT/app-data/history" --ensure | tee /dev/stderr \
+           | grep -oE 'VECTOR_DB_ID=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)"
+    [[ -n "$APPVEC" ]] || die "app history ingest did not report a VECTOR_DB_ID"
+    ok "app history store $APPVEC"
+    python3 - "$ENV_FILE" "$LS" "$RS" "$VEC" "$APPVEC" <<'PY'
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 for k, v in (('LLAMA_STACK_URL', sys.argv[2]),
              ('RISK_URL', sys.argv[3].rstrip('/') + '/v1/models/risk-score:predict'),
-             ('VECTOR_DB_ID', sys.argv[4])):
+             ('VECTOR_DB_ID', sys.argv[4]),
+             ('APP_VECTOR_DB_ID', sys.argv[5])):
     pat = re.compile(rf'^{k}=.*$', re.M)
     s = pat.sub(f'{k}={v}', s) if pat.search(s) else s + f'\n{k}={v}\n'
 p.write_text(s)
-print('  \033[32m✓\033[0m wrote LLAMA_STACK_URL, RISK_URL and VECTOR_DB_ID back to .env')
+print('  \033[32m✓\033[0m wrote LLAMA_STACK_URL, RISK_URL, VECTOR_DB_ID and APP_VECTOR_DB_ID back to .env')
 PY
     set -a; . "$ENV_FILE"; set +a
   fi

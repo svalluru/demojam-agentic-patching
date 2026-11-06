@@ -1,0 +1,15 @@
+{
+  "app": "orders-api",
+  "owner": "demojam",
+  "path": "/opt/apps/orders-api",
+  "service": "orders-api",
+  "health_url": "http://localhost:8081/health",
+  "servers": [
+    {"host": "node1", "env": "qa"}
+  ],
+  "dependencies": [
+    {"group": "org.apache.logging.log4j", "artifact": "log4j-api", "version": "2.24.3"},
+    {"group": "org.apache.logging.log4j", "artifact": "log4j-core", "version": "2.24.3"},
+    {"group": "commons-io", "artifact": "commons-io", "version": "2.11.0"}
+  ]
+}

@@ -68,6 +68,8 @@ class _Hooks:
     llm: Callable[[str], str] | None = None              # prompt -> answer text
     ao_call: Callable[..., Any] | None = None            # (path, method='GET', body=None)
     fixed_cves: Callable[[str, str, str], list] | None = None   # (group, artifact, version) -> CVE ids
+    rag_search: Callable[[str, str], list] | None = None        # (vector store id, query) -> hit texts
+    lightwell_get: Callable[..., dict] | None = None            # (path, **params) -> Lightwell API body
 
 
 H = _Hooks()
@@ -110,6 +112,13 @@ DEMO_BOM = [
      'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'},
                       {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-api', 'version': '2.24.3'},
                       {'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.16.1'}]},
+    # Shares orders-qa-01 with orders-service and runs the same log4j-core: two apps on one QA server, so a run
+    # can patch one and leave the other (the Impact table's checkboxes).
+    {'app': 'orders-api', 'owner': 'payments', 'path': '/opt/apps/orders-api', 'service': 'orders-api',
+     'health_url': 'http://localhost:8081/health',
+     'servers': [{'host': 'orders-qa-01.acme.internal', 'env': 'qa'}],
+     'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'},
+                      {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-api', 'version': '2.24.3'}]},
     {'app': 'billing-api', 'owner': 'payments', 'path': '/opt/apps/billing-api', 'service': 'billing-api',
      'health_url': 'http://localhost:8081/health',
      'servers': [{'host': 'billing-prod-01.acme.internal', 'env': 'prod'}],
@@ -125,6 +134,25 @@ DEMO_BOM = [
 
 # The staged failure: this host's health check fails after the swap and the playbook rolls it back.
 DEMO_FAILING_HOST = 'orders-prod-02.acme.internal'
+
+# What the reasoning step says per app and server in demo mode. Live mode retrieves the same kind of thing from the
+# app history store (APP_VECTOR_DB_ID, app-data/history/) and has the LLM write one line per row.
+DEMO_REASONING = {
+    'orders-service|orders-qa-01.acme.internal':
+        'QA restarts take about 20s and carry no traffic; safe to go first. Shares the server with orders-api.',
+    'orders-api|orders-qa-01.acme.internal':
+        'Small stateless service; a log4j-core swap failed in September only because log4j-api lagged, which is '
+        'now 2.24.3 here.',
+    'orders-service|orders-prod-01.acme.internal':
+        'Clean jar swaps in the last three changes; patch outside 09:00-17:00 when order traffic peaks.',
+    'orders-service|orders-prod-02.acme.internal':
+        'Health check needed 60s after the last restart; a 30s window rolled back an August change. Watch it.',
+    'billing-api|billing-prod-01.acme.internal':
+        'Month-end batch runs on the 1st; no restarts in the last two days of a month.',
+    'catalog-web|catalog-qa-01.acme.internal': 'No earlier changes recorded for this app on this server.',
+    'catalog-web|catalog-prod-01.acme.internal':
+        'Behind a load balancer with a second instance; a restart is invisible to users.',
+}
 
 
 # ---------------------------------------------------------------------------- versions
@@ -291,12 +319,12 @@ def poller_loop() -> None:
 # ---------------------------------------------------------------------------- inventory (app BOMs)
 
 def bom_dir() -> Path:
-    return Path(env('BOM_DIR', str(ROOT / 'rag-setup' / 'data' / 'bom')))
+    # Not under rag-setup/data: that folder is ingested, recursively, into the infra history store.
+    return Path(env('BOM_DIR', str(ROOT / 'app-data' / 'bom')))
 
 
 def load_bom() -> list[dict]:
-    """Every app's BOM. Demo: the staged fleet. Live: one JSON file per app under BOM_DIR, the same
-    records rag-setup/ingest.py --bom loads into the BOM vector store for the LLM's context."""
+    """Every app's BOM. Demo: the staged fleet. Live: one JSON file per app under BOM_DIR (app-data/bom)."""
     if H.demo_mode():
         apps = json.loads(json.dumps(DEMO_BOM))
     else:
@@ -332,7 +360,8 @@ def impact(event: dict, apps: list[dict]) -> dict:
                 continue
             if dep.get('version') == want:
                 for s in app.get('servers', []):
-                    targets.append({'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
+                    targets.append({'key': f"{app['app']}|{s['host']}",
+                                    'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
                                     'env': s.get('env', 'prod'), 'path': app.get('path', ''),
                                     'service': app.get('service', app['app']),
                                     'health_url': app.get('health_url', ''), 'installed': dep['version']})
@@ -373,6 +402,53 @@ def helpful_info(event: dict, imp: dict) -> tuple[str, str]:
              + (f"; Prod waits for your approval ({len(prod)} server(s))." if prod else '.'))
     return f'{facts} {order} Each server keeps a backup of the old jar and rolls back if the health check fails.', \
         'rules' if not H.demo_mode() else 'staged'
+
+
+def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
+    """({target key: one line}, source). What the history says about patching this app on this server.
+
+    Live: one vector search per row in the app history store, keeping only records that name both the app and
+    the server, then one LLM call that writes a line per row. A row with no records says so; nothing is
+    invented for it."""
+    if H.demo_mode():
+        return ({t['key']: DEMO_REASONING.get(t['key'], 'No earlier changes recorded for this app on this server.')
+                 for t in targets}, 'staged')
+    store = env('APP_VECTOR_DB_ID')
+    if not store or not H.rag_search:
+        return {t['key']: 'No app history store configured (APP_VECTOR_DB_ID).' for t in targets}, 'none'
+    excerpts: dict[str, str] = {}
+    for t in targets:
+        short = t['host'].split('.')[0]
+        try:
+            hits = H.rag_search(store, f"patch history of {t['app']} on {short}")
+        except Exception:
+            hits = []
+        mine = [h for h in hits if t['app'] in h and re.search(rf'\b{re.escape(short)}\b', h)]
+        if mine:
+            excerpts[t['key']] = '\n---\n'.join(mine)[:2500]
+    out = {t['key']: 'No history found for this app on this server.' for t in targets if t['key'] not in excerpts}
+    if not excerpts:
+        return out, 'rag'
+    keys = list(excerpts)
+    prompt = ('For each numbered app and server below, write ONE short sentence a reviewer needs before a library '
+              'jar is swapped and the service restarted: timing, past failures, traffic windows. Use only the '
+              'records given. Answer as JSON, {"1": "...", "2": "..."}, and nothing else.\n\n'
+              + '\n\n'.join(f"{i + 1}. {k.replace('|', ' on ')}\n{excerpts[k]}" for i, k in enumerate(keys)))
+    try:
+        answer = H.llm(prompt) if H.llm else ''
+        parsed = json.loads(re.search(r'\{.*\}', answer, re.S).group(0))
+        for i, k in enumerate(keys):
+            out[k] = str(parsed.get(str(i + 1)) or '').strip() or _lesson(excerpts[k])
+        return out, 'rag+llm'
+    except Exception:
+        for k in keys:
+            out[k] = _lesson(excerpts[k])     # the record's own words when the LLM cannot be used
+        return out, 'rag'
+
+
+def _lesson(excerpt: str) -> str:
+    m = re.search(r'Lessons:\s*(.+?)(?:\n\n|$)', excerpt, re.S)
+    return ' '.join((m.group(1) if m else excerpt).split())[:220]
 
 
 # ---------------------------------------------------------------------------- playbook
@@ -631,6 +707,8 @@ def restore() -> dict:
         pass
     if not isinstance(saved, dict) or saved.get('status', 'idle') == 'idle':
         return {'restored': False}
+    for h in saved.get('hosts') or []:          # saved before hosts were keyed by app|host
+        h.setdefault('key', f"{h.get('app', '')}|{h.get('host', '')}")
     with _LOCK:
         _RUN.clear()
         _RUN.update(saved)
@@ -642,8 +720,8 @@ def restore() -> dict:
     resumed = []
     for h in saved.get('hosts') or []:
         if h.get('outcome') in ('running', 'queued') and h.get('execution_id') and not saved.get('simulated'):
-            threading.Thread(target=_follow_live, args=(h,), daemon=True, name=f'appv2-resume-{h["host"]}').start()
-            resumed.append(h['host'])
+            threading.Thread(target=_follow_live, args=(h,), daemon=True, name=f'appv2-resume-{h["key"]}').start()
+            resumed.append(h['key'])
     if resumed or status == 'awaiting_approval':
         _trace('console', 'ao', 'restarted; ' + (f"following {', '.join(resumed)} again" if resumed
                                                  else 'run restored, Prod waiting at the gate'))
@@ -664,6 +742,7 @@ def reset() -> None:
     with _LOCK:
         _RUN.clear()
         _RUN['status'] = 'idle'
+        _DEMO_RUNS.clear()          # demo history is memory only; it goes with the demo
     EVENTS = None
     _persist()
 
@@ -754,6 +833,17 @@ def _assess(ev: dict) -> None:
         H.demo_pause(1.2)
         imp = impact(ev, load_bom())
         _trace('inventory', 'intake', f"{len(imp['targets'])} server(s) in {len(imp['apps'])} app(s)")
+        if imp['targets']:
+            _trace('inventory', 'reasoning', f"past changes for {len(imp['targets'])} app/server pair(s)")
+            H.demo_pause(1.0)
+            notes, rsource = reasoning(imp['targets'])
+            if rsource == 'rag+llm':
+                _trace('reasoning', 'llm', 'one line per app and server')
+            for t in imp['targets']:
+                t['reasoning'] = notes.get(t['key'], '')
+            imp['reasoning_source'] = rsource
+        if H.llm and not H.demo_mode() and imp['targets']:
+            _trace('inventory', 'llm', 'note for the reviewer')
         info, source = helpful_info(ev, imp)
         _set(impact=imp, info=info, info_source=source)
         _stage('impact', 'done')
@@ -788,6 +878,8 @@ def _generate() -> None:
         for app in imp['apps']:
             target = next(t for t in imp['targets'] if t['app'] == app)
             _trace('intake', 'playbook', f'draft for {app}')
+            if H.llm and not H.demo_mode():
+                _trace('playbook', 'llm', f'draft for {app}')
             H.demo_pause(1.4)
             text, source, checks, note = draft_playbook(ev, target)
             ok = all(c['ok'] for c in checks)
@@ -807,26 +899,42 @@ def _generate() -> None:
         _set(status='failed', error=str(exc))
 
 
-def start_dispatch() -> tuple[int, dict]:
+SKIPPED_STEPS = {k: 'skipped' for k in ('commit', 'approval', 'sync', 'remediate', 'verify')}
+
+
+def start_dispatch(targets: list[str] | None = None) -> tuple[int, dict]:
+    """Run on the selected app/server pairs (all of them when targets is None). The rest are recorded as
+    skipped, so the run and its history say what was left out and why."""
     with _LOCK:
         if _RUN.get('status') != 'generated':
             return 409, {'ok': False, 'error': 'generate the playbook first'}
+        known = {t['key'] for t in _RUN['impact']['targets']}
+        chosen = known if targets is None else {k for k in targets if k in known}
+        if not chosen:
+            return 400, {'ok': False, 'error': 'select at least one app and server'}
         _RUN['status'] = 'dispatching'
         st = json.loads(json.dumps(_RUN))
     hosts = []
     for t in st['impact']['targets']:
         pb = next(p for p in st['playbooks'] if p['app'] == t['app'])
-        hosts.append({**t, 'playbook': pb['filename'], 'outcome': 'queued', 'steps': {}, 'execution_id': ''})
+        if t['key'] in chosen:
+            hosts.append({**t, 'playbook': pb['filename'], 'outcome': 'queued', 'steps': {}, 'execution_id': ''})
+        else:
+            hosts.append({**t, 'playbook': pb['filename'], 'outcome': 'skipped', 'steps': dict(SKIPPED_STEPS),
+                          'execution_id': '', 'detail': 'Not selected for this run.'})
     _set(hosts=hosts)
+    if len(chosen) < len(known):
+        _trace('console', 'ao', f'{len(chosen)} of {len(known)} app/server pair(s) selected')
     target = _simulate if H.demo_mode() else _dispatch_live
     threading.Thread(target=target, daemon=True, name='appv2-run').start()
     return 200, {'ok': True}
 
 
-def _host(host: str, **kw) -> None:
+def _host(key: str, **kw) -> None:
+    """Update one app/server pair. Keyed by app|host: two apps can share a server."""
     with _LOCK:
         for h in _RUN.get('hosts', []):
-            if h['host'] == host:
+            if h['key'] == key:
                 h.update({k: v for k, v in kw.items() if k != 'steps'})
                 if 'steps' in kw:
                     h.setdefault('steps', {}).update(kw['steps'])
@@ -836,7 +944,7 @@ def _host(host: str, **kw) -> None:
 def _roll_stages() -> None:
     """The bar from the hosts: a stage is done when every host that goes through it is past it."""
     st = state()
-    hosts = st.get('hosts') or []
+    hosts = [h for h in (st.get('hosts') or []) if h['outcome'] != 'skipped']
     if not hosts:
         return
     for key in ('commit', 'approval', 'sync', 'remediate', 'verify'):
@@ -855,68 +963,79 @@ def _roll_stages() -> None:
             _stage(key, 'pending')
 
 
+def _label(h: dict) -> str:
+    return f"{h['app']}@{h['host'].split('.')[0]}"
+
+
 def _simulate() -> None:
     """Demo: the AO workflow, staged. Nothing is committed, synced or patched."""
     st = state()
     _set(status='running', simulated=True)
     sha = hashlib.sha1(st['run_id'].encode()).hexdigest()
     jar_sha = hashlib.sha256(st['event']['version'].encode()).hexdigest()
-    for h in st['hosts']:
-        _host(h['host'], execution_id=f'sim-{uuid.uuid4().hex[:12]}', outcome='running')
-    _trace('console', 'ao', f"{len(st['hosts'])} execution(s) of App Patch v2")
-    # Commit runs once per playbook; every host's execution reports the same commit.
-    for h in st['hosts']:
-        _host(h['host'], steps={'commit': 'active'})
+    active = [h for h in st['hosts'] if h['outcome'] == 'queued']
+    for h in active:
+        _host(h['key'], execution_id=f'sim-{uuid.uuid4().hex[:12]}', outcome='running', steps={'commit': 'active'})
+    _trace('console', 'ao', f"{len(active)} execution(s) of App Patch v2")
     _roll_stages()
     H.demo_pause(1.6)
-    _trace('ao', 'gitea', f'committed {len(st["playbooks"])} playbook(s) at {sha[:8]}; provenance verified (cosign)')
+    _trace('ao', 'gitea', f'committed {len({h["app"] for h in active})} playbook(s) at {sha[:8]}; provenance verified (cosign)')
     gitea = env('GITEA_URL', 'https://gitea.example') + '/' + env('GITEA_REPO', 'lab-user/app_v2_playbooks')
-    for h in st['hosts']:
-        _host(h['host'], commit_sha=sha, commit_url=f'{gitea}/src/commit/{sha}/{h["playbook"]}',
+    for h in active:
+        _host(h['key'], commit_sha=sha, commit_url=f'{gitea}/src/commit/{sha}/{h["playbook"]}',
               provenance='verified', jar_sha256=jar_sha,
               steps={'commit': 'done', 'approval': 'skipped' if h['env'] == 'qa' else 'waiting'},
               outcome='running' if h['env'] == 'qa' else 'awaiting_approval')
     _roll_stages()
-    for h in [x for x in st['hosts'] if x['env'] == 'qa']:
+    for h in [x for x in active if x['env'] == 'qa']:
         _run_host_sim(h)
-    _set(status='awaiting_approval' if any(x['env'] != 'qa' for x in st['hosts']) else 'running')
+    _set(status='awaiting_approval' if any(x['env'] != 'qa' for x in active) else 'running')
     _maybe_finish()
 
 
 def _run_host_sim(h: dict, delay: float = 1.0) -> None:
-    host = h['host']
+    key = h['key']
     for step in ('sync', 'remediate', 'verify'):
-        _host(host, steps={step: 'active'})
+        _host(key, steps={step: 'active'})
+        if step == 'sync':
+            _trace('ao', 'aap', f'{_label(h)}: sync and run')
+        elif step == 'remediate':
+            _trace('aap', 'servers', f'{_label(h)}: swap the jar, restart {h["service"]}')
         _roll_stages()
         H.demo_pause(delay)
-        if step == 'verify' and host == DEMO_FAILING_HOST:
-            _host(host, steps={'verify': 'failed'}, outcome='rolled_back',
+        if step == 'verify' and h['host'] == DEMO_FAILING_HOST:
+            _host(key, steps={'verify': 'failed'}, outcome='rolled_back',
                   detail='Health check failed after the swap (HTTP 503 for 60s); the old jar was restored and the service restarted.')
-            _trace('aap', 'ao', f'{host.split(".")[0]}: health check failed, rolled back')
+            _trace('aap', 'ao', f'{_label(h)}: health check failed, rolled back')
             _roll_stages()
             return
-        _host(host, steps={step: 'done'})
-    _host(host, outcome='patched', detail=f"{h['service']} healthy on {jar_name(state()['event']['artifact'], state()['event']['version'])}")
-    _trace('aap', 'ao', f'{host.split(".")[0]}: patched and healthy')
+        _host(key, steps={step: 'done'})
+    _host(key, outcome='patched', detail=f"{h['service']} healthy on {jar_name(state()['event']['artifact'], state()['event']['version'])}")
+    _trace('aap', 'ao', f'{_label(h)}: patched and healthy')
     _roll_stages()
 
 
-def decide(host: str, decision: str) -> tuple[int, dict]:
+def decide(key: str, decision: str) -> tuple[int, dict]:
+    """Approve or reject one app/server pair at the gate. A bare host name is accepted when only one app on that
+    server is waiting."""
     if decision not in ('approved', 'rejected'):
         return 400, {'ok': False, 'error': "decision must be 'approved' or 'rejected'"}
     st = state()
-    h = next((x for x in st.get('hosts', []) if x['host'] == host), None)
-    if not h or h.get('outcome') != 'awaiting_approval':
-        return 409, {'ok': False, 'error': f'{host} is not waiting for approval'}
-    _trace('console', 'ao', f"{decision} {host.split('.')[0]}")
+    waiting = [x for x in st.get('hosts', []) if x.get('outcome') == 'awaiting_approval']
+    h = next((x for x in waiting if x['key'] == key), None) or (
+        [x for x in waiting if x['host'] == key][0] if len([x for x in waiting if x['host'] == key]) == 1 else None)
+    if not h:
+        return 409, {'ok': False, 'error': f'{key} is not waiting for approval'}
+    key = h['key']
+    _trace('console', 'ao', f"{decision} {_label(h)}")
     if decision == 'rejected':
-        _host(host, outcome='rejected', steps={'approval': 'failed', 'sync': 'skipped', 'remediate': 'skipped', 'verify': 'skipped'})
+        _host(key, outcome='rejected', steps={'approval': 'failed', 'sync': 'skipped', 'remediate': 'skipped', 'verify': 'skipped'})
         if not st.get('simulated'):
             _signal(h, 'rejected')
         _roll_stages()
         _maybe_finish()
         return 200, {'ok': True}
-    _host(host, outcome='running', steps={'approval': 'done'})
+    _host(key, outcome='running', steps={'approval': 'done'})
     _set(status='running')
     if st.get('simulated'):
         threading.Thread(target=lambda: (_run_host_sim(h), _maybe_finish()), daemon=True).start()
@@ -952,21 +1071,167 @@ def _learn(st: dict) -> None:
             _trace('learn', 'inventory', f"{app}: BOM now {ev['artifact']} {ev['version']}")
         else:
             _trace('learn', 'inventory', f'{app}: BOM unchanged (not every server patched)')
-    if not st.get('simulated'):
-        try:
-            p = state_dir() / 'appv2-history.jsonl'
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with p.open('a') as f:
-                f.write(json.dumps({'run_id': st['run_id'], 'event': ev, 'finished_at': now_iso(),
-                                    'hosts': [{k: h.get(k) for k in ('host', 'app', 'env', 'outcome', 'commit_sha')}
-                                              for h in st['hosts']]}) + '\n')
-        except OSError:
-            pass
     H.demo_pause(0.6)
     _stage('learn', 'done')
     outcomes = [h['outcome'] for h in st['hosts']]
     _set(status='complete', finished_at=now_iso(),
-         summary={k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed')})
+         summary={k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped')})
+    _record(state())
+
+
+# ---------------------------------------------------------------------------- run history
+
+_DEMO_RUNS: list[dict] = []
+
+
+def _summary_of(hosts: list[dict]) -> dict:
+    outcomes = [h.get('outcome') for h in hosts]
+    return {k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped')}
+
+
+def _record(st: dict) -> None:
+    """One line of history per finished run: the summary for the Runs list and the whole run, so opening it
+    later shows what the reviewer saw. Live: appv2-history.jsonl on the volume. Demo: memory."""
+    rec = {'run_id': st.get('run_id'), 'event': st.get('event'), 'started_at': st.get('started_at'),
+           'finished_at': st.get('finished_at'), 'simulated': bool(st.get('simulated')),
+           'summary': st.get('summary') or _summary_of(st.get('hosts') or []),
+           'hosts': [{k: h.get(k) for k in ('key', 'app', 'host', 'env', 'outcome', 'commit_sha', 'commit_url',
+                                            'execution_id')} for h in st.get('hosts') or []],
+           'snapshot': st}
+    if H.demo_mode():
+        _DEMO_RUNS.append(rec)
+        return
+    try:
+        p = state_dir() / 'appv2-history.jsonl'
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open('a') as f:
+            f.write(json.dumps(rec) + '\n')
+    except OSError:
+        pass
+
+
+def _staged_runs() -> list[dict]:
+    """Two past runs, so the demo's Runs screen has history before anything is run."""
+    out = []
+    for i, (ev, day, outcomes) in enumerate([
+            (DEMO_EVENTS[1], '2026-11-03', {'catalog-web|catalog-qa-01.acme.internal': 'patched',
+                                             'catalog-web|catalog-prod-01.acme.internal': 'patched'}),
+            (DEMO_EVENTS[0], '2026-10-28', {'orders-service|orders-qa-01.acme.internal': 'patched',
+                                             'orders-service|orders-prod-01.acme.internal': 'rejected'})]):
+        hosts = [{'key': k, 'app': k.split('|')[0], 'host': k.split('|')[1],
+                  'env': 'qa' if '-qa-' in k else 'prod', 'outcome': o, 'commit_sha': f'{i + 7:x}' * 8,
+                  'commit_url': '', 'execution_id': f'sim-past-{i}'} for k, o in outcomes.items()]
+        snap = {'run_id': f'past{i + 1}', 'status': 'complete', 'simulated': True, 'event': ev,
+                'started_at': f'{day}T21:04:00Z', 'finished_at': f'{day}T21:11:00Z',
+                'stages': {k: 'done' for k in STAGES}, 'events': [],
+                'impact': {'targets': [dict(h, installed=upstream(ev['version'])) for h in hosts],
+                           'apps': sorted({h['app'] for h in hosts}), 'other': []},
+                'hosts': [dict(h, steps={}, detail='') for h in hosts], 'summary': _summary_of(hosts)}
+        out.append({k: snap[k] for k in ('run_id', 'event', 'started_at', 'finished_at', 'summary')}
+                   | {'simulated': True, 'hosts': hosts, 'snapshot': snap})
+    return out
+
+
+def _history() -> list[dict]:
+    if H.demo_mode():
+        return _staged_runs() + _DEMO_RUNS
+    try:
+        return [json.loads(l) for l in (state_dir() / 'appv2-history.jsonl').read_text().splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def runs() -> list[dict]:
+    """Newest first, without the snapshots; the run in progress (if any) on top."""
+    out = [{k: v for k, v in r.items() if k != 'snapshot'} | {'current': False} for r in reversed(_history())]
+    st = state()
+    if st.get('status') not in (None, 'idle', 'complete') and st.get('event'):
+        out.insert(0, {'run_id': st.get('run_id'), 'event': st['event'], 'started_at': st.get('started_at'),
+                       'finished_at': None, 'simulated': bool(st.get('simulated')), 'status': st.get('status'),
+                       'summary': _summary_of(st.get('hosts') or []), 'hosts': st.get('hosts') or [],
+                       'current': True})
+    return out
+
+
+def run_detail(run_id: str) -> dict | None:
+    st = state()
+    if st.get('run_id') == run_id:
+        return st
+    return next((r.get('snapshot') for r in _history() if r.get('run_id') == run_id), None)
+
+
+# ---------------------------------------------------------------------------- the Lightwell catalog
+
+def _installed() -> dict[tuple[str, str], dict[str, list[str]]]:
+    """(group, artifact) -> {version in use: [apps]}."""
+    out: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for app in load_bom():
+        for dep in app.get('dependencies', []):
+            out.setdefault((dep['group'], dep['artifact']), {}).setdefault(dep['version'], []).append(app['app'])
+    return out
+
+
+def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
+    """Remediated builds Lightwell publishes, each marked with the deployed apps it would fix.
+
+    scope 'mine': only builds of versions the apps run (asked per library, so it is exact and cheap).
+    scope 'all': Lightwell's whole remediated catalog, a page at a time."""
+    inst = _installed()
+
+    def affects(group: str, artifact: str, version: str) -> list[str]:
+        return sorted(inst.get((group, artifact), {}).get(upstream(version), []))
+
+    rows: list[dict] = []
+    total = None
+    if H.demo_mode():
+        try:
+            saved = json.loads((ROOT / 'lightwell' / 'demo' / 'lightwell_catalog.json').read_text())
+        except (OSError, ValueError):
+            saved = {'entries': []}
+        seen = set()
+        for e in [{'name': f"{x['group']}:{x['artifact']}", 'build': x['version'], 'cves': x['cves'],
+                   'status': 'remediated'} for x in DEMO_EVENTS] + list(saved.get('entries') or []):
+            if e.get('status') != 'remediated' or not e.get('build') or e['build'] in seen:
+                continue
+            seen.add(e['build'])
+            group, _, artifact = e['name'].partition(':')
+            rows.append({'group': group, 'artifact': artifact, 'build': e['build'], 'upstream': upstream(e['build']),
+                         'cves': e.get('cves') or [], 'affects': affects(group, artifact, e['build'])})
+        source = 'saved'
+    elif not H.lightwell_get:
+        return {'ok': False, 'error': 'Lightwell API not configured (LIGHTWELL_CLIENT_ID / _SECRET)'}
+    elif scope == 'mine':
+        for (group, artifact), versions in sorted(inst.items()):
+            for version in versions:
+                body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}',
+                                       package_version=version, limit=100)
+                builds: dict[str, set] = {}
+                for adv in body.get('data') or []:
+                    ids = {i for i in [adv.get('advisory_id', '')] + list(adv.get('aliases') or [])
+                           if str(i).startswith('CVE-')}
+                    for b in adv.get('fixed_versions') or []:
+                        if is_lightwell(b) and upstream(b) == version:
+                            builds.setdefault(b, set()).update(ids)
+                for b, cves in sorted(builds.items()):
+                    rows.append({'group': group, 'artifact': artifact, 'build': b, 'upstream': version,
+                                 'cves': sorted(cves), 'affects': affects(group, artifact, b)})
+        source = 'lightwell'
+    else:
+        body = H.lightwell_get('/package_versions', limit=size, offset=(page - 1) * size)
+        total = int((body.get('meta') or {}).get('count') or 0)
+        for r in body.get('data') or []:
+            rows.append({'group': r.get('group', ''), 'artifact': r.get('name', ''), 'build': r.get('version', ''),
+                         'upstream': upstream(r.get('version', '')), 'repository': r.get('repository', ''),
+                         'cves': [], 'affects': affects(r.get('group', ''), r.get('name', ''), r.get('version', ''))
+                         if 'remediated' in (r.get('repository') or '') else []})
+        return {'ok': True, 'scope': scope, 'source': 'lightwell', 'rows': rows, 'page': page, 'size': size,
+                'total': total}
+    if scope == 'mine':
+        rows = [r for r in rows if r['affects']]
+    total = len(rows)
+    start = (page - 1) * size
+    return {'ok': True, 'scope': scope, 'source': source, 'rows': rows[start:start + size], 'page': page,
+            'size': size, 'total': total}
 
 
 # ---------------------------------------------------------------------------- live AO
@@ -996,7 +1261,7 @@ def _dispatch_live() -> None:
         _set(status='failed', error=str(exc))
         _stage('commit', 'failed')
         return
-    for h in st['hosts']:
+    for h in [x for x in st['hosts'] if x['outcome'] == 'queued']:
         pb = next(p for p in st['playbooks'] if p['app'] == h['app'])
         inputs = {'host': h['host'].split('.')[0] if env('AO_HOST_SHORTNAME', 'true') == 'true' else h['host'],
                   'group': 'qa_auto' if h['env'] == 'qa' else 'prod_review',
@@ -1012,10 +1277,10 @@ def _dispatch_live() -> None:
                 'workflow_id': wf, 'trigger_node_id': env('AO_APP_V2_TRIGGER_NODE', 'trigger_manual'),
                 'input_data': inputs}) or {}
         except Exception as exc:
-            _host(h['host'], outcome='failed', detail=f'not dispatched: {exc}', steps={'commit': 'failed'})
+            _host(h['key'], outcome='failed', detail=f'not dispatched: {exc}', steps={'commit': 'failed'})
             continue
-        _host(h['host'], execution_id=created.get('id', ''), outcome='running', steps={'commit': 'active'})
-        _trace('console', 'ao', f"{h['host'].split('.')[0]} -> App Patch v2 ({inputs['group']})")
+        _host(h['key'], execution_id=created.get('id', ''), outcome='running', steps={'commit': 'active'})
+        _trace('console', 'ao', f"{_label(h)} -> App Patch v2 ({inputs['group']})")
         threading.Thread(target=_follow_live, args=({**h, 'execution_id': created.get('id', '')},), daemon=True).start()
     _roll_stages()
 
@@ -1039,8 +1304,16 @@ AO_STATE = {'completed': 'done', 'succeeded': 'done', 'failed': 'failed', 'runni
 
 def _follow_live(h: dict) -> None:
     """Poll one execution until it settles or stops at the approval gate."""
-    exec_id = h.get('execution_id') or next((x['execution_id'] for x in state()['hosts'] if x['host'] == h['host']), '')
+    key = h['key']
+    exec_id = h.get('execution_id') or next((x['execution_id'] for x in state()['hosts'] if x['key'] == key), '')
     deadline = time.time() + int(env('AO_POLL_TIMEOUT', '900'))
+    said: set[str] = set()                 # each hop traced once, for the architecture diagram
+
+    def hop(name: str, src: str, dst: str, msg: str) -> None:
+        if name not in said:
+            said.add(name)
+            _trace(src, dst, msg)
+
     while exec_id and time.time() < deadline:
         time.sleep(3)
         try:
@@ -1070,6 +1343,11 @@ def _follow_live(h: dict) -> None:
                                else 'failed')
         elif run_state == 'active':
             steps['remediate'] = 'active'
+        if steps.get('commit') in ('active', 'done'):
+            hop('commit', 'ao', 'gitea', f'{_label(h)}: verify the build, commit the playbook')
+        if steps.get('sync') in ('active', 'done'):
+            hop('sync', 'ao', 'aap', f'{_label(h)}: sync and run')
+            hop('servers', 'aap', 'servers', f'{_label(h)}: swap the jar, restart {h.get("service", "")}')
         commit = _out(acts.get(NODE_COMMIT))
         extra = {}
         if commit.get('commit_sha'):
@@ -1078,7 +1356,7 @@ def _follow_live(h: dict) -> None:
                          jar_sha256=commit.get('jar_sha256', ''))
         status = str(ex.get('status', '')).lower()
         if steps.get('approval') == 'waiting' and h['env'] != 'qa':
-            _host(h['host'], steps=steps, outcome='awaiting_approval', **extra)
+            _host(key, steps=steps, outcome='awaiting_approval', **extra)
             _roll_stages()
             _maybe_finish()
             return
@@ -1089,13 +1367,14 @@ def _follow_live(h: dict) -> None:
                 outcome, detail = 'rolled_back', 'health check failed after the swap; old jar restored'
             else:
                 outcome, detail = 'failed', str(ex.get('error_details') or status)
-            _host(h['host'], steps=steps, outcome=outcome, detail=detail, **extra)
+            _host(key, steps=steps, outcome=outcome, detail=detail, **extra)
+            _trace('aap', 'ao', f'{_label(h)}: {outcome.replace("_", " ")}')
             _roll_stages()
             _maybe_finish()
             return
-        _host(h['host'], steps=steps, **extra)
+        _host(key, steps=steps, **extra)
         _roll_stages()
-    _host(h['host'], outcome='failed', detail='timed out following the execution')
+    _host(key, outcome='failed', detail='timed out following the execution')
     _maybe_finish()
 
 

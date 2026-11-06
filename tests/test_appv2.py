@@ -4,6 +4,7 @@
 """
 import hashlib
 import hmac
+import re
 import json
 import sys
 import tempfile
@@ -89,8 +90,9 @@ class Impact(unittest.TestCase):
     def test_exact_version_only(self):
         ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'log4j-core')
         imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['billing-api', 'orders-service'])
-        self.assertEqual(len(imp['targets']), 4)
+        self.assertEqual(imp['apps'], ['billing-api', 'orders-api', 'orders-service'])
+        self.assertEqual(len(imp['targets']), 5)
+        self.assertEqual(len({t['key'] for t in imp['targets']}), 5)          # two apps share orders-qa-01
         self.assertEqual(imp['targets'][0]['env'], 'qa')                  # QA first
         self.assertEqual([o['app'] for o in imp['other']], ['catalog-web'])  # 2.25.1, left alone
 
@@ -98,7 +100,7 @@ class Impact(unittest.TestCase):
         ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'log4j-core')
         appv2._BOM_UPDATES['billing-api|org.apache.logging.log4j:log4j-core'] = ev['version']
         imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['orders-service'])
+        self.assertEqual(imp['apps'], ['orders-api', 'orders-service'])
         self.assertIn('already on this build', [o['why'] for o in imp['other']])
 
 
@@ -141,7 +143,8 @@ class Playbook(unittest.TestCase):
         self.assertFalse(ok['pinned'])
 
     def test_changed_path_is_rejected(self):
-        moved = self.text.replace('/opt/apps/orders-service/lib', '/tmp/lib', 1)
+        moved = re.sub(r'lib_dir: \S+', 'lib_dir: /tmp/lib', self.text, count=1)
+        self.assertNotEqual(moved, self.text)
         ok = {c['id']: c['ok'] for c in appv2.check_playbook(moved, self.text)}
         self.assertTrue(ok['play'])
         self.assertFalse(ok['pinned'])
@@ -176,13 +179,13 @@ class DemoRun(unittest.TestCase):
         self.wait({'generated'})
         self.assertEqual(appv2.start_dispatch()[0], 200)
         st = self.wait({'awaiting_approval'})
-        gated = [h['host'] for h in st['hosts'] if h['outcome'] == 'awaiting_approval']
+        gated = [h['key'] for h in st['hosts'] if h['outcome'] == 'awaiting_approval']
         self.assertEqual(len(gated), 3)
         self.assertEqual(appv2.decide('orders-qa-01.acme.internal', 'approved')[0], 409)   # QA is not gated
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0})
+        self.assertEqual(st['summary'], {'patched': 4, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
         self.assertEqual(st['stages']['verify'], 'failed')
         # Only the app with every server patched is written back.
         self.assertIn('billing-api|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
@@ -256,7 +259,8 @@ class LiveFollow(unittest.TestCase):
         try:
             appv2.EVENTS = appv2.EventStore(None)
             ev = dict(appv2.DEMO_EVENTS[0])
-            target = {'app': 'billing-api', 'host': 'billing-prod-01', 'env': 'prod', 'installed': '2.24.3',
+            target = {'key': 'billing-api|billing-prod-01', 'app': 'billing-api', 'host': 'billing-prod-01',
+                      'env': 'prod', 'installed': '2.24.3',
                       'path': '/opt/apps/billing-api', 'service': 'billing-api', 'health_url': 'http://x'}
             with appv2._LOCK:
                 appv2._RUN.clear()
@@ -329,7 +333,8 @@ class Restart(unittest.TestCase):
             appv2._RUN['status'] = 'idle'
 
     def host(self, name, env, outcome):
-        return {'host': name, 'app': 'sample-app', 'env': env, 'outcome': outcome, 'steps': {},
+        return {'key': f'sample-app|{name}', 'host': name, 'app': 'sample-app', 'env': env, 'outcome': outcome,
+                'steps': {},
                 'execution_id': f'ex-{name}'}
 
     def test_gate_survives_and_can_be_approved(self):
@@ -343,7 +348,7 @@ class Restart(unittest.TestCase):
     def test_running_execution_is_followed_again(self):
         self.phase = 'done'
         self.saved_run('running', [self.host('node1', 'qa', 'running')])
-        self.assertEqual(appv2.restore()['resumed'], ['node1'])
+        self.assertEqual(appv2.restore()['resumed'], ['sample-app|node1'])
         for _ in range(300):
             if appv2.state()['status'] == 'complete':
                 break
@@ -369,6 +374,130 @@ class Restart(unittest.TestCase):
         appv2.configure(demo_mode=lambda: True)
         appv2._set(status='assessed')
         self.assertFalse((Path(self.dir) / 'appv2-run.json').exists())
+
+
+class Subset(unittest.TestCase):
+    def wait(self, statuses, timeout=5):
+        end = time.time() + timeout
+        while time.time() < end:
+            if appv2.state().get('status') in statuses:
+                return appv2.state()
+            time.sleep(0.02)
+        self.fail(f"stuck at {appv2.state().get('status')}")
+
+    def test_only_selected_pairs_run(self):
+        demo()
+        appv2.start_assess('evt-log4j-core'); self.wait({'assessed'})
+        appv2.start_generate(); self.wait({'generated'})
+        self.assertEqual(appv2.start_dispatch([])[0], 400)                       # nothing selected
+        self.assertEqual(appv2.start_dispatch(['orders-api|orders-qa-01.acme.internal', 'not|known'])[0], 200)
+        st = self.wait({'complete'})
+        by = {h['key']: h for h in st['hosts']}
+        self.assertEqual(by['orders-api|orders-qa-01.acme.internal']['outcome'], 'patched')
+        self.assertEqual(by['orders-service|orders-qa-01.acme.internal']['outcome'], 'skipped')
+        self.assertFalse(by['orders-service|orders-qa-01.acme.internal']['execution_id'])   # never sent to AO
+        self.assertEqual(st['summary']['skipped'], 4)
+        # orders-api's only server was patched; orders-service was not touched, so its BOM stays.
+        self.assertIn('orders-api|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
+        self.assertNotIn('orders-service|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
+
+    def test_reasoning_is_on_every_target(self):
+        demo()
+        appv2.start_assess('evt-log4j-core'); st = self.wait({'assessed'})
+        self.assertTrue(all(t.get('reasoning') for t in st['impact']['targets']))
+        self.assertIn('60s', next(t for t in st['impact']['targets']
+                                  if t['host'] == 'orders-prod-02.acme.internal')['reasoning'])
+
+
+class Reasoning(unittest.TestCase):
+    T = [{'key': 'sample-app|node2', 'app': 'sample-app', 'host': 'node2'},
+         {'key': 'orders-api|node1', 'app': 'orders-api', 'host': 'node1'}]
+
+    def setUp(self):
+        demo(APP_VECTOR_DB_ID='vs_apps')
+        appv2.configure(demo_mode=lambda: False)
+
+    def test_keeps_only_records_about_that_app_and_server(self):
+        hits = {'sample-app': ['App: sample-app Server: node2\nLessons:\nAllow 60 seconds.',
+                               'App: sample-app Server: node1\nLessons:\nQuick on QA.'],
+                'orders-api': ['App: sample-app Server: node3\nLessons:\nStandby.']}
+        appv2.configure(rag_search=lambda store, q: hits['sample-app' if 'sample-app' in q else 'orders-api'],
+                        llm=lambda prompt: '{"1": "Give node2 a 60s health window."}')
+        notes, source = appv2.reasoning(self.T)
+        self.assertEqual(notes['sample-app|node2'], 'Give node2 a 60s health window.')
+        self.assertEqual(notes['orders-api|node1'], 'No history found for this app on this server.')
+        self.assertEqual(source, 'rag+llm')
+
+    def test_falls_back_to_the_records_own_words(self):
+        appv2.configure(rag_search=lambda store, q: ['App: sample-app Server: node2\nLessons:\nAllow 60 seconds.'],
+                        llm=lambda prompt: 'not json at all')
+        notes, _ = appv2.reasoning(self.T[:1])
+        self.assertEqual(notes['sample-app|node2'], 'Allow 60 seconds.')
+
+    def test_no_store_says_so(self):
+        demo()
+        appv2.configure(demo_mode=lambda: False)
+        notes, source = appv2.reasoning(self.T)
+        self.assertEqual(source, 'none')
+        self.assertIn('APP_VECTOR_DB_ID', notes['sample-app|node2'])
+
+
+class Catalog(unittest.TestCase):
+    def test_demo_marks_builds_the_apps_need(self):
+        demo()
+        mine = appv2.catalog('mine')
+        builds = {r['build']: r['affects'] for r in mine['rows']}
+        self.assertEqual(builds['2.24.3.rhlw-00004'], ['billing-api', 'orders-api', 'orders-service'])
+        self.assertEqual(builds['2.11.0.rhlw-00009'], ['billing-api', 'catalog-web'])
+        everything = appv2.catalog('all')
+        self.assertGreater(everything['total'], mine['total'])
+
+    def test_live_mine_asks_per_library_version(self):
+        demo()
+        asked = []
+
+        def lw(path, **params):
+            asked.append((path, params.get('package_name'), params.get('package_version')))
+            if params.get('package_name') == 'org.apache.logging.log4j:log4j-core':
+                return {'data': [{'advisory_id': 'x', 'aliases': ['CVE-2026-1'], 'fixed_versions': ['2.24.3.rhlw-00004']}]}
+            return {'data': []}
+
+        appv2.configure(demo_mode=lambda: False, lightwell_get=lw,
+                        env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
+                                             'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        out = appv2.catalog('mine')
+        self.assertEqual([(r['build'], r['cves'], r['affects']) for r in out['rows']],
+                         [('2.24.3.rhlw-00004', ['CVE-2026-1'], ['orders-api', 'sample-app'])])
+        self.assertIn(('/advisories', 'commons-io:commons-io', '2.11.0'), asked)
+
+
+class History(unittest.TestCase):
+    def test_runs_newest_first_and_detail(self):
+        demo()
+        before = appv2.runs()
+        self.assertEqual(len(before), 2)                                          # the staged past runs
+        appv2.start_assess('evt-commons-io')
+        for _ in range(200):
+            if appv2.state().get('status') == 'assessed':
+                break
+            time.sleep(0.02)
+        self.assertTrue(appv2.runs()[0]['current'])
+        appv2.start_generate()
+        for _ in range(200):
+            if appv2.state().get('status') == 'generated':
+                break
+            time.sleep(0.02)
+        appv2.start_dispatch(['catalog-web|catalog-qa-01.acme.internal'])
+        for _ in range(300):
+            if appv2.state().get('status') == 'complete':
+                break
+            time.sleep(0.02)
+        runs = appv2.runs()
+        self.assertEqual(len(runs), 3)
+        self.assertFalse(runs[0]['current'])
+        self.assertEqual(runs[0]['run_id'], appv2.state()['run_id'])
+        self.assertEqual(appv2.run_detail(runs[0]['run_id'])['status'], 'complete')
+        self.assertEqual(appv2.run_detail('past1')['event']['artifact'], 'commons-io')
 
 
 if __name__ == '__main__':

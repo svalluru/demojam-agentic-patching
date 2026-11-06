@@ -1,21 +1,24 @@
 ---
-# Deploy the Applications v2 sample app to the lab hosts, on the vulnerable log4j 2.24.3 that the Lightwell build
-# 2.24.3.rhlw-00004 replaces. Run once, by aap-setup/create-app-v2-objects.py --deploy-sample (job template
+# Deploy an Applications v2 sample app to the lab hosts, on the vulnerable log4j 2.24.3 that the Lightwell build
+# 2.24.3.rhlw-00004 replaces. Run by aap-setup/create-app-v2-objects.py --deploy-sample (job template
 # "App Patch v2 - Deploy Sample App"), or by hand:
 #
 #   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e target_hosts=node1,node2,node3
+#   ansible-playbook ... -e app_name=orders-api -e app_port=8081 -e target_hosts=node1   # the second QA app
 #
-# The layout matches rag-setup/data/bom/sample-app.json, which is what the inventory agent reads:
-#   /opt/apps/sample-app/HealthServer.java      the app (source launcher, nothing to build)
-#   /opt/apps/sample-app/lib/*.jar              its dependencies, swapped by the generated playbooks
-#   /opt/apps/sample-app/backup/                where a generated playbook keeps the jar it replaced
-#   systemd unit sample-app, GET http://localhost:8080/health
-- name: Deploy the Applications v2 sample app
+# The layout matches app-data/bom/<app_name>.json, which is what the inventory agent reads:
+#   /opt/apps/<app_name>/HealthServer.java      the app (source launcher, nothing to build)
+#   /opt/apps/<app_name>/lib/*.jar              its dependencies, swapped by the generated playbooks
+#   /opt/apps/<app_name>/backup/                where a generated playbook keeps the jar it replaced
+#   systemd unit <app_name>, GET http://localhost:<app_port>/health
+- name: Deploy an Applications v2 sample app
   hosts: "{{ target_hosts | default('node1,node2,node3') }}"
   become: true
   gather_facts: false
   vars:
-    app_dir: /opt/apps/sample-app
+    app_name: sample-app
+    app_port: 8080
+    app_dir: "/opt/apps/{{ app_name }}"
     central: https://repo1.maven.org/maven2
     jars:
       - { path: org/apache/logging/log4j/log4j-api/2.24.3/log4j-api-2.24.3.jar }
@@ -61,15 +64,15 @@
 
     - name: Install the systemd unit
       ansible.builtin.copy:
-        dest: /etc/systemd/system/sample-app.service
+        dest: "/etc/systemd/system/{{ app_name }}.service"
         mode: "0644"
         content: |
           [Unit]
-          Description=Applications v2 sample app
+          Description=Applications v2 sample app ({{ app_name }})
           After=network.target
 
           [Service]
-          Environment=PORT=8080
+          Environment=PORT={{ app_port }}
           ExecStart=/usr/bin/java -cp '{{ app_dir }}/lib/*' {{ app_dir }}/HealthServer.java
           Restart=on-failure
 
@@ -78,14 +81,14 @@
 
     - name: Start it
       ansible.builtin.systemd_service:
-        name: sample-app
+        name: "{{ app_name }}"
         state: restarted
         enabled: true
         daemon_reload: true
 
     - name: Check it answers
       ansible.builtin.uri:
-        url: http://localhost:8080/health
+        url: "http://localhost:{{ app_port }}/health"
         return_content: true
       register: health
       until: health.status == 200
@@ -94,4 +97,4 @@
 
     - name: Show which log4j-core it loaded
       ansible.builtin.debug:
-        msg: "{{ inventory_hostname }}: {{ health.json.log4j_core }}"
+        msg: "{{ inventory_hostname }} {{ app_name }}: {{ health.json.log4j_core }}"

@@ -3918,6 +3918,9 @@ SETTINGS: tuple[Setting, ...] = (
     Setting('NEXUS_EVENTS', 'Applications v2', 'Events from', 'choice', 'webhook',
             'webhook: the Nexus webhook records events. poller: the poller records '
             'them itself, for a Nexus without webhooks.', choices=('webhook', 'poller')),
+    Setting('APP_VECTOR_DB_ID', 'Applications v2', 'App history store', 'str', '',
+            'The vector store of past app changes (app-data/history/), searched for '
+            'the Reasoning column. Written by setup.sh.'),
     Setting('GITEA_REPO', 'Applications v2', 'Playbooks repository', 'str',
             'lab-user/app_v2_playbooks', 'owner/name in the lab Gitea. The AO '
             'workflow commits the generated playbooks here.'),
@@ -4132,13 +4135,8 @@ def lightwell_handler() -> Any:
 _LW_CATALOG: dict[str, Any] = {}
 
 
-def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
-    """The CVEs Lightwell says this exact build fixes, from its /advisories API.
-
-    Asked by the upstream version (2.24.3), then filtered to advisories naming
-    this build (2.24.3.rhlw-00004) as a fixed version: an advisory fixed only in
-    a newer build does not belong to this one. Reuses the scanner's client,
-    which owns the SSO token and the paging."""
+def _lightwell_catalog() -> Any:
+    """The scanner's Lightwell API client, made once: it owns the SSO token and its refresh."""
     with _LIGHTWELL_LOCK:
         if 'catalog' not in _LW_CATALOG:
             if str(LIGHTWELL_DIR) not in sys.path:
@@ -4148,7 +4146,32 @@ def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
             if not (cid and secret):
                 raise RuntimeError('LIGHTWELL_CLIENT_ID / LIGHTWELL_CLIENT_SECRET not set')
             _LW_CATALOG['catalog'] = LightwellApiCatalog(cid, secret)
-        cat = _LW_CATALOG['catalog']
+        return _LW_CATALOG['catalog']
+
+
+def lightwell_get(path: str, **params) -> dict:
+    """One Lightwell API call, for the Applications v2 catalog."""
+    return _lightwell_catalog()._get(path, **params)
+
+
+def app_history_search(store: str, query: str) -> list[str]:
+    """Vector search in the app history store; the text of each hit. Same call as the infra history."""
+    if not LLAMA_URL:
+        raise RuntimeError('LLAMA_STACK_URL not set')
+    found = http_json(f'{LLAMA_URL}/v1/vector_stores/{store}/search', method='POST',
+                      body={'query': query, 'max_num_results': 6}, verify=False, timeout=RAG_TIMEOUT)
+    return [' '.join(c.get('text', '') for c in (h.get('content') or []) if isinstance(c, dict))
+            for h in (found or {}).get('data', [])]
+
+
+def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
+    """The CVEs Lightwell says this exact build fixes, from its /advisories API.
+
+    Asked by the upstream version (2.24.3), then filtered to advisories naming
+    this build (2.24.3.rhlw-00004) as a fixed version: an advisory fixed only in
+    a newer build does not belong to this one. Reuses the scanner's client,
+    which owns the SSO token and the paging."""
+    cat = _lightwell_catalog()
     out: set[str] = set()
     for adv in cat._advisory_rows('maven', f'{group}:{artifact}', appv2.upstream(version)):
         if version in (adv.get('fixed_versions') or []):
@@ -4158,7 +4181,8 @@ def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
 
 
 appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
-                llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves)
+                llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
+                rag_search=app_history_search, lightwell_get=lightwell_get)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4430,6 +4454,20 @@ class Handler(BaseHTTPRequestHandler):
                              'mode': 'demo' if demo_mode() else 'live'})
         elif path == '/api/v2/state':
             self._send(200, {'ok': True, **appv2.state()})
+        elif path == '/api/v2/runs':
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if q.get('run_id'):
+                run = appv2.run_detail(q['run_id'][0])
+                self._send(200 if run else 404, {'ok': bool(run), 'run': run})
+            else:
+                self._send(200, {'ok': True, 'runs': appv2.runs()})
+        elif path == '/api/v2/catalog':
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                self._send(200, appv2.catalog((q.get('scope') or ['mine'])[0],
+                                              max(1, int((q.get('page') or ['1'])[0]))))
+            except Exception as exc:
+                self._send(502, {'ok': False, 'error': f'Lightwell: {exc}'})
         elif path == '/api/state':
             with _RUN_LOCK:
                 self._send(200, dict(_RUN))
@@ -4802,9 +4840,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/v2/generate':
             code, body = appv2.start_generate()
         elif path == '/api/v2/dispatch':
-            code, body = appv2.start_dispatch()
+            targets = payload.get('targets')
+            code, body = appv2.start_dispatch(
+                [str(t) for t in targets] if isinstance(targets, list) else None)
         elif path == '/api/v2/decide':
-            code, body = appv2.decide(str(payload.get('host', '')),
+            code, body = appv2.decide(str(payload.get('key') or payload.get('host', '')),
                                       str(payload.get('decision', '')))
         elif path == '/api/v2/reset':
             appv2.reset()
