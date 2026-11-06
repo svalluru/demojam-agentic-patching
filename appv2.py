@@ -503,7 +503,14 @@ def render_playbook(event: dict, app: dict) -> str:
 """
 
 
-def check_playbook(text: str) -> list[dict]:
+def pinned_vars(template: str) -> list[str]:
+    """The template's vars lines: paths, jar names, service, health URL and the checksum variable. These are set by
+    the system, not the LLM; a draft must carry every one of them verbatim."""
+    block = template.split('\n  vars:\n', 1)[1].split('\n  tasks:', 1)[0]
+    return [l.strip() for l in block.splitlines() if l.strip()]
+
+
+def check_playbook(text: str, template: str | None = None) -> list[dict]:
     """The guardrail between an LLM draft and a host. Each check is {'id','label','ok','detail'}.
 
     Not a YAML parser (there is none in the standard library): it reads the task lines the template
@@ -521,7 +528,14 @@ def check_playbook(text: str) -> list[dict]:
                 'command', 'shell', 'raw', 'script', 'expect', 'win_shell', 'win_command'):
             unknown.add(key)
     low = text.lower()
+    missing = [v for v in (pinned_vars(template) if template else []) if v not in [l.strip() for l in text.splitlines()]]
     checks = [
+        {'id': 'play', 'label': 'A play for the target hosts',
+         'ok': re.search(r'^\s*hosts:\s*"\{\{ target_hosts \}\}"\s*$', text, re.M) is not None
+               and re.search(r'^\s*become:\s*true\s*$', text, re.M) is not None,
+         'detail': 'needs hosts: "{{ target_hosts }}" and become: true'},
+        {'id': 'pinned', 'label': 'Paths, jars and checksum as set by the system',
+         'ok': not missing, 'detail': ('changed or missing: ' + '; '.join(missing)) if missing else ''},
         {'id': 'modules', 'label': 'Only allowed modules',
          'ok': bool(modules) and not unknown,
          'detail': ('not allowed: ' + ', '.join(sorted(unknown))) if unknown else
@@ -543,7 +557,7 @@ def draft_playbook(event: dict, app: dict) -> tuple[str, str, list[dict], str]:
     there is no LLM, in demo mode, or when the draft fails a check — and the note says which."""
     template = render_playbook(event, app)
     if H.demo_mode() or not H.llm:
-        return template, 'template', check_playbook(template), ''
+        return template, 'template', check_playbook(template, template), ''
     prompt = ('Write an Ansible playbook, and nothing else, no prose and no code fences. It must do exactly '
               'what this example does for the same variables: download the new jar with a pinned sha256, back '
               'up and remove the old jar, restart the service, verify health and checksum, report with '
@@ -552,13 +566,13 @@ def draft_playbook(event: dict, app: dict) -> tuple[str, str, list[dict], str]:
     try:
         draft = H.llm(prompt)
     except Exception as exc:
-        return template, 'template', check_playbook(template), f'LLM unavailable ({exc}); used the template.'
+        return template, 'template', check_playbook(template, template), f'LLM unavailable ({exc}); used the template.'
     draft = re.sub(r'(?s)^```[a-z]*\n|```\s*$', '', draft.strip()).strip() + '\n'
-    checks = check_playbook(draft)
+    checks = check_playbook(draft, template)
     if all(c['ok'] for c in checks):
         return draft, 'llm', checks, ''
     failed = ', '.join(c['label'] for c in checks if not c['ok'])
-    return template, 'template', check_playbook(template), f'The LLM draft failed: {failed}. Used the template.'
+    return template, 'template', check_playbook(template, template), f'The LLM draft failed: {failed}. Used the template.'
 
 
 # ---------------------------------------------------------------------------- the run

