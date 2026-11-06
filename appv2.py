@@ -270,7 +270,7 @@ def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] |
 def poller_loop() -> None:
     """Live mode only, started by the console when NEXUS_POLL_SECONDS > 0."""
     import urllib.request
-    state_file = ROOT / 'runs' / 'nexus-poller.json'
+    state_file = state_dir() / 'nexus-poller.json'
     try:
         seen = set(json.loads(state_file.read_text()))
     except (OSError, ValueError):
@@ -581,11 +581,80 @@ _RUN: dict[str, Any] = {'status': 'idle'}
 _LOCK = threading.Lock()
 EVENTS: EventStore | None = None
 
+# Live mode keeps the run and the BOM write-backs beside the inbox, on the console's volume (runs/ is the PVC on
+# OpenShift). Without this a console restart forgot a run whose Prod servers were still waiting at the AO gate: the
+# executions went on waiting, and nothing could approve them any more. Demo mode keeps everything in memory.
+_PERSIST_LOCK = threading.Lock()
+
+
+def state_dir() -> Path:
+    return Path(env('APPV2_STATE_DIR', str(ROOT / 'runs')))
+
+
+def _write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(data, indent=1))
+    tmp.replace(path)                      # atomic: a crash mid-write leaves the previous copy, never half of one
+
+
+def _persist() -> None:
+    if H.demo_mode():
+        return
+    with _LOCK:
+        snapshot = json.loads(json.dumps(_RUN))
+        bom = dict(_BOM_UPDATES)
+    with _PERSIST_LOCK:
+        try:
+            _write_json(state_dir() / 'appv2-run.json', snapshot)
+            _write_json(state_dir() / 'appv2-bom-updates.json', bom)
+        except OSError:
+            pass                           # a full or read-only volume must not stop a run that is patching
+
+
+# What a console restart interrupts. These ran in a thread of the process that died, so they are not coming back.
+_IN_PROCESS = {'assessing': 'assess', 'generating': 'generate', 'dispatching': 'dispatch'}
+
+
+def restore() -> dict:
+    """Load the saved run and BOM write-backs (live mode). Hosts at the gate stay approvable; executions that were
+    running in AO are followed again; a step that was running inside the console is marked interrupted."""
+    if H.demo_mode():
+        return {'restored': False}
+    try:
+        saved = json.loads((state_dir() / 'appv2-run.json').read_text())
+    except (OSError, ValueError):
+        saved = None
+    try:
+        _BOM_UPDATES.update(json.loads((state_dir() / 'appv2-bom-updates.json').read_text()))
+    except (OSError, ValueError):
+        pass
+    if not isinstance(saved, dict) or saved.get('status', 'idle') == 'idle':
+        return {'restored': False}
+    with _LOCK:
+        _RUN.clear()
+        _RUN.update(saved)
+    status = saved.get('status')
+    if status in _IN_PROCESS:
+        step = _IN_PROCESS[status]
+        _set(status='failed', error=f'The console restarted during {step}; start the run again.')
+        _trace('console', 'console', f'restarted during {step}; run stopped')
+    resumed = []
+    for h in saved.get('hosts') or []:
+        if h.get('outcome') in ('running', 'queued') and h.get('execution_id') and not saved.get('simulated'):
+            threading.Thread(target=_follow_live, args=(h,), daemon=True, name=f'appv2-resume-{h["host"]}').start()
+            resumed.append(h['host'])
+    if resumed or status == 'awaiting_approval':
+        _trace('console', 'ao', 'restarted; ' + (f"following {', '.join(resumed)} again" if resumed
+                                                 else 'run restored, Prod waiting at the gate'))
+    _persist()
+    return {'restored': True, 'status': state().get('status'), 'resumed': resumed}
+
 
 def events() -> EventStore:
     global EVENTS
     if EVENTS is None:
-        EVENTS = EventStore(None if H.demo_mode() else ROOT / 'runs' / 'appv2-events.json')
+        EVENTS = EventStore(None if H.demo_mode() else state_dir() / 'appv2-events.json')
     return EVENTS
 
 
@@ -596,6 +665,7 @@ def reset() -> None:
         _RUN.clear()
         _RUN['status'] = 'idle'
     EVENTS = None
+    _persist()
 
 
 def state() -> dict:
@@ -606,16 +676,19 @@ def state() -> dict:
 def _trace(src: str, dst: str, msg: str) -> None:
     with _LOCK:
         _RUN.setdefault('events', []).append({'t': now_iso(), 'src': src, 'dst': dst, 'msg': msg})
+    _persist()
 
 
 def _stage(key: str, value: str) -> None:
     with _LOCK:
         _RUN.setdefault('stages', {})[key] = value
+    _persist()
 
 
 def _set(**kw) -> None:
     with _LOCK:
         _RUN.update(kw)
+    _persist()
 
 
 def busy() -> bool:
@@ -664,6 +737,7 @@ def start_assess(event_id: str) -> tuple[int, dict]:
         _RUN.clear()
         _RUN.update(status='assessing', run_id=uuid.uuid4().hex[:8], event=ev, events=[],
                     stages={k: 'pending' for k in STAGES}, started_at=now_iso())
+    _persist()
     threading.Thread(target=_assess, args=(ev,), daemon=True, name='appv2-assess').start()
     return 200, {'ok': True}
 
@@ -700,6 +774,7 @@ def start_generate() -> tuple[int, dict]:
         if _RUN.get('status') != 'assessed':
             return 409, {'ok': False, 'error': 'assess an event first'}
         _RUN['status'] = 'generating'
+    _persist()
     threading.Thread(target=_generate, daemon=True, name='appv2-generate').start()
     return 200, {'ok': True}
 
@@ -755,6 +830,7 @@ def _host(host: str, **kw) -> None:
                 h.update({k: v for k, v in kw.items() if k != 'steps'})
                 if 'steps' in kw:
                     h.setdefault('steps', {}).update(kw['steps'])
+    _persist()
 
 
 def _roll_stages() -> None:
@@ -871,13 +947,14 @@ def _learn(st: dict) -> None:
     for app in st['impact']['apps']:
         mine = [h for h in st['hosts'] if h['app'] == app]
         if mine and all(h['outcome'] == 'patched' for h in mine):
-            _BOM_UPDATES[f"{app}|{ev['group']}:{ev['artifact']}"] = ev['version']
+            with _LOCK:
+                _BOM_UPDATES[f"{app}|{ev['group']}:{ev['artifact']}"] = ev['version']
             _trace('learn', 'inventory', f"{app}: BOM now {ev['artifact']} {ev['version']}")
         else:
             _trace('learn', 'inventory', f'{app}: BOM unchanged (not every server patched)')
     if not st.get('simulated'):
         try:
-            p = ROOT / 'runs' / 'appv2-history.jsonl'
+            p = state_dir() / 'appv2-history.jsonl'
             p.parent.mkdir(parents=True, exist_ok=True)
             with p.open('a') as f:
                 f.write(json.dumps({'run_id': st['run_id'], 'event': ev, 'finished_at': now_iso(),

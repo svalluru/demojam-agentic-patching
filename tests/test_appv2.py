@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import sys
+import tempfile
 import time
 import types
 import unittest
@@ -16,6 +17,9 @@ import appv2  # noqa: E402
 
 
 def demo(**extra):
+    # Every test gets its own state directory: a live-mode test must never write into the repo's runs/, where a
+    # local console would restore it at startup.
+    extra.setdefault('APPV2_STATE_DIR', tempfile.mkdtemp(prefix='appv2-test-'))
     appv2.configure(env=lambda k, d='': extra.get(k, d), demo_mode=lambda: True,
                     demo_pause=lambda f=1.0: None, llm=None, ao_call=None, fixed_cves=None)
     appv2.reset()
@@ -282,6 +286,89 @@ class LiveFollow(unittest.TestCase):
             self.assertEqual(st['hosts'][0]['steps']['verify'], 'done')
         finally:
             appv2.time = time
+
+
+class Restart(unittest.TestCase):
+    """Live mode: the run outlives a console restart. A restart is simulated by emptying the in-memory run and
+    calling restore(), which is what a new process does at startup."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.signals = []
+        self.phase = 'running'
+
+        def ao(path, method='GET', body=None):
+            if path.endswith('/signal'):
+                self.signals.append(body)
+                return {}
+            if path.endswith('/activities'):
+                run = {'temporal_activity_id': 'run_app_patch', 'status': 'completed', 'started_at': 't',
+                       'output_data': {'artifacts': {'patched': True, 'version': 'x.jar'}}}
+                return {'resources': [run] if self.phase == 'done' else []}
+            return {'status': 'completed' if self.phase == 'done' else 'running'}
+
+        demo(APPV2_STATE_DIR=self.dir)
+        appv2.configure(demo_mode=lambda: False, ao_call=ao)
+        self.clock = appv2.time
+        appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
+
+    def tearDown(self):
+        appv2.time = self.clock
+        appv2.reset()
+
+    def saved_run(self, status, hosts):
+        with appv2._LOCK:
+            appv2._RUN.clear()
+            appv2._RUN.update(status=status, run_id='r1', event=dict(appv2.DEMO_EVENTS[0]), events=[],
+                              stages={k: 'pending' for k in appv2.STAGES}, hosts=hosts,
+                              impact={'targets': [], 'apps': ['sample-app'], 'other': []}, playbooks=[])
+        appv2._persist()
+        with appv2._LOCK:                       # the process "dies": memory is gone, the file is not
+            appv2._RUN.clear()
+            appv2._RUN['status'] = 'idle'
+
+    def host(self, name, env, outcome):
+        return {'host': name, 'app': 'sample-app', 'env': env, 'outcome': outcome, 'steps': {},
+                'execution_id': f'ex-{name}'}
+
+    def test_gate_survives_and_can_be_approved(self):
+        self.saved_run('awaiting_approval', [self.host('node2', 'prod', 'awaiting_approval')])
+        r = appv2.restore()
+        self.assertTrue(r['restored'])
+        self.assertEqual(appv2.state()['status'], 'awaiting_approval')
+        self.assertEqual(appv2.decide('node2', 'rejected')[0], 200)
+        self.assertEqual(self.signals, [{'signal_data': {'decision': 'rejected'}}])
+
+    def test_running_execution_is_followed_again(self):
+        self.phase = 'done'
+        self.saved_run('running', [self.host('node1', 'qa', 'running')])
+        self.assertEqual(appv2.restore()['resumed'], ['node1'])
+        for _ in range(300):
+            if appv2.state()['status'] == 'complete':
+                break
+            time.sleep(0.01)
+        self.assertEqual(appv2.state()['hosts'][0]['outcome'], 'patched')
+        self.assertIn('sample-app|org.apache.logging.log4j:log4j-core', json.loads(
+            (Path(self.dir) / 'appv2-bom-updates.json').read_text()))
+
+    def test_step_inside_the_console_is_reported_interrupted(self):
+        self.saved_run('generating', [])
+        appv2.restore()
+        st = appv2.state()
+        self.assertEqual(st['status'], 'failed')
+        self.assertIn('restarted during generate', st['error'])
+
+    def test_bom_write_backs_survive(self):
+        (Path(self.dir) / 'appv2-bom-updates.json').write_text(json.dumps({'a|g:x': '1.rhlw-00001'}))
+        appv2._BOM_UPDATES.clear()
+        appv2.restore()
+        self.assertEqual(appv2._BOM_UPDATES.get('a|g:x'), '1.rhlw-00001')
+
+    def test_demo_mode_writes_nothing(self):
+        appv2.configure(demo_mode=lambda: True)
+        appv2._set(status='assessed')
+        self.assertFalse((Path(self.dir) / 'appv2-run.json').exists())
 
 
 if __name__ == '__main__':

@@ -4828,6 +4828,11 @@ def serve(host: str, port: int) -> None:
             print('  WARNING: neither HOSTS_FILTER nor HOSTS_TAG is set — every '
                   'assessment will be refused until one is. '
                   'Run ./discover-hosts.py --write.')
+    # Applications v2: the run a restart interrupted, back from runs/ (live mode).
+    restored = appv2.restore()
+    if restored.get('restored'):
+        print(f'  apps v2: restored run ({restored["status"]})'
+              + (f', following {", ".join(restored["resumed"])}' if restored['resumed'] else ''))
     if int(env('NEXUS_POLL_SECONDS', '0') or 0) > 0:
         # Applications v2: ask Nexus for new Lightwell builds of what the apps run.
         threading.Thread(target=appv2.poller_loop, daemon=True, name='nexus-poller').start()
