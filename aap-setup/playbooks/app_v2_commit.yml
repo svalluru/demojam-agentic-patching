@@ -144,7 +144,7 @@
     - name: Files to commit
       ansible.builtin.set_fact:
         to_commit: >-
-          {{ ([{'path': 'app_v2_run.yml', 'content': lookup('ansible.builtin.file', 'files/app_v2_run.yml') ~ '\n'}])
+          {{ ([{'path': 'app_v2_run.yml', 'content': lookup('ansible.builtin.file', 'files/app_v2_run.yml')}])
              + ([] if init_only | default(false) | bool else
                 [{'path': playbook_filename, 'content': playbook_b64 | b64decode}]) }}
 

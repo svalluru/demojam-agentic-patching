@@ -976,8 +976,10 @@ def _follow_live(h: dict) -> None:
             a = acts.get(node)
             if a and a.get('status'):
                 s = AO_STATE.get(str(a.get('status', '')).lower(), 'active')
-                if s == 'waiting' and not a.get('started_at') and step != 'approval':
-                    continue                      # a node the run has not reached, not a gate
+                # AO lists every node from the start, the ones not reached as 'waiting' (a real gate has started),
+                # and the branch not taken as 'skipped'. Neither says anything about this host's run.
+                if (s == 'waiting' and not a.get('started_at')) or s == 'skipped':
+                    continue
                 steps[step] = s
         if h['env'] == 'qa':
             steps['approval'] = 'skipped'
