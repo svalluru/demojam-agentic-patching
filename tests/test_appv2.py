@@ -222,6 +222,23 @@ class Poller(unittest.TestCase):
         self.assertTrue(any(e['version'] == '2.24.3.rhlw-00004' for e in appv2.events().all()))
         self.assertEqual(appv2.poll_nexus(fetch, seen, apps), [])                 # seen: not requested twice
 
+    def test_takes_only_the_newest_build_of_a_version(self):
+        demo(NEXUS_URL='https://nexus.lab')
+        meta = ('<versions><version>2.11.0.rhlw-00001</version><version>2.11.0.rhlw-00009</version>'
+                '<version>2.13.0.rhlw-00007</version></versions>')
+        got = []
+
+        def fetch(url):
+            if url.endswith('maven-metadata.xml'):
+                return meta.encode()
+            got.append(url)
+            return b'jar'
+
+        apps = [{'app': 'a', 'dependencies': [{'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.11.0'}]}]
+        found = appv2.poll_nexus(fetch, set(), apps)
+        self.assertEqual([f['version'] for f in found], ['2.11.0.rhlw-00009'])
+        self.assertEqual(len(got), 1)
+
 
 class LiveFollow(unittest.TestCase):
     """The live path against a fake AO that walks one Prod execution through the App Patch v2 nodes."""

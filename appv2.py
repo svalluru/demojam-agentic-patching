@@ -277,9 +277,19 @@ def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] |
             versions = _versions(fetch(f'{path}/maven-metadata.xml').decode('utf-8', 'replace'))
         except Exception:
             continue                       # not in Lightwell, or Nexus is down; next pass tries again
+        # The newest Lightwell build of each version in use, not every build: 2.11.0.rhlw-00001 and
+        # 2.11.0.rhlw-00009 are the same fix at two points in time, and the later one is the fix to apply.
+        newest: dict[str, str] = {}
         for v in versions:
+            m = RHLW.match(v)
+            if not m or m.group('upstream') not in installed:
+                continue
+            current = newest.get(m.group('upstream'))
+            if current is None or int(m.group('build')) > int(RHLW.match(current).group('build')):
+                newest[m.group('upstream')] = v
+        for v in newest.values():
             key = f'{group}:{artifact}:{v}'
-            if key in seen or not is_lightwell(v) or upstream(v) not in installed:
+            if key in seen:
                 continue
             try:
                 fetch(f'{path}/{v}/{jar_name(artifact, v)}')       # this is what makes Nexus cache it

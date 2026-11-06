@@ -584,6 +584,7 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 
 | Symptom | Cause |
 |---|---|
+| Nexus answers 404 "Repository not found" for `lightwell-remediated` | Nexus restarted while `packages.redhat.com` did not resolve, so it refused to load the proxy (log: "Failed to restore repository … Proxy URL blocked: Failed to resolve host"). The webhook goes with it. `oc rollout restart deploy/nexus` once DNS works |
 | Nexus returns 403 for everything, even to admin | The Community Edition EULA is not accepted. Set `NEXUS_ACCEPT_EULA=true` and rerun `nexus-setup/deploy.sh` |
 | A setup script fails reading `.env` | `LIGHTWELL_REGISTRY_USER` is not single-quoted; the shell reads its `\|` as a pipe |
 | Live mode on a Mac: `CERTIFICATE_VERIFY_FAILED` | python.org Python has no CA bundle. Start the console with `SSL_CERT_FILE=/etc/ssl/cert.pem` |
