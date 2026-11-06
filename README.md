@@ -509,7 +509,10 @@ checks (step 3), provenance before commit (step 4), and the runner's sha256
 **The three views** in the right frame: **Incoming fixes** (builds that have
 arrived in Nexus), **Lightwell catalog** (remediated builds Lightwell
 publishes; "Only builds my apps need" asks Lightwell per library version in
-the BOMs, unticked it pages through the whole catalog), and **Runs** (every
+the BOMs, unticked it pages through the whole catalog; **SBOM · app** exports
+that app's BOM as CycloneDX 1.5, `/api/v2/sbom?app=`, to upload to
+[Lightwell Lens](https://console.redhat.com/lightwell/lens), Red Hat's own
+coverage view, which has no public API to call), and **Runs** (every
 finished run, newest first; open one to see it as the reviewer did). The left
 column draws the agent architecture, lit from the run's trace: which agent is
 calling which service, on OpenShift AI or Ansible Automation Platform.

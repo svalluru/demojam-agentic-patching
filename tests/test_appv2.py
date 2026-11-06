@@ -533,6 +533,24 @@ class Catalog(unittest.TestCase):
         self.assertIn(('/advisories', 'commons-io:commons-io', '2.11.0'), asked)
 
 
+class Sbom(unittest.TestCase):
+    def test_cyclonedx_from_the_bom(self):
+        demo()
+        doc = appv2.sbom('orders-api')
+        self.assertEqual((doc['bomFormat'], doc['specVersion']), ('CycloneDX', '1.5'))
+        self.assertEqual(doc['metadata']['component']['name'], 'orders-api')
+        purls = {c['purl'] for c in doc['components']}
+        self.assertIn('pkg:maven/org.apache.logging.log4j/log4j-core@2.24.3', purls)
+        self.assertEqual(doc['dependencies'][0]['dependsOn'], [c['bom-ref'] for c in doc['components']])
+        self.assertIsNone(appv2.sbom('no-such-app'))
+
+    def test_write_back_changes_the_exported_version(self):
+        demo()
+        appv2._BOM_UPDATES['orders-api|org.apache.logging.log4j:log4j-core'] = '2.24.3.rhlw-00004'
+        purls = {c['purl'] for c in appv2.sbom('orders-api')['components']}
+        self.assertIn('pkg:maven/org.apache.logging.log4j/log4j-core@2.24.3.rhlw-00004', purls)
+
+
 class History(unittest.TestCase):
     def test_runs_newest_first_and_detail(self):
         demo()

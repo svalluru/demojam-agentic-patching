@@ -1993,6 +1993,9 @@
   #appv2-pane tbody tr { cursor: default; }
   .v2-reason { font-size: calc(11px * var(--ts)); color: var(--muted); line-height: 1.45;
                white-space: normal; min-width: 220px; max-width: 380px; }
+  .v2-lens { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 12px;
+             padding: 9px 12px; border: 1px dashed var(--border); border-radius: var(--r-sm); background: var(--surface); }
+  .v2-lens .pill { display: inline-flex; align-items: center; height: 26px; padding: 0 11px; text-decoration: none; }
   .v2-catbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
   .v2-check { display: inline-flex; align-items: center; gap: 7px; margin: 0; text-transform: none;
               letter-spacing: 0; font-size: calc(12px * var(--ts)); color: var(--text); font-weight: 600; }
@@ -3689,12 +3692,19 @@ function v2Catalog(c) {
         Only builds my apps need</label>
       <span class="muted-sm">${c.source === 'saved' ? 'Saved Lightwell data (demo mode)' : c.source ? 'Live from the Lightwell API' : ''}</span>
     </div>`;
+  // Lightwell Lens is Red Hat's own coverage view: it takes an SBOM. Each app's BOM exports as CycloneDX, to
+  // upload there and compare with the table below.
+  const lens = (c.apps || []).length ? `<div class="v2-lens">
+      <span class="muted-sm">Compare in <b>Lightwell Lens</b>: export an app's SBOM, then upload it there.</span>
+      ${c.apps.map(a => `<a class="pill" href="/api/v2/sbom?app=${encodeURIComponent(a)}" download>SBOM · ${esc(a)}</a>`).join('')}
+      <a class="pill" href="${esc(c.lens_url || 'https://console.redhat.com/lightwell/lens')}" target="_blank" rel="noopener">Open Lightwell Lens ↗</a>
+    </div>` : '';
   if (c.loading) return scope + '<div class="empty"><div class="spinner"></div><span>Asking Lightwell…</span></div>';
   if (c.error) return scope + `<div class="degraded"><b>Lightwell did not answer.</b> ${esc(c.error)}</div>`;
   const rows = c.rows || [];
-  if (!rows.length) return scope + '<div class="empty"><span>Nothing in this view.</span></div>';
+  if (!rows.length) return scope + lens + '<div class="empty"><span>Nothing in this view.</span></div>';
   const pages = c.total ? Math.ceil(c.total / (c.size || 25)) : 1;
-  return scope + `<table><thead><tr><th>Package</th><th>Fixed build</th><th>Fixes</th><th>Affects</th></tr></thead>
+  return scope + lens + `<table><thead><tr><th>Package</th><th>Fixed build</th><th>Fixes</th><th>Affects</th></tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td>${esc(r.group)}:<b>${esc(r.artifact)}</b></td>
       <td class="mono">${esc(r.build)}${r.repository ? `<div class="muted-sm">${esc(r.repository)}</div>` : ''}</td>

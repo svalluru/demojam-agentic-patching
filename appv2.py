@@ -1302,13 +1302,49 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
                          'cves': [], 'affects': affects(r.get('group', ''), r.get('name', ''), r.get('version', ''))
                          if 'remediated' in (r.get('repository') or '') else []})
         return {'ok': True, 'scope': scope, 'source': 'lightwell', 'rows': rows, 'page': page, 'size': size,
-                'total': total}
+                'total': total, 'apps': app_names(), 'lens_url': LENS_URL}
     if scope == 'mine':
         rows = [r for r in rows if r['affects']]
     total = len(rows)
     start = (page - 1) * size
     return {'ok': True, 'scope': scope, 'source': source, 'rows': rows[start:start + size], 'page': page,
-            'size': size, 'total': total}
+            'size': size, 'total': total, 'apps': app_names(), 'lens_url': LENS_URL}
+
+
+# ---------------------------------------------------------------------------- SBOM export (for Lightwell Lens)
+
+LENS_URL = 'https://console.redhat.com/lightwell/lens'
+
+
+def app_names() -> list[str]:
+    return sorted(a['app'] for a in load_bom())
+
+
+def sbom(app_name: str) -> dict | None:
+    """A CycloneDX 1.5 SBOM for one app, from its BOM: the file Lightwell Lens takes to show which of the app's
+    packages Lightwell covers. Versions are the ones in use now, write-backs included."""
+    app = next((a for a in load_bom() if a['app'] == app_name), None)
+    if not app:
+        return None
+    ref = f"app:{app['app']}"
+    return {
+        'bomFormat': 'CycloneDX', 'specVersion': '1.5', 'version': 1,
+        'serialNumber': f'urn:uuid:{uuid.uuid4()}',
+        'metadata': {
+            'timestamp': now_iso(),
+            'tools': {'components': [{'type': 'application', 'name': 'agentic-patching-console',
+                                      'description': 'Applications v2 app BOM export'}]},
+            'component': {'type': 'application', 'name': app['app'], 'bom-ref': ref,
+                          'properties': [{'name': 'servers', 'value': ', '.join(
+                              f"{s['host']} ({s.get('env', 'prod')})" for s in app.get('servers', []))}]},
+        },
+        'components': [{'type': 'library', 'group': d['group'], 'name': d['artifact'], 'version': d['version'],
+                        'purl': f"pkg:maven/{d['group']}/{d['artifact']}@{d['version']}",
+                        'bom-ref': f"pkg:maven/{d['group']}/{d['artifact']}@{d['version']}"}
+                       for d in app.get('dependencies', [])],
+        'dependencies': [{'ref': ref, 'dependsOn': [f"pkg:maven/{d['group']}/{d['artifact']}@{d['version']}"
+                                                   for d in app.get('dependencies', [])]}],
+    }
 
 
 # ---------------------------------------------------------------------------- live AO

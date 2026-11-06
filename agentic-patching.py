@@ -4461,6 +4461,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200 if run else 404, {'ok': bool(run), 'run': run})
             else:
                 self._send(200, {'ok': True, 'runs': appv2.runs()})
+        elif path == '/api/v2/sbom':
+            # A download, for uploading to Lightwell Lens: the app's BOM as CycloneDX.
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = (q.get('app') or [''])[0]
+            doc = appv2.sbom(name)
+            if not doc:
+                self._send(404, {'ok': False, 'error': f'no app {name!r}'})
+            else:
+                safe = re.sub(r'[^A-Za-z0-9._-]', '_', name)
+                self._send_raw(200, 'application/vnd.cyclonedx+json', json.dumps(doc, indent=2).encode(),
+                               {'Content-Disposition': f'attachment; filename="{safe}.cdx.json"'})
         elif path == '/api/v2/catalog':
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             try:
