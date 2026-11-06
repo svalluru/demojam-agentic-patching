@@ -596,6 +596,37 @@ def pinned_vars(template: str) -> list[str]:
     return [l.strip() for l in block.splitlines() if l.strip()]
 
 
+def structure_ok(text: str) -> tuple[bool, str]:
+    """The block/rescue shape, read from indentation (there is no YAML parser in the standard library).
+
+    Every rescue: or always: needs a block: at the same indent in the same task, and each of the three must hold
+    a task list indented under it. The live LLM has flattened a block and left its rescue: hanging: lines that
+    read correctly one by one and do not parse as a whole."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r'^(\s*)(block|rescue|always):\s*$', line)
+        if not m:
+            continue
+        ind, key = len(m.group(1)), m.group(2)
+        nxt = next((x for x in lines[i + 1:] if x.strip()), '')
+        if not re.match(r'^ {%d,}- ' % (ind + 1), nxt):
+            return False, f'{key}: on line {i + 1} holds no task list'
+        if key == 'block':
+            continue
+        for j in range(i - 1, -1, -1):
+            prev = lines[j]
+            if not prev.strip():
+                continue
+            k = len(prev) - len(prev.lstrip())
+            if k == ind and re.match(r'^\s*block:\s*$', prev):
+                break
+            if k < ind:
+                return False, f'{key}: on line {i + 1} has no block: in its task'
+        else:
+            return False, f'{key}: on line {i + 1} has no block: in its task'
+    return True, ''
+
+
 def check_playbook(text: str, template: str | None = None) -> list[dict]:
     """The guardrail between an LLM draft and a host. Each check is {'id','label','ok','detail'}.
 
@@ -615,7 +646,9 @@ def check_playbook(text: str, template: str | None = None) -> list[dict]:
             unknown.add(key)
     low = text.lower()
     missing = [v for v in (pinned_vars(template) if template else []) if v not in [l.strip() for l in text.splitlines()]]
+    shape_ok, shape_why = structure_ok(text)
     checks = [
+        {'id': 'structure', 'label': 'Block and rescue nested correctly', 'ok': shape_ok, 'detail': shape_why},
         {'id': 'play', 'label': 'A play for the target hosts',
          'ok': re.search(r'^\s*hosts:\s*"\{\{ target_hosts \}\}"\s*$', text, re.M) is not None
                and re.search(r'^\s*become:\s*true\s*$', text, re.M) is not None,
@@ -638,27 +671,61 @@ def check_playbook(text: str, template: str | None = None) -> list[dict]:
     return checks
 
 
+def _split_play(template: str) -> tuple[str, str]:
+    """(header through vars, the tasks list at its own indent)."""
+    head, tasks = template.split('\n  tasks:\n', 1)
+    return head, tasks
+
+
+def _tasks_only(draft: str) -> str:
+    """The task list out of whatever the LLM returned: a bare list, or a whole play (whose header is dropped,
+    because the header is the system's). Dedented so it can be placed under `tasks:`."""
+    text = re.sub(r'(?s)^```[a-z]*\n|```\s*$', '', draft.strip()).strip('\n')
+    m = re.search(r'^(\s*)tasks:\s*$', text, re.M)
+    if m:
+        text = text[m.end():].strip('\n')
+    lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith('---')]
+    indent = min((len(l) - len(l.lstrip()) for l in lines), default=0)
+    return '\n'.join(l[indent:] if l.strip() else '' for l in text.splitlines())
+
+
+def assemble(template: str, tasks: str) -> str:
+    """The system's header (hosts, become, the pinned vars) with the LLM's tasks under it."""
+    head, _ = _split_play(template)
+    return head + '\n  tasks:\n' + '\n'.join(('    ' + l) if l.strip() else '' for l in tasks.splitlines()) + '\n'
+
+
 def draft_playbook(event: dict, app: dict) -> tuple[str, str, list[dict], str]:
-    """(playbook, source, checks, note). The LLM drafts in live mode; the template stands in when
-    there is no LLM, in demo mode, or when the draft fails a check — and the note says which."""
+    """(playbook, source, checks, note). In live mode the LLM writes the tasks and the system supplies everything
+    it should not decide: the hosts, become, and the paths, jar names and checksum in vars. The checks then judge
+    the tasks: allowed modules only, a pinned download, health and checksum verified, a rollback, the report. The
+    template stands in when there is no LLM, in demo mode, or when the tasks fail a check, and the note says why."""
     template = render_playbook(event, app)
     if H.demo_mode() or not H.llm:
         return template, 'template', check_playbook(template, template), ''
-    prompt = ('Write an Ansible playbook, and nothing else, no prose and no code fences. It must do exactly '
-              'what this example does for the same variables: download the new jar with a pinned sha256, back '
-              'up and remove the old jar, restart the service, verify health and checksum, report with '
-              'set_stats, and roll back in a rescue block. Use only these modules: '
-              + ', '.join(sorted(ALLOWED_MODULES)) + '. Keep the same vars.\n\n' + template)
+    _, example = _split_play(template)
+    prompt = ('Write the tasks for an Ansible play, and nothing else: no prose, no code fences, no play header '
+              'and no vars, which are supplied. Return a YAML list of tasks starting with "- name:". They must do '
+              'what these example tasks do, using the same variables: download the new jar with a pinned sha256, '
+              'back up and remove the old jar, restart the service, verify health and checksum, report patched / '
+              'rolled_back with set_stats, and roll back in a rescue block. Use only these modules: '
+              + ', '.join(sorted(ALLOWED_MODULES)) + '. Keep the example\'s shape exactly: ONE task with a '
+              '"block:" list and a "rescue:" list, both keys indented the same, under the same "- name:", and the '
+              'tasks inside each indented two spaces further. Two-space indentation throughout.'
+              '\n\nVariables available: '
+              + ', '.join(re.findall(r'^    ([a-z_]+):', template, re.M)) + '\n\nExample tasks:\n' + example)
     try:
         draft = H.llm(prompt)
     except Exception as exc:
-        return template, 'template', check_playbook(template, template), f'LLM unavailable ({exc}); used the template.'
-    draft = re.sub(r'(?s)^```[a-z]*\n|```\s*$', '', draft.strip()).strip() + '\n'
-    checks = check_playbook(draft, template)
+        return template, 'template', check_playbook(template, template), \
+            f'The LLM was not reachable ({exc}), so the checked template was used.'
+    playbook = assemble(template, _tasks_only(draft))
+    checks = check_playbook(playbook, template)
     if all(c['ok'] for c in checks):
-        return draft, 'llm', checks, ''
-    failed = ', '.join(c['label'] for c in checks if not c['ok'])
-    return template, 'template', check_playbook(template, template), f'The LLM draft failed: {failed}. Used the template.'
+        return playbook, 'llm', checks, ''
+    failed = ', '.join(c['label'].lower() for c in checks if not c['ok'])
+    return template, 'template', check_playbook(template, template), \
+        f'The LLM draft was not used (checks not met: {failed}), so the checked template was used instead.'
 
 
 # ---------------------------------------------------------------------------- the run

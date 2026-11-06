@@ -80,6 +80,14 @@
             that: pb.stat.checksum == playbook_sha256
             fail_msg: "playbook sha256 {{ pb.stat.checksum }} does not match {{ playbook_sha256 }}; not committing it"
 
+        # Ansible's own parser, which the console does not have. A playbook that does not parse is never
+        # committed, so it can never reach the gate or a host.
+        - name: The playbook parses
+          ansible.builtin.command:
+            argv: [ansible-playbook, --syntax-check, -i, "localhost,", "{{ work }}/playbook.yml",
+                   -e, target_hosts=localhost]
+          changed_when: false
+
         - name: Download the Lightwell build through Nexus
           ansible.builtin.get_url:
             url: "{{ jar_url }}"

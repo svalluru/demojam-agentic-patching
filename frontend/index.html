@@ -3770,7 +3770,7 @@ function v2Run(s, readOnly) {
     out.push(`<div class="v2-sec"><h3>Remediation playbooks</h3>${s.playbooks.map(p => `<div class="v2-card">
       <b>${esc(p.app)}</b> <span class="mono muted-sm">${esc(p.filename)}</span>
       <span class="muted-sm"> · ${p.source === 'llm' ? 'drafted by the LLM' : 'from the checked template'}</span>
-      ${p.note ? `<div class="err-sm">${esc(p.note)}</div>` : ''}
+      ${p.note ? `<div class="muted-sm">${esc(p.note)}</div>` : ''}
       <div class="v2-checks">${(p.checks || []).map(c =>
         `<span class="${c.ok ? 'ok' : 'no'}" title="${esc(c.detail || '')}">${esc(c.label)}</span>`).join('')}</div>
       <details><summary class="muted-sm" style="cursor:pointer;margin-top:8px">View playbook</summary>
