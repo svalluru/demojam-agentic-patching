@@ -452,47 +452,132 @@ socket is already open by the time the panel can reach the process.
 The third option on the header toggle. Where **Applications** scans a
 repository and rebuilds it, v2 starts from the other end: a Lightwell build
 lands in Nexus, and the console patches the servers already running the
-version it replaces.
+version it replaces. **How the demo works** (the flow icon in the header) has a
+v2 tab with the numbered diagram; this is the same thing in text.
+
+```
+ Lightwell ──▶ Nexus proxy ──webhook──▶ 1 Intake ──▶ 2 Impact ──▶ 3 Playbook ──▶ you press Run
+ (packages.     lightwell-              agent        agent         agent (LLM)
+  redhat.com)   remediated              │            │             │
+                                        Lightwell    app BOMs      checks, else template
+                                        advisories
+
+ AO workflow "App Patch v2", one run per server:
+   4 Commit to Gitea ──▶ route ──QA──────────────────────▶ 6 Sync & Run ──▶ Verify ──▶ Learn
+     cosign provenance           └─Prod─▶ 5 Approval ──▶     (AAP)           (playbook)  (BOM)
+     + playbook commit                    (this console)
+```
 
 1. **Intake.** Nexus calls `POST /api/v2/webhook` when its
    `lightwell-remediated` proxy caches a new `.rhlw-` build. The signature
    (`X-Nexus-Webhook-Signature`, HMAC-SHA1 of `NEXUS_WEBHOOK_SECRET`) is
-   checked, and the CVEs the build fixes come from the Lightwell advisories
-   API (`LIGHTWELL_CLIENT_ID` / `_SECRET`).
+   checked before anything else, and a redelivery is the same event. The CVEs
+   come from the Lightwell advisories API for that exact build.
 2. **Impact.** The app BOMs (`rag-setup/data/bom/*.json`) say which apps, on
-   which servers, run that exact upstream version. Other versions of the same
-   library are listed as left alone.
-3. **Playbook.** The LLM drafts it; `check_playbook()` allows only a short list
-   of modules (no shell or command), and requires a pinned sha256, a health
-   check and a rollback. A draft that fails is replaced by the checked
-   template, and the page says so.
-4. **AO workflow `App Patch v2`.** Per server: commit the playbook to Gitea and
-   verify the build's provenance with cosign, hold Prod at the approval gate,
-   then have AAP sync the project at that commit and run it. The console never
-   touches git.
-5. **Learn.** An app whose servers were all patched gets the new version in its
-   BOM; one with a rolled-back server keeps the old one.
+   which servers, run the upstream version the build replaces. Exact match
+   only: an app on another version is listed as left alone, with the reason.
+   The LLM writes a short note for the reviewer.
+3. **Playbook.** The LLM drafts it, and `check_playbook()` decides whether the
+   draft can be used: a play for `{{ target_hosts }}` with `become`, every
+   path, jar name and checksum variable exactly as the system set them,
+   allowed modules only (no shell, command or raw), a pinned sha256 download,
+   a health check, a rollback in `rescue`. A draft that fails any of these is
+   replaced by the checked template, and the page says which check failed.
+4. **Commit** (AO, job `App Patch v2 - Commit to Gitea`). The jar and its
+   provenance bundle are downloaded through Nexus and verified with cosign
+   against Red Hat's PNC key. Only then is the playbook committed to Gitea,
+   through Gitea's contents API, as the lab's own Fetch and Commit job does.
+5. **Approval** (Prod only). The run stops at the AO gate, and the console shows
+   the exact commit being approved. QA goes straight through.
+6. **Sync & Run** (AO, job `App Patch v2 - Sync and Run`). AAP syncs the Gitea
+   project and runs `app_v2_run.yml`, which refuses any playbook whose sha256
+   is not the approved one. The generated playbook downloads the build from
+   Nexus pinned to the verified checksum, backs up the old jar, restarts the
+   service, checks health and checksum, and rolls back if either fails.
+7. **Learn.** An app's BOM moves to the new version only when every one of its
+   servers was patched.
 
-Demo mode stages all of it, with real Lightwell builds (`log4j-core
+**Three checks between an LLM-written playbook and a host**: the playbook
+checks (step 3), provenance before commit (step 4), and the runner's sha256
+(step 6). The console never touches git or a server; the AO workflow does.
+
+**Demo mode** stages all of it, with real Lightwell builds (`log4j-core
 2.24.3.rhlw-00004`, `commons-io 2.11.0.rhlw-00009`) and one Prod server that
-fails its health check and is rolled back. All of it lives in `appv2.py`;
-tests are in `tests/test_appv2.py`.
+fails its health check and is rolled back. Code: `appv2.py`; tests:
+`python3 -m unittest discover -s tests`.
 
-**Live setup**, after `./setup.sh` and the console on OpenShift
-(`./console-app-ocp-setup/deploy.sh`), in this order:
+#### Where things live
+
+| What | Where |
+|---|---|
+| Console side: intake, impact, playbook agent, AO dispatch | `appv2.py`, routes `/api/v2/*` in `agentic-patching.py` |
+| Commit and sample-app playbooks | this repo, `aap-setup/playbooks/`. AAP project **App Patch v2 - Setup Playbooks** reads them from GitHub (`PROJECT_BRANCH_V2`, default `infra-app-agentic-patching`), so push before running setup |
+| Generated playbooks and the runner | lab Gitea `lab-user/app_v2_playbooks`, AAP project **App Patch v2 Playbooks**. Written by the workflow, never by hand |
+| AO workflow | `ao-setup/app_v2_workflow.json` |
+| Nexus | `nexus-setup/` (`deploy.sh`, `configure.py`) |
+| App inventory | `rag-setup/data/bom/sample-app.json`: node1 QA, node2–3 Prod |
+
+#### Live setup
+
+On a fresh lab, in this order. Each step is idempotent.
 
 ```bash
-./nexus-setup/deploy.sh                       # Nexus + lightwell-remediated proxy + webhook
-git push                                      # the AAP setup project reads the v2 playbooks from GitHub
-./aap-setup/create-app-v2-objects.py --deploy-sample   # templates, Gitea project, sample app on node1-3
+./setup.sh --skip-aap --skip-ao --skip-smoke      # RAG + risk model (if not done yet)
+./ao-setup/create-ao-objects.sh                   # AO credential + integration for AAP
+./console-app-ocp-setup/deploy.sh                 # the console on OpenShift (the webhook calls it there)
+./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy, the webhook
+git push                                          # AAP reads the v2 setup playbooks from GitHub
+./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates, runner, sample app
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
-./console-app-ocp-setup/deploy.sh --config-only      # pick up the NEXUS_* keys
+./console-app-ocp-setup/deploy.sh --config-only   # the console picks up NEXUS_* from .env
 ```
 
-The BOM for the sample app is `rag-setup/data/bom/sample-app.json` (node1 QA,
-node2–3 Prod). The provenance check uses cosign 3 (`verify-blob-attestation`
-reads the Sigstore v0.3 bundles Lightwell publishes; cosign 2.4 cannot), and
-Red Hat's public PNC key in `aap-setup/playbooks/files/`.
+`.env` needs, beyond the infra keys:
+
+| Key | Notes |
+|---|---|
+| `LIGHTWELL_CLIENT_ID` / `_SECRET` | Console service account in a User Access group with **Repositories viewer**. Without it the CVEs are not itemised |
+| `LIGHTWELL_REGISTRY_USER` / `_TOKEN` | Registry service account; Nexus proxies with it. **Single-quote the user**: it contains a `\|` |
+| `NEXUS_ACCEPT_EULA=true` | Nexus Community Edition serves nothing until its EULA is accepted; deploy.sh accepts it only with this set |
+| `TARGET_INVENTORY`, `MACHINE_CREDENTIAL` | The AAP inventory and machine credential for the app servers (`Workshop Inventory` / `Workshop Credential` on the current lab) |
+| `NEXUS_URL`, `NEXUS_ADMIN_PASSWORD`, `NEXUS_WEBHOOK_SECRET` | Written by `nexus-setup/deploy.sh` |
+
+No Gitea token is needed: the setup reuses the lab's **Gitea API** credential
+(from `CVE - Fetch and Commit`) for the commit job, and the lab's Gitea
+source-control credential for the project. Neither is edited.
+
+#### Checking it works
+
+```bash
+# A Lightwell build through Nexus: Nexus caches it and fires the webhook.
+curl -sk -o /dev/null "$NEXUS_URL/repository/lightwell-remediated/org/apache/logging/log4j/log4j-core/2.24.3.rhlw-00004/log4j-core-2.24.3.rhlw-00004.jar"
+# The event, with its CVEs, in the console's inbox.
+curl -sk https://<console route>/api/v2/events
+```
+
+Then in the console: Applications v2 → the event → Assess → Generate playbook →
+Run. node1 is patched without a gate; node2–3 wait for Approve. On a server,
+`curl localhost:8080/health` names the log4j-core jar the app loaded: it reads
+`log4j-core-2.24.3.rhlw-00004.jar` once patched.
+
+First verified end to end on 2026-11-05: node1 patched and healthy on the
+Lightwell build, Prod held at the gate, provenance verified, commit
+`dc522fd` in Gitea.
+
+#### When it goes wrong
+
+| Symptom | Cause |
+|---|---|
+| Nexus returns 403 for everything, even to admin | The Community Edition EULA is not accepted. Set `NEXUS_ACCEPT_EULA=true` and rerun `nexus-setup/deploy.sh` |
+| A setup script fails reading `.env` | `LIGHTWELL_REGISTRY_USER` is not single-quoted; the shell reads its `\|` as a pipe |
+| Live mode on a Mac: `CERTIFICATE_VERIFY_FAILED` | python.org Python has no CA bundle. Start the console with `SSL_CERT_FILE=/etc/ssl/cert.pem` |
+| Webhook answers 401 | The console's `NEXUS_WEBHOOK_SECRET` differs from Nexus's; run `deploy.sh --config-only` after `nexus-setup/deploy.sh` |
+| Webhook answers 503 (live) | `NEXUS_WEBHOOK_SECRET` is not set, so no webhook is trusted |
+| No webhook at all | This Nexus has no capabilities API; `configure.py` prints the manual steps. Or set `NEXUS_POLL_SECONDS=300` and `NEXUS_EVENTS=poller` |
+| The page says "The LLM draft failed: …. Used the template." | Working as intended: the draft broke a check (the live LLM has dropped the play header). The template is the same playbook, checked |
+| Commit job fails at "Verify the build's SLSA provenance" | The build or its bundle does not verify; nothing is committed. Needs cosign 3, which the job downloads, pinned by checksum |
+| Sync and Run fails "is not the approved playbook" | The file in Gitea changed after the commit; the runner will not run it |
+| AO rejects the workflow import: approval "missing a connection from the 'Approved' branch" | The edge out of an approval node needs `"from_port": "approved"` |
 
 ### Demo guide
 

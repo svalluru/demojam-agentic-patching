@@ -2667,13 +2667,15 @@
            same choice, and a second control for it that looked different
            would read as a different choice. -->
       <div class="fd-tabs">
-        <span class="domain-toggle" id="flow-toggle" role="group"
+        <span class="domain-toggle three" id="flow-toggle" role="group"
               aria-label="Which side of the demo" data-pane="infra">
           <span class="dt-thumb" aria-hidden="true"></span>
           <button type="button" class="dt-btn" data-pane="infra" aria-pressed="true"
                   >Infra<span class="wide-only">structure</span></button>
           <button type="button" class="dt-btn" data-pane="app" aria-pressed="false"
-                  >App<span class="wide-only">lication</span></button>
+                  >App<span class="wide-only">lications</span></button>
+          <button type="button" class="dt-btn" data-pane="appv2" aria-pressed="false"
+                  >App<span class="wide-only">lications</span> v2</button>
         </span>
       </div>
       <div id="flow-body"></div>
@@ -7495,6 +7497,92 @@ const FLOW_APP = {
   ],
 };
 
+const FLOW_APPV2 = {
+  // Each vertical arrow keeps its words in the gap to its right, except step
+  // 12, which takes the free gap on its left (the Approval box has no riser).
+  //
+  // The same ten columns as the other two tabs, so flipping between them does
+  // not move the picture. Column 9 is empty for the same reason Push has air
+  // on the Application tab: Learn's arrow needs somewhere to land its words.
+  cols: 10,
+  boxes: [
+    { c: 0, t: 'NEXUS WEBHOOK', k: 'THE TRIGGER' },
+    { c: 1, t: '1 · INTAKE',   k: 'AGENT', k2: 'INTAKE', cls: 'ag' },
+    { c: 2, t: '2 · IMPACT',   k: 'AGENT', k2: 'INVENTORY', cls: 'ag' },
+    { c: 3, t: '3 · PLAYBOOK', k: 'AGENT', k2: 'PLAYBOOK', cls: 'ag' },
+    { c: 4, t: '4 · COMMIT',   k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh' },
+    { c: 5, t: '5 · APPROVAL', k: 'YOU', k2: 'PROD ONLY', cls: 'gate' },
+    { c: 6, t: '6 · SYNC & RUN', k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh' },
+    { c: 7, t: 'VERIFY',       k: 'THE PLAYBOOK', k2: 'ITSELF', cls: 'rh' },
+    { c: 8, t: 'LEARN',        k: 'AGENT', k2: 'BOM WRITE-BACK', cls: 'ag' },
+
+    { c: 0, lane: 1, cls: 'svc', t: 'NEXUS', s: 'proxy of Lightwell' },
+    { c: 1, lane: 1, cls: 'svc rh', t: 'LIGHTWELL API', s: 'advisories' },
+    { c: 2, lane: 1, cls: 'svc', t: 'APP BOMs', s: 'apps · servers · jars' },
+    { c: 3, lane: 1, cls: 'svc rh', t: 'LLM', s: 'OGX · deepseek' },
+    { c: 4, lane: 1, cls: 'svc', t: 'GITEA', s: 'app_v2_playbooks' },
+    { c: 6, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
+      s: 'Ansible Automation Platform' },
+    { c: 7, lane: 1, cls: 'svc rh', t: 'RHEL', s: 'the app servers' },
+  ],
+  groups: [],
+  edges: [
+    down(0, '1', 'Nexus', 'Webhook',
+      'A Lightwell build lands in the <em>lightwell-remediated</em> proxy. Nexus '
+      + 'calls the console, signed with a shared secret.'),
+    hop(0, 1, '2', 'Webhook', 'Intake',
+      'The signature is checked first. Only a newly cached <em>.rhlw-</em> build '
+      + 'becomes an event; retries are the same event.'),
+    up(1, '3', 'Intake', 'Lightwell API',
+      'Which CVEs <em>this exact build</em> fixes, from Lightwell’s own '
+      + 'advisories, not guessed from the version.'),
+    hop(1, 2, '4', 'Intake', 'Impact',
+      'The package and the version it replaces go to the inventory agent.'),
+    up(2, '5', 'Impact', 'App BOMs',
+      'Exact match on the version in use. An app on another version is listed as '
+      + 'left alone, with the reason.'),
+    hop(2, 3, '6', 'Impact', 'Playbook',
+      'Servers by environment, QA first, and a note for the reviewer.'),
+    up(3, '7', 'Playbook', 'LLM',
+      'The LLM drafts it. A draft that fails the checks (modules, pinned paths, '
+      + 'health check, rollback) is replaced by the template.'),
+    hop(3, 4, '8', 'Playbook', 'Commit',
+      'You press <strong>Run</strong>: one App Patch v2 workflow run per server.'),
+    up(4, '9', 'Commit', 'Gitea',
+      'cosign verifies the build’s provenance against Red Hat’s key, then the '
+      + 'playbook is committed. A bad build never is.'),
+    hop(4, 5, '10', 'Commit', 'Approval',
+      'Prod stops for a person, who sees the exact commit. QA goes straight '
+      + 'through.'),
+    hop(5, 6, '11', 'Approval', 'Sync & Run',
+      '<strong>Approve</strong> signals the gate in the AO workflow.'),
+    up(6, '12', 'Sync & Run', 'Red Hat AAP',
+      'The project syncs at that commit, and the runner refuses a playbook whose '
+      + 'sha256 is not the approved one.', -1),
+    lane(6, 7, '13', 'Red Hat AAP', 'RHEL',
+      'The jar comes from Nexus, pinned to the verified checksum; the old one is '
+      + 'backed up, the service restarted.'),
+    down(7, '14', 'RHEL', 'Verify',
+      'Health URL and checksum on the server. A failure restores the old jar '
+      + 'and fails the run.'),
+    hop(7, 8, '15', 'Verify', 'Learn',
+      'An app’s BOM moves to the new version only when every one of its servers '
+      + 'is patched.'),
+  ],
+  caps: [
+    '<strong>The event comes to the console, not the other way round.</strong> A '
+    + 'Lightwell build arriving in Nexus starts the run, and three agents decide '
+    + 'what it means: which CVEs it fixes, which servers run the version it '
+    + 'replaces, and what to do on them. Everything from step 9 to 14 is an '
+    + 'Automation Orchestrator workflow driving AAP — the console never touches '
+    + 'git or a server.',
+    'Three checks stand between an LLM-written playbook and a host: the checks at '
+    + 'step 7, provenance at step 9, and the runner’s sha256 at step 12. The '
+    + 'amber box is still the only one a person is inside, and only Prod passes '
+    + 'through it.',
+  ],
+};
+
 // A box's cls is a space-separated token list — 'svc' is a shape, 'rh' and
 // 'ag' are colours, and a Red Hat service box carries both — so test for a
 // token rather than compare the whole string.
@@ -7676,14 +7764,14 @@ function renderFlow() {
   seg.querySelectorAll('.dt-btn').forEach(
     b => b.setAttribute('aria-pressed', String(b.dataset.pane === flowSide)));
   const body = document.getElementById('flow-body');
-  body.innerHTML = flowSVG(flowSide === 'app' ? FLOW_APP : FLOW_INFRA);
+  body.innerHTML = flowSVG({ app: FLOW_APP, appv2: FLOW_APPV2 }[flowSide] || FLOW_INFRA);
   flowFit(body);
 }
 
 function openFlow() {
   // paneSide, not paneNow: from the ROI report, which is neither side, open
   // on the side the reader will go back to.
-  flowSide = paneSide === 'app' ? 'app' : 'infra';
+  flowSide = ['app', 'appv2'].includes(paneSide) ? paneSide : 'infra';
   // Unhidden first, then drawn: renderFlow measures its own labels, and
   // nothing inside a hidden subtree has a width to measure.
   document.getElementById('flow-scrim').hidden = false;
