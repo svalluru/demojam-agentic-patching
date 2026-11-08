@@ -485,6 +485,23 @@ class Subset(unittest.TestCase):
         self.assertIn('oss-inventory|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
         self.assertNotIn('nfvo-orchestrator|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
 
+    def test_sites_chosen_before_prepare(self):
+        demo()
+        appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
+        self.assertEqual(appv2.start_generate([])[0], 400)                       # nothing selected
+        self.assertEqual(appv2.start_generate(['oss-inventory|lab', 'oss-inventory|core-dc-1'])[0], 200)
+        st = self.wait({'generated'})
+        self.assertEqual([p['app'] for p in st['playbooks']], ['oss-inventory'])   # nothing drafted for nfvo
+        # The run can narrow the prepared sites but not widen them: nfvo has no playbook.
+        self.assertEqual(appv2.start_dispatch(['nfvo-orchestrator|lab'])[0], 400)
+        self.assertEqual(appv2.start_dispatch(['oss-inventory|lab', 'nfvo-orchestrator|lab'])[0], 200)
+        st = self.wait({'complete'})
+        by = {h['key']: h for h in st['hosts']}
+        self.assertEqual(by['oss-inventory|lab']['outcome'], 'patched')
+        self.assertEqual(by['oss-inventory|core-dc-1']['outcome'], 'skipped')
+        self.assertEqual(by['nfvo-orchestrator|lab']['outcome'], 'skipped')
+        self.assertEqual(st['summary']['skipped'], 5)
+
     def test_reasoning_is_on_every_target(self):
         demo()
         appv2.start_assess('evt-mina-core'); st = self.wait({'assessed'})

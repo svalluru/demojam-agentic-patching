@@ -982,10 +982,17 @@ def _assess(ev: dict) -> None:
         _set(status='failed', error=str(exc))
 
 
-def start_generate() -> tuple[int, dict]:
+def start_generate(targets: list[str] | None = None) -> tuple[int, dict]:
+    """Prepare the remediation for the selected sites (all of them when targets is None): a playbook for each app
+    they run. The selection carries to the run, which can narrow it but not widen it."""
     with _LOCK:
         if _RUN.get('status') != 'assessed':
             return 409, {'ok': False, 'error': 'assess an event first'}
+        known = [t['key'] for t in _RUN['impact']['targets']]
+        chosen = known if targets is None else [k for k in known if k in set(targets)]
+        if not chosen:
+            return 400, {'ok': False, 'error': 'select at least one site'}
+        _RUN['selected'] = chosen
         _RUN['status'] = 'generating'
     _persist()
     threading.Thread(target=_generate, daemon=True, name='appv2-generate').start()
@@ -998,8 +1005,13 @@ def _generate() -> None:
         ev, imp = st['event'], st['impact']
         _stage('generate', 'active')
         playbooks = []
+        selected = set(st.get('selected') or [t['key'] for t in imp['targets']])
+        if len(selected) < len(imp['targets']):
+            _trace('console', 'playbook', f"{len(selected)} of {len(imp['targets'])} site(s) selected")
         for app in imp['apps']:
-            target = next(t for t in imp['targets'] if t['app'] == app)
+            target = next((t for t in imp['targets'] if t['app'] == app and t['key'] in selected), None)
+            if target is None:
+                continue                     # none of its sites selected: nothing to prepare
             _trace('intake', 'playbook', f'draft for {app}')
             if H.llm and not H.demo_mode():
                 _trace('playbook', 'llm', f'draft for {app}')
@@ -1031,7 +1043,8 @@ def start_dispatch(targets: list[str] | None = None) -> tuple[int, dict]:
     with _LOCK:
         if _RUN.get('status') != 'generated':
             return 409, {'ok': False, 'error': 'generate the playbook first'}
-        known = {t['key'] for t in _RUN['impact']['targets']}
+        # Only sites prepared for: their app has a playbook.
+        known = set(_RUN.get('selected') or [t['key'] for t in _RUN['impact']['targets']])
         chosen = known if targets is None else {k for k in targets if k in known}
         if not chosen:
             return 400, {'ok': False, 'error': 'select at least one app and server'}
@@ -1039,11 +1052,11 @@ def start_dispatch(targets: list[str] | None = None) -> tuple[int, dict]:
         st = json.loads(json.dumps(_RUN))
     hosts = []
     for t in st['impact']['targets']:
-        pb = next(p for p in st['playbooks'] if p['app'] == t['app'])
+        pb = next((p for p in st['playbooks'] if p['app'] == t['app']), {})
         if t['key'] in chosen:
             hosts.append({**t, 'playbook': pb['filename'], 'outcome': 'queued', 'steps': {}, 'execution_id': ''})
         else:
-            hosts.append({**t, 'playbook': pb['filename'], 'outcome': 'skipped', 'steps': dict(SKIPPED_STEPS),
+            hosts.append({**t, 'playbook': pb.get('filename', ''), 'outcome': 'skipped', 'steps': dict(SKIPPED_STEPS),
                           'execution_id': '', 'detail': 'Not selected for this run.'})
     _set(hosts=hosts)
     if len(chosen) < len(known):

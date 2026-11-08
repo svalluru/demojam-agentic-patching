@@ -4865,7 +4865,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/v2/assess':
             code, body = appv2.start_assess(str(payload.get('event_id', '')))
         elif path == '/api/v2/generate':
-            code, body = appv2.start_generate()
+            targets = payload.get('targets')
+            code, body = appv2.start_generate(
+                [str(t) for t in targets] if isinstance(targets, list) else None)
         elif path == '/api/v2/dispatch':
             targets = payload.get('targets')
             code, body = appv2.start_dispatch(
