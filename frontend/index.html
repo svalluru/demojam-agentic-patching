@@ -3791,7 +3791,7 @@ function v2Run(s, readOnly) {
   </div>`);
 
   if (s.status === 'assessing' && !s.impact) {
-    out.push('<div class="empty"><div class="spinner"></div><span>Asking the inventory agent…</span></div>');
+    out.push('<div class="empty"><div class="spinner"></div><span>Finding the affected sites…</span></div>');
   }
   if (s.impact) {
     const t = s.impact.targets || [];
