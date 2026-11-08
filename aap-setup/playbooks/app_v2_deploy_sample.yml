@@ -3,8 +3,11 @@
 # 2.24.3.rhlw-00004 replaces. Run by aap-setup/create-app-v2-objects.py --deploy-sample (job template
 # "App Patch v2 - Deploy Sample App"), or by hand:
 #
-#   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e target_hosts=node1,node2,node3
-#   ansible-playbook ... -e app_name=orders-api -e app_port=8081 -e target_hosts=node1   # the second QA app
+#   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e @app.json
+# where app.json gives app_name, app_port, target_hosts, jars (Maven Central paths) and probes. The telco apps:
+#   nfvo-orchestrator  port 8090  node1,node2,node3  mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11
+#   oss-inventory      port 8091  node1,node3        postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6
+# create-app-v2-objects.py --deploy-sample launches both.
 #
 # The layout matches app-data/bom/<app_name>.json, which is what the inventory agent reads:
 #   /opt/apps/<app_name>/HealthServer.java      the app (source launcher, nothing to build)
@@ -20,10 +23,13 @@
     app_port: 8080
     app_dir: "/opt/apps/{{ app_name }}"
     central: https://repo1.maven.org/maven2
+    # Maven Central paths. The defaults are the original sample app's; the telco apps pass their own.
     jars:
       - { path: org/apache/logging/log4j/log4j-api/2.24.3/log4j-api-2.24.3.jar }
       - { path: org/apache/logging/log4j/log4j-core/2.24.3/log4j-core-2.24.3.jar }
       - { path: commons-io/commons-io/2.11.0/commons-io-2.11.0.jar }
+    # name=class pairs: /health names the jar each class loads from.
+    probes: "log4j-core=org.apache.logging.log4j.core.LoggerContext"
   tasks:
     - name: Install a JDK (the source launcher needs javac's compiler, which the headless JRE lacks)
       ansible.builtin.dnf:
@@ -73,6 +79,7 @@
 
           [Service]
           Environment=PORT={{ app_port }}
+          Environment=PROBES={{ probes }}
           ExecStart=/usr/bin/java -cp '{{ app_dir }}/lib/*' {{ app_dir }}/HealthServer.java
           Restart=on-failure
 
@@ -95,6 +102,6 @@
       retries: 20
       delay: 3
 
-    - name: Show which log4j-core it loaded
+    - name: Show which jars it loaded
       ansible.builtin.debug:
-        msg: "{{ inventory_hostname }} {{ app_name }}: {{ health.json.log4j_core }}"
+        msg: "{{ inventory_hostname }} {{ app_name }}: {{ health.json.jars }}"

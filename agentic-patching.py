@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import html
+import importlib.util
 import json
 import math
 import os
@@ -4180,9 +4181,19 @@ def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
     return sorted(out)
 
 
+def app_history_add(store: str, path: Path) -> None:
+    """Add one outcome record to the app history store: rag-setup/ingest.py's own upload and attach."""
+    spec = importlib.util.spec_from_file_location('ingest', ROOT / 'rag-setup' / 'ingest.py')
+    ingest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ingest)
+    if not ingest.attach(LLAMA_URL, store, ingest.upload_file(LLAMA_URL, path)):
+        raise RuntimeError(f'could not attach {path.name} to {store}')
+
+
 appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
-                rag_search=app_history_search, lightwell_get=lightwell_get)
+                rag_search=app_history_search, lightwell_get=lightwell_get,
+                rag_add=app_history_add)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4461,6 +4472,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200 if run else 404, {'ok': bool(run), 'run': run})
             else:
                 self._send(200, {'ok': True, 'runs': appv2.runs()})
+        elif path == '/api/v2/estate':
+            try:
+                self._send(200, appv2.estate())
+            except Exception as exc:
+                self._send(502, {'ok': False, 'error': str(exc)})
         elif path == '/api/v2/sbom':
             # A download, for uploading to Lightwell Lens: the app's BOM as CycloneDX.
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

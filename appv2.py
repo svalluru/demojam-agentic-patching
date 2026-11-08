@@ -35,7 +35,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parent
 
 # The nine stages of a v2 run, in order. The console's stage bar is drawn from the same keys.
-STAGES = ('intake', 'impact', 'generate', 'commit', 'approval', 'sync', 'remediate', 'verify', 'learn')
+STAGES = ('intake', 'impact', 'generate', 'commit', 'approval', 'sync', 'remediate', 'verify', 'report', 'learn')
 
 # Node ids in ao-setup/app_v2_workflow.json. The console reads each one's outcome by id. Sync and Run exists once per
 # branch (AO nodes do not join), and its own set_stats (patched / rolled_back, from the generated playbook) is the
@@ -69,6 +69,7 @@ class _Hooks:
     ao_call: Callable[..., Any] | None = None            # (path, method='GET', body=None)
     fixed_cves: Callable[[str, str, str], list] | None = None   # (group, artifact, version) -> CVE ids
     rag_search: Callable[[str, str], list] | None = None        # (vector store id, query) -> hit texts
+    rag_add: Callable[[str, Path], None] | None = None          # (vector store id, file) -> added to the store
     lightwell_get: Callable[..., dict] | None = None            # (path, **params) -> Lightwell API body
 
 
@@ -90,68 +91,108 @@ def now_iso() -> str:
 
 # ---------------------------------------------------------------------------- demo data
 
-# Real Lightwell facts (registry and /advisories, 2026-11-05). The apps and servers are staged.
+# A telco estate. The fixed builds and their CVEs are real Lightwell facts (registry and /advisories, checked
+# 2026-11-08); the apps, sites and reasoning are staged for the demo. Java-led, because that is where Lightwell's
+# catalog is (1,009 remediated Java packages against 7 Python and no npm): the Python and JS apps are in the estate
+# so the gaps show honestly.
 DEMO_EVENTS = [
-    {'id': 'evt-log4j-core', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
-     'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3.rhlw-00004',
-     'received_at': '2026-11-05T18:37:12Z',
-     'cves': ['CVE-2025-68161', 'CVE-2026-34477', 'CVE-2026-34478', 'CVE-2026-34480'],
-     'cves_source': 'lightwell'},
-    {'id': 'evt-commons-io', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
-     'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.11.0.rhlw-00009',
-     'received_at': '2026-11-05T17:02:40Z',
-     'cves': ['CVE-2024-47554'], 'cves_source': 'lightwell'},
+    {'id': 'evt-mina-core', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
+     'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5.rhlw-00002',
+     'received_at': '2026-11-08T18:37:12Z', 'cves': ['CVE-2026-41635'], 'cves_source': 'lightwell',
+     'note': 'The SSH library behind NETCONF: what the orchestrator uses to configure network elements.'},
+    {'id': 'evt-postgresql', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
+     'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3.rhlw-00006',
+     'received_at': '2026-11-08T17:02:40Z',
+     'cves': ['CVE-2022-31197', 'CVE-2022-41946', 'CVE-2024-1597', 'CVE-2026-42198'], 'cves_source': 'lightwell',
+     'note': 'The JDBC driver under billing and inventory; the fix includes a SQL injection.'},
+    {'id': 'evt-zookeeper', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
+     'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9.rhlw-00001',
+     'received_at': '2026-11-08T16:21:05Z', 'cves': ['CVE-2023-44981'], 'cves_source': 'lightwell',
+     'note': 'Coordination for the orchestrator and inventory clusters.'},
 ]
+
+# More real Lightwell builds the estate's libraries have (registry and /advisories, 2026-11-08). In the demo
+# catalog and the estate view, not in the inbox: they have not "arrived" in Nexus in the staged story.
+DEMO_CATALOG_EXTRA = [
+    {'name': 'org.apache.httpcomponents.client5:httpclient5', 'build': '5.6.2.rhlw-00005', 'status': 'remediated',
+     'cves': ['CVE-2026-64607', 'CVE-2026-71290']},
+    {'name': 'org.springframework.security:spring-security-web', 'build': '5.7.11.rhlw-00006', 'status': 'remediated',
+     'cves': ['CVE-2024-38821', 'CVE-2026-22732']},
+    {'name': 'org.apache.avro:avro', 'build': '1.11.0.rhlw-00002', 'status': 'remediated',
+     'cves': ['CVE-2023-39410', 'CVE-2024-47561']},
+]
+
+# Telco domains, grouped as on Lightwell's "One implementation, whole network" slide.
+NETWORK_DOMAINS = {'NFVO / MANO', '5G Core (SBA)', 'O-RAN Near-RT RIC', 'IMS / Voice', 'Transport / SDN', 'Edge / MEC'}
 
 DEMO_BOM = [
-    {'app': 'orders-service', 'owner': 'payments', 'path': '/opt/apps/orders-service', 'service': 'orders-service',
-     'health_url': 'http://localhost:8080/actuator/health',
-     'servers': [{'host': 'orders-qa-01.acme.internal', 'env': 'qa'},
-                 {'host': 'orders-prod-01.acme.internal', 'env': 'prod'},
-                 {'host': 'orders-prod-02.acme.internal', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'},
-                      {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-api', 'version': '2.24.3'},
-                      {'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.16.1'}]},
-    # Shares orders-qa-01 with orders-service and runs the same log4j-core: two apps on one QA server, so a run
-    # can patch one and leave the other (the Impact table's checkboxes).
-    {'app': 'orders-api', 'owner': 'payments', 'path': '/opt/apps/orders-api', 'service': 'orders-api',
-     'health_url': 'http://localhost:8081/health',
-     'servers': [{'host': 'orders-qa-01.acme.internal', 'env': 'qa'}],
-     'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'},
-                      {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-api', 'version': '2.24.3'}]},
-    {'app': 'billing-api', 'owner': 'payments', 'path': '/opt/apps/billing-api', 'service': 'billing-api',
-     'health_url': 'http://localhost:8081/health',
-     'servers': [{'host': 'billing-prod-01.acme.internal', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'},
-                      {'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.11.0'}]},
-    {'app': 'catalog-web', 'owner': 'storefront', 'path': '/opt/apps/catalog-web', 'service': 'catalog-web',
-     'health_url': 'http://localhost:8082/health',
-     'servers': [{'host': 'catalog-qa-01.acme.internal', 'env': 'qa'},
-                 {'host': 'catalog-prod-01.acme.internal', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.25.1'},
-                      {'group': 'commons-io', 'artifact': 'commons-io', 'version': '2.11.0'}]},
+    {'app': 'nfvo-orchestrator', 'domain': 'NFVO / MANO', 'languages': {'java': 'H', 'python': '', 'js': ''},
+     'path': '/opt/apps/nfvo-orchestrator', 'service': 'nfvo-orchestrator', 'health_url': 'http://localhost:8080/health',
+     'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'edge-site-1', 'env': 'prod'},
+                 {'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
+     'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5'},
+                      {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
+                      {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]},
+    {'app': 'oss-inventory', 'domain': 'OSS – Inventory', 'languages': {'java': 'H', 'python': 'M', 'js': ''},
+     'path': '/opt/apps/oss-inventory', 'service': 'oss-inventory', 'health_url': 'http://localhost:8081/health',
+     'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'core-dc-1', 'env': 'prod'}],
+     'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
+                      {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
+                      {'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.1.6'}]},
+    {'app': 'charging-engine', 'domain': 'BSS – Charging', 'languages': {'java': 'H', 'python': '', 'js': ''},
+     'path': '/opt/apps/charging-engine', 'service': 'charging-engine', 'health_url': 'http://localhost:8082/health',
+     'servers': [{'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
+     'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
+                      {'group': 'org.apache.avro', 'artifact': 'avro', 'version': '1.11.0'},
+                      {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'}]},
+    {'app': 'sba-gateway', 'domain': '5G Core (SBA)', 'languages': {'java': 'M', 'python': 'M', 'js': ''},
+     'path': '/opt/apps/sba-gateway', 'service': 'sba-gateway', 'health_url': 'http://localhost:8083/health',
+     'servers': [{'host': 'edge-site-1', 'env': 'prod'}],
+     'dependencies': [{'group': 'org.apache.httpcomponents.client5', 'artifact': 'httpclient5', 'version': '5.6.2'},
+                      {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]},
+    {'app': 'ric-xapp', 'domain': 'O-RAN Near-RT RIC', 'languages': {'java': '', 'python': 'H', 'js': ''},
+     'servers': [], 'dependencies': [{'ecosystem': 'pypi', 'group': '', 'artifact': 'ricxappframe', 'version': '3.2.2'}]},
+    {'app': 'selfcare-api', 'domain': 'Self-care API gateway', 'languages': {'java': '', 'python': '', 'js': 'H'},
+     'servers': [], 'dependencies': [{'ecosystem': 'npm', 'group': '', 'artifact': 'express', 'version': '4.18.2'}]},
 ]
 
-# The staged failure: this host's health check fails after the swap and the playbook rolls it back.
-DEMO_FAILING_HOST = 'orders-prod-02.acme.internal'
+# The staged failure: this pair's health check fails after the swap and the playbook rolls it back.
+DEMO_FAILING_KEY = 'nfvo-orchestrator|core-dc-2'
 
-# What the reasoning step says per app and server in demo mode. Live mode retrieves the same kind of thing from the
+# What the reasoning step says per app and site in demo mode. Live mode retrieves the same kind of thing from the
 # app history store (APP_VECTOR_DB_ID, app-data/history/) and has the LLM write one line per row.
 DEMO_REASONING = {
-    'orders-service|orders-qa-01.acme.internal':
-        'QA restarts take about 20s and carry no traffic; safe to go first. Shares the server with orders-api.',
-    'orders-api|orders-qa-01.acme.internal':
-        'Small stateless service; a log4j-core swap failed in September only because log4j-api lagged, which is '
-        'now 2.24.3 here.',
-    'orders-service|orders-prod-01.acme.internal':
-        'Clean jar swaps in the last three changes; patch outside 09:00-17:00 when order traffic peaks.',
-    'orders-service|orders-prod-02.acme.internal':
-        'Health check needed 60s after the last restart; a 30s window rolled back an August change. Watch it.',
-    'billing-api|billing-prod-01.acme.internal':
-        'Month-end batch runs on the 1st; no restarts in the last two days of a month.',
-    'catalog-web|catalog-qa-01.acme.internal': 'No earlier changes recorded for this app on this server.',
-    'catalog-web|catalog-prod-01.acme.internal':
-        'Behind a load balancer with a second instance; a restart is invisible to users.',
+    'nfvo-orchestrator|lab': 'No live network elements; restarts in 15s. Goes first.',
+    'nfvo-orchestrator|edge-site-1': '120 NEs over NETCONF; drain sessions before restart.',
+    'nfvo-orchestrator|core-dc-1': '340 NEs; only in the 00:00–04:00 network change window. Last change rolled back on '
+                                   'a 30s health window.',
+    'nfvo-orchestrator|core-dc-2': 'Standby of core-dc-1. Patch the night after, once core-dc-1 is stable.',
+    'oss-inventory|lab': 'Lab copy with synthetic topology; safe at any time.',
+    'oss-inventory|core-dc-1': 'Feeds topology to the orchestrator; patch after the NFVO change has settled.',
+    'charging-engine|core-dc-1': 'CDR backlog grows if down more than 30s; avoid the month-end billing run.',
+    'charging-engine|core-dc-2': 'Standby for billing; patch it before core-dc-1.',
+    'sba-gateway|edge-site-1': 'Single instance with no standby; a restart drops in-flight SBA sessions.',
+}
+
+# The estate view's priority and note per app, in demo mode. Live: the app history store plus the Lightwell
+# advisories, one LLM call for all apps.
+DEMO_ESTATE = {
+    'nfvo-orchestrator': ('CRITICAL', 'mina-core carries NETCONF to 340 network elements: a compromise here reaches '
+                          'every element it configures. Drain NETCONF sessions before the restart, and take the '
+                          'zookeeper fix in the same change so the orchestrator restarts once.'),
+    'sba-gateway': ('HIGH', 'Fronts the SBA control plane; the spring-security fix closes an authorization bypass. '
+                    'Single instance on edge-site-1 with no standby: a restart drops in-flight sessions, so patch '
+                    'inside the 00:00–04:00 window.'),
+    'ric-xapp': ('MEDIUM', 'Python only; Lightwell has no build for its libraries. Track the upstream fixes and keep the '
+                 'xApp constrained by RIC platform policy until a fixed build exists.'),
+    'charging-engine': ('CRITICAL', 'The postgresql driver fix covers 4 CVEs including SQL injection on the billing '
+                        'path. A restart stalls CDR intake beyond 30s: avoid the month-end billing run, and patch the '
+                        'standby (core-dc-2) before core-dc-1.'),
+    'oss-inventory': ('HIGH', 'Feeds network topology to the orchestrator. Patch after the NFVO change has settled, so '
+                      'the window never runs with both down. Its mina-core 2.1.6 is a different version and not '
+                      'touched by the mina-core fix.'),
+    'selfcare-api': ('LOW', "JavaScript; Lightwell builds aren't available for npm here. Customer-facing, so rely on "
+                     'upstream npm updates and the WAF; no action from this console.'),
 }
 
 
@@ -269,7 +310,8 @@ def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] |
     wanted: dict[tuple[str, str], set[str]] = {}
     for app in (apps if apps is not None else load_bom()):
         for dep in app.get('dependencies', []):
-            wanted.setdefault((dep['group'], dep['artifact']), set()).add(dep.get('version', ''))
+            if dep.get('ecosystem', 'maven') == 'maven':
+                wanted.setdefault((dep['group'], dep['artifact']), set()).add(dep.get('version', ''))
     found = []
     for (group, artifact), installed in sorted(wanted.items()):
         path = f"{base}/repository/{repo}/{group.replace('.', '/')}/{artifact}"
@@ -366,11 +408,14 @@ def impact(event: dict, apps: list[dict]) -> dict:
     targets, other = [], []
     for app in apps:
         for dep in app.get('dependencies', []):
+            if dep.get('ecosystem', 'maven') != 'maven':
+                continue                   # a Python or npm library is never the same package as a Maven build
             if (dep.get('group'), dep.get('artifact')) != (event['group'], event['artifact']):
                 continue
             if dep.get('version') == want:
-                for s in app.get('servers', []):
-                    targets.append({'key': f"{app['app']}|{s['host']}",
+                for order, s in enumerate(app.get('servers', [])):
+                    targets.append({'key': f"{app['app']}|{s['host']}", 'domain': app.get('domain', ''), 'order': order,
+                                    'site': s.get('site', s['host']),
                                     'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
                                     'env': s.get('env', 'prod'), 'path': app.get('path', ''),
                                     'service': app.get('service', app['app']),
@@ -381,7 +426,8 @@ def impact(event: dict, apps: list[dict]) -> dict:
                 other.append({'app': app['app'], 'installed': dep.get('version', ''),
                               'why': f'different version; this build replaces {want} only'})
     # QA first, so a bad build shows up where it costs least.
-    targets.sort(key=lambda t: (t['env'] != 'qa', t['app'], t['host']))
+    # The lab first, so a bad build shows up where it costs least; then each app's sites in the order its BOM lists.
+    targets.sort(key=lambda t: (t['env'] != 'qa', t['app'], t['order']))
     return {'targets': targets, 'other': other, 'apps': sorted({t['app'] for t in targets})}
 
 
@@ -395,8 +441,8 @@ def helpful_info(event: dict, imp: dict) -> tuple[str, str]:
         return (f'No deployed app runs {pkg}, so nothing needs patching for this build. '
                 + (f"{len(imp['other'])} app(s) use another version of {event['artifact']}." if imp['other'] else ''),
                 'rules')
-    facts = (f"{pkg} is in {len(imp['apps'])} app(s) ({', '.join(imp['apps'])}) on {len(t)} server(s): "
-             f"{len(qa)} QA, {len(prod)} Prod. The build {event['version']} fixes "
+    facts = (f"{pkg} is in {len(imp['apps'])} app(s) ({', '.join(imp['apps'])}) at {len(t)} site(s): "
+             f"{len(qa)} lab, {len(prod)} live. The build {event['version']} fixes "
              f"{', '.join(event.get('cves') or []) or 'CVEs not yet itemised by Lightwell'}.")
     if H.llm and not H.demo_mode():
         prompt = ('You are helping an operator review an application patch. In 3 short sentences, say what '
@@ -408,9 +454,9 @@ def helpful_info(event: dict, imp: dict) -> tuple[str, str]:
             return H.llm(prompt), 'llm'
         except Exception:
             pass                           # the facts alone are still the right answer
-    order = ('Patch QA first' + (f" ({', '.join(x['host'].split('.')[0] for x in qa)})" if qa else '')
-             + (f"; Prod waits for your approval ({len(prod)} server(s))." if prod else '.'))
-    return f'{facts} {order} Each server keeps a backup of the old jar and rolls back if the health check fails.', \
+    order = ('The lab goes first, automatically' + (f" ({', '.join(x['host'].split('.')[0] for x in qa)})" if qa else '')
+             + (f"; live sites wait for your approval ({len(prod)})." if prod else '.'))
+    return f'{facts} {order} Each site keeps a backup of the old jar and rolls back if the health check fails.', \
         'rules' if not H.demo_mode() else 'staged'
 
 
@@ -1080,7 +1126,7 @@ def _run_host_sim(h: dict, delay: float = 1.0) -> None:
             _trace('aap', 'servers', f'{_label(h)}: swap the jar, restart {h["service"]}')
         _roll_stages()
         H.demo_pause(delay)
-        if step == 'verify' and h['host'] == DEMO_FAILING_HOST:
+        if step == 'verify' and h['key'] == DEMO_FAILING_KEY:
             _host(key, steps={'verify': 'failed'}, outcome='rolled_back',
                   detail='Health check failed after the swap (HTTP 503 for 60s); the old jar was restored and the service restarted.')
             _trace('aap', 'ao', f'{_label(h)}: health check failed, rolled back')
@@ -1135,25 +1181,205 @@ def _maybe_finish() -> None:
 
 
 def _learn(st: dict) -> None:
-    """Write the new version back to the BOM for every app whose servers are all patched, so the next
-    event for this library sees it. An app with a rolled-back or rejected server keeps the old version:
-    that server is still running it."""
-    _stage('learn', 'active')
+    """Agents 4 and 5, once every selected site has settled. The Report agent writes the PDF status report; the
+    Results agent feeds the outcome back: the BOM moves to the new version for apps whose selected sites were all
+    patched, and each site's outcome goes into the app history the Reasoning column reads next time."""
     ev = st['event']
+    _stage('report', 'active')
+    _trace('aap', 'report', 'status report for the change board')
+    H.demo_pause(0.6)
+    try:
+        report = write_report(st)
+        _trace('report', 'console', f"report written: {report['file']}")
+        _stage('report', 'done')
+    except Exception as exc:                 # never lose a run's outcome over a PDF
+        report = {'error': str(exc)}
+        _trace('report', 'console', f'report failed: {exc}')
+        _stage('report', 'failed')
+    _set(report=report)
+
+    _stage('learn', 'active')
+    _trace('report', 'results', 'feed the outcome back')
+    bom = []
     for app in st['impact']['apps']:
-        mine = [h for h in st['hosts'] if h['app'] == app]
+        mine = [h for h in st['hosts'] if h['app'] == app and h['outcome'] != 'skipped']
         if mine and all(h['outcome'] == 'patched' for h in mine):
             with _LOCK:
                 _BOM_UPDATES[f"{app}|{ev['group']}:{ev['artifact']}"] = ev['version']
-            _trace('learn', 'inventory', f"{app}: BOM now {ev['artifact']} {ev['version']}")
+            bom.append({'app': app, 'version': ev['version'], 'changed': True})
+            _trace('results', 'inventory', f"{app}: BOM now {ev['artifact']} {ev['version']}")
         else:
-            _trace('learn', 'inventory', f'{app}: BOM unchanged (not every server patched)')
+            bom.append({'app': app, 'version': upstream(ev['version']), 'changed': False})
+            _trace('results', 'inventory', f'{app}: BOM unchanged (not every selected site patched)')
+    history = feed_history(st)
+    _trace('results', 'inventory', f"{history['records']} outcome record(s) to the app history ({history['where']})")
     H.demo_pause(0.6)
     _stage('learn', 'done')
     outcomes = [h['outcome'] for h in st['hosts']]
-    _set(status='complete', finished_at=now_iso(),
+    _set(status='complete', finished_at=now_iso(), feedback={'bom': bom, 'history': history},
          summary={k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped')})
     _record(state())
+
+
+def reports_dir() -> Path:
+    return Path(env('REPORTS_DIR', str(ROOT / 'reports')))
+
+
+def write_report(st: dict) -> dict:
+    """The status report, a PDF for the change board: the fix and its CVEs, each site's outcome, the commit and
+    provenance, and what was fed back. Same writer as the infrastructure side's report (pdf.py)."""
+    import pdf
+    ev = st['event']
+    now = datetime.now(timezone.utc)
+    doc = pdf.Doc()
+    doc.text('Application Patch Report', size=19, bold=True)
+    doc.text(f"{ev['group']}:{ev['artifact']}  ·  {upstream(ev['version'])} → {ev['version']}  ·  "
+             f"{now.strftime('%d %b %Y %H:%M UTC')}", size=9.5, color='#6a6e73')
+    doc.rule()
+    doc.gap(4)
+    if st.get('simulated'):
+        doc.banner('Simulated run — nothing was patched',
+                   'Demo mode: the App Patch v2 workflow ran in the console\'s simulator. No site was changed.',
+                   '#fdf0d5')
+    hosts = [h for h in st.get('hosts') or []]
+    m = _summary_of(hosts)
+    doc.banner(f"{m['patched']} patched · {m['rolled_back']} rolled back · {m['rejected']} rejected · "
+               f"{m['skipped']} not selected", ev.get('note', ''), '#eef3ee' if not m['rolled_back'] else '#fdecec')
+    doc.text('Fixes', size=11, bold=True)
+    doc.text(', '.join(ev.get('cves') or []) or 'Not itemised by Lightwell.', size=9)
+    doc.gap(8)
+    doc.text('Per-site outcome', size=11, bold=True)
+    doc.gap(2)
+    doc.table(['Site', 'App', 'Domain', 'Env', 'Outcome', 'Detail'],
+              [[h.get('site') or h['host'], h['app'], h.get('domain', ''), 'LAB' if h.get('env') == 'qa' else 'LIVE',
+                h.get('outcome', '').replace('_', ' '), h.get('detail', '')] for h in hosts] or [['—'] * 6],
+              [70, 90, 80, 32, 60, 167])
+    doc.gap(10)
+    commit = next((h for h in hosts if h.get('commit_sha')), {})
+    doc.text('Change record', size=11, bold=True)
+    doc.gap(2)
+    doc.table(['Field', 'Value'], [
+        ['Run', st.get('run_id', '')],
+        ['Playbook commit', (commit.get('commit_sha') or '—')[:12]],
+        ['Build provenance', commit.get('provenance', '—')],
+        ['Started', st.get('started_at', '')],
+        ['Workflow', env('AO_APP_V2_WORKFLOW', 'App Patch v2')],
+    ], [130, 369])
+    doc.gap(14)
+    doc.rule()
+    doc.text('Generated by the Report agent (Applications v2, agent 4).', size=8, color='#6a6e73')
+    out = reports_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    name = f"{re.sub(r'[^A-Za-z0-9._-]', '_', ev['artifact'])}-{ev['version']}-{st.get('run_id', '')}.pdf"
+    path = doc.save(out / name)
+    return {'file': path.name, 'bytes': path.stat().st_size, 'created_at': now_iso()}
+
+
+def feed_history(st: dict) -> dict:
+    """One outcome record per site, written so the inventory agent's next search finds it: the app, the site, what
+    happened and how long it took. Live: added to the app history store. Demo: counted, nothing written."""
+    ev = st['event']
+    records = []
+    for h in st.get('hosts') or []:
+        if h['outcome'] == 'skipped':
+            continue
+        site = h.get('site') or h['host']
+        records.append((f"{now_iso()[:10]}-{h['app']}-{site}-{ev['artifact']}-{h['outcome'].upper()}.md",
+                        f"# App patch record — {h['app']} on {site} ({h['host']}) — {now_iso()[:10]}\n\n"
+                        f"App: {h['app']}   Site: {site}   Server: {h['host']}   "
+                        f"Environment: {'LAB' if h.get('env') == 'qa' else 'LIVE'}\n"
+                        f"Change: {ev['artifact']} {upstream(ev['version'])} -> {ev['version']} (run {st.get('run_id')})\n"
+                        f"Result: {h['outcome'].replace('_', ' ').upper()}\n\nWhat happened:\n{h.get('detail') or '—'}\n"))
+    if H.demo_mode():
+        return {'records': len(records), 'where': 'demo, not stored'}
+    folder = state_dir() / 'app-history'
+    folder.mkdir(parents=True, exist_ok=True)
+    added = 0
+    for name, text in records:
+        path = folder / name
+        path.write_text(text)
+        store = env('APP_VECTOR_DB_ID')
+        if store and H.rag_add:
+            try:
+                H.rag_add(store, path)
+                added += 1
+            except Exception:
+                pass
+    return {'records': len(records), 'where': f'{added} added to the app history store' if added else 'saved locally'}
+
+
+# ---------------------------------------------------------------------------- the telco estate
+
+def estate() -> dict:
+    """Every app by telco domain: what it is written in, which Lightwell fixes exist for the versions it runs, and
+    the agent's priority and note: what is critical, how patching affects the current setup, what else to watch."""
+    apps = load_bom()
+    cat = catalog('mine', 1, 1000)
+    fixes: dict[str, list[dict]] = {}
+    for r in cat.get('rows') or []:
+        for a in r.get('affects') or []:
+            fixes.setdefault(a, []).append({'artifact': r['artifact'], 'build': r['build'], 'cves': r.get('cves') or []})
+    rows = []
+    for a in apps:
+        maven = [d for d in a.get('dependencies', []) if d.get('ecosystem', 'maven') == 'maven']
+        other = sorted({d.get('ecosystem') for d in a.get('dependencies', []) if d.get('ecosystem', 'maven') != 'maven'})
+        rows.append({'app': a['app'], 'domain': a.get('domain', ''),
+                     'group': 'network' if a.get('domain') in NETWORK_DOMAINS else 'it',
+                     'languages': a.get('languages') or {},
+                     'sites': [s.get('site', s['host']) for s in a.get('servers', [])],
+                     'fixes': fixes.get(a['app'], []), 'covered': bool(maven), 'other': other})
+    notes, source = estate_reasoning(rows)
+    for r in rows:
+        r['priority'], r['note'] = notes.get(r['app'], ('LOW', ''))
+    return {'ok': True, 'rows': rows, 'source': source, 'catalog_source': cat.get('source')}
+
+
+def _estate_rule(r: dict) -> tuple[str, str]:
+    if not r['covered']:
+        what = 'npm' if 'npm' in r['other'] else 'Python' if 'pypi' in r['other'] else 'this ecosystem'
+        return 'LOW', f'No Lightwell build for {what} here; track upstream fixes.'
+    if not r['fixes']:
+        return 'LOW', 'No Lightwell fix for the versions this app runs.'
+    cves = sum(len(f['cves']) for f in r['fixes'])
+    return ('HIGH' if cves >= 2 else 'MEDIUM'), (f"{len(r['fixes'])} Lightwell fix(es), {cves} CVE(s), across "
+                                                 f"{len(r['sites'])} site(s).")
+
+
+def estate_reasoning(rows: list[dict]) -> tuple[dict, str]:
+    if H.demo_mode():
+        return {r['app']: DEMO_ESTATE.get(r['app'], _estate_rule(r)) for r in rows}, 'staged'
+    store = env('APP_VECTOR_DB_ID')
+    excerpts = {}
+    if store and H.rag_search:
+        for r in rows:
+            try:
+                hits = [h for h in H.rag_search(store, f"patch history of {r['app']}") if r['app'] in h]
+            except Exception:
+                hits = []
+            if hits:
+                excerpts[r['app']] = '\n---\n'.join(hits)[:1800]
+    out = {r['app']: _estate_rule(r) for r in rows}
+    if not H.llm:
+        return out, 'rules'
+    facts = '\n'.join(f"- {r['app']} ({r['domain']}; sites: {', '.join(r['sites']) or 'none'}): fixes "
+                      + (', '.join(f"{f['artifact']} {f['build']} [{', '.join(f['cves'])}]" for f in r['fixes'])
+                         or ('none' if r['covered'] else f"not covered ({', '.join(r['other'])})"))
+                      + (f"\n  history: {excerpts[r['app']]}" if r['app'] in excerpts else '') for r in rows)
+    prompt = ('You are advising a telco operations team. For each app below, give a priority (CRITICAL, HIGH, MEDIUM '
+              'or LOW) for applying its Lightwell fixes, and one or two sentences: what is critical, how patching '
+              'affects the current setup (restarts, sessions, windows, order), and anything else to watch. Use only the '
+              'facts and history given. Answer as JSON, {"app": {"priority": "...", "note": "..."}}, nothing else.\n\n'
+              + facts)
+    try:
+        parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
+        for r in rows:
+            v = parsed.get(r['app']) or {}
+            pr = str(v.get('priority', '')).upper()
+            if pr in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') and v.get('note'):
+                out[r['app']] = (pr, str(v['note']).strip())
+        return out, 'rag+llm' if excerpts else 'llm'
+    except Exception:
+        return out, 'rules'
 
 
 # ---------------------------------------------------------------------------- run history
@@ -1191,12 +1417,11 @@ def _staged_runs() -> list[dict]:
     """Two past runs, so the demo's Runs screen has history before anything is run."""
     out = []
     for i, (ev, day, outcomes) in enumerate([
-            (DEMO_EVENTS[1], '2026-11-03', {'catalog-web|catalog-qa-01.acme.internal': 'patched',
-                                             'catalog-web|catalog-prod-01.acme.internal': 'patched'}),
-            (DEMO_EVENTS[0], '2026-10-28', {'orders-service|orders-qa-01.acme.internal': 'patched',
-                                             'orders-service|orders-prod-01.acme.internal': 'rejected'})]):
+            (DEMO_EVENTS[2], '2026-11-03', {'oss-inventory|lab': 'patched', 'oss-inventory|core-dc-1': 'patched'}),
+            (DEMO_EVENTS[1], '2026-10-28', {'charging-engine|core-dc-2': 'patched',
+                                             'charging-engine|core-dc-1': 'rejected'})]):
         hosts = [{'key': k, 'app': k.split('|')[0], 'host': k.split('|')[1],
-                  'env': 'qa' if '-qa-' in k else 'prod', 'outcome': o, 'commit_sha': f'{i + 7:x}' * 8,
+                  'env': 'qa' if k.endswith('|lab') else 'prod', 'outcome': o, 'commit_sha': f'{i + 7:x}' * 8,
                   'commit_url': '', 'execution_id': f'sim-past-{i}'} for k, o in outcomes.items()]
         snap = {'run_id': f'past{i + 1}', 'status': 'complete', 'simulated': True, 'event': ev,
                 'started_at': f'{day}T21:04:00Z', 'finished_at': f'{day}T21:11:00Z',
@@ -1244,7 +1469,8 @@ def _installed() -> dict[tuple[str, str], dict[str, list[str]]]:
     out: dict[tuple[str, str], dict[str, list[str]]] = {}
     for app in load_bom():
         for dep in app.get('dependencies', []):
-            out.setdefault((dep['group'], dep['artifact']), {}).setdefault(dep['version'], []).append(app['app'])
+            if dep.get('ecosystem', 'maven') == 'maven':
+                out.setdefault((dep['group'], dep['artifact']), {}).setdefault(dep['version'], []).append(app['app'])
     return out
 
 
@@ -1267,7 +1493,7 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
             saved = {'entries': []}
         seen = set()
         for e in [{'name': f"{x['group']}:{x['artifact']}", 'build': x['version'], 'cves': x['cves'],
-                   'status': 'remediated'} for x in DEMO_EVENTS] + list(saved.get('entries') or []):
+                   'status': 'remediated'} for x in DEMO_EVENTS] + DEMO_CATALOG_EXTRA + list(saved.get('entries') or []):
             if e.get('status') != 'remediated' or not e.get('build') or e['build'] in seen:
                 continue
             seen.add(e['build'])

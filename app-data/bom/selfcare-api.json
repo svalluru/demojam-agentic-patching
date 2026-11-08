@@ -1,0 +1,7 @@
+{
+  "app": "selfcare-api",
+  "domain": "Self-care API gateway",
+  "languages": {"java": "", "python": "", "js": "H"},
+  "servers": [],
+  "dependencies": [{"ecosystem": "npm", "group": "", "artifact": "express", "version": "4.18.2"}]
+}

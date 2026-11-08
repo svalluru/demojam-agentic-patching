@@ -1,0 +1,7 @@
+{
+  "app": "ric-xapp",
+  "domain": "O-RAN Near-RT RIC",
+  "languages": {"java": "", "python": "H", "js": ""},
+  "servers": [],
+  "dependencies": [{"ecosystem": "pypi", "group": "", "artifact": "ricxappframe", "version": "3.2.2"}]
+}

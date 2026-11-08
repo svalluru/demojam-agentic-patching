@@ -1,0 +1,18 @@
+{
+  "app": "nfvo-orchestrator",
+  "domain": "NFVO / MANO",
+  "languages": {"java": "H", "python": "", "js": ""},
+  "path": "/opt/apps/nfvo-orchestrator",
+  "service": "nfvo-orchestrator",
+  "health_url": "http://localhost:8090/health",
+  "servers": [
+    {"host": "node1", "site": "lab", "env": "qa"},
+    {"host": "node2", "site": "edge-site-1", "env": "prod"},
+    {"host": "node3", "site": "core-dc-1", "env": "prod"}
+  ],
+  "dependencies": [
+    {"group": "org.apache.mina", "artifact": "mina-core", "version": "2.2.5"},
+    {"group": "org.apache.zookeeper", "artifact": "zookeeper", "version": "3.5.9"},
+    {"group": "org.springframework.security", "artifact": "spring-security-web", "version": "5.7.11"}
+  ]
+}

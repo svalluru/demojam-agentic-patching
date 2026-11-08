@@ -1991,6 +1991,29 @@
   .v2-steps i.failed { border-color: var(--red); background: var(--tint-r); }
   .v2-steps i.skipped { opacity: .35; }
   #appv2-pane tbody tr { cursor: default; }
+  #appv2-pane td.nowrap { white-space: nowrap; }
+  .v2-dom { font-size: calc(9.5px * var(--ts)); font-weight: 800; letter-spacing: .4px; white-space: nowrap;
+            border: 1px solid var(--text); border-radius: 6px; padding: 2px 7px; }
+  .v2-k { font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+          color: var(--muted); margin-bottom: 6px; }
+  .v2-rf { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+  .v2-rf .v2-card + .v2-card { margin-top: 0; }
+  .v2-rf .pill { display: inline-flex; align-items: center; height: 26px; padding: 0 11px; text-decoration: none; }
+  .v2-est td { vertical-align: top; }
+  .v2-hm { text-align: center; width: 56px; font-weight: 800; }
+  .v2-hm.H { background: #c9190b; color: #fff; } .v2-hm.M { background: #f0ab00; } .v2-hm.L { background: #f0f0f2; color: #999; }
+  .v2-fit { display: inline-block; white-space: nowrap; border-radius: 20px; padding: 3px 10px; font-weight: 800;
+            font-size: calc(10.5px * var(--ts)); color: #fff; background: #3e8635; }
+  .v2-fit.no { background: #d2d2d2; color: #555; }
+  .v2-prio { font-size: calc(9.5px * var(--ts)); font-weight: 800; letter-spacing: .5px; border-radius: 6px;
+             padding: 2px 8px; color: #fff; white-space: nowrap; }
+  .v2-prio.critical { background: #a30000; } .v2-prio.high { background: var(--red); }
+  .v2-prio.medium { background: #b08920; } .v2-prio.low { background: #8a8d90; }
+  .v2-subframe { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .v2-subframe > table, .v2-subframe > .muted-sm { margin: 0 14px; width: calc(100% - 28px); }
+  .v2-subframe > .muted-sm { margin-bottom: 12px; }
+  .v2-subhead { display: flex; align-items: baseline; gap: 10px; padding: 11px 14px; margin-bottom: 6px;
+                border-bottom: 1px solid var(--border); background: linear-gradient(var(--panel), var(--surface)); }
   .v2-reason { font-size: calc(11px * var(--ts)); color: var(--muted); line-height: 1.45;
                white-space: normal; min-width: 220px; max-width: 380px; }
   .v2-lens { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 12px;
@@ -2779,6 +2802,7 @@
       <div class="head-actions">
         <div class="pills" id="v2-views">
           <button class="pill active" data-v2-view="inbox">Incoming fixes</button>
+          <button class="pill" data-v2-view="estate">Telco estate</button>
           <button class="pill" data-v2-view="catalog">Lightwell catalog</button>
           <button class="pill" data-v2-view="runs">Runs</button>
         </div>
@@ -3493,6 +3517,8 @@ const APPV2_STAGES = [
     tip: 'AAP runs the playbook: fetch the build from Nexus, swap the jar, restart the service.' },
   { key: 'verify',    label: 'Verify',    icon: ICON.shield,
     tip: 'Health check and checksum on each server. A failure rolls that server back to the old jar.' },
+  { key: 'report',    label: 'Report',    icon: ICON.doc,
+    tip: 'The Report agent writes the PDF status report for the change board once every selected site has settled.' },
   { key: 'learn',     label: 'Learn',     icon: ICON.pulse,
     tip: 'Apps whose servers are all patched get the new version in their BOM, so the next event sees it.' },
 ];
@@ -3512,7 +3538,7 @@ renderV2Stages(null);
 // the Lightwell catalog, the runs list, the current run, or a past run opened
 // from the list (read-only). `sel` is the Impact table's ticked app/server
 // pairs, reset to all of them each time a run is assessed.
-const v2 = { events: [], state: {}, view: 'inbox', timer: null, sel: null, selRun: '',
+const v2 = { events: [], state: {}, view: 'inbox', timer: null, sel: null, selRun: '', estate: null,
              catScope: 'mine', catPage: 1, catalog: null, runs: [], past: null };
 const V2_BUSY = ['assessing', 'generating', 'dispatching', 'running'];
 
@@ -3534,6 +3560,10 @@ async function v2Load() {
     if (v2.view === 'inbox' && V2_BUSY.includes(st.status)) v2.view = 'run';
     if (v2.view === 'catalog') await v2LoadCatalog();
     if (v2.view === 'runs') v2.runs = (await v2Fetch('/api/v2/runs')).runs || [];
+    if (v2.view === 'estate') {
+      v2.estate = { loading: true }; v2Render();
+      try { v2.estate = await v2Fetch('/api/v2/estate'); } catch (e) { v2.estate = { error: e.message }; }
+    }
   } catch (e) {
     document.getElementById('v2-body').innerHTML =
       `<div class="empty"><strong>Could not load Applications v2</strong><span>${esc(e.message)}</span></div>`;
@@ -3575,7 +3605,7 @@ const v2Pkg = e => `${esc(e.group)}:<b>${esc(e.artifact)}</b>`;
 const v2Cves = list => (list || []).length
   ? `<span class="v2-cves">${list.map(c => `<span class="v2-cve">${esc(c)}</span>`).join('')}</span>`
   : '<span class="muted-sm">not itemised by Lightwell yet</span>';
-const v2Env = env => `<span class="v2-env ${env === 'qa' ? '' : 'prod'}">${env === 'qa' ? 'QA' : 'PROD'}</span>`;
+const v2Env = env => `<span class="v2-env ${env === 'qa' ? '' : 'prod'}" title="${env === 'qa' ? 'Lab: patched without approval' : 'Live network site: waits for approval'}">${env === 'qa' ? 'LAB' : 'LIVE'}</span>`;
 const v2When = t => esc(String(t || '').replace('T', ' ').replace('Z', '').slice(0, 16));
 
 function v2Badge(h) {
@@ -3617,7 +3647,7 @@ function v2Render() {
   chip.className = 'run-state' + (s.status === 'awaiting_approval' ? ' wait'
     : V2_BUSY.includes(s.status) ? ' work' : '');
 
-  const tab = { inbox: 'inbox', run: 'inbox', catalog: 'catalog', runs: 'runs', past: 'runs' }[v2.view];
+  const tab = { inbox: 'inbox', run: 'inbox', catalog: 'catalog', runs: 'runs', past: 'runs', estate: 'estate' }[v2.view];
   document.querySelectorAll('#v2-views .pill').forEach(b => b.classList.toggle('active', b.dataset.v2View === tab));
   const back = document.getElementById('v2-back');
   const go = document.getElementById('v2-go');
@@ -3634,6 +3664,12 @@ function v2Render() {
     sub.innerHTML = `<span>${c.total == null ? '' : `${c.total} remediated build${c.total === 1 ? '' : 's'}`}
       ${v2.catScope === 'mine' ? ' my apps need' : ''}</span>`;
     body.innerHTML = v2Catalog(c);
+    return;
+  }
+  if (v2.view === 'estate') {
+    title.textContent = 'Telco estate';
+    sub.innerHTML = '<span>where Lightwell fits, from the app BOMs and the Lightwell catalog</span>';
+    body.innerHTML = v2Estate(v2.estate || {});
     return;
   }
   if (v2.view === 'runs') {
@@ -3739,35 +3775,46 @@ function v2Runs() {
 
 function v2Run(s, readOnly) {
   const e = s.event, out = [];
-  out.push(`<div class="v2-sec"><h3>Build</h3><div class="v2-card">
+  out.push(`<div class="v2-card" style="margin-bottom:14px">
     ${v2Pkg(e)} <span class="mono">${esc((s.impact && (s.impact.targets[0] || {}).installed) || '')}</span>
-    → <span class="mono"><b>${esc(e.version)}</b></span>
-    <div style="margin-top:7px">${v2Cves(e.cves)}</div>
-    <div class="muted-sm" style="margin-top:6px">From artifact repository ${esc(e.repository || '—')}. Fixed CVEs from the Lightwell advisories API.</div>
-  </div></div>`);
+    → <span class="mono"><b>${esc(e.version)}</b></span> &nbsp;${v2Cves(e.cves)}
+    <div class="muted-sm" style="margin-top:6px">${e.note ? `${esc(e.note)} ` : ''}Same version, Red Hat-patched; fixed CVEs from the Lightwell advisories API.</div>
+  </div>`);
 
   if (s.status === 'assessing' && !s.impact) {
     out.push('<div class="empty"><div class="spinner"></div><span>Asking the inventory agent…</span></div>');
   }
   if (s.impact) {
     const t = s.impact.targets || [];
-    // Selectable only before the run is sent; afterwards the column shows what was chosen.
+    // Impact and the run in one table: a row is a site, and its run columns fill in once the run is sent.
+    // Selectable only before the run is sent; afterwards the box shows what was chosen.
     const pick = !readOnly && s.status === 'generated';
     if (v2.selRun !== s.run_id) { v2.sel = new Set(t.map(x => x.key)); v2.selRun = s.run_id; }
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
-    out.push(`<div class="v2-sec"><h3>Impact</h3>`
+    const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
+    const STEP_KEYS = ['commit', 'approval', 'sync', 'remediate', 'verify'];
+    out.push(`<div class="v2-sec"><h3>Impact and run</h3>`
       + (t.length ? `<table><thead><tr>
-          <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.length ? 'checked' : ''}>` : 'Run'}</th>
-          <th>Server</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th></tr></thead><tbody>
-        ${t.map(x => `<tr>
+          <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.length ? 'checked' : ''}>` : ''}</th>
+          <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th>
+          <th title="Commit, Approval, Sync, Remediate, Verify">Steps</th><th>Status</th><th></th></tr></thead><tbody>
+        ${t.map(x => { const h = run[x.key]; return `<tr>
           <td><input type="checkbox" data-v2-sel="${esc(x.key)}" ${chosen.has(x.key) ? 'checked' : ''} ${pick ? '' : 'disabled'}></td>
-          <td class="mono">${v2Short(x.host)}</td><td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
+          <td class="mono nowrap" title="${esc(x.host)}">${esc(x.site || String(x.host || '').split('.')[0])}</td>
+          <td>${x.domain ? `<span class="v2-dom">${esc(x.domain)}</span>` : ''}</td>
+          <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}</td>
-          <td class="v2-reason">${esc(x.reasoning || '')}</td></tr>`).join('')}
+          <td class="v2-reason">${esc(x.reasoning || '')}</td>
+          <td>${h ? `<span class="v2-steps">${STEP_KEYS.map(k =>
+            `<i class="${esc((h.steps || {})[k] || '')}" title="${k}: ${esc((h.steps || {})[k] || 'pending')}"></i>`).join('')}</span>` : ''}</td>
+          <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
+          <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
+            ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>
+        </tr>`; }).join('')}
         </tbody></table>
         <div class="muted-sm" style="margin-top:6px">Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM',
           rag: 'app history store', none: 'no app history store configured' }[s.impact.reasoning_source] || '—'}.
-          ${pick ? 'Untick a row to leave it out of this run; Prod still waits for approval.' : ''}</div>` : '')
+          ${pick ? 'Untick a row to leave it out of this run; LIVE sites still wait for approval.' : ''}</div>` : '')
       + ((s.impact.other || []).length ? `<div class="muted-sm" style="margin-top:8px">Left alone: ${s.impact.other.map(o =>
           `<b>${esc(o.app)}</b> (${esc(o.installed)}, ${esc(o.why)})`).join('; ')}</div>` : '')
       + (s.info ? `<div class="v2-card" style="margin-top:10px"><b>Agent note.</b> ${esc(s.info)}</div>` : '')
@@ -3788,28 +3835,27 @@ function v2Run(s, readOnly) {
     </div>`).join('')}</div>`);
   }
   if (s.hosts) {
-    const STEP_KEYS = ['commit', 'approval', 'sync', 'remediate', 'verify'];
-    out.push(`<div class="v2-sec"><h3>Run · App Patch v2</h3>
-      <table><thead><tr><th>Server</th><th>Env</th><th title="Commit, Approval, Sync, Remediate, Verify">Steps</th>
-        <th>Status</th><th>Commit</th><th></th></tr></thead><tbody>
-      ${s.hosts.map(h => `<tr>
-        <td class="mono">${v2Short(h.host)}<div class="muted-sm">${esc(h.app)}</div></td>
-        <td>${v2Env(h.env)}</td>
-        <td><span class="v2-steps">${STEP_KEYS.map(k =>
-          `<i class="${esc((h.steps || {})[k] || '')}" title="${k}: ${esc((h.steps || {})[k] || 'pending')}"></i>`).join('')}</span></td>
-        <td>${v2Badge(h)}${h.detail ? `<div class="v2-detail">${esc(h.detail)}</div>` : ''}</td>
-        <td>${h.commit_sha ? `<a class="mono" href="${esc(h.commit_url || '#')}" target="_blank" rel="noopener">${esc(h.commit_sha.slice(0, 8))}</a>
-          <div class="muted-sm">provenance ${esc(h.provenance || '—')}</div>` : '<span class="muted-sm">—</span>'}</td>
-        <td class="act">${!readOnly && h.outcome === 'awaiting_approval'
-          ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>
-      </tr>`).join('')}</tbody></table></div>`);
-  }
-  if (s.status === 'complete' && s.summary) {
-    const m = s.summary;
-    out.push(`<div class="v2-sec"><h3>Result</h3><div class="v2-card">
-      ${m.patched || 0} patched, ${m.rolled_back || 0} rolled back, ${m.rejected || 0} rejected, ${m.failed || 0} failed${m.skipped ? `, ${m.skipped} not selected` : ''}.
-      ${(s.events || []).filter(x => x.src === 'learn').map(x => `<div class="muted-sm">${esc(x.msg)}</div>`).join('')}
-    </div></div>`);
+    // Agents 4 and 5, as on the infrastructure side: a report for the change board, and what was fed back.
+    const done = s.status === 'complete';
+    const rep = s.report || {};
+    const fb = s.feedback || {};
+    const m = s.summary || {};
+    out.push(`<div class="v2-rf">
+      <div class="v2-card"><div class="v2-k">Report · agent 4</div>
+        <b>${done ? (rep.file ? 'Written' : 'Not written') : 'Pending: written when every selected site has settled'}</b>
+        <div class="muted-sm" style="margin-top:4px">${done
+          ? `${m.patched || 0} patched, ${m.rolled_back || 0} rolled back, ${m.rejected || 0} rejected, ${m.failed || 0} failed${m.skipped ? `, ${m.skipped} not selected` : ''}.`
+          : 'A PDF status report for the change board: the fix and its CVEs, each site\'s outcome, the commit and provenance, and timings. Listed in Runs too.'}</div>
+        <div style="margin-top:8px">${rep.file
+          ? `<a class="pill" href="/api/report?file=${encodeURIComponent(rep.file)}" target="_blank" rel="noopener">Report PDF ↗</a>`
+          : `<span class="pill" style="opacity:.6">Report PDF · ${rep.error ? 'failed' : 'pending'}</span>`}</div></div>
+      <div class="v2-card"><div class="v2-k">Feedback · agent 5</div>
+        <b>${done ? 'Fed back' : 'Pending: fed back when the run completes'}</b>
+        <div class="muted-sm" style="margin-top:4px">${done && fb.bom
+          ? fb.bom.map(b => `<div><b>BOM:</b> ${esc(b.app)} ${b.changed ? `now on <span class="mono">${esc(b.version)}</span>` : 'unchanged (not every selected site patched)'}</div>`).join('')
+            + `<div><b>History:</b> ${esc(String((fb.history || {}).records || 0))} outcome record(s), ${esc((fb.history || {}).where || '')}.</div>`
+          : '<b>BOM:</b> an app moves to the new build only once all its selected sites are patched.<br><b>History:</b> each site\'s outcome (health time, rollbacks) is added to the app history store, so the next Reasoning column learns from it.'}</div></div>
+    </div>`);
   }
   if (s.status === 'nothing') {
     out.push('<div class="v2-card">No deployed app runs the version this build replaces, so there is nothing to patch.</div>');
@@ -3818,6 +3864,28 @@ function v2Run(s, readOnly) {
     out.push(`<div class="degraded"><b>Stopped.</b> ${esc(s.error || '')}</div>`);
   }
   return out.join('');
+}
+
+function v2Estate(c) {
+  if (c.loading) return '<div class="empty"><div class="spinner"></div><span>Reading the estate…</span></div>';
+  if (c.error) return `<div class="degraded"><b>Could not build the estate.</b> ${esc(c.error)}</div>`;
+  const cell = v => `<td class="v2-hm ${esc(v || 'L')}">${v ? esc(v) : '·'}</td>`;
+  const fix = r => r.fixes.length
+    ? `<span class="v2-fit">${r.fixes.length} · ${r.fixes.map(f => esc(f.artifact)).join(', ')}</span>`
+    : `<span class="v2-fit no">${r.covered ? 'no fix for these versions' : (r.other || []).includes('npm') ? 'npm not available' : 'not covered yet'}</span>`;
+  const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">Domain · app</th><th>Java</th><th>Python</th><th>JS</th>
+      <th style="width:290px">Lightwell fixes available</th><th>Reasoning / impact</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td><b>${esc(r.domain)}</b><div class="muted-sm">${esc(r.app)}</div></td>
+      ${cell(r.languages.java)}${cell(r.languages.python)}${cell(r.languages.js)}
+      <td>${fix(r)}</td>
+      <td><span class="v2-prio ${esc((r.priority || 'low').toLowerCase())}">${esc(r.priority || '')}</span>
+        <div class="v2-reason" style="margin-top:4px">${esc(r.note || '')}</div></td></tr>`).join('')}</tbody></table>`;
+  const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
+    Priority weighs what the app touches, whether a fix exists, and how hard the restart is.</div>`;
+  const rows = c.rows || [];
+  return `<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
+    <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">billing, inventory, customer channels</span></div>
+    ${table(rows.filter(r => r.group !== 'network'))}${foot}</div>`;
 }
 
 document.getElementById('v2-body').addEventListener('click', async ev => {
@@ -4240,8 +4308,9 @@ const V2_NODES = [
   { id: 'ao',        x: 52,  y: 262, w: 164, h: 38, ext: 1, t: 'AUTOMATION ORCH', s: 'App Patch v2 · the gate' },
   { id: 'gitea',     x: 229, y: 271, w: 98,  h: 20, ext: 1, mid: 1, t: 'GITEA' },
   { id: 'aap',       x: 52,  y: 310, w: 164, h: 38, ext: 1, t: 'RED HAT AAP', s: 'sync & run the playbook' },
-  { id: 'servers',   x: 229, y: 319, w: 98,  h: 20, ext: 1, mid: 1, t: 'APP SERVERS' },
-  { id: 'learn',     x: 52,  y: 366, w: 164, h: 30, t: 'LEARN', s: 'BOM write-back' },
+  { id: 'servers',   x: 229, y: 319, w: 98,  h: 20, ext: 1, mid: 1, t: 'TELCO SITES' },
+  { id: 'report',    x: 52,  y: 366, w: 164, h: 36, t: '4 · REPORT AGENT', s: 'PDF status report per run' },
+  { id: 'results',   x: 52,  y: 414, w: 164, h: 36, t: '5 · RESULTS AGENT', s: 'BOM write-back · history → RAG' },
 ];
 const V2_GROUPS = [
   { x: 222, y: 138, w: 112, h: 66, t: 'OPENSHIFT AI' },
@@ -4263,7 +4332,10 @@ const V2_EDGES = [
   { id: 'aap>ao',  d: 'M150,310 L150,305' },
   { id: 'aap>srv', d: 'M216,329 L226,329' },
   { id: 'ao>con',  d: 'M216,290 L356,290 L356,26 L333,26' },
-  { id: 'lrn>inv', d: 'M48,381 L36,381 L36,170 L47,170' },
+  { id: 'aap>rep', d: 'M134,348 L134,361' },
+  { id: 'rep>res', d: 'M134,402 L134,409' },
+  { id: 'res>inv', d: 'M48,432 L36,432 L36,170 L47,170' },
+  { id: 'rep>con', d: 'M216,384 L356,384 L356,26 L333,26' },
 ];
 const V2_EDGE_FOR = {
   'nexus>intake': 'nex>int', 'console>intake': 'con>int', 'intake>lightwell': 'int>lw',
@@ -4271,10 +4343,11 @@ const V2_EDGE_FOR = {
   'inventory>reasoning': 'inv>rea', 'reasoning>llm': 'rea>llm', 'inventory>llm': 'inv>llm',
   'intake>playbook': 'inv>pb', 'playbook>intake': 'inv>pb', 'playbook>llm': 'pb>llm',
   'console>ao': 'con>ao', 'ao>gitea': 'ao>git', 'ao>aap': 'ao>aap', 'aap>ao': 'aap>ao',
-  'aap>servers': 'aap>srv', 'inventory>console': 'ao>con', 'learn>inventory': 'lrn>inv',
+  'aap>servers': 'aap>srv', 'inventory>console': 'ao>con',
+  'aap>report': 'aap>rep', 'report>results': 'rep>res', 'results>inventory': 'res>inv', 'report>console': 'rep>con',
 };
 const V2_ARCH = {
-  vb: [362, 400], nodes: V2_NODES, edges: V2_EDGES, edgeFor: V2_EDGE_FOR, groups: V2_GROUPS,
+  vb: [362, 456], nodes: V2_NODES, edges: V2_EDGES, edgeFor: V2_EDGE_FOR, groups: V2_GROUPS,
   hop: e => [e.src, e.dst],
   moving: s => ['assessing', 'generating', 'dispatching', 'running'].includes(s.status),
   extra: () => {},
@@ -8112,7 +8185,7 @@ renderStages({});
       : app
       ? 'Dependency scanning, Lightwell coverage and supervised remediation'
       : v2on
-      ? 'Lightwell builds from Nexus, patched onto running applications through AO and AAP'
+      ? 'Lightwell fixes for the telco estate, patched site by site through AO and AAP'
       : 'CVE triage, risk assessment and supervised remediation';
 
     // And so does the bar under the toggle. Both are measured once they are

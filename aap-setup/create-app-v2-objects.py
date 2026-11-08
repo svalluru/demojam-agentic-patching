@@ -5,7 +5,7 @@ templates and credentials are read, never changed.
 
     ./aap-setup/create-app-v2-objects.py --dry-run          show what would change
     ./aap-setup/create-app-v2-objects.py                    create or update
-    ./aap-setup/create-app-v2-objects.py --deploy-sample    also deploy the sample app to the lab hosts
+    ./aap-setup/create-app-v2-objects.py --deploy-sample    also deploy the BOM's apps to their hosts
     ./aap-setup/create-app-v2-objects.py --delete           remove what this script created
 
   project        App Patch v2 - Setup Playbooks     this repository (GITHUB_REPO_URL) on PROJECT_BRANCH_V2, for the
@@ -32,7 +32,7 @@ GITEA_TOKEN, that one is attached instead and nothing new is needed.
 
 Settings come from the repository's .env: AAP_BASE_URL, AAP_TOKEN, and optionally GITHUB_REPO_URL, PROJECT_BRANCH_V2,
 GITEA_REPO, GITEA_URL, GITEA_USERNAME, GITEA_TOKEN, BUILD_INVENTORY (default Demo Inventory), TARGET_INVENTORY
-(default lab-inventory), MACHINE_CREDENTIAL (default lab-credential), SAMPLE_HOSTS (default node1,node2,node3).
+(default lab-inventory), MACHINE_CREDENTIAL (default lab-credential), SAMPLE_HOSTS (default: every server in app-data/bom).
 The two setup playbooks must be pushed to PROJECT_BRANCH_V2 first; the script checks the project lists them.
 """
 import argparse
@@ -56,6 +56,36 @@ Controller, load_env = _v1.Controller, _v1.load_env
 COMMIT_PB = 'aap-setup/playbooks/app_v2_commit.yml'
 SAMPLE_PB = 'aap-setup/playbooks/app_v2_deploy_sample.yml'
 RUN_PB = 'app_v2_run.yml'
+# The class /health probes for each library, so it can name the jar that class loads from.
+PROBE_CLASS = {
+    'mina-core': 'org.apache.mina.core.session.IoSession',
+    'zookeeper': 'org.apache.zookeeper.ZooKeeper',
+    'spring-security-web': 'org.springframework.security.web.FilterChainProxy',
+    'postgresql': 'org.postgresql.Driver',
+    'log4j-core': 'org.apache.logging.log4j.core.LoggerContext',
+    'commons-io': 'org.apache.commons.io.IOUtils',
+}
+
+
+def sample_apps(hosts=None):
+    """Deploy variables for each app in app-data/bom that has servers: its Maven jars, port, hosts and probes.
+    SAMPLE_HOSTS, if set, narrows the hosts."""
+    out = []
+    for f in sorted((ROOT / 'app-data' / 'bom').glob('*.json')):
+        bom = json.loads(f.read_text())
+        maven = [d for d in bom.get('dependencies', []) if d.get('ecosystem', 'maven') == 'maven']
+        names = [s['host'] for s in bom.get('servers', []) if not hosts or s['host'] in hosts]
+        if not maven or not names:
+            continue
+        jars = [{'path': f"{d['group'].replace('.', '/')}/{d['artifact']}/{d['version']}/{d['artifact']}-{d['version']}.jar"}
+                for d in maven]
+        jars.append({'path': 'org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar'})   # zookeeper and others log through it
+        out.append({'app_name': bom['app'], 'app_port': int(urllib.parse.urlparse(bom['health_url']).port or 8080),
+                    'target_hosts': ','.join(names), 'jars': jars,
+                    'probes': ','.join(f"{d['artifact']}={PROBE_CLASS[d['artifact']]}" for d in maven
+                                       if d['artifact'] in PROBE_CLASS)})
+    return out
+
 N = {
     'setup_project': 'App Patch v2 - Setup Playbooks',
     'gitea_project': 'App Patch v2 Playbooks',
@@ -238,8 +268,10 @@ def main():
     attach(run_row['id'] if run_row else None, machine['id'], machine['name'])
 
     if args.deploy_sample and not args.dry_run:
-        print('Sample app')
-        launch(sample_id, {'target_hosts': env('SAMPLE_HOSTS', 'node1,node2,node3')}, N['sample_jt'])
+        print('Sample apps (from app-data/bom)')
+        narrow = [h for h in env('SAMPLE_HOSTS', '').split(',') if h]
+        for app in sample_apps(narrow):
+            launch(sample_id, app, f"{N['sample_jt']}: {app['app_name']} on {app['target_hosts']}")
 
     print('\nNext: DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh')
 

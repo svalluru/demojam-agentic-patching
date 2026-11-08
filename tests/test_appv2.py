@@ -21,6 +21,7 @@ def demo(**extra):
     # Every test gets its own state directory: a live-mode test must never write into the repo's runs/, where a
     # local console would restore it at startup.
     extra.setdefault('APPV2_STATE_DIR', tempfile.mkdtemp(prefix='appv2-test-'))
+    extra.setdefault('REPORTS_DIR', tempfile.mkdtemp(prefix='appv2-reports-'))
     appv2.configure(env=lambda k, d='': extra.get(k, d), demo_mode=lambda: True,
                     demo_pause=lambda f=1.0: None, llm=None, ao_call=None, fixed_cves=None)
     appv2.reset()
@@ -38,8 +39,8 @@ class Versions(unittest.TestCase):
 
 class Webhook(unittest.TestCase):
     BODY = json.dumps({'action': 'CREATED', 'repositoryName': 'lightwell-remediated',
-                       'component': {'format': 'maven2', 'group': 'org.apache.logging.log4j',
-                                     'name': 'log4j-core', 'version': '2.24.3.rhlw-00004'}}).encode()
+                       'component': {'format': 'maven2', 'group': 'org.apache.mina',
+                                     'name': 'mina-core', 'version': '2.2.5.rhlw-00002'}}).encode()
 
     def sign(self, body, secret='s3cret'):
         return hmac.new(secret.encode(), body, hashlib.sha1).hexdigest()
@@ -56,7 +57,7 @@ class Webhook(unittest.TestCase):
         self.assertEqual(code, 401)
         code, body = appv2.accept_webhook(self.BODY, self.sign(self.BODY))
         self.assertEqual(code, 200)
-        self.assertEqual(body['event']['artifact'], 'log4j-core')
+        self.assertEqual(body['event']['artifact'], 'mina-core')
 
     def test_live_without_secret_trusts_nothing(self):
         demo()
@@ -69,7 +70,7 @@ class Webhook(unittest.TestCase):
         p = json.loads(self.BODY)
         self.assertIsNotNone(appv2.parse_nexus(p))
         self.assertIsNone(appv2.parse_nexus({**p, 'action': 'UPDATED'}))
-        self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'version': '2.24.3'}}))
+        self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'version': '2.2.5'}}))
         self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'group': ''}}))
         self.assertIsNone(appv2.parse_nexus('nope'))
 
@@ -87,20 +88,34 @@ class Impact(unittest.TestCase):
     def setUp(self):
         demo()
 
+    def ev(self, artifact):
+        return next(e for e in appv2.DEMO_EVENTS if e['artifact'] == artifact)
+
     def test_exact_version_only(self):
-        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'log4j-core')
-        imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['billing-api', 'orders-api', 'orders-service'])
-        self.assertEqual(len(imp['targets']), 5)
-        self.assertEqual(len({t['key'] for t in imp['targets']}), 5)          # two apps share orders-qa-01
-        self.assertEqual(imp['targets'][0]['env'], 'qa')                  # QA first
-        self.assertEqual([o['app'] for o in imp['other']], ['catalog-web'])  # 2.25.1, left alone
+        imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
+        self.assertEqual(imp['apps'], ['nfvo-orchestrator'])
+        self.assertEqual([t['site'] for t in imp['targets']], ['lab', 'edge-site-1', 'core-dc-1', 'core-dc-2'])
+        self.assertEqual(imp['targets'][0]['env'], 'qa')                      # the lab first, then BOM order
+        self.assertEqual(imp['targets'][0]['domain'], 'NFVO / MANO')
+        self.assertEqual([o['app'] for o in imp['other']], ['oss-inventory'])  # mina-core 2.1.6, left alone
+
+    def test_lab_sites_first_across_apps(self):
+        imp = appv2.impact(self.ev('zookeeper'), appv2.load_bom())
+        self.assertEqual([t['env'] for t in imp['targets']][:2], ['qa', 'qa'])
+        self.assertEqual(len({t['key'] for t in imp['targets']}), 6)         # both apps have a lab copy
+
+    def test_non_maven_dependencies_are_skipped(self):
+        bom = [{'app': 'x', 'servers': [{'host': 'h', 'env': 'qa'}],
+                'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5',
+                                  'ecosystem': 'pypi'}]}]
+        imp = appv2.impact(self.ev('mina-core'), bom)
+        self.assertEqual((imp['apps'], imp['other']), ([], []))
 
     def test_write_back_removes_app_from_next_impact(self):
-        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'log4j-core')
-        appv2._BOM_UPDATES['billing-api|org.apache.logging.log4j:log4j-core'] = ev['version']
+        ev = self.ev('postgresql')
+        appv2._BOM_UPDATES['charging-engine|org.postgresql:postgresql'] = ev['version']
         imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['orders-api', 'orders-service'])
+        self.assertEqual(imp['apps'], ['oss-inventory'])
         self.assertIn('already on this build', [o['why'] for o in imp['other']])
 
 
@@ -218,7 +233,7 @@ class DemoRun(unittest.TestCase):
 
     def test_full_staged_run(self):
         demo()
-        self.assertEqual(appv2.start_assess('evt-log4j-core')[0], 200)
+        self.assertEqual(appv2.start_assess('evt-mina-core')[0], 200)
         self.wait({'assessed'})
         self.assertEqual(appv2.start_generate()[0], 200)
         self.wait({'generated'})
@@ -226,15 +241,20 @@ class DemoRun(unittest.TestCase):
         st = self.wait({'awaiting_approval'})
         gated = [h['key'] for h in st['hosts'] if h['outcome'] == 'awaiting_approval']
         self.assertEqual(len(gated), 3)
-        self.assertEqual(appv2.decide('orders-qa-01.acme.internal', 'approved')[0], 409)   # QA is not gated
+        self.assertEqual(appv2.decide('nfvo-orchestrator|lab', 'approved')[0], 409)   # the lab is not gated
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 4, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
+        self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
         self.assertEqual(st['stages']['verify'], 'failed')
-        # Only the app with every server patched is written back.
-        self.assertIn('billing-api|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
-        self.assertNotIn('orders-service|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
+        # core-dc-2 rolled back, so nfvo-orchestrator's BOM stays on 2.2.5.
+        self.assertNotIn('nfvo-orchestrator|org.apache.mina:mina-core', appv2._BOM_UPDATES)
+        self.assertEqual(st['feedback']['bom'], [{'app': 'nfvo-orchestrator', 'version': '2.2.5', 'changed': False}])
+        self.assertEqual(st['feedback']['history']['records'], 4)
+        # The Report agent's PDF.
+        self.assertEqual(st['stages']['report'], 'done')
+        pdf = Path(appv2.reports_dir()) / st['report']['file']
+        self.assertTrue(pdf.read_bytes().startswith(b'%PDF'))
 
     def test_order_is_enforced(self):
         demo()
@@ -388,14 +408,14 @@ class Restart(unittest.TestCase):
             appv2._RUN.clear()
             appv2._RUN.update(status=status, run_id='r1', event=dict(appv2.DEMO_EVENTS[0]), events=[],
                               stages={k: 'pending' for k in appv2.STAGES}, hosts=hosts,
-                              impact={'targets': [], 'apps': ['sample-app'], 'other': []}, playbooks=[])
+                              impact={'targets': [], 'apps': ['nfvo-orchestrator'], 'other': []}, playbooks=[])
         appv2._persist()
         with appv2._LOCK:                       # the process "dies": memory is gone, the file is not
             appv2._RUN.clear()
             appv2._RUN['status'] = 'idle'
 
     def host(self, name, env, outcome):
-        return {'key': f'sample-app|{name}', 'host': name, 'app': 'sample-app', 'env': env, 'outcome': outcome,
+        return {'key': f'nfvo-orchestrator|{name}', 'host': name, 'app': 'nfvo-orchestrator', 'env': env, 'outcome': outcome,
                 'steps': {},
                 'execution_id': f'ex-{name}'}
 
@@ -410,13 +430,13 @@ class Restart(unittest.TestCase):
     def test_running_execution_is_followed_again(self):
         self.phase = 'done'
         self.saved_run('running', [self.host('node1', 'qa', 'running')])
-        self.assertEqual(appv2.restore()['resumed'], ['sample-app|node1'])
+        self.assertEqual(appv2.restore()['resumed'], ['nfvo-orchestrator|node1'])
         for _ in range(300):
             if appv2.state()['status'] == 'complete':
                 break
             time.sleep(0.01)
         self.assertEqual(appv2.state()['hosts'][0]['outcome'], 'patched')
-        self.assertIn('sample-app|org.apache.logging.log4j:log4j-core', json.loads(
+        self.assertIn('nfvo-orchestrator|org.apache.mina:mina-core', json.loads(
             (Path(self.dir) / 'appv2-bom-updates.json').read_text()))
 
     def test_step_inside_the_console_is_reported_interrupted(self):
@@ -449,26 +469,28 @@ class Subset(unittest.TestCase):
 
     def test_only_selected_pairs_run(self):
         demo()
-        appv2.start_assess('evt-log4j-core'); self.wait({'assessed'})
+        appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
         appv2.start_generate(); self.wait({'generated'})
         self.assertEqual(appv2.start_dispatch([])[0], 400)                       # nothing selected
-        self.assertEqual(appv2.start_dispatch(['orders-api|orders-qa-01.acme.internal', 'not|known'])[0], 200)
+        self.assertEqual(appv2.start_dispatch(['oss-inventory|lab', 'oss-inventory|core-dc-1', 'not|known'])[0], 200)
+        st = self.wait({'awaiting_approval'})
+        self.assertEqual(appv2.decide('oss-inventory|core-dc-1', 'approved')[0], 200)
         st = self.wait({'complete'})
         by = {h['key']: h for h in st['hosts']}
-        self.assertEqual(by['orders-api|orders-qa-01.acme.internal']['outcome'], 'patched')
-        self.assertEqual(by['orders-service|orders-qa-01.acme.internal']['outcome'], 'skipped')
-        self.assertFalse(by['orders-service|orders-qa-01.acme.internal']['execution_id'])   # never sent to AO
+        self.assertEqual(by['oss-inventory|lab']['outcome'], 'patched')
+        self.assertEqual(by['nfvo-orchestrator|lab']['outcome'], 'skipped')
+        self.assertFalse(by['nfvo-orchestrator|lab']['execution_id'])         # never sent to AO
         self.assertEqual(st['summary']['skipped'], 4)
-        # orders-api's only server was patched; orders-service was not touched, so its BOM stays.
-        self.assertIn('orders-api|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
-        self.assertNotIn('orders-service|org.apache.logging.log4j:log4j-core', appv2._BOM_UPDATES)
+        # Both oss-inventory sites were patched; nfvo-orchestrator was not touched, so its BOM stays.
+        self.assertIn('oss-inventory|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
+        self.assertNotIn('nfvo-orchestrator|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
 
     def test_reasoning_is_on_every_target(self):
         demo()
-        appv2.start_assess('evt-log4j-core'); st = self.wait({'assessed'})
+        appv2.start_assess('evt-mina-core'); st = self.wait({'assessed'})
         self.assertTrue(all(t.get('reasoning') for t in st['impact']['targets']))
-        self.assertIn('60s', next(t for t in st['impact']['targets']
-                                  if t['host'] == 'orders-prod-02.acme.internal')['reasoning'])
+        self.assertIn('340 NEs', next(t for t in st['impact']['targets']
+                                      if t['key'] == 'nfvo-orchestrator|core-dc-1')['reasoning'])
 
 
 class Reasoning(unittest.TestCase):
@@ -509,8 +531,8 @@ class Catalog(unittest.TestCase):
         demo()
         mine = appv2.catalog('mine')
         builds = {r['build']: r['affects'] for r in mine['rows']}
-        self.assertEqual(builds['2.24.3.rhlw-00004'], ['billing-api', 'orders-api', 'orders-service'])
-        self.assertEqual(builds['2.11.0.rhlw-00009'], ['billing-api', 'catalog-web'])
+        self.assertEqual(builds['2.2.5.rhlw-00002'], ['nfvo-orchestrator'])
+        self.assertEqual(builds['3.5.9.rhlw-00001'], ['nfvo-orchestrator', 'oss-inventory'])
         everything = appv2.catalog('all')
         self.assertGreater(everything['total'], mine['total'])
 
@@ -520,8 +542,8 @@ class Catalog(unittest.TestCase):
 
         def lw(path, **params):
             asked.append((path, params.get('package_name'), params.get('package_version')))
-            if params.get('package_name') == 'org.apache.logging.log4j:log4j-core':
-                return {'data': [{'advisory_id': 'x', 'aliases': ['CVE-2026-1'], 'fixed_versions': ['2.24.3.rhlw-00004']}]}
+            if params.get('package_name') == 'org.apache.mina:mina-core' and params.get('package_version') == '2.2.5':
+                return {'data': [{'advisory_id': 'x', 'aliases': ['CVE-2026-1'], 'fixed_versions': ['2.2.5.rhlw-00002']}]}
             return {'data': []}
 
         appv2.configure(demo_mode=lambda: False, lightwell_get=lw,
@@ -529,26 +551,28 @@ class Catalog(unittest.TestCase):
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
         out = appv2.catalog('mine')
         self.assertEqual([(r['build'], r['cves'], r['affects']) for r in out['rows']],
-                         [('2.24.3.rhlw-00004', ['CVE-2026-1'], ['orders-api', 'sample-app'])])
-        self.assertIn(('/advisories', 'commons-io:commons-io', '2.11.0'), asked)
+                         [('2.2.5.rhlw-00002', ['CVE-2026-1'], ['nfvo-orchestrator'])])
+        self.assertIn(('/advisories', 'org.postgresql:postgresql', '42.3.3'), asked)
+        self.assertIn(('/advisories', 'org.apache.mina:mina-core', '2.1.6'), asked)   # oss-inventory's
+        self.assertFalse([a for a in asked if a[1] in ('ricxappframe', 'express')])   # Lightwell Java only
 
 
 class Sbom(unittest.TestCase):
     def test_cyclonedx_from_the_bom(self):
         demo()
-        doc = appv2.sbom('orders-api')
+        doc = appv2.sbom('nfvo-orchestrator')
         self.assertEqual((doc['bomFormat'], doc['specVersion']), ('CycloneDX', '1.5'))
-        self.assertEqual(doc['metadata']['component']['name'], 'orders-api')
+        self.assertEqual(doc['metadata']['component']['name'], 'nfvo-orchestrator')
         purls = {c['purl'] for c in doc['components']}
-        self.assertIn('pkg:maven/org.apache.logging.log4j/log4j-core@2.24.3', purls)
+        self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5', purls)
         self.assertEqual(doc['dependencies'][0]['dependsOn'], [c['bom-ref'] for c in doc['components']])
         self.assertIsNone(appv2.sbom('no-such-app'))
 
     def test_write_back_changes_the_exported_version(self):
         demo()
-        appv2._BOM_UPDATES['orders-api|org.apache.logging.log4j:log4j-core'] = '2.24.3.rhlw-00004'
-        purls = {c['purl'] for c in appv2.sbom('orders-api')['components']}
-        self.assertIn('pkg:maven/org.apache.logging.log4j/log4j-core@2.24.3.rhlw-00004', purls)
+        appv2._BOM_UPDATES['nfvo-orchestrator|org.apache.mina:mina-core'] = '2.2.5.rhlw-00002'
+        purls = {c['purl'] for c in appv2.sbom('nfvo-orchestrator')['components']}
+        self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5.rhlw-00002', purls)
 
 
 class History(unittest.TestCase):
@@ -556,7 +580,7 @@ class History(unittest.TestCase):
         demo()
         before = appv2.runs()
         self.assertEqual(len(before), 2)                                          # the staged past runs
-        appv2.start_assess('evt-commons-io')
+        appv2.start_assess('evt-postgresql')
         for _ in range(200):
             if appv2.state().get('status') == 'assessed':
                 break
@@ -567,7 +591,7 @@ class History(unittest.TestCase):
             if appv2.state().get('status') == 'generated':
                 break
             time.sleep(0.02)
-        appv2.start_dispatch(['catalog-web|catalog-qa-01.acme.internal'])
+        appv2.start_dispatch(['oss-inventory|lab'])
         for _ in range(300):
             if appv2.state().get('status') == 'complete':
                 break
@@ -577,7 +601,48 @@ class History(unittest.TestCase):
         self.assertFalse(runs[0]['current'])
         self.assertEqual(runs[0]['run_id'], appv2.state()['run_id'])
         self.assertEqual(appv2.run_detail(runs[0]['run_id'])['status'], 'complete')
-        self.assertEqual(appv2.run_detail('past1')['event']['artifact'], 'commons-io')
+        self.assertEqual(appv2.run_detail('past1')['event']['artifact'], 'zookeeper')
+
+
+class Estate(unittest.TestCase):
+    def test_groups_fixes_and_priorities(self):
+        demo()
+        rows = {r['app']: r for r in appv2.estate()['rows']}
+        self.assertEqual(rows['nfvo-orchestrator']['group'], 'network')
+        self.assertEqual(rows['charging-engine']['group'], 'it')
+        self.assertEqual({f['artifact'] for f in rows['nfvo-orchestrator']['fixes']},
+                         {'mina-core', 'zookeeper', 'spring-security-web'})
+        self.assertFalse(rows['ric-xapp']['covered'])                         # Python only
+        self.assertFalse(rows['selfcare-api']['covered'])                     # npm only
+        self.assertEqual(rows['nfvo-orchestrator']['priority'], 'CRITICAL')
+        self.assertTrue(all(r['priority'] in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') and r['note']
+                            for r in rows.values()))
+
+    def test_live_reasoning_falls_back_to_the_rule(self):
+        demo()
+        appv2.configure(demo_mode=lambda: False, llm=lambda prompt: 'not json', rag_search=lambda s, q: [],
+                        lightwell_get=lambda path, **p: {'data': []},
+                        env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
+                                             'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        rows = {r['app']: r for r in appv2.estate()['rows']}
+        self.assertEqual(set(rows), {'nfvo-orchestrator', 'oss-inventory', 'ric-xapp', 'selfcare-api'})
+        self.assertTrue(all(r['priority'] and r['note'] for r in rows.values()))
+
+
+class Feedback(unittest.TestCase):
+    def test_live_history_records_go_to_the_store(self):
+        d = tempfile.mkdtemp()
+        added = []
+        demo(APPV2_STATE_DIR=d, APP_VECTOR_DB_ID='vs_apps')
+        appv2.configure(demo_mode=lambda: False, rag_add=lambda store, path: added.append((store, path.name)))
+        st = {'run_id': 'r9', 'event': dict(appv2.DEMO_EVENTS[0]), 'hosts': [
+            {'app': 'nfvo-orchestrator', 'host': 'node1', 'site': 'lab', 'env': 'qa', 'outcome': 'patched'},
+            {'app': 'nfvo-orchestrator', 'host': 'node2', 'site': 'edge-site-1', 'env': 'prod', 'outcome': 'skipped'}]}
+        out = appv2.feed_history(st)
+        self.assertEqual(out['records'], 1)
+        self.assertEqual([s for s, _ in added], ['vs_apps'])
+        self.assertIn('nfvo-orchestrator-lab-mina-core-PATCHED', added[0][1])
+        self.assertIn('Site: lab', next((Path(d) / 'app-history').glob('*.md')).read_text())
 
 
 if __name__ == '__main__':

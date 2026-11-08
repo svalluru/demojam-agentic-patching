@@ -1,0 +1,17 @@
+{
+  "app": "oss-inventory",
+  "domain": "OSS – Inventory",
+  "languages": {"java": "H", "python": "M", "js": ""},
+  "path": "/opt/apps/oss-inventory",
+  "service": "oss-inventory",
+  "health_url": "http://localhost:8091/health",
+  "servers": [
+    {"host": "node1", "site": "lab", "env": "qa"},
+    {"host": "node3", "site": "core-dc-1", "env": "prod"}
+  ],
+  "dependencies": [
+    {"group": "org.postgresql", "artifact": "postgresql", "version": "42.3.3"},
+    {"group": "org.apache.zookeeper", "artifact": "zookeeper", "version": "3.5.9"},
+    {"group": "org.apache.mina", "artifact": "mina-core", "version": "2.1.6"}
+  ]
+}
