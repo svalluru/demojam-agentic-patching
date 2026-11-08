@@ -22,6 +22,8 @@ COPY lightwell/demo/ ./lightwell/demo/
 COPY aap-setup/playbooks/files/ ./aap-setup/playbooks/files/
 # Applications v2: the app BOMs the inventory agent reads (BOM_DIR).
 COPY app-data/bom/ ./app-data/bom/
+# The Results agent adds each site's outcome to the app history store with ingest.py's upload and attach.
+COPY rag-setup/ingest.py ./rag-setup/
 
 # OpenShift runs the container as an arbitrary uid in group 0, not as the
 # user named here, so anything written at runtime has to be group-writable.

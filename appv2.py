@@ -1295,7 +1295,7 @@ def feed_history(st: dict) -> dict:
         return {'records': len(records), 'where': 'demo, not stored'}
     folder = state_dir() / 'app-history'
     folder.mkdir(parents=True, exist_ok=True)
-    added = 0
+    added, error = 0, ''
     for name, text in records:
         path = folder / name
         path.write_text(text)
@@ -1304,9 +1304,12 @@ def feed_history(st: dict) -> dict:
             try:
                 H.rag_add(store, path)
                 added += 1
-            except Exception:
-                pass
-    return {'records': len(records), 'where': f'{added} added to the app history store' if added else 'saved locally'}
+            except Exception as exc:
+                error = str(exc)
+    out = {'records': len(records), 'where': f'{added} added to the app history store' if added else 'saved locally'}
+    if error:
+        out['error'] = error
+    return out
 
 
 # ---------------------------------------------------------------------------- the telco estate
