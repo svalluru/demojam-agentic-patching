@@ -1212,6 +1212,7 @@ def _learn(st: dict) -> None:
             bom.append({'app': app, 'version': upstream(ev['version']), 'changed': False})
             _trace('results', 'inventory', f'{app}: BOM unchanged (not every selected site patched)')
     history = feed_history(st)
+    _ESTATE_CACHE.clear()
     _trace('results', 'inventory', f"{history['records']} outcome record(s) to the app history ({history['where']})")
     H.demo_pause(0.6)
     _stage('learn', 'done')
@@ -1345,9 +1346,25 @@ def _estate_rule(r: dict) -> tuple[str, str]:
                                                  f"{len(r['sites'])} site(s).")
 
 
+_ESTATE_CACHE: dict[str, tuple[dict, str]] = {}
+
+
 def estate_reasoning(rows: list[dict]) -> tuple[dict, str]:
+    """Priority and note per app. Live answers are kept until the estate's facts change or a run feeds the app
+    history (the Results agent clears them), so opening the tab does not cost an LLM call every time."""
     if H.demo_mode():
         return {r['app']: DEMO_ESTATE.get(r['app'], _estate_rule(r)) for r in rows}, 'staged'
+    key = json.dumps([env('APP_VECTOR_DB_ID'), rows], sort_keys=True)
+    if key in _ESTATE_CACHE:
+        return _ESTATE_CACHE[key]
+    out, source = _estate_reasoning_live(rows)
+    if source != 'rules':
+        _ESTATE_CACHE.clear()
+        _ESTATE_CACHE[key] = (out, source)
+    return out, source
+
+
+def _estate_reasoning_live(rows: list[dict]) -> tuple[dict, str]:
     store = env('APP_VECTOR_DB_ID')
     excerpts = {}
     if store and H.rag_search:
@@ -1371,12 +1388,20 @@ def estate_reasoning(rows: list[dict]) -> tuple[dict, str]:
               'facts and history given. Answer as JSON, {"app": {"priority": "...", "note": "..."}}, nothing else.\n\n'
               + facts)
     try:
-        parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
+        parsed = json.loads(re.search(r'[\[{].*[\]}]', H.llm(prompt), re.S).group(0))
+        # Models vary the shape: a list of {"app": ...}, keys in another case, the note under another name.
+        if isinstance(parsed, dict) and isinstance(parsed.get('apps'), list):
+            parsed = parsed['apps']
+        if isinstance(parsed, list):
+            parsed = [{str(k).lower(): x for k, x in v.items()} for v in parsed if isinstance(v, dict)]
+            parsed = {str(v.get('app', '')): v for v in parsed}
+        parsed = {str(k).strip().lower(): v for k, v in parsed.items() if isinstance(v, dict)}
         for r in rows:
-            v = parsed.get(r['app']) or {}
-            pr = str(v.get('priority', '')).upper()
-            if pr in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') and v.get('note'):
-                out[r['app']] = (pr, str(v['note']).strip())
+            v = {str(k).lower(): x for k, x in (parsed.get(r['app'].lower()) or {}).items()}
+            pr = str(v.get('priority', '')).strip().upper()
+            note = v.get('note') or v.get('reasoning') or v.get('impact') or ''
+            if pr in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') and note:
+                out[r['app']] = (pr, str(note).strip())
         return out, 'rag+llm' if excerpts else 'llm'
     except Exception:
         return out, 'rules'

@@ -463,8 +463,8 @@ v2 tab with the numbered diagram; this is the same thing in text.
                                         advisories
 
  AO workflow "App Patch v2", one run per server:
-   4 Commit to Gitea ──▶ route ──QA──────────────────────▶ 6 Sync & Run ──▶ Verify ──▶ Learn
-     cosign provenance           └─Prod─▶ 5 Approval ──▶     (AAP)           (playbook)  (BOM)
+   4 Commit to Gitea ──▶ route ──LAB─────────────────────▶ 6 Sync & Run ──▶ Verify ──▶ 7 Report ──▶ 8 Results
+     cosign provenance           └─LIVE─▶ 5 Approval ──▶     (AAP)           (playbook)  (PDF)        (BOM + history)
      + playbook commit                    (this console)
 ```
 
@@ -499,15 +499,20 @@ v2 tab with the numbered diagram; this is the same thing in text.
    is not the approved one. The generated playbook downloads the build from
    Nexus pinned to the verified checksum, backs up the old jar, restarts the
    service, checks health and checksum, and rolls back if either fails.
-7. **Learn.** An app's BOM moves to the new version only when every one of its
-   servers was patched.
+7. **Report** (agent 4). A PDF per run for the change board: the fix and its
+   CVEs, each site's outcome, the commit and provenance. Linked from the
+   Report card under the table; files in `REPORTS_DIR` (default `reports/`).
+8. **Results** (agent 5). An app's BOM moves to the new version only when
+   every one of its selected sites was patched, and each site's outcome is
+   written as a record into the app history store, so the next run's
+   Reasoning column reads it. Shown in the Feedback card.
 
 **Three checks between an LLM-written playbook and a host**: the playbook
 checks (step 3), provenance before commit (step 4), and the runner's sha256
 (step 6). The console never touches git or a server; the AO workflow does.
 
-**The three views** in the right frame: **Incoming fixes** (builds that have
-arrived in Nexus), **Lightwell catalog** (remediated builds Lightwell
+**The four views** in the right frame: **Incoming fixes** (builds that have
+arrived in Nexus), **Telco estate** (below), **Lightwell catalog** (remediated builds Lightwell
 publishes; "Only builds my apps need" asks Lightwell per library version in
 the BOMs, unticked it pages through the whole catalog; **SBOM · app** exports
 that app's BOM as CycloneDX 1.5, `/api/v2/sbom?app=`, to upload to
@@ -517,22 +522,58 @@ finished run, newest first; open one to see it as the reviewer did). The left
 column draws the agent architecture, lit from the run's trace: which agent is
 calling which service, on OpenShift AI or Ansible Automation Platform.
 
-**Demo mode** stages all of it, with real Lightwell builds (`log4j-core
-2.24.3.rhlw-00004`, `commons-io 2.11.0.rhlw-00009`) and one Prod server that
-fails its health check and is rolled back. Code: `appv2.py`; tests:
+**Demo mode** stages all of it, with real Lightwell builds (`mina-core
+2.2.5.rhlw-00002`, `postgresql 42.3.3.rhlw-00006`, `zookeeper
+3.5.9.rhlw-00001`) and one live site, `nfvo-orchestrator` on core-dc-2,
+that fails its health check and is rolled back. Code: `appv2.py`; tests:
 `python3 -m unittest discover -s tests`.
+
+#### The telco scenario
+
+The estate is a telco's, and the story is *a NETCONF library fix reaches the
+network*: Lightwell publishes `mina-core 2.2.5.rhlw-00002` (CVE-2026-41635),
+the SSH library the NFV orchestrator uses to configure network elements.
+
+| Term | Meaning |
+|---|---|
+| App | The software: one BOM in `app-data/bom/` |
+| Domain | The telco area it belongs to (NFVO / MANO, OSS – Inventory, BSS – Charging, 5G Core, O-RAN RIC…); a label and the estate grouping |
+| Site | Where a copy runs (lab, edge-site-1, core-dc-1). Shown instead of the server name |
+| LAB / LIVE | The env underneath (qa / prod). LAB is patched automatically and goes first; LIVE waits for approval |
+
+| App | Domain | Libraries | Live sites |
+|---|---|---|---|
+| nfvo-orchestrator | NFVO / MANO | mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11 | node1 lab, node2 edge-site-1, node3 core-dc-1 |
+| oss-inventory | OSS – Inventory | postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6 (left alone by the mina-core fix) | node1 lab, node3 core-dc-1 |
+| ric-xapp | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
+| selfcare-api | Self-care API gateway | npm only: not covered | none |
+
+Demo mode adds charging-engine and sba-gateway and a fourth nfvo site,
+core-dc-2. Lightwell today is Java-led (about 1,000 remediated Maven
+packages, 7 Python, no npm), so impact ignores non-Maven dependencies and the
+estate shows them as not covered.
+
+**Telco estate** is two frames, Network then IT/OSS/BSS. Per app: domain, the
+Java/Python/JS mix (from the BOM's `languages`), the Lightwell fixes for the
+exact versions it runs (the catalog's "builds my apps need"), and a
+**Reasoning / Impact** column: a priority (CRITICAL, HIGH, MEDIUM, LOW) and a
+note on what is critical, how patching affects the current setup and what
+else to watch. The note comes from the app history store and the LLM
+(`GET /api/v2/estate`), and is kept until the facts change or a run feeds
+the history. With no LLM it falls back to a rule on fixes and CVE count.
 
 #### Where things live
 
 | What | Where |
 |---|---|
 | Console side: intake, impact, playbook agent, AO dispatch | `appv2.py`, routes `/api/v2/*` in `agentic-patching.py` |
-| Commit and sample-app playbooks | this repo, `aap-setup/playbooks/`. AAP project **App Patch v2 - Setup Playbooks** reads them from GitHub (`PROJECT_BRANCH_V2`, default `infra-app-agentic-patching`), so push before running setup |
+| Commit and deploy playbooks | this repo, `aap-setup/playbooks/`. AAP project **App Patch v2 - Setup Playbooks** reads them from GitHub (`PROJECT_BRANCH_V2`, default `infra-app-agentic-patching`), so push before running setup |
 | Generated playbooks and the runner | lab Gitea `lab-user/app_v2_playbooks`, AAP project **App Patch v2 Playbooks**. Written by the workflow, never by hand |
 | AO workflow | `ao-setup/app_v2_workflow.json` |
 | Nexus | `nexus-setup/` (`deploy.sh`, `configure.py`) |
-| App inventory | `app-data/bom/`: `sample-app` (node1 QA, node2–3 Prod) and `orders-api` (node1 QA, port 8081). Not under `rag-setup/data/`, which is ingested into the infra history store |
-| App history (synthetic) | `app-data/history/*.md`, ingested by `setup.sh` into the `app_patch_history` store |
+| App inventory | `app-data/bom/`: the telco apps above. `create-app-v2-objects.py --deploy-sample` deploys each one that has servers, with its jars and `/health` probes taken from the BOM. Not under `rag-setup/data/`, which is ingested into the infra history store |
+| App history (synthetic) | `app-data/history/*.md`, telco records marked SYNTHETIC. Ingested into its own store (`APP_VECTOR_DB_ID`); live runs add their own records |
+| Run reports | `REPORTS_DIR` (default `reports/`), served by `/api/report?file=` |
 
 #### Live setup
 
@@ -544,9 +585,9 @@ On a fresh lab, in this order. Each step is idempotent.
 ./console-app-ocp-setup/deploy.sh                 # the console on OpenShift (the webhook calls it there)
 ./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy, the webhook
 git push                                          # AAP reads the v2 setup playbooks from GitHub
-./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates, runner, sample app
-# the second QA app: launch "App Patch v2 - Deploy Sample App" with
-#   app_name=orders-api app_port=8081 target_hosts=node1
+./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates, runner, the BOMs' apps on node1-3
+./rag-setup/ingest.py --route "$LLAMA_STACK_URL" --name app_patch_history_telco --dir app-data/history
+#   then set APP_VECTOR_DB_ID to the vs_... it prints
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
 ./console-app-ocp-setup/deploy.sh --config-only   # the console picks up NEXUS_* from .env
 ```
@@ -569,15 +610,16 @@ source-control credential for the project. Neither is edited.
 
 ```bash
 # A Lightwell build through Nexus: Nexus caches it and fires the webhook.
-curl -sk -o /dev/null "$NEXUS_URL/repository/lightwell-remediated/org/apache/logging/log4j/log4j-core/2.24.3.rhlw-00004/log4j-core-2.24.3.rhlw-00004.jar"
+curl -sk -o /dev/null "$NEXUS_URL/repository/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00009/mina-core-2.2.5.rhlw-00009.jar"
 # The event, with its CVEs, in the console's inbox.
 curl -sk https://<console route>/api/v2/events
 ```
 
 Then in the console: Applications v2 → the event → Assess → Generate playbook →
-Run. node1 is patched without a gate; node2–3 wait for Approve. On a server,
-`curl localhost:8080/health` names the log4j-core jar the app loaded: it reads
-`log4j-core-2.24.3.rhlw-00004.jar` once patched.
+Run. The lab site (node1) is patched without a gate; edge-site-1 and core-dc-1
+wait for Approve. On a server, `curl localhost:8090/health` (nfvo-orchestrator;
+8091 is oss-inventory) names the jar each probed library is found in: mina-core
+reads `mina-core-2.2.5.rhlw-…jar` once patched.
 
 First verified end to end on 2026-11-05: node1 patched and healthy on the
 Lightwell build, Prod held at the gate, provenance verified, commit

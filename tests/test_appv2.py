@@ -628,6 +628,23 @@ class Estate(unittest.TestCase):
         self.assertEqual(set(rows), {'nfvo-orchestrator', 'oss-inventory', 'ric-xapp', 'selfcare-api'})
         self.assertTrue(all(r['priority'] and r['note'] for r in rows.values()))
 
+    def test_live_reasoning_accepts_a_list_shape(self):
+        demo()
+        appv2._ESTATE_CACHE.clear()
+        calls = []
+
+        def llm(prompt):
+            calls.append(1)
+            return '[{"App": "oss-inventory", "Priority": "high", "Reasoning": "Feeds topology."}]'
+        appv2.configure(demo_mode=lambda: False, llm=llm, rag_search=lambda s, q: [],
+                        lightwell_get=lambda path, **p: {'data': []},
+                        env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
+                                             'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        rows = {r['app']: r for r in appv2.estate()['rows']}
+        self.assertEqual((rows['oss-inventory']['priority'], rows['oss-inventory']['note']), ('HIGH', 'Feeds topology.'))
+        appv2.estate()
+        self.assertEqual(len(calls), 1)                                       # the second open is cached
+
 
 class Feedback(unittest.TestCase):
     def test_live_history_records_go_to_the_store(self):
