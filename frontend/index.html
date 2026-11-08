@@ -3696,7 +3696,7 @@ function v2Render() {
   title.textContent = s.event.artifact;
   sub.innerHTML = `<span class="cve-id">${esc(s.event.version)}</span>`;
   if (s.status === 'assessed') {
-    go.hidden = false; go.textContent = 'Generate remediation playbooks'; go.dataset.act = 'generate';
+    go.hidden = false; go.textContent = 'Prepare remediation'; go.dataset.act = 'generate';
   } else if (s.status === 'generated') {
     const t = (s.impact.targets || []);
     const picked = t.filter(x => v2.sel && v2.sel.has(x.key));

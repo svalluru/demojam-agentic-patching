@@ -615,7 +615,7 @@ curl -sk -o /dev/null "$NEXUS_URL/repository/lightwell-remediated/org/apache/min
 curl -sk https://<console route>/api/v2/events
 ```
 
-Then in the console: Applications v2 → the event → Assess → Generate playbook →
+Then in the console: Applications v2 → the event → Assess → Prepare remediation →
 Run. The lab site (node1) is patched without a gate; edge-site-1 and core-dc-1
 wait for Approve. On a server, `curl localhost:8090/health` (nfvo-orchestrator;
 8091 is oss-inventory) names the jar each probed library is found in: mina-core
