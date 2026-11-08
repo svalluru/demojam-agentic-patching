@@ -4900,12 +4900,15 @@ def serve(host: str, port: int) -> None:
     if restored.get('restored'):
         print(f'  apps v2: restored run ({restored["status"]})'
               + (f', following {", ".join(restored["resumed"])}' if restored['resumed'] else ''))
+    # Bind first: the poller's first pass makes Nexus cache new builds, and Nexus's webhook for them comes straight
+    # back here. Started before the socket listens, those webhooks were refused and the events lost.
+    server = ThreadingHTTPServer((host, port), Handler)
     if int(env('NEXUS_POLL_SECONDS', '0') or 0) > 0:
         # Applications v2: ask Nexus for new Lightwell builds of what the apps run.
         threading.Thread(target=appv2.poller_loop, daemon=True, name='nexus-poller').start()
         print(f'  nexus poller: every {env("NEXUS_POLL_SECONDS")}s against {env("NEXUS_URL") or "(NEXUS_URL unset)"}')
     print(f'  listening on http://{host}:{port}')
-    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    server.serve_forever()
 
 
 # --------------------------------------------------------------------------
