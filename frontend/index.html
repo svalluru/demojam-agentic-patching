@@ -3687,7 +3687,8 @@ function v2Render() {
   }
   if (v2.view === 'inbox' || !s.event) {
     title.textContent = 'Incoming fixes';
-    sub.innerHTML = `<span>${v2.events.length} fixed build${v2.events.length === 1 ? '' : 's'} received</span>`;
+    const n = v2Shown().length;
+    sub.innerHTML = `<span>${n} fixed build${n === 1 ? '' : 's'} received</span>`;
     body.innerHTML = v2Inbox();
     return;
   }
@@ -3707,15 +3708,19 @@ function v2Render() {
   body.innerHTML = v2Run(s, false);
 }
 
+// Builds no Lightwell advisory names (a later rebuild of a version, or a library whose CVEs are filed against
+// another one) are hidden: there is no fix to show for them. A build still being looked up stays.
+const v2Shown = () => v2.events.filter(e => (e.cves || []).length || e.cves_source === 'pending');
+
 function v2Inbox() {
-  if (!v2.events.length) {
+  if (!v2Shown().length) {
     return `<div class="empty"><strong>No fixes yet</strong>
       <span>They arrive when a fixed build is published to the artifact repository. The Lightwell catalog
       tab lists what Lightwell already has.</span></div>`;
   }
   const busy = V2_BUSY.includes((v2.state || {}).status);
   return `<table><thead><tr><th>Package</th><th>Fixed build</th><th>Fixes</th><th>Received</th><th></th></tr></thead>
-    <tbody>${v2.events.map(e => `<tr>
+    <tbody>${v2Shown().map(e => `<tr>
       <td>${v2Pkg(e)}</td><td class="mono">${esc(e.version)}</td><td>${v2Cves(e.cves)}</td>
       <td class="muted-sm">${v2When(e.received_at)}</td>
       <td class="act"><button class="go-patch calm" data-v2-assess="${esc(e.id)}" ${busy ? 'disabled' : ''}>Assess</button></td>
