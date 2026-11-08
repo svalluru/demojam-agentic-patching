@@ -3,9 +3,9 @@
 //   PROBES='mina-core=org.apache.mina.core.session.IoSession,...' \
 //   java -cp '/opt/apps/<app>/lib/*' /opt/apps/<app>/HealthServer.java
 //
-// /health reports, for each probed library, the jar its class is loaded from: after a swap it names the
-// Lightwell build, so the health check is evidence of the patch, not just of the restart. A class that cannot be
-// loaded is reported as "missing" and the server still answers 200: the generated playbook's own checksum check
+// /health reports, for each probed library, the jar its class file is found in: after a swap it names the
+// Lightwell build, so the health check is evidence of the patch, not just of the restart. A class that is not
+// found is reported as "missing" and the server still answers 200: the generated playbook's own checksum check
 // is what verifies the jar.
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -20,13 +20,11 @@ public class HealthServer {
         for (String probe : System.getenv().getOrDefault("PROBES", "").split(",")) {
             String[] kv = probe.trim().split("=", 2);
             if (kv.length != 2) continue;
-            try {
-                String path = Class.forName(kv[1], false, HealthServer.class.getClassLoader())
-                        .getProtectionDomain().getCodeSource().getLocation().getPath();
-                jars.put(kv[0], path.substring(path.lastIndexOf('/') + 1));
-            } catch (Throwable t) {
-                jars.put(kv[0], "missing");
-            }
+            // The class file's URL (jar:file:/.../lib/x.jar!/a/b/C.class), not the loaded class: loading would
+            // need the class's own dependencies on the classpath too.
+            java.net.URL url = HealthServer.class.getClassLoader().getResource(kv[1].replace('.', '/') + ".class");
+            String path = url == null ? "" : url.getPath().split("!")[0];
+            jars.put(kv[0], path.isEmpty() ? "missing" : path.substring(path.lastIndexOf('/') + 1));
         }
         StringBuilder json = new StringBuilder("{\"status\":\"UP\",\"jars\":{");
         int i = 0;
