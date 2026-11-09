@@ -1,8 +1,8 @@
-# App patch record — nfvo-orchestrator on edge-site-1 (node2) — 2026-06-18
+# App patch record — workflow-engine on edge-site-1 (node2) — 2026-06-18
 
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
-App: nfvo-orchestrator   Site: edge-site-1   Server: node2   Environment: LIVE
+App: workflow-engine   Site: edge-site-1   Server: node2   Environment: LIVE
 Change: spring-security-web 5.7.10 -> 5.7.11 (library swap, service restart)
 Result: SUCCESS
 

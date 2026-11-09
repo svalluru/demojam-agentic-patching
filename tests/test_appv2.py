@@ -93,11 +93,11 @@ class Impact(unittest.TestCase):
 
     def test_exact_version_only(self):
         imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
-        self.assertEqual(imp['apps'], ['nfvo-orchestrator'])
+        self.assertEqual(imp['apps'], ['workflow-engine'])
         self.assertEqual([t['site'] for t in imp['targets']], ['lab', 'edge-site-1', 'core-dc-1', 'core-dc-2'])
         self.assertEqual(imp['targets'][0]['env'], 'qa')                      # the lab first, then BOM order
         self.assertEqual(imp['targets'][0]['domain'], 'NFVO / MANO')
-        self.assertEqual([o['app'] for o in imp['other']], ['oss-inventory'])  # mina-core 2.1.6, left alone
+        self.assertEqual([o['app'] for o in imp['other']], ['inventory-service'])  # mina-core 2.1.6, left alone
 
     def test_lab_sites_first_across_apps(self):
         imp = appv2.impact(self.ev('zookeeper'), appv2.load_bom())
@@ -113,9 +113,9 @@ class Impact(unittest.TestCase):
 
     def test_write_back_removes_app_from_next_impact(self):
         ev = self.ev('postgresql')
-        appv2._BOM_UPDATES['charging-engine|org.postgresql:postgresql'] = ev['version']
+        appv2._BOM_UPDATES['billing-engine|org.postgresql:postgresql'] = ev['version']
         imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['oss-inventory'])
+        self.assertEqual(imp['apps'], ['inventory-service'])
         self.assertIn('already on this build', [o['why'] for o in imp['other']])
 
 
@@ -241,15 +241,15 @@ class DemoRun(unittest.TestCase):
         st = self.wait({'awaiting_approval'})
         gated = [h['key'] for h in st['hosts'] if h['outcome'] == 'awaiting_approval']
         self.assertEqual(len(gated), 3)
-        self.assertEqual(appv2.decide('nfvo-orchestrator|lab', 'approved')[0], 409)   # the lab is not gated
+        self.assertEqual(appv2.decide('workflow-engine|lab', 'approved')[0], 409)   # the lab is not gated
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
         self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
         self.assertEqual(st['stages']['verify'], 'failed')
-        # core-dc-2 rolled back, so nfvo-orchestrator's BOM stays on 2.2.5.
-        self.assertNotIn('nfvo-orchestrator|org.apache.mina:mina-core', appv2._BOM_UPDATES)
-        self.assertEqual(st['feedback']['bom'], [{'app': 'nfvo-orchestrator', 'version': '2.2.5', 'changed': False, 'also': []}])
+        # core-dc-2 rolled back, so workflow-engine's BOM stays on 2.2.5.
+        self.assertNotIn('workflow-engine|org.apache.mina:mina-core', appv2._BOM_UPDATES)
+        self.assertEqual(st['feedback']['bom'], [{'app': 'workflow-engine', 'version': '2.2.5', 'changed': False, 'also': []}])
         self.assertEqual(st['feedback']['history']['records'], 4)
         # The Report agent's PDF.
         self.assertEqual(st['stages']['report'], 'done')
@@ -408,14 +408,14 @@ class Restart(unittest.TestCase):
             appv2._RUN.clear()
             appv2._RUN.update(status=status, run_id='r1', event=dict(appv2.DEMO_EVENTS[0]), events=[],
                               stages={k: 'pending' for k in appv2.STAGES}, hosts=hosts,
-                              impact={'targets': [], 'apps': ['nfvo-orchestrator'], 'other': []}, playbooks=[])
+                              impact={'targets': [], 'apps': ['workflow-engine'], 'other': []}, playbooks=[])
         appv2._persist()
         with appv2._LOCK:                       # the process "dies": memory is gone, the file is not
             appv2._RUN.clear()
             appv2._RUN['status'] = 'idle'
 
     def host(self, name, env, outcome):
-        return {'key': f'nfvo-orchestrator|{name}', 'host': name, 'app': 'nfvo-orchestrator', 'env': env, 'outcome': outcome,
+        return {'key': f'workflow-engine|{name}', 'host': name, 'app': 'workflow-engine', 'env': env, 'outcome': outcome,
                 'steps': {},
                 'execution_id': f'ex-{name}'}
 
@@ -430,13 +430,13 @@ class Restart(unittest.TestCase):
     def test_running_execution_is_followed_again(self):
         self.phase = 'done'
         self.saved_run('running', [self.host('node1', 'qa', 'running')])
-        self.assertEqual(appv2.restore()['resumed'], ['nfvo-orchestrator|node1'])
+        self.assertEqual(appv2.restore()['resumed'], ['workflow-engine|node1'])
         for _ in range(300):
             if appv2.state()['status'] == 'complete':
                 break
             time.sleep(0.01)
         self.assertEqual(appv2.state()['hosts'][0]['outcome'], 'patched')
-        self.assertIn('nfvo-orchestrator|org.apache.mina:mina-core', json.loads(
+        self.assertIn('workflow-engine|org.apache.mina:mina-core', json.loads(
             (Path(self.dir) / 'appv2-bom-updates.json').read_text()))
 
     def test_step_inside_the_console_is_reported_interrupted(self):
@@ -472,34 +472,34 @@ class Subset(unittest.TestCase):
         appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
         appv2.start_generate(); self.wait({'generated'})
         self.assertEqual(appv2.start_dispatch([])[0], 400)                       # nothing selected
-        self.assertEqual(appv2.start_dispatch(['oss-inventory|lab', 'oss-inventory|core-dc-1', 'not|known'])[0], 200)
+        self.assertEqual(appv2.start_dispatch(['inventory-service|lab', 'inventory-service|core-dc-1', 'not|known'])[0], 200)
         st = self.wait({'awaiting_approval'})
-        self.assertEqual(appv2.decide('oss-inventory|core-dc-1', 'approved')[0], 200)
+        self.assertEqual(appv2.decide('inventory-service|core-dc-1', 'approved')[0], 200)
         st = self.wait({'complete'})
         by = {h['key']: h for h in st['hosts']}
-        self.assertEqual(by['oss-inventory|lab']['outcome'], 'patched')
-        self.assertEqual(by['nfvo-orchestrator|lab']['outcome'], 'skipped')
-        self.assertFalse(by['nfvo-orchestrator|lab']['execution_id'])         # never sent to AO
+        self.assertEqual(by['inventory-service|lab']['outcome'], 'patched')
+        self.assertEqual(by['workflow-engine|lab']['outcome'], 'skipped')
+        self.assertFalse(by['workflow-engine|lab']['execution_id'])         # never sent to AO
         self.assertEqual(st['summary']['skipped'], 4)
-        # Both oss-inventory sites were patched; nfvo-orchestrator was not touched, so its BOM stays.
-        self.assertIn('oss-inventory|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
-        self.assertNotIn('nfvo-orchestrator|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
+        # Both inventory-service sites were patched; workflow-engine was not touched, so its BOM stays.
+        self.assertIn('inventory-service|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
+        self.assertNotIn('workflow-engine|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
 
     def test_sites_chosen_before_prepare(self):
         demo()
         appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
         self.assertEqual(appv2.start_generate([])[0], 400)                       # nothing selected
-        self.assertEqual(appv2.start_generate(['oss-inventory|lab', 'oss-inventory|core-dc-1'])[0], 200)
+        self.assertEqual(appv2.start_generate(['inventory-service|lab', 'inventory-service|core-dc-1'])[0], 200)
         st = self.wait({'generated'})
-        self.assertEqual([p['app'] for p in st['playbooks']], ['oss-inventory'])   # nothing drafted for nfvo
+        self.assertEqual([p['app'] for p in st['playbooks']], ['inventory-service'])   # nothing drafted for nfvo
         # The run can narrow the prepared sites but not widen them: nfvo has no playbook.
-        self.assertEqual(appv2.start_dispatch(['nfvo-orchestrator|lab'])[0], 400)
-        self.assertEqual(appv2.start_dispatch(['oss-inventory|lab', 'nfvo-orchestrator|lab'])[0], 200)
+        self.assertEqual(appv2.start_dispatch(['workflow-engine|lab'])[0], 400)
+        self.assertEqual(appv2.start_dispatch(['inventory-service|lab', 'workflow-engine|lab'])[0], 200)
         st = self.wait({'complete'})
         by = {h['key']: h for h in st['hosts']}
-        self.assertEqual(by['oss-inventory|lab']['outcome'], 'patched')
-        self.assertEqual(by['oss-inventory|core-dc-1']['outcome'], 'skipped')
-        self.assertEqual(by['nfvo-orchestrator|lab']['outcome'], 'skipped')
+        self.assertEqual(by['inventory-service|lab']['outcome'], 'patched')
+        self.assertEqual(by['inventory-service|core-dc-1']['outcome'], 'skipped')
+        self.assertEqual(by['workflow-engine|lab']['outcome'], 'skipped')
         self.assertEqual(st['summary']['skipped'], 5)
 
     def test_reasoning_is_on_every_target(self):
@@ -507,7 +507,7 @@ class Subset(unittest.TestCase):
         appv2.start_assess('evt-mina-core'); st = self.wait({'assessed'})
         self.assertTrue(all(t.get('reasoning') for t in st['impact']['targets']))
         self.assertIn('340 NEs', next(t for t in st['impact']['targets']
-                                      if t['key'] == 'nfvo-orchestrator|core-dc-1')['reasoning'])
+                                      if t['key'] == 'workflow-engine|core-dc-1')['reasoning'])
 
 
 class Reasoning(unittest.TestCase):
@@ -548,8 +548,8 @@ class Catalog(unittest.TestCase):
         demo()
         mine = appv2.catalog('mine')
         builds = {r['build']: r['affects'] for r in mine['rows']}
-        self.assertEqual(builds['2.2.5.rhlw-00002'], ['nfvo-orchestrator'])
-        self.assertEqual(builds['3.5.9.rhlw-00001'], ['nfvo-orchestrator', 'oss-inventory'])
+        self.assertEqual(builds['2.2.5.rhlw-00002'], ['workflow-engine'])
+        self.assertEqual(builds['3.5.9.rhlw-00001'], ['inventory-service', 'workflow-engine'])
         everything = appv2.catalog('all')
         self.assertGreater(everything['total'], mine['total'])
 
@@ -568,18 +568,18 @@ class Catalog(unittest.TestCase):
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
         out = appv2.catalog('mine')
         self.assertEqual([(r['build'], r['cves'], r['affects']) for r in out['rows']],
-                         [('2.2.5.rhlw-00002', ['CVE-2026-1'], ['nfvo-orchestrator'])])
+                         [('2.2.5.rhlw-00002', ['CVE-2026-1'], ['workflow-engine'])])
         self.assertIn(('/advisories', 'org.postgresql:postgresql', '42.3.3'), asked)
-        self.assertIn(('/advisories', 'org.apache.mina:mina-core', '2.1.6'), asked)   # oss-inventory's
+        self.assertIn(('/advisories', 'org.apache.mina:mina-core', '2.1.6'), asked)   # inventory-service's
         self.assertFalse([a for a in asked if a[1] in ('ricxappframe', 'express')])   # Lightwell Java only
 
 
 class Sbom(unittest.TestCase):
     def test_cyclonedx_from_the_bom(self):
         demo()
-        doc = appv2.sbom('nfvo-orchestrator')
+        doc = appv2.sbom('workflow-engine')
         self.assertEqual((doc['bomFormat'], doc['specVersion']), ('CycloneDX', '1.5'))
-        self.assertEqual(doc['metadata']['component']['name'], 'nfvo-orchestrator')
+        self.assertEqual(doc['metadata']['component']['name'], 'workflow-engine')
         purls = {c['purl'] for c in doc['components']}
         self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5', purls)
         self.assertEqual(doc['dependencies'][0]['dependsOn'], [c['bom-ref'] for c in doc['components']])
@@ -587,8 +587,8 @@ class Sbom(unittest.TestCase):
 
     def test_write_back_changes_the_exported_version(self):
         demo()
-        appv2._BOM_UPDATES['nfvo-orchestrator|org.apache.mina:mina-core'] = '2.2.5.rhlw-00002'
-        purls = {c['purl'] for c in appv2.sbom('nfvo-orchestrator')['components']}
+        appv2._BOM_UPDATES['workflow-engine|org.apache.mina:mina-core'] = '2.2.5.rhlw-00002'
+        purls = {c['purl'] for c in appv2.sbom('workflow-engine')['components']}
         self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5.rhlw-00002', purls)
 
 
@@ -608,7 +608,7 @@ class History(unittest.TestCase):
             if appv2.state().get('status') == 'generated':
                 break
             time.sleep(0.02)
-        appv2.start_dispatch(['oss-inventory|lab'])
+        appv2.start_dispatch(['inventory-service|lab'])
         for _ in range(300):
             if appv2.state().get('status') == 'complete':
                 break
@@ -625,13 +625,13 @@ class Estate(unittest.TestCase):
     def test_groups_fixes_and_priorities(self):
         demo()
         rows = {r['app']: r for r in appv2.estate()['rows']}
-        self.assertEqual(rows['nfvo-orchestrator']['group'], 'network')
-        self.assertEqual(rows['charging-engine']['group'], 'it')
-        self.assertEqual({f['artifact'] for f in rows['nfvo-orchestrator']['fixes']},
+        self.assertEqual(rows['workflow-engine']['group'], 'network')
+        self.assertEqual(rows['billing-engine']['group'], 'it')
+        self.assertEqual({f['artifact'] for f in rows['workflow-engine']['fixes']},
                          {'mina-core', 'zookeeper', 'spring-security-web'})
-        self.assertFalse(rows['ric-xapp']['covered'])                         # Python only
-        self.assertFalse(rows['selfcare-api']['covered'])                     # npm only
-        self.assertEqual(rows['nfvo-orchestrator']['priority'], 'CRITICAL')
+        self.assertFalse(rows['analytics-agent']['covered'])                         # Python only
+        self.assertFalse(rows['customer-portal']['covered'])                     # npm only
+        self.assertEqual(rows['workflow-engine']['priority'], 'CRITICAL')
         self.assertTrue(all(r['priority'] in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW') and r['note']
                             for r in rows.values()))
 
@@ -642,7 +642,7 @@ class Estate(unittest.TestCase):
                         env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
         rows = {r['app']: r for r in appv2.estate()['rows']}
-        self.assertEqual(set(rows), {'nfvo-orchestrator', 'oss-inventory', 'ric-xapp', 'selfcare-api'})
+        self.assertEqual(set(rows), {'workflow-engine', 'inventory-service', 'analytics-agent', 'customer-portal'})
         self.assertTrue(all(r['priority'] and r['note'] for r in rows.values()))
 
     def test_live_reasoning_accepts_a_list_shape(self):
@@ -652,13 +652,13 @@ class Estate(unittest.TestCase):
 
         def llm(prompt):
             calls.append(1)
-            return '[{"App": "oss-inventory", "Priority": "high", "Reasoning": "Feeds topology."}]'
+            return '[{"App": "inventory-service", "Priority": "high", "Reasoning": "Feeds topology."}]'
         appv2.configure(demo_mode=lambda: False, llm=llm, rag_search=lambda s, q: [],
                         lightwell_get=lambda path, **p: {'data': []},
                         env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
         rows = {r['app']: r for r in appv2.estate()['rows']}
-        self.assertEqual((rows['oss-inventory']['priority'], rows['oss-inventory']['note']), ('HIGH', 'Feeds topology.'))
+        self.assertEqual((rows['inventory-service']['priority'], rows['inventory-service']['note']), ('HIGH', 'Feeds topology.'))
         appv2.estate()
         self.assertEqual(len(calls), 1)                                       # the second open is cached
 
@@ -670,12 +670,12 @@ class Feedback(unittest.TestCase):
         demo(APPV2_STATE_DIR=d, APP_VECTOR_DB_ID='vs_apps')
         appv2.configure(demo_mode=lambda: False, rag_add=lambda store, path: added.append((store, path.name)))
         st = {'run_id': 'r9', 'event': dict(appv2.DEMO_EVENTS[0]), 'hosts': [
-            {'app': 'nfvo-orchestrator', 'host': 'node1', 'site': 'lab', 'env': 'qa', 'outcome': 'patched'},
-            {'app': 'nfvo-orchestrator', 'host': 'node2', 'site': 'edge-site-1', 'env': 'prod', 'outcome': 'skipped'}]}
+            {'app': 'workflow-engine', 'host': 'node1', 'site': 'lab', 'env': 'qa', 'outcome': 'patched'},
+            {'app': 'workflow-engine', 'host': 'node2', 'site': 'edge-site-1', 'env': 'prod', 'outcome': 'skipped'}]}
         out = appv2.feed_history(st)
         self.assertEqual(out['records'], 1)
         self.assertEqual([s for s, _ in added], ['vs_apps'])
-        self.assertIn('nfvo-orchestrator-lab-mina-core-PATCHED', added[0][1])
+        self.assertIn('workflow-engine-lab-mina-core-PATCHED', added[0][1])
         self.assertIn('Site: lab', next((Path(d) / 'app-history').glob('*.md')).read_text())
 
 
@@ -710,21 +710,21 @@ class Extras(unittest.TestCase):
 
     def test_upstream_on_the_same_line(self):
         with_osv()
-        r = self.rows()['oss-inventory|org.apache.mina:mina-core']
+        r = self.rows()['inventory-service|org.apache.mina:mina-core']
         self.assertEqual((r['kind'], r['to'], r['selectable']), ('upstream', '2.1.13', True))
         self.assertEqual(len(r['advisories']), 6)
         self.assertIn('2.1 line', r['reasoning'])
 
     def test_lightwell_build_preferred_and_its_cves_removed(self):
         with_osv()
-        r = self.rows()['nfvo-orchestrator|org.springframework.security:spring-security-web']
+        r = self.rows()['workflow-engine|org.springframework.security:spring-security-web']
         self.assertEqual((r['kind'], r['to']), ('lightwell', '5.7.11.rhlw-00006'))
         self.assertEqual(sorted(r['lightwell_covers']), ['CVE-2024-38821', 'CVE-2026-22732'])
         self.assertNotIn('CVE-2024-38821', [a['id'] for a in r['advisories']])   # fixed by Lightwell: not "open"
 
     def test_the_events_own_package_is_information_only(self):
         with_osv()
-        r = self.rows('evt-mina-core')['nfvo-orchestrator|org.apache.mina:mina-core']
+        r = self.rows('evt-mina-core')['workflow-engine|org.apache.mina:mina-core']
         self.assertEqual((r['kind'], r['selectable'], r['to']), ('residual', False, '2.2.8'))
         self.assertNotIn('CVE-2026-41635', [a['id'] for a in r['advisories']])
 
@@ -759,34 +759,34 @@ class MultiJar(unittest.TestCase):
         appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
 
     def test_selected_extra_joins_that_apps_playbook_only(self):
-        self.assertEqual(appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core', 'not|offered'])[0], 200)
+        self.assertEqual(appv2.start_generate(None, ['inventory-service|org.apache.mina:mina-core', 'not|offered'])[0], 200)
         st = wait_for({'generated'})
         pbs = {p['app']: p for p in st['playbooks']}
-        self.assertEqual([(c['artifact'], c['source']) for c in pbs['oss-inventory']['changes']],
+        self.assertEqual([(c['artifact'], c['source']) for c in pbs['inventory-service']['changes']],
                          [('zookeeper', 'lightwell'), ('mina-core', 'upstream')])
-        self.assertEqual(len(pbs['nfvo-orchestrator']['changes']), 1)
-        text = pbs['oss-inventory']['text']
+        self.assertEqual(len(pbs['workflow-engine']['changes']), 1)
+        text = pbs['inventory-service']['text']
         self.assertIn('new_jar: mina-core-2.1.13.jar', text)
         self.assertIn('/maven2/org/apache/mina/mina-core/2.1.13/', text)        # upstream, not the Lightwell repo
         self.assertTrue(all(c['ok'] for c in appv2.check_playbook(text, text)))
-        self.assertEqual(st['extra_selected'], ['oss-inventory|org.apache.mina:mina-core'])
+        self.assertEqual(st['extra_selected'], ['inventory-service|org.apache.mina:mina-core'])
 
     def test_extra_for_an_unselected_app_is_dropped(self):
-        appv2.start_generate(['nfvo-orchestrator|lab'], ['oss-inventory|org.apache.mina:mina-core'])
+        appv2.start_generate(['workflow-engine|lab'], ['inventory-service|org.apache.mina:mina-core'])
         st = wait_for({'generated'})
         self.assertEqual(st['extra_selected'], [])
-        self.assertEqual([p['app'] for p in st['playbooks']], ['nfvo-orchestrator'])
+        self.assertEqual([p['app'] for p in st['playbooks']], ['workflow-engine'])
 
     def test_a_moved_swap_fails_the_pin(self):
-        appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core'])
-        text = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'oss-inventory')['text']
+        appv2.start_generate(None, ['inventory-service|org.apache.mina:mina-core'])
+        text = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'inventory-service')['text']
         bad = text.replace('new_jar: mina-core-2.1.13.jar', 'new_jar: mina-core-9.9.9.jar')
         self.assertFalse({c['id']: c['ok'] for c in appv2.check_playbook(bad, text)}['pinned'])
 
     def test_test_inputs_cover_every_jar(self):
-        appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core'])
-        pb = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'oss-inventory')
-        t = appv2.test_inputs('oss-inventory', pb['changes'])
+        appv2.start_generate(None, ['inventory-service|org.apache.mina:mina-core'])
+        pb = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'inventory-service')
+        t = appv2.test_inputs('inventory-service', pb['changes'])
         lib = {x['artifact']: x for x in json.loads(t['lib_json'])}
         self.assertEqual(set(lib), {'postgresql', 'zookeeper', 'mina-core'})
         self.assertTrue(lib['mina-core']['changed'] and lib['zookeeper']['changed'])
@@ -796,19 +796,19 @@ class MultiJar(unittest.TestCase):
         self.assertIn('mina-core=org.apache.mina.core.session.IoSession', t['probes'])
 
     def test_demo_run_tests_writes_back_and_reports_both_jars(self):
-        appv2.start_generate(['oss-inventory|lab', 'oss-inventory|core-dc-1'], ['oss-inventory|org.apache.mina:mina-core'])
+        appv2.start_generate(['inventory-service|lab', 'inventory-service|core-dc-1'], ['inventory-service|org.apache.mina:mina-core'])
         wait_for({'generated'})
         appv2.start_dispatch()
         wait_for({'awaiting_approval'})
-        appv2.decide('oss-inventory|core-dc-1', 'approved')
+        appv2.decide('inventory-service|core-dc-1', 'approved')
         st = wait_for({'complete'})
-        h = next(x for x in st['hosts'] if x['key'] == 'oss-inventory|lab')
+        h = next(x for x in st['hosts'] if x['key'] == 'inventory-service|lab')
         self.assertEqual(h['steps']['test'], 'done')
         self.assertTrue(h['test']['passed'])
         self.assertEqual(json.loads(h['test']['health'])['jars']['mina-core'], 'mina-core-2.1.13.jar')
         self.assertIn('mina-core-2.1.13.jar', h['detail'])
-        self.assertEqual(appv2._BOM_UPDATES['oss-inventory|org.apache.mina:mina-core'], '2.1.13')
-        self.assertEqual(appv2._BOM_UPDATES['oss-inventory|org.apache.zookeeper:zookeeper'], '3.5.9.rhlw-00001')
+        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.mina:mina-core'], '2.1.13')
+        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.zookeeper:zookeeper'], '3.5.9.rhlw-00001')
         self.assertTrue((Path(appv2.reports_dir()) / st['report']['file']).exists())
 
 
@@ -840,15 +840,15 @@ class LiveTestNode(unittest.TestCase):
         appv2.configure(demo_mode=lambda: False, ao_call=ao)
         appv2.EVENTS = appv2.EventStore(None)
         ev = dict(appv2.DEMO_EVENTS[0])
-        target = {'key': 'nfvo-orchestrator|node1', 'app': 'nfvo-orchestrator', 'host': 'node1', 'env': 'qa',
-                  'installed': '2.2.5', 'path': '/opt/apps/nfvo-orchestrator', 'service': 'nfvo-orchestrator',
+        target = {'key': 'workflow-engine|node1', 'app': 'workflow-engine', 'host': 'node1', 'env': 'qa',
+                  'installed': '2.2.5', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
                   'health_url': 'http://localhost:8090/health'}
         with appv2._LOCK:
             appv2._RUN.clear()
             appv2._RUN.update(status='generated', run_id='r1', event=ev, events=[],
                               stages={k: 'pending' for k in appv2.STAGES},
-                              impact={'targets': [target], 'apps': ['nfvo-orchestrator'], 'other': []},
-                              playbooks=[{'app': 'nfvo-orchestrator', 'filename': 'app-v2/n.yml', 'text': 'x',
+                              impact={'targets': [target], 'apps': ['workflow-engine'], 'other': []},
+                              playbooks=[{'app': 'workflow-engine', 'filename': 'app-v2/n.yml', 'text': 'x',
                                           'sha256': '0' * 64, 'ok': True,
                                           'changes': [appv2.change_for_event(ev, target)]}])
         try:

@@ -1,5 +1,5 @@
 {
-  "app": "ric-xapp",
+  "app": "analytics-agent",
   "domain": "O-RAN Near-RT RIC",
   "languages": {"java": "", "python": "H", "js": ""},
   "servers": [],

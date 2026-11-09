@@ -1,8 +1,8 @@
-# App patch record — nfvo-orchestrator on core-dc-1 (node3) — 2026-08-21
+# App patch record — workflow-engine on core-dc-1 (node3) — 2026-08-21
 
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
-App: nfvo-orchestrator   Site: core-dc-1   Server: node3   Environment: LIVE
+App: workflow-engine   Site: core-dc-1   Server: node3   Environment: LIVE
 Change: mina-core 2.2.4 -> 2.2.5 (library swap, service restart)
 Result: ROLLED BACK
 

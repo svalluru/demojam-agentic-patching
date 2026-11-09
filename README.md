@@ -524,7 +524,7 @@ calling which service, on OpenShift AI or Ansible Automation Platform.
 
 **Demo mode** stages all of it, with real Lightwell builds (`mina-core
 2.2.5.rhlw-00002`, `postgresql 42.3.3.rhlw-00006`, `zookeeper
-3.5.9.rhlw-00001`) and one live site, `nfvo-orchestrator` on core-dc-2,
+3.5.9.rhlw-00001`) and one live site, `workflow-engine` on core-dc-2,
 that fails its health check and is rolled back. Code: `appv2.py`; tests:
 `python3 -m unittest discover -s tests`.
 
@@ -556,7 +556,7 @@ The job commits an SBOM of the tested jars beside the playbook in Gitea. A faile
 no site is touched. The console shows the evidence (image, `/health`, the osv.dev count, the SBOM) on the
 approval screen and in the report.
 
-First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus oss-inventory's upstream mina-core
+First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus inventory-service's upstream mina-core
 `2.1.13`. The pod test passed, and node1 is healthy on both jars; node3 was untouched.
 
 #### The telco scenario
@@ -574,12 +574,12 @@ the SSH library the NFV orchestrator uses to configure network elements.
 
 | App | Domain | Libraries | Live sites |
 |---|---|---|---|
-| nfvo-orchestrator | NFVO / MANO | mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11 | node1 lab, node2 edge-site-1, node3 core-dc-1 |
-| oss-inventory | OSS – Inventory | postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6 (left alone by the mina-core fix) | node1 lab, node3 core-dc-1 |
-| ric-xapp | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
-| selfcare-api | Self-care API gateway | npm only: not covered | none |
+| workflow-engine | NFVO / MANO | mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11 | node1 lab, node2 edge-site-1, node3 core-dc-1 |
+| inventory-service | OSS – Inventory | postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6 (left alone by the mina-core fix) | node1 lab, node3 core-dc-1 |
+| analytics-agent | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
+| customer-portal | Self-care API gateway | npm only: not covered | none |
 
-Demo mode adds charging-engine and sba-gateway and a fourth nfvo site,
+Demo mode adds billing-engine and api-gateway and a fourth nfvo site,
 core-dc-2. Lightwell today is Java-led (about 1,000 remediated Maven
 packages, 7 Python, no npm), so impact ignores non-Maven dependencies and the
 estate shows them as not covered.
@@ -651,8 +651,8 @@ curl -sk https://<console route>/api/v2/events
 
 Then in the console: Applications v2 → the event → Assess → Prepare remediation →
 Run. The lab site (node1) is patched without a gate; edge-site-1 and core-dc-1
-wait for Approve. On a server, `curl localhost:8090/health` (nfvo-orchestrator;
-8091 is oss-inventory) names the jar each probed library is found in: mina-core
+wait for Approve. On a server, `curl localhost:8090/health` (workflow-engine;
+8091 is inventory-service) names the jar each probed library is found in: mina-core
 reads `mina-core-2.2.5.rhlw-…jar` once patched.
 
 First verified end to end on 2026-11-05: node1 patched and healthy on the

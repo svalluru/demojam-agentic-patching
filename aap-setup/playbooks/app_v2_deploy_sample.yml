@@ -5,8 +5,8 @@
 #
 #   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e @app.json
 # where app.json gives app_name, app_port, target_hosts, jars (Maven Central paths) and probes. The telco apps:
-#   nfvo-orchestrator  port 8090  node1,node2,node3  mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11
-#   oss-inventory      port 8091  node1,node3        postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6
+#   workflow-engine  port 8090  node1,node2,node3  mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11
+#   inventory-service      port 8091  node1,node3        postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6
 # create-app-v2-objects.py --deploy-sample launches both.
 #
 # The layout matches app-data/bom/<app_name>.json, which is what the inventory agent reads:

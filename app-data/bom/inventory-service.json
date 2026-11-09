@@ -1,9 +1,9 @@
 {
-  "app": "oss-inventory",
+  "app": "inventory-service",
   "domain": "OSS – Inventory",
   "languages": {"java": "H", "python": "M", "js": ""},
-  "path": "/opt/apps/oss-inventory",
-  "service": "oss-inventory",
+  "path": "/opt/apps/inventory-service",
+  "service": "inventory-service",
   "health_url": "http://localhost:8091/health",
   "servers": [
     {"host": "node1", "site": "lab", "env": "qa"},
