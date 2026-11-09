@@ -1644,6 +1644,11 @@
 
   .fd-cap { margin-top: 15px; font-size: calc(11.5px * var(--ts));
             line-height: 1.55; color: var(--muted); }
+  .fd-api { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 18px; }
+  .fd-api th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #6a6e73);
+               border-bottom: 1px solid #d2d2d2; padding: 6px 8px; }
+  .fd-api td { border-bottom: 1px solid #ececec; padding: 7px 8px; vertical-align: top; }
+  .fd-api td.mono { font-family: var(--mono); font-size: 11.5px; word-break: break-word; }
   .fd-cap + .fd-cap { margin-top: 7px; }
   .fd-cap strong { color: var(--text); font-weight: 700; }
   /* The demo-mode drawing: everything outside this console greyed and dashed,
@@ -1996,7 +2001,8 @@
             border: 1px solid var(--text); border-radius: 6px; padding: 2px 7px; }
   .v2-src { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; padding: 1px 7px;
             border-radius: 9px; border: 1px solid currentColor; white-space: nowrap; }
-  .v2-src.lw { color: #3e8635; } .v2-src.up { color: #0066cc; } .v2-src.no { color: #6a6e73; }
+  .v2-src.lw { color: #3e8635; } .v2-src.vc { color: #8a4b00; }
+  .v2-opt { font: inherit; font-size: 12px; padding: 1px 4px; max-width: 340px; } .v2-src.up { color: #0066cc; } .v2-src.no { color: #6a6e73; }
   .v2-cve.sev-critical { background: #fbe5e5; } .v2-cve.sev-high { background: #fdf0e1; }
   .v2-cve.sev-moderate, .v2-cve.sev-unknown { color: #795600; border-color: #c9a227; background: #fdf7e3; }
   .v2-cve.sev-low { color: #6a6e73; border-color: #b8bbbe; background: #f5f5f5; }
@@ -3705,6 +3711,7 @@ function v2Render() {
     return;
   }
   back.hidden = V2_BUSY.includes(s.status);
+  v2InitSel(s);                       // before the button label, which counts the ticked sites
   title.textContent = s.event.artifact;
   sub.innerHTML = `<span class="cve-id">${esc(s.event.version)}</span>`;
   if (s.status === 'assessed') {
@@ -3800,6 +3807,15 @@ function v2Runs() {
       </tr>`; }).join('')}</tbody></table>`;
 }
 
+// The run's site selection: on a new run, every exact match ticked (version changes are opt-in); once prepared,
+// the prepared sites.
+function v2InitSel(s) {
+  const t = (s.impact || {}).targets || [];
+  if (!t.length) return;              // the sites are not known yet: nothing to tick
+  if (v2.selRun !== s.run_id) { v2.sel = new Set(t.filter(x => !x.version_change).map(x => x.key)); v2.selRun = s.run_id; }
+  if (s.selected && v2.selFor !== s.run_id) { v2.sel = new Set(s.selected); v2.selFor = s.run_id; }
+}
+
 function v2Run(s, readOnly) {
   const e = s.event, out = [];
   out.push(`<div class="v2-card" style="margin-bottom:14px">
@@ -3819,8 +3835,7 @@ function v2Run(s, readOnly) {
     // among the prepared sites.
     const pick = !readOnly && (s.status === 'assessed' || s.status === 'generated');
     const prepared = s.selected ? new Set(s.selected) : null;
-    if (v2.selRun !== s.run_id) { v2.sel = new Set(t.map(x => x.key)); v2.selRun = s.run_id; }
-    if (prepared && v2.selFor !== s.run_id) { v2.sel = new Set(prepared); v2.selFor = s.run_id; }
+    v2InitSel(s);
     const canPick = x => pick && (!prepared || prepared.has(x.key));
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
     const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
@@ -3835,7 +3850,7 @@ function v2Run(s, readOnly) {
           <td class="mono nowrap" title="${esc(x.host)}">${esc(x.site || String(x.host || '').split('.')[0])}</td>
           <td>${x.domain ? `<span class="v2-dom">${esc(x.domain)}</span>` : ''}</td>
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
-          <td class="mono">${esc(x.installed)}</td>
+          <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
           <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')}</td>
           <td>${h ? `<span class="v2-steps">${STEP_KEYS.map(k =>
             `<i class="${esc((h.steps || {})[k] || '')}" title="${k}: ${esc((h.steps || {})[k] || 'pending')}"></i>`).join('')}</span>` : ''}</td>
@@ -3863,8 +3878,8 @@ function v2Run(s, readOnly) {
     out.push(`<div class="v2-sec"><h3>Remediation playbooks</h3>${s.playbooks.map(p => `<div class="v2-card">
       <b>${esc(p.app)}</b> <span class="mono muted-sm">${esc(p.filename)}</span>
       <span class="muted-sm"> · ${p.source === 'llm' ? 'drafted by the LLM' : 'from the checked template'}</span>
-      ${(p.changes || []).length > 1 ? `<div class="v2-changes">${p.changes.map(c => `<span><span class="mono">${esc(c.artifact)} ${esc(c.from)} → <b>${esc(c.to)}</b></span>
-        <span class="v2-src ${c.source === 'lightwell' ? 'lw' : 'up'}">${c.source === 'lightwell' ? 'Lightwell · provenance' : 'Upstream · sha1'}</span></span>`).join('')}
+      ${((p.changes || []).length > 1 || (p.changes || []).some(c => c.version_change)) ? `<div class="v2-changes">${p.changes.map(c => `<span><span class="mono">${esc(c.artifact)} ${esc(c.from)} → <b>${esc(c.to)}</b></span>
+        <span class="v2-src ${c.source === 'lightwell' ? 'lw' : 'up'}">${c.source === 'lightwell' ? 'Lightwell · provenance' : 'Upstream · sha1'}</span>${c.version_change ? '<span class="v2-src vc">version change</span>' : ''}</span>`).join('')}
         <span class="muted-sm">one swap, one restart, one rollback</span></div>` : ''}
       ${p.note ? `<div class="muted-sm">${esc(p.note)}</div>` : ''}
       <div class="v2-checks">${(p.checks || []).map(c =>
@@ -3929,16 +3944,26 @@ function v2Extras(s, readOnly) {
   const pick = !readOnly && s.status === 'assessed';
   if (v2.extraRun !== s.run_id) { v2.extraSel = new Set(); v2.extraRun = s.run_id; }
   const chosen = s.extra_selected ? new Set(s.extra_selected) : v2.extraSel;
-  const SRC = { lightwell: ['lw', 'Lightwell build'], upstream: ['up', 'Upstream fix'], major: ['no', 'Major upgrade'],
-                residual: ['no', 'Still open'], none: ['no', 'No fix yet'] };
+  const SRC = { lightwell: ['lw', 'Lightwell build'], upstream: ['up', 'Upstream fix'], lightwell_vc: ['vc', 'Lightwell · version change'],
+                major: ['no', 'Major upgrade'], residual: ['no', 'Still open'], none: ['no', 'No fix yet'] };
+  v2.extraOpt = v2.extraOpt || {};
+  const chosenOpt = r => { const sel = (s.extra_selected || []).find(x => x.split('::')[0] === r.id);
+    if (sel) return sel.includes('::') ? +sel.split('::')[1] : (r.default || 0);
+    return r.id in v2.extraOpt ? v2.extraOpt[r.id] : (r.default || 0); };
+  const optLabel = o => o.source === 'upstream' ? `Upstream ${o.to}${o.version_change ? ' (minor change)' : ''}`
+                                                : `Lightwell ${o.to}${o.version_change ? ' (version change)' : ''}`;
   const sev = a => `<span class="v2-cve sev-${esc(a.severity || 'unknown')}" title="${esc(a.severity || '')}${a.score ? ' ' + a.score : ''}${a.fix ? ' · fixed in ' + esc(a.fix) : ''}">${esc(a.id)}</span>`;
   const body = rows.length ? `<table><thead><tr><th></th><th>Library</th><th>App</th><th>Installed → proposed</th><th>Source</th>
       <th>Advisories</th><th>Reasoning</th></tr></thead><tbody>${rows.map(r => `<tr>
         <td>${r.selectable ? `<input type="checkbox" data-v2-extra="${esc(r.id)}" ${chosen.has(r.id) ? 'checked' : ''} ${pick ? '' : 'disabled'}>` : ''}</td>
         <td><b>${esc(r.artifact)}</b><div class="muted-sm">${esc(r.group)}</div></td>
         <td>${esc(r.app)}<div class="muted-sm">${esc((r.sites || []).join(', '))}</div></td>
-        <td class="mono nowrap">${esc(r.installed)}${r.to ? ` → <b>${esc(r.to)}</b>` : ''}</td>
-        <td><span class="v2-src ${SRC[r.kind][0]}">${SRC[r.kind][1]}</span></td>
+        <td class="mono">${esc(r.installed)}${(r.options || []).length > 1
+          ? ` → <select class="v2-opt" data-v2-opt="${esc(r.id)}" ${pick ? '' : 'disabled'}>${r.options.map((o, i) =>
+              `<option value="${i}" ${chosenOpt(r) === i ? 'selected' : ''}>${esc(optLabel(o))}</option>`).join('')}</select>`
+          : (r.to ? ` → <b>${esc(r.to)}</b>` : '')}</td>
+        <td>${(() => { const o = (r.options || [])[chosenOpt(r)]; const k = o ? (o.source === 'upstream' ? 'upstream' : o.version_change ? 'lightwell_vc' : 'lightwell') : r.kind;
+          return `<span class="v2-src ${SRC[k][0]}">${SRC[k][1]}</span>`; })()}</td>
         <td><span class="v2-cves">${(r.kind === 'lightwell' ? (r.lightwell_covers || []).map(c => `<span class="v2-cve">${esc(c)}</span>`) : r.advisories.slice(0, 4).map(sev)).join('')}</span>
           ${r.kind === 'lightwell' && r.advisories.length ? `<div class="muted-sm">${r.advisories.length} more open upstream</div>` : ''}
           ${r.kind !== 'lightwell' && r.advisories.length > 4 ? `<div class="muted-sm">+${r.advisories.length - 4} more</div>` : ''}</td>
@@ -3958,14 +3983,14 @@ function v2Estate(c) {
     ? `<span class="v2-fit">${r.fixes.length} · ${r.fixes.map(f => esc(f.artifact)).join(', ')}</span>`
     : `<span class="v2-fit no">${r.covered ? 'no fix for these versions' : (r.other || []).includes('npm') ? 'npm not available' : 'not covered yet'}</span>`;
   const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">Domain · app</th><th>Java</th><th>Python</th><th>JS</th>
-      <th style="width:290px">Lightwell fixes available</th><th>Reasoning / impact</th></tr></thead><tbody>
+      <th style="width:260px">Lightwell fixes available</th><th style="width:110px">App severity</th><th>Reasoning / impact</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td><b>${esc(r.domain)}</b><div class="muted-sm">${esc(r.app)}</div></td>
       ${cell(r.languages.java)}${cell(r.languages.python)}${cell(r.languages.js)}
       <td>${fix(r)}</td>
-      <td><span class="v2-prio ${esc((r.priority || 'low').toLowerCase())}">${esc(r.priority || '')}</span>
-        <div class="v2-reason" style="margin-top:4px">${esc(r.note || '')}</div></td></tr>`).join('')}</tbody></table>`;
+      <td><span class="v2-prio ${esc((r.priority || 'low').toLowerCase())}">${esc(r.priority || '')}</span></td>
+      <td class="v2-reason">${esc(r.note || '')}</td></tr>`).join('')}</tbody></table>`;
   const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
-    Priority weighs what the app touches, whether a fix exists, and how hard the restart is.</div>`;
+    App severity weighs what the app touches, whether a Lightwell fix exists, and how hard the restart is.</div>`;
   const rows = c.rows || [];
   return `<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
     <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">billing, inventory, customer channels</span></div>
@@ -4001,6 +4026,11 @@ document.getElementById('v2-body').addEventListener('change', async ev => {
     if (t.checked) v2.sel.add(t.dataset.v2Sel); else v2.sel.delete(t.dataset.v2Sel);
     v2Render();
   }
+  if (t.dataset.v2Opt) {
+    v2.extraOpt = v2.extraOpt || {};
+    v2.extraOpt[t.dataset.v2Opt] = +t.value;
+    v2Render(); return;
+  }
   if (t.dataset.v2Extra) {
     if (t.checked) v2.extraSel.add(t.dataset.v2Extra); else v2.extraSel.delete(t.dataset.v2Extra);
     v2Render();
@@ -4013,7 +4043,7 @@ document.getElementById('v2-go').addEventListener('click', ev => {
   btn.disabled = true;
   if (btn.dataset.act === 'generate') btn.textContent = 'Preparing remediation…';
   const body = ['dispatch', 'generate'].includes(btn.dataset.act) ? { targets: [...(v2.sel || [])] } : {};
-  if (btn.dataset.act === 'generate') body.extra = [...(v2.extraSel || [])];
+  if (btn.dataset.act === 'generate') body.extra = [...(v2.extraSel || [])].map(id => id in (v2.extraOpt || {}) ? `${id}::${v2.extraOpt[id]}` : id);
   // Re-enabled only if the run is not now busy: while it prepares, the render keeps it greyed out.
   v2Act(`/api/v2/${btn.dataset.act}`, body).finally(() => {
     if (!V2_BUSY.includes((v2.state || {}).status)) btn.disabled = false;
@@ -7894,7 +7924,7 @@ const FLOW_APPV2 = {
     { c: 8, t: 'LEARN',        k: 'AGENT', k2: 'BOM WRITE-BACK', cls: 'ag' },
 
     { c: 0, lane: 1, cls: 'svc', t: 'NEXUS', s: 'proxy of Lightwell' },
-    { c: 1, lane: 1, cls: 'svc rh', t: 'LIGHTWELL API', s: 'advisories' },
+    { c: 1, lane: 1, cls: 'svc rh', t: 'LIGHTWELL API', s: 'advisories · package_versions' },
     { c: 2, lane: 1, cls: 'svc', t: 'APP BOMs', s: 'apps · servers · jars' },
     { c: 3, lane: 1, cls: 'svc rh', t: 'LLM', s: 'OGX · deepseek' },
     { c: 4, lane: 1, cls: 'svc', t: 'GITEA', s: 'app_v2_playbooks' },
@@ -7911,13 +7941,13 @@ const FLOW_APPV2 = {
       'The signature is checked first. Only a newly cached <em>.rhlw-</em> build '
       + 'becomes an event; retries are the same event.'),
     up(1, '3', 'Intake', 'Lightwell API',
-      'Which CVEs <em>this exact build</em> fixes, from Lightwell’s own '
-      + 'advisories, not guessed from the version.'),
+      'Which CVEs <em>this exact build</em> fixes: <em>GET /advisories</em> for the package and version, '
+      + 'kept to the advisories that name this build.'),
     hop(1, 2, '4', 'Intake', 'Impact',
       'The package and the version it replaces go to the inventory agent.'),
     up(2, '5', 'Impact', 'App BOMs',
-      'Exact match on the version in use. An app on another version is listed as '
-      + 'left alone, with the reason.'),
+      'Exact match on the version in use. An app on another version of the same major line is offered the build '
+      + 'as a version change (off by default); across a major version it is left alone, with the reason.'),
     hop(2, 3, '6', 'Impact', 'Playbook',
       'Servers by environment, QA first, and a note for the reviewer.'),
     up(3, '7', 'Playbook', 'LLM',
@@ -8148,6 +8178,35 @@ function flowSVG(f, demo = false) {
 // scrim moving under you would be the drawer arguing with itself.
 let flowSide = 'infra';
 
+// The Lightwell calls the code makes, under the drawings of the two application tabs.
+const FLOW_LW_APIS = {
+  appv2: [
+    ['POST sso.redhat.com/…/openid-connect/token', 'The service-account token (client credentials) every API call carries.',
+     'scanner/lightwell.py · LightwellApiCatalog'],
+    ['GET /api/lightwell/v0.1/advisories?package_name=&package_version=',
+     'The CVEs an exact build fixes (Intake), and the builds the apps need: catalog, Telco estate, osv.dev rows.',
+     'lightwell_fixed_cves · appv2.catalog(\'mine\')'],
+    ['GET /api/lightwell/v0.1/package_versions',
+     'The whole remediated catalog a page at a time, and every Lightwell build of one package, for a version change.',
+     'appv2.catalog(\'all\') · package_facts'],
+    ['packages.redhat.com/lightwell/java/remediated/ (Maven repository, not the API)',
+     'The jars and their .provenance.sigstore.json bundles. Nexus proxies it with the registry service account; hosts never call it.',
+     'nexus-setup/ · app_v2_commit.yml'],
+  ],
+  app: [
+    ['POST sso.redhat.com/…/openid-connect/token', 'The service-account token every API call carries.',
+     'scanner/lightwell.py · LightwellApiCatalog'],
+    ['GET /api/lightwell/v0.1/advisories', 'Whether Lightwell fixes each scanned package version, and which CVEs.',
+     'LightwellApiCatalog.check'],
+    ['GET /api/lightwell/v0.1/package_versions', 'Every Lightwell build of a package: the nearest build at another version.',
+     'package_facts · package_view'],
+    ['GET /api/lightwell/v0.1/repositories', 'The repositories this account can see (the catalog panel).',
+     'LightwellApiCatalog.facts'],
+    ['packages.redhat.com/lightwell/java/remediated/ (Maven repository)', 'Where the rebuilt app resolves the remediated jars from.',
+     'app_clone_update_build.yml'],
+  ],
+};
+
 function renderFlow() {
   const seg = document.getElementById('flow-toggle');
   seg.dataset.pane = flowSide;
@@ -8160,7 +8219,11 @@ function renderFlow() {
   body.innerHTML = `<h3 class="fd-mode">Live mode <span>every box is a real component</span></h3>${flowSVG(f)}
     <h3 class="fd-mode">Demo mode <span>greyed boxes are not contacted</span></h3>${flowSVG(f, true)}
     <p class="fd-cap"><strong>In demo mode nothing greyed out is contacted:</strong> the console answers with
-    staged data, so a run needs no cluster. ${FLOW_DEMO[flowSide] || FLOW_DEMO.infra}</p>`;
+    staged data, so a run needs no cluster. ${FLOW_DEMO[flowSide] || FLOW_DEMO.infra}</p>`
+    + (FLOW_LW_APIS[flowSide] ? `<h3 class="fd-mode">Lightwell APIs used <span>what the code calls, and where</span></h3>
+      <table class="fd-api"><thead><tr><th>Call</th><th>What for</th><th>Code</th></tr></thead><tbody>
+      ${FLOW_LW_APIS[flowSide].map(([c, w, where]) => `<tr><td class="mono">${esc(c)}</td><td>${esc(w)}</td>
+        <td class="mono muted-sm">${esc(where)}</td></tr>`).join('')}</tbody></table>` : '');
   flowFit(body);
 }
 

@@ -4162,6 +4162,12 @@ def lightwell_get(path: str, **params) -> dict:
     return _lightwell_catalog()._get(path, **params)
 
 
+def lightwell_builds(group: str, artifact: str) -> list[dict]:
+    """Applications v2: every Lightwell build of one package, best build per upstream version (/package_versions,
+    through the scanner's client), for offering a build of another version."""
+    return _lightwell_catalog().package_facts('maven', f'{group}:{artifact}').get('remediated') or []
+
+
 def osv_lookup(queries: list) -> dict:
     """Applications v2: osv.dev advisories for [(ecosystem, name, version)], through the scanner's client (live) or
     its saved answers (lightwell/demo/osv.json, demo). Same summaries v1's scan shows."""
@@ -4212,7 +4218,7 @@ def app_history_add(store: str, path: Path) -> None:
 appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
-                rag_add=app_history_add, osv_lookup=osv_lookup)
+                rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()

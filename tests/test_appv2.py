@@ -93,11 +93,42 @@ class Impact(unittest.TestCase):
 
     def test_exact_version_only(self):
         imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
-        self.assertEqual(imp['apps'], ['workflow-engine'])
-        self.assertEqual([t['site'] for t in imp['targets']], ['lab', 'edge-site-1', 'core-dc-1', 'core-dc-2'])
+        exact = [t for t in imp['targets'] if not t.get('version_change')]
+        self.assertEqual({t['app'] for t in exact}, {'workflow-engine'})
+        self.assertEqual([t['site'] for t in exact], ['lab', 'edge-site-1', 'core-dc-1', 'core-dc-2'])
         self.assertEqual(imp['targets'][0]['env'], 'qa')                      # the lab first, then BOM order
         self.assertEqual(imp['targets'][0]['domain'], 'NFVO / MANO')
-        self.assertEqual([o['app'] for o in imp['other']], ['inventory-service'])  # mina-core 2.1.6, left alone
+        self.assertEqual(imp['other'], [])
+
+    def test_older_version_on_the_same_line_is_a_version_change(self):
+        imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
+        vc = [t for t in imp['targets'] if t.get('version_change')]
+        self.assertEqual([(t['app'], t['installed'], t['to_version']) for t in vc],
+                         [('inventory-service', '2.1.6', '2.2.5')] * 2)
+        self.assertEqual(imp['targets'][-1]['key'], vc[-1]['key'])            # after the exact matches
+
+    def test_other_major_or_newer_is_left_alone(self):
+        ev = self.ev('mina-core')
+        bom = [{'app': a, 'servers': [{'host': 'h', 'env': 'qa'}],
+                'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': v}]}
+               for a, v in (('old-major', '1.1.7'), ('newer', '2.2.8'))]
+        imp = appv2.impact(ev, bom)
+        self.assertEqual(imp['targets'], [])
+        self.assertEqual({o['app']: o['why'].split(';')[0] for o in imp['other']},
+                         {'old-major': 'major version 1', 'newer': 'newer than 2.2.5'})
+
+    def test_version_changes_are_opt_in(self):
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate()
+        st = wait_for({'generated'})
+        self.assertNotIn('inventory-service|lab', st['selected'])
+        self.assertEqual([p['app'] for p in st['playbooks']], ['workflow-engine'])
+        appv2.reset(); demo()
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate(['inventory-service|lab'])
+        pb = wait_for({'generated'})['playbooks'][0]
+        self.assertEqual((pb['app'], pb['changes'][0]['old_jar'], pb['changes'][0]['new_jar']),
+                         ('inventory-service', 'mina-core-2.1.6.jar', 'mina-core-2.2.5.rhlw-00002.jar'))
 
     def test_lab_sites_first_across_apps(self):
         imp = appv2.impact(self.ev('zookeeper'), appv2.load_bom())
@@ -245,7 +276,7 @@ class DemoRun(unittest.TestCase):
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
+        self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 2})
         self.assertEqual(st['stages']['verify'], 'failed')
         # core-dc-2 rolled back, so workflow-engine's BOM stays on 2.2.5.
         self.assertNotIn('workflow-engine|org.apache.mina:mina-core', appv2._BOM_UPDATES)
@@ -715,6 +746,25 @@ class Extras(unittest.TestCase):
         self.assertEqual(len(r['advisories']), 6)
         self.assertIn('2.1 line', r['reasoning'])
 
+    def test_lightwell_build_of_a_newer_version_is_a_second_option(self):
+        with_osv()
+        r = self.rows()['inventory-service|org.apache.mina:mina-core']
+        self.assertEqual([(o['source'], o['to'], o['version_change']) for o in r['options']],
+                         [('upstream', '2.1.13', False), ('lightwell', '2.2.5.rhlw-00002', True)])
+        self.assertEqual(r['default'], 0)                 # a patch release on the same minor line wins by default
+        self.assertEqual(r['options'][1]['cves'], ['CVE-2026-41635'])
+
+    def test_other_version_of_the_fix_library_gets_options_not_still_open(self):
+        with_osv()
+        rows = self.rows('evt-mina-core')
+        self.assertEqual(rows['workflow-engine|org.apache.mina:mina-core']['kind'], 'residual')
+        r = rows['inventory-service|org.apache.mina:mina-core']
+        self.assertTrue(r['selectable'])
+        self.assertEqual([o['to'] for o in r['options']], ['2.1.13', '2.2.5.rhlw-00002'])
+        appv2.start_generate(['inventory-service|lab'], ['inventory-service|org.apache.mina:mina-core'])
+        changes = wait_for({'generated'})['playbooks'][0]['changes']
+        self.assertEqual([(c['artifact'], c['to']) for c in changes], [('mina-core', '2.1.13')])   # one change per library
+
     def test_lightwell_build_preferred_and_its_cves_removed(self):
         with_osv()
         r = self.rows()['workflow-engine|org.springframework.security:spring-security-web']
@@ -770,6 +820,15 @@ class MultiJar(unittest.TestCase):
         self.assertIn('/maven2/org/apache/mina/mina-core/2.1.13/', text)        # upstream, not the Lightwell repo
         self.assertTrue(all(c['ok'] for c in appv2.check_playbook(text, text)))
         self.assertEqual(st['extra_selected'], ['inventory-service|org.apache.mina:mina-core'])
+
+    def test_the_chosen_option_decides_the_jar(self):
+        appv2.start_generate(None, ['inventory-service|org.apache.mina:mina-core::1', 'inventory-service|org.apache.mina:mina-core::9'])
+        st = wait_for({'generated'})
+        self.assertEqual(st['extra_selected'], ['inventory-service|org.apache.mina:mina-core::1'])   # ::9 does not exist
+        c = next(p for p in st['playbooks'] if p['app'] == 'inventory-service')['changes'][1]
+        self.assertEqual((c['source'], c['to'], c['version_change']), ('lightwell', '2.2.5.rhlw-00002', True))
+        self.assertIn('/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00002/', c['url'])
+        self.assertTrue(c['provenance_url'].endswith('.provenance.sigstore.json'))
 
     def test_extra_for_an_unselected_app_is_dropped(self):
         appv2.start_generate(['workflow-engine|lab'], ['inventory-service|org.apache.mina:mina-core'])

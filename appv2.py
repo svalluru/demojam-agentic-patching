@@ -73,6 +73,7 @@ class _Hooks:
     rag_add: Callable[[str, Path], None] | None = None          # (vector store id, file) -> added to the store
     lightwell_get: Callable[..., dict] | None = None            # (path, **params) -> Lightwell API body
     osv_lookup: Callable[[list], dict] | None = None             # [(ecosystem, name, version)] -> {key: [advisory]}
+    lightwell_builds: Callable[[str, str], list] | None = None   # (group, artifact) -> [{version, build}], every version
 
 
 H = _Hooks()
@@ -197,6 +198,12 @@ DEMO_ESTATE = {
                      'upstream npm updates and the WAF; no action from this console.'),
 }
 
+
+# The Reasoning line for a version change offered in Impact, in demo mode, per app.
+DEMO_VERSION_CHANGE = {
+    'inventory-service': 'Version change 2.1.6 → 2.2.5: the 2.2 API broke its SFTP export last time (2026-03-03). Leave '
+                         'it unticked unless the app team has re-tested; the osv.dev row offers upstream 2.1.13 instead.',
+}
 
 # What the reasoning says about each osv.dev package in demo mode (live: the app history store plus the LLM).
 # Keyed app|group:artifact. The advisories and fix versions themselves are real (osv.dev, 2026-11-09).
@@ -427,9 +434,10 @@ _BOM_UPDATES: dict[str, str] = {}
 def impact(event: dict, apps: list[dict]) -> dict:
     """Which deployed apps and servers run the vulnerable version this build replaces.
 
-    Exact match on group, artifact and version: a Lightwell build fixes one upstream version, and an
-    app on any other version of the same library is not helped by it. Those are listed apart, so a
-    reviewer can see the library is there and why it was left alone."""
+    Exact match on group, artifact and version: a Lightwell build fixes one upstream version. An app on an older
+    version of the same major line is offered the build too, as a version change (version_change: True), which
+    the operator opts into: it moves the app to another version, not just a patched copy of its own. Anything
+    else is listed apart, so a reviewer can see the library is there and why it was left alone."""
     want = upstream(event['version'])
     targets, other = [], []
     for app in apps:
@@ -438,22 +446,30 @@ def impact(event: dict, apps: list[dict]) -> dict:
                 continue                   # a Python or npm library is never the same package as a Maven build
             if (dep.get('group'), dep.get('artifact')) != (event['group'], event['artifact']):
                 continue
-            if dep.get('version') == want:
+            change = (dep.get('version') != want and dep.get('version') != event['version']
+                      and _major(dep.get('version', '')) == _major(want)
+                      and _vkey(dep.get('version', '')) < _vkey(want))
+            if dep.get('version') == want or change:
                 for order, s in enumerate(app.get('servers', [])):
                     targets.append({'key': f"{app['app']}|{s['host']}", 'domain': app.get('domain', ''), 'order': order,
                                     'site': s.get('site', s['host']),
                                     'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
                                     'env': s.get('env', 'prod'), 'path': app.get('path', ''),
                                     'service': app.get('service', app['app']),
-                                    'health_url': app.get('health_url', ''), 'installed': dep['version']})
+                                    'health_url': app.get('health_url', ''), 'installed': dep['version'],
+                                    **({'version_change': True, 'to_version': want} if change else {})})
             elif dep.get('version') == event['version']:
                 other.append({'app': app['app'], 'installed': dep['version'], 'why': 'already on this build'})
+            elif _major(dep.get('version', '')) != _major(want):
+                other.append({'app': app['app'], 'installed': dep.get('version', ''),
+                              'why': f'major version {_major(dep.get("version", ""))}; this build is for {want}, a code change away'})
             else:
                 other.append({'app': app['app'], 'installed': dep.get('version', ''),
-                              'why': f'different version; this build replaces {want} only'})
+                              'why': f'newer than {want}; this build would be a downgrade'})
     # QA first, so a bad build shows up where it costs least.
     # The lab first, so a bad build shows up where it costs least; then each app's sites in the order its BOM lists.
-    targets.sort(key=lambda t: (t['env'] != 'qa', t['app'], t['order']))
+    # Exact matches before version changes, which are opt-in.
+    targets.sort(key=lambda t: (bool(t.get('version_change')), t['env'] != 'qa', t['app'], t['order']))
     return {'targets': targets, 'other': other, 'apps': sorted({t['app'] for t in targets})}
 
 
@@ -508,7 +524,9 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     the server, then one LLM call that writes a line per row. A row with no records says so; nothing is
     invented for it."""
     if H.demo_mode():
-        return ({t['key']: DEMO_REASONING.get(t['key'], 'No earlier changes recorded for this app on this server.')
+        return ({t['key']: (DEMO_VERSION_CHANGE.get(t['app'], 'A version change: verify the app against the new API first.')
+                            if t.get('version_change') else
+                            DEMO_REASONING.get(t['key'], 'No earlier changes recorded for this app on this server.'))
                  for t in targets}, 'staged')
     store = env('APP_VECTOR_DB_ID')
     if not store or not H.rag_search:
@@ -525,10 +543,14 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     if not excerpts:
         return out, 'rag'
     keys = list(excerpts)
+    # A version change is a different risk from a patched copy of the same version: say so, so the line can weigh
+    # the API change against the history.
+    vc = {t['key']: f" (VERSION CHANGE {t['installed']} -> {t.get('to_version', '')}: the app moves to another version)"
+          for t in targets if t.get('version_change')}
     prompt = ('For each numbered app and server below, write ONE short sentence (at most 25 words) a reviewer needs '
               'before a library jar is swapped and the service restarted: timing, past failures, traffic windows. Use only the '
               'records given. Answer as JSON, {"1": "...", "2": "..."}, and nothing else.\n\n'
-              + '\n\n'.join(f"{i + 1}. {k.replace('|', ' on ')}\n{excerpts[k]}" for i, k in enumerate(keys)))
+              + '\n\n'.join(f"{i + 1}. {k.replace('|', ' on ')}{vc.get(k, '')}\n{excerpts[k]}" for i, k in enumerate(keys)))
     try:
         answer = H.llm(prompt) if H.llm else ''
         parsed = json.loads(re.search(r'\{.*\}', answer, re.S).group(0))
@@ -594,6 +616,46 @@ def _lightwell_builds_uncached() -> dict[tuple[str, str, str], dict]:
     return out
 
 
+def lightwell_builds(group: str, artifact: str) -> list[dict]:
+    """Every Lightwell build of one package, best build per upstream version: [{version, build, cves?}].
+    Live: the Lightwell API (/package_versions, through the scanner's client). Demo: the saved builds."""
+    if H.demo_mode():
+        try:
+            saved = json.loads((ROOT / 'lightwell' / 'demo' / 'lightwell_catalog.json').read_text()).get('entries') or []
+        except (OSError, ValueError):
+            saved = []
+        best: dict[str, dict] = {}
+        for e in ([{'name': f"{x['group']}:{x['artifact']}", 'build': x['version'], 'cves': x['cves'], 'status': 'remediated'}
+                   for x in DEMO_EVENTS] + DEMO_CATALOG_EXTRA + saved):
+            if e.get('name') != f'{group}:{artifact}' or e.get('status') != 'remediated' or not RHLW.match(e.get('build') or ''):
+                continue
+            up, cur = upstream(e['build']), best.get(upstream(e['build']))
+            if cur is None or int(RHLW.match(e['build']).group('build')) > int(RHLW.match(cur['build']).group('build')):
+                best[up] = {'version': up, 'build': e['build'], 'cves': list(e.get('cves') or [])}
+        return sorted(best.values(), key=lambda x: _vkey(x['version']))
+    if not H.lightwell_builds:
+        return []
+    return H.lightwell_builds(group, artifact) or []
+
+
+def _lightwell_newer(group: str, artifact: str, base: str) -> dict | None:
+    """The nearest Lightwell build of a newer version on the same major line, with the CVEs it fixes."""
+    try:
+        cands = [b for b in lightwell_builds(group, artifact)
+                 if _major(b['version']) == _major(base) and _vkey(b['version']) > _vkey(base)]
+    except Exception:
+        return None
+    if not cands:
+        return None
+    pick = dict(min(cands, key=lambda b: _vkey(b['version'])))
+    if not pick.get('cves') and H.fixed_cves and not H.demo_mode():
+        try:
+            pick['cves'] = sorted(H.fixed_cves(group, artifact, pick['build']))
+        except Exception:
+            pick['cves'] = []
+    return pick
+
+
 def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
     """{'rows', 'source', 'error'}: the open osv.dev advisories on the apps in this impact, one row per app and
     library, with the proposed change. Never raises: osv.dev being down leaves the run as it was."""
@@ -618,7 +680,10 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
         coord = f"{dep['group']}:{dep['artifact']}"
         base = upstream(dep['version'])
         advisories = answers.get(('Maven', coord, base)) or []
-        mine = dep['artifact'] == event['artifact'] and dep['group'] == event['group']
+        # The event's own library at the version it replaces: what is left open after it is information. On any
+        # other version the build does not apply as is, so the library gets the usual options.
+        mine = (dep['artifact'] == event['artifact'] and dep['group'] == event['group']
+                and upstream(dep['version']) == upstream(event['version']))
         build = lw.get((dep['group'], dep['artifact'], base))
         # What Lightwell fixes for this library: the event's own build, the build already installed, or another
         # Lightwell build of the same version.
@@ -647,17 +712,38 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
                 if fix_all else f'Still open after the Lightwell build: {len(open_)} advisory(ies), no fix published.'))
         elif build and not is_lightwell(dep['version']):
             row.update(kind='lightwell', to=build['build'], source='lightwell', selectable=True,
+                       options=[{'source': 'lightwell', 'to': build['build'], 'version_change': False,
+                                 'cves': list(build['cves'])}], default=0,
                        why=f"Lightwell build of the same version fixes {', '.join(build['cves'])}.")
-        elif fix_all and _major(fix_all) == _major(base):
-            row.update(kind='upstream', to=fix_all, source='upstream', selectable=True,
-                       why=f'No Lightwell build at {base}; upstream {fix_all} clears every advisory on the same line.')
-        elif fix_all:
-            row.update(kind='major', to=fix_all,
-                       why=f'Only fixed in {fix_all}, a major upgrade: a code change for the app team, not a jar swap.')
         else:
-            row.update(kind='none', why='No fixed version published yet.')
+            # No Lightwell build of this version. Up to two ways forward on the same major line: the upstream fix,
+            # and a Lightwell build of a newer version (Red Hat provenance, but a version change).
+            opts = []
+            if fix_all and _major(fix_all) == _major(base):
+                opts.append({'source': 'upstream', 'to': fix_all, 'version_change': fix_all.split('.')[:2] != base.split('.')[:2],
+                             'cves': [a.get('cve') or a.get('id') for a in open_]})
+            alt = _lightwell_newer(dep['group'], dep['artifact'], base)
+            if alt:
+                opts.append({'source': 'lightwell', 'to': alt['build'], 'version_change': True, 'cves': alt['cves']})
+            if opts:
+                # The upstream fix by default when it is a patch release on the same minor line (no API change);
+                # otherwise the Lightwell build.
+                default = 0 if opts[0]['source'] == 'upstream' and not opts[0]['version_change'] else len(opts) - 1
+                pick = opts[default]
+                row.update(kind='upstream' if pick['source'] == 'upstream' else 'lightwell_vc', to=pick['to'],
+                           source=pick['source'], selectable=True, options=opts, default=default,
+                           why=('; '.join(
+                               (f"upstream {o['to']} clears every advisory" + (' (a minor version change)' if o['version_change'] else ' on the same minor line'))
+                               if o['source'] == 'upstream' else
+                               f"Lightwell has {o['to']}, a version change from {base}, fixing {', '.join(o['cves']) or 'its listed CVEs'}"
+                               for o in opts) + f'. No Lightwell build at {base}.'))
+            elif fix_all:
+                row.update(kind='major', to=fix_all,
+                           why=f'Only fixed in {fix_all}, a major upgrade: a code change for the app team, not a jar swap.')
+            else:
+                row.update(kind='none', why='No fixed version published yet.')
         rows.append(row)
-    order = {'lightwell': 0, 'upstream': 1, 'major': 2, 'residual': 3, 'none': 4}
+    order = {'lightwell': 0, 'upstream': 1, 'lightwell_vc': 1, 'major': 2, 'residual': 3, 'none': 4}
     rows.sort(key=lambda r: (order[r['kind']], -max([a['score'] or 0 for a in r['advisories']] or [0]), r['app']))
     notes, rsource = extras_reasoning(rows)
     for r in rows:
@@ -678,7 +764,8 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
     if not rows:
         return {}, 'none'
     if H.demo_mode():
-        return {r['id']: DEMO_EXTRA_REASONING.get(r['id'], r['why']) for r in rows}, 'staged'
+        return {r['id']: (r['why'] if r['kind'] == 'residual' else DEMO_EXTRA_REASONING.get(r['id'], r['why']))
+                for r in rows}, 'staged'
     store = env('APP_VECTOR_DB_ID')
     excerpts = {}
     if store and H.rag_search:
@@ -694,11 +781,17 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
         if r['kind'] == 'lightwell':
             what = (f"proposed: Lightwell build {r['to']} (same version, Red Hat provenance). It fixes these CVEs that "
                     f"are open on the app today: {', '.join(r['lightwell_covers']) or 'none listed'}. Still open after it: {sev}.")
-        elif r['kind'] == 'upstream':
-            same_minor = upstream(r['installed']).split('.')[:2] == r['to'].split('.')[:2]
-            line = (f"a patch release on the same {'.'.join(r['to'].split('.')[:2])} line" if same_minor
-                    else 'the same major line, a minor version change')
-            what = f"open today: {sev}. Proposed: upstream {r['to']}, {line}, which fixes all of them."
+        elif r['kind'] in ('upstream', 'lightwell_vc'):
+            def opt(o: dict) -> str:
+                if o['source'] == 'upstream':
+                    same_minor = upstream(r['installed']).split('.')[:2] == o['to'].split('.')[:2]
+                    return (f"upstream {o['to']}, " + (f"a patch release on the same {'.'.join(o['to'].split('.')[:2])} line"
+                            if same_minor else 'a minor version change') + ', fixing all of them')
+                return (f"Lightwell build {o['to']} (Red Hat provenance), a version change from {upstream(r['installed'])}, "
+                        f"fixing {', '.join(o['cves']) or 'its listed CVEs'}")
+            options = r.get('options') or []
+            what = (f"open today: {sev}. Options: " + '; or '.join(opt(o) for o in options)
+                    + f". Proposed by default: {r['to']}. Say which option you would take.")
         else:
             what = f"open today: {sev}. {r['why']} Not offered in this change."
         return f"{r['app']} (sites {', '.join(r['sites'])}): {r['artifact']} {r['installed']}. {what}"
@@ -744,19 +837,23 @@ def change_for_event(event: dict, target: dict) -> dict:
     url = jar_url(event)
     return {'group': event['group'], 'artifact': event['artifact'], 'from': target['installed'],
             'to': event['version'], 'source': 'lightwell', 'cves': list(event.get('cves') or []),
+            'version_change': upstream(event['version']) != upstream(target['installed']),
             'old_jar': jar_name(event['artifact'], target['installed']), 'new_jar': jar_name(event['artifact'], event['version']),
             'url': url, 'provenance_url': url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json'}
 
 
-def change_for_extra(row: dict) -> dict:
-    """An osv.dev row the operator selected: a Lightwell build (provenance checked) or an upstream release (Maven
-    Central's sha1 checked)."""
-    lw = row['source'] == 'lightwell'
-    url = maven_url(row['group'], row['artifact'], row['to'],
+def change_for_extra(row: dict, option: int | None = None) -> dict:
+    """An osv.dev row the operator selected, with the option chosen (the row's default when None): a Lightwell build
+    (provenance checked) or an upstream release (Maven Central's sha1 checked)."""
+    opts = row.get('options') or [{'source': row['source'], 'to': row['to'], 'version_change': False,
+                                   'cves': row['lightwell_covers'] if row['source'] == 'lightwell' else [a['id'] for a in row['advisories']]}]
+    o = opts[option if option is not None and 0 <= option < len(opts) else row.get('default', 0)]
+    lw = o['source'] == 'lightwell'
+    url = maven_url(row['group'], row['artifact'], o['to'],
                     env('NEXUS_REPOSITORY', 'lightwell-remediated') if lw else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central'))
-    out = {'group': row['group'], 'artifact': row['artifact'], 'from': row['installed'], 'to': row['to'],
-           'source': row['source'], 'cves': (row['lightwell_covers'] if lw else [a['id'] for a in row['advisories']]),
-           'old_jar': jar_name(row['artifact'], row['installed']), 'new_jar': jar_name(row['artifact'], row['to']),
+    out = {'group': row['group'], 'artifact': row['artifact'], 'from': row['installed'], 'to': o['to'],
+           'source': o['source'], 'version_change': bool(o.get('version_change')), 'cves': list(o.get('cves') or []),
+           'old_jar': jar_name(row['artifact'], row['installed']), 'new_jar': jar_name(row['artifact'], o['to']),
            'url': url}
     out['provenance_url' if lw else 'sha1_url'] = (url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json') if lw else url + '.sha1'
     return out
@@ -1274,13 +1371,21 @@ def start_generate(targets: list[str] | None = None, extra: list[str] | None = N
         if _RUN.get('status') != 'assessed':
             return 409, {'ok': False, 'error': 'assess an event first'}
         known = [t['key'] for t in _RUN['impact']['targets']]
-        chosen = known if targets is None else [k for k in known if k in set(targets)]
+        # By default only exact matches: a version change is something the operator ticks.
+        chosen = ([t['key'] for t in _RUN['impact']['targets'] if not t.get('version_change')] if targets is None
+                  else [k for k in known if k in set(targets)])
         if not chosen:
             return 400, {'ok': False, 'error': 'select at least one site'}
         _RUN['selected'] = chosen
         apps = {k.split('|', 1)[0] for k in chosen}
-        offered = {r['id'] for r in ((_RUN['impact'].get('extra') or {}).get('rows') or []) if r['selectable']}
-        _RUN['extra_selected'] = [x for x in (extra or []) if x in offered and x.split('|', 1)[0] in apps]
+        offered = {r['id']: len(r.get('options') or [1]) for r in ((_RUN['impact'].get('extra') or {}).get('rows') or [])
+                   if r['selectable']}
+        picked = []
+        for x in extra or []:                # "row id" for its default option, or "row id::option index"
+            rid, _, opt = x.partition('::')
+            if rid in offered and rid.split('|', 1)[0] in apps and (not opt or (opt.isdigit() and int(opt) < offered[rid])):
+                picked.append(x)
+        _RUN['extra_selected'] = picked
         _RUN['status'] = 'generating'
     _persist()
     threading.Thread(target=_generate, daemon=True, name='appv2-generate').start()
@@ -1301,8 +1406,13 @@ def _generate() -> None:
             if target is None:
                 continue                     # none of its sites selected: nothing to prepare
             rows = {r['id']: r for r in ((imp.get('extra') or {}).get('rows') or [])}
-            changes = [change_for_event(ev, target)] + [change_for_extra(rows[x]) for x in st.get('extra_selected') or []
-                                                         if x in rows and rows[x]['app'] == app]
+            chosen = [(x.partition('::')[0], x.partition('::')[2]) for x in st.get('extra_selected') or []]
+            extra_changes = [change_for_extra(rows[rid], int(opt) if opt else None)
+                             for rid, opt in chosen if rid in rows and rows[rid]['app'] == app]
+            # One change per library: an osv.dev choice on the fix's own library (an app on another version of it)
+            # stands in for the fix there.
+            same = {(c['group'], c['artifact']) for c in extra_changes}
+            changes = ([] if (ev['group'], ev['artifact']) in same else [change_for_event(ev, target)]) + extra_changes
             _trace('intake', 'playbook', f'draft for {app}' + (f' ({len(changes)} jars)' if len(changes) > 1 else ''))
             if H.llm and not H.demo_mode():
                 _trace('playbook', 'llm', f'draft for {app}')
@@ -1538,6 +1648,8 @@ def _learn(st: dict) -> None:
     pbs = {p['app']: p for p in st.get('playbooks') or []}
     for app in st['impact']['apps']:
         mine = [h for h in st['hosts'] if h['app'] == app and h['outcome'] != 'skipped']
+        if not mine:
+            continue                         # none of its sites was in this run: nothing to say about its BOM
         changes = (pbs.get(app) or {}).get('changes') or [{'group': ev['group'], 'artifact': ev['artifact'],
                                                           'to': ev['version'], 'from': upstream(ev['version'])}]
         if mine and all(h['outcome'] == 'patched' for h in mine):
@@ -1593,7 +1705,8 @@ def write_report(st: dict) -> dict:
         doc.text('Change list', size=11, bold=True)
         doc.gap(2)
         doc.table(['App', 'Library', 'From', 'To', 'Source', 'Checked by'],
-                  [[a, c['artifact'], c['from'], c['to'], 'Lightwell' if c['source'] == 'lightwell' else 'Upstream (osv.dev)',
+                  [[a, c['artifact'], c['from'], c['to'],
+                    ('Lightwell' if c['source'] == 'lightwell' else 'Upstream (osv.dev)') + (', version change' if c.get('version_change') else ''),
                     'cosign provenance' if c['source'] == 'lightwell' else 'Maven Central sha1'] for a, c in changes],
                   [90, 90, 70, 100, 80, 69])
         doc.gap(8)

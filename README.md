@@ -475,7 +475,9 @@ v2 tab with the numbered diagram; this is the same thing in text.
    come from the Lightwell advisories API for that exact build.
 2. **Impact.** The app BOMs (`app-data/bom/*.json`) say which apps, on
    which servers, run the upstream version the build replaces. Exact match
-   only: an app on another version is listed as left alone, with the reason.
+   only, plus one opt-in: an app on an older version of the same major line is offered the build as a **version
+   change** (a Version change chip, unticked by default). Other majors, and newer versions, are left alone with
+   the reason.
    Each app and server gets a **Reasoning** line: the agent searches the app
    history store (`APP_VECTOR_DB_ID`, from `app-data/history/`) for past
    changes to that app on that server, and the LLM writes one line per row. A
@@ -537,6 +539,7 @@ answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Light
 | Row | When | Offered |
 |---|---|---|
 | Lightwell build | Lightwell has a build of the same version | yes: Red Hat provenance, no version change |
+| Lightwell · version change | Lightwell has no build of this version but has one of a newer version on the same major line (`/package_versions`) | yes, as an option beside the upstream fix: the row's selector picks one. Upstream is the default when it is a patch release on the same minor line |
 | Upstream fix | no Lightwell build; the lowest release that clears every advisory is on the same major line | yes: from Nexus's `maven-central` proxy, checked against Maven Central's sha1 |
 | Major upgrade | the fix is only in a new major version | no: a code change for the app team |
 | Still open | the fix being applied leaves advisories open on its own library | no: information |
@@ -584,7 +587,7 @@ core-dc-2. Lightwell today is Java-led (about 1,000 remediated Maven
 packages, 7 Python, no npm), so impact ignores non-Maven dependencies and the
 estate shows them as not covered.
 
-**Telco estate** is two frames, Network then IT/OSS/BSS. Per app: domain, the
+**Telco estate** is two frames, Network then IT/OSS/BSS, each with an **App severity** column. Per app: domain, the
 Java/Python/JS mix (from the BOM's `languages`), the Lightwell fixes for the
 exact versions it runs (the catalog's "builds my apps need"), and a
 **Reasoning / Impact** column: a priority (CRITICAL, HIGH, MEDIUM, LOW) and a
@@ -592,6 +595,9 @@ note on what is critical, how patching affects the current setup and what
 else to watch. The note comes from the app history store and the LLM
 (`GET /api/v2/estate`), and is kept until the facts change or a run feeds
 the history. With no LLM it falls back to a rule on fixes and CVE count.
+
+**How to run** lists the Lightwell APIs the code calls (the SSO token, `/advisories`, `/package_versions`, and the
+Maven repository Nexus proxies), what each is for and where in the code.
 
 #### Where things live
 
