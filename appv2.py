@@ -1226,6 +1226,8 @@ def reset() -> None:
         _RUN.clear()
         _RUN['status'] = 'idle'
         _DEMO_RUNS.clear()          # demo history is memory only; it goes with the demo
+    for cache in ('_MINE_CACHE', '_LW_BUILDS', '_ESTATE_CACHE'):   # demo and live answers never mix
+        globals()[cache].clear()
     EVENTS = None
     _persist()
 
@@ -1980,6 +1982,9 @@ def _installed() -> dict[tuple[str, str], dict[str, list[str]]]:
     return out
 
 
+_MINE_CACHE: dict[str, Any] = {}
+
+
 def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
     """Remediated builds Lightwell publishes, each marked with the deployed apps it would fix.
 
@@ -2010,10 +2015,16 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
     elif not H.lightwell_get:
         return {'ok': False, 'error': 'Lightwell API not configured (LIGHTWELL_CLIENT_ID / _SECRET)'}
     elif scope == 'mine':
-        for (group, artifact), versions in sorted(inst.items()):
-            for version in versions:
-                body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}',
-                                       package_version=version, limit=100)
+        # One /advisories call per library version the apps run: asked side by side, and kept for 10 minutes (the
+        # estate, the osv.dev rows and the catalog all read it).
+        key = json.dumps(sorted((g, a, sorted(v)) for (g, a), v in inst.items()))
+        hit = _MINE_CACHE.get('v')
+        if hit and hit[0] == key and time.time() - hit[1] < 600:
+            found = hit[2]
+        else:
+            def ask(gav: tuple[str, str, str]) -> list[tuple[str, str, str, list]]:
+                group, artifact, version = gav
+                body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}', package_version=version, limit=100)
                 builds: dict[str, set] = {}
                 for adv in body.get('data') or []:
                     ids = {i for i in [adv.get('advisory_id', '')] + list(adv.get('aliases') or [])
@@ -2021,9 +2032,14 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
                     for b in adv.get('fixed_versions') or []:
                         if is_lightwell(b) and upstream(b) == version:
                             builds.setdefault(b, set()).update(ids)
-                for b, cves in sorted(builds.items()):
-                    rows.append({'group': group, 'artifact': artifact, 'build': b, 'upstream': version,
-                                 'cves': sorted(cves), 'affects': affects(group, artifact, b)})
+                return [(group, artifact, version, b, sorted(c)) for b, c in sorted(builds.items())]
+            gavs = [(g, a, v) for (g, a), vs in sorted(inst.items()) for v in vs]
+            with ThreadPoolExecutor(max_workers=min(8, len(gavs) or 1)) as pool:
+                found = [x for part in pool.map(ask, gavs) for x in part]
+            _MINE_CACHE['v'] = (key, time.time(), found)
+        for group, artifact, version, b, cves in found:
+            rows.append({'group': group, 'artifact': artifact, 'build': b, 'upstream': version,
+                         'cves': cves, 'affects': affects(group, artifact, b)})
         source = 'lightwell'
     else:
         body = H.lightwell_get('/package_versions', limit=size, offset=(page - 1) * size)

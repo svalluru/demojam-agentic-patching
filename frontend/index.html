@@ -2025,6 +2025,7 @@
              padding: 2px 8px; color: #fff; white-space: nowrap; }
   .v2-prio.critical { background: #a30000; } .v2-prio.high { background: var(--red); }
   .v2-prio.medium { background: #b08920; } .v2-prio.low { background: #8a8d90; }
+  .v2-estbar { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
   .v2-subframe { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
   .v2-subframe > table, .v2-subframe > .muted-sm { margin: 0 14px; width: calc(100% - 28px); }
   .v2-subframe > .muted-sm { margin-bottom: 12px; }
@@ -3579,8 +3580,12 @@ async function v2Load() {
     if (v2.view === 'catalog') await v2LoadCatalog();
     if (v2.view === 'runs') v2.runs = (await v2Fetch('/api/v2/runs')).runs || [];
     if (v2.view === 'estate') {
-      v2.estate = { loading: true }; v2Render();
-      try { v2.estate = await v2Fetch('/api/v2/estate'); } catch (e) { v2.estate = { error: e.message }; }
+      // The last estate stays on screen while a fresh one loads: the spinner only on the very first open.
+      const had = v2.estate && v2.estate.rows;
+      if (had) { v2.estate = { ...v2.estate, refreshing: true }; } else { v2.estate = { loading: true }; }
+      v2Render();
+      try { v2.estate = await v2Fetch('/api/v2/estate'); }
+      catch (e) { v2.estate = had ? { ...v2.estate, refreshing: false, stale: e.message } : { error: e.message }; }
     }
   } catch (e) {
     document.getElementById('v2-body').innerHTML =
@@ -3991,13 +3996,22 @@ function v2Estate(c) {
       <td class="v2-reason">${esc(r.note || '')}</td></tr>`).join('')}</tbody></table>`;
   const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
     App severity weighs what the app touches, whether a Lightwell fix exists, and how hard the restart is.</div>`;
-  const rows = c.rows || [];
-  return `<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
+  const RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  const sorted = list => v2.estateSort === 'severity'
+    ? [...list].sort((a, b) => (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9) || a.app.localeCompare(b.app)) : list;
+  const rows = sorted(c.rows || []);
+  const bar = `<div class="v2-estbar"><span class="muted-sm">Sort by</span>
+      <button class="pill ${v2.estateSort !== 'severity' ? 'active' : ''}" data-v2-sort="domain">Domain</button>
+      <button class="pill ${v2.estateSort === 'severity' ? 'active' : ''}" data-v2-sort="severity">App severity</button>
+      ${c.refreshing ? '<span class="muted-sm">refreshing…</span>' : c.stale ? `<span class="muted-sm">could not refresh: ${esc(c.stale)}</span>` : ''}</div>`;
+  return `${bar}<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
     <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">billing, inventory, customer channels</span></div>
     ${table(rows.filter(r => r.group !== 'network'))}${foot}</div>`;
 }
 
 document.getElementById('v2-body').addEventListener('click', async ev => {
+  const sortBtn = ev.target.closest('[data-v2-sort]');
+  if (sortBtn) { v2.estateSort = sortBtn.dataset.v2Sort; v2Render(); return; }
   const a = ev.target.closest('[data-v2-assess]');
   if (a) { v2.view = 'run'; v2Act('/api/v2/assess', { event_id: a.dataset.v2Assess }); return; }
   const d = ev.target.closest('[data-v2-decide]');

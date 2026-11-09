@@ -4935,6 +4935,15 @@ def serve(host: str, port: int) -> None:
         # Applications v2: ask Nexus for new Lightwell builds of what the apps run.
         threading.Thread(target=appv2.poller_loop, daemon=True, name='nexus-poller').start()
         print(f'  nexus poller: every {env("NEXUS_POLL_SECONDS")}s against {env("NEXUS_URL") or "(NEXUS_URL unset)"}')
+    if not demo_mode():
+        # Warm the Telco estate (Lightwell lookups, history searches, one LLM call) so the first click on the tab
+        # reads a cache instead of waiting for all of it.
+        def warm() -> None:
+            try:
+                appv2.estate()
+            except Exception as exc:
+                print(f'  apps v2: estate not warmed ({exc})')
+        threading.Thread(target=warm, daemon=True, name='appv2-estate-warm').start()
     print(f'  listening on http://{host}:{port}')
     server.serve_forever()
 
