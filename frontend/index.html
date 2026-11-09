@@ -3639,7 +3639,7 @@ function v2Render() {
   const t0 = evs.length ? Date.parse(evs[0].t) : 0;
   const since = e => { const d = Date.parse(e.t) - t0; return isNaN(d) ? '' : `+${Math.round(d / 1000)}s`; };
   document.getElementById('v2-trace').innerHTML =
-    `<div class="trace-k">Agent trace${evs.length ? `<span class="c">${evs.length}</span>` : ''}</div>`
+    `<div class="trace-k">Agent trace</div>`
     + (evs.length
       ? `<div class="trace-log">${evs.map((e, i) =>
           `<div class="${i === evs.length - 1 ? 'now' : ''}"><span class="t-time">${esc(since(e))}</span>`
@@ -4341,8 +4341,7 @@ function renderArch(s, A = INFRA_ARCH) {
        fill="${fill}" fill-opacity="${op}"></path></marker>`;
 
   return `<div>
-    <div class="side-k">Agent architecture${ev.length
-      ? `<span class="c">${esc(ev.length)} hops</span>` : ''}</div>
+    <div class="side-k">Agent architecture</div>
     <div class="arch">
       <svg viewBox="0 0 ${A.vb[0]} ${A.vb[1]}" role="img"
            aria-label="Agent architecture and the calls made so far">
@@ -4496,9 +4495,7 @@ function renderTrace(s) {
        </select>` : '';
 
   const html =
-    `<div class="trace-k">Agent trace${events.length
-      ? `<span class="c">${esc(shown.length)}${traceHost ? ` of ${events.length}` : ''}</span>`
-      : ''}${picker}</div>`
+    `<div class="trace-k">Agent trace${picker}</div>`
     + (events.length
       ? (shown.length
         ? `<div class="trace-log" id="trace-log">${shown.map((e, i) => {
