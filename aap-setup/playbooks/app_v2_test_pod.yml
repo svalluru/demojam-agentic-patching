@@ -33,7 +33,9 @@
     gitea_repo: lab-user/app_v2_playbooks
     lib: "{{ lib_json if lib_json is not string else (lib_json | from_json) }}"
     sums: "{{ sha256s_json if sha256s_json is mapping else (sha256s_json | from_json) }}"
-    run_name: "app-v2-{{ app }}-{{ run_id }}-{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=5) }}"
+    # One test per app per run: every site of the app in this run uses the same name, so the first site's execution
+    # creates the PipelineRun and the others find it (409) and wait on it instead of building the same image again.
+    run_name: "{{ ('app-v2-' ~ app ~ '-' ~ run_id) | lower | regex_replace('[^a-z0-9-]', '-') | truncate(63, true, '') | regex_replace('-+$', '') }}"
   tasks:
     - name: Check the inputs and the OpenShift credential
       ansible.builtin.assert:
@@ -58,10 +60,10 @@
         headers: { Authorization: "Bearer {{ ocp_token }}" }
         validate_certs: false
         body_format: json
-        status_code: [201]
+        status_code: [201, 409]
         body: >-
           {{ {'apiVersion': 'tekton.dev/v1', 'kind': 'PipelineRun',
-              'metadata': {'name': run_name | truncate(60, true, '') | regex_replace('[^a-z0-9-]', '-'),
+              'metadata': {'name': run_name,
                            'labels': {'app-v2/app': app, 'app-v2/run': run_id | string}},
               'spec': {'pipelineRef': {'name': 'app-v2-test'},
                        'params': [{'name': 'app', 'value': app},
@@ -76,9 +78,15 @@
       register: created
       no_log: true
 
+    - name: Note whether this site started the test or joined one already running
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Started PipelineRun ' ~ run_name if created.status == 201
+             else 'PipelineRun ' ~ run_name ~ ' already started by another site of ' ~ app ~ '; waiting on it' }}
+
     - name: Wait for it
       ansible.builtin.uri:
-        url: "{{ ocp_url }}/apis/tekton.dev/v1/namespaces/{{ ocp_ns }}/pipelineruns/{{ created.json.metadata.name }}"
+        url: "{{ ocp_url }}/apis/tekton.dev/v1/namespaces/{{ ocp_ns }}/pipelineruns/{{ run_name }}"
         headers: { Authorization: "Bearer {{ ocp_token }}" }
         validate_certs: false
       register: pr
@@ -101,7 +109,7 @@
           specVersion: "1.5"
           metadata:
             component: { type: application, name: "{{ app }}", version: "{{ run_id }}" }
-            properties: [{ name: "app-v2:pipelinerun", value: "{{ created.json.metadata.name }}" }]
+            properties: [{ name: "app-v2:pipelinerun", value: "{{ run_name }}" }]
           components: []
 
     - name: Fill in the components
@@ -138,7 +146,7 @@
           test_health: "{{ results.health | default('') }}"
           osv_open: "{{ results.osv_open | default('unknown') }}"
           osv_detail: "{{ results.osv_detail | default('') }}"
-          pipelinerun: "{{ created.json.metadata.name }}"
+          pipelinerun: "{{ run_name }}"
           test_reason: "{{ cond.message | default('') | truncate(300) }}"
           sbom_url: >-
             {{ (gitea_url ~ '/' ~ gitea_repo ~ '/src/branch/main/' ~ (playbook_filename | regex_replace('\.yml$', '.sbom.json')))
@@ -150,5 +158,5 @@
           - cond.status == 'True'
           - results.passed | default('false') == 'true'
         fail_msg: >-
-          The test in a pod did not pass ({{ created.json.metadata.name }}): {{ cond.message | default('') | truncate(200) }}
+          The test in a pod did not pass ({{ run_name }}): {{ cond.message | default('') | truncate(200) }}
           {{ results.health | default('') | truncate(300) }}
