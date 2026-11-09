@@ -862,11 +862,12 @@ class LiveTestNode(unittest.TestCase):
             appv2.time = time
 
     def test_evidence_is_kept(self):
-        st, inputs = self.run_with('completed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'True',
-                                                 'osv_open': '5', 'test_health': '{"status": "UP"}'})
+        st, inputs = self.run_with('completed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'True', 'osv_open': 5,
+                                                 'test_health': {'status': 'UP', 'jars': {'mina-core': 'm.jar'}}})
         h = st['hosts'][0]
         self.assertEqual((h['outcome'], h['steps']['test']), ('patched', 'done'))
         self.assertEqual((h['test']['pipelinerun'], h['test']['passed'], h['test']['osv_open']), ('app-v2-n-r1', True, '5'))
+        self.assertEqual(json.loads(h['test']['health'])['jars']['mina-core'], 'm.jar')   # parsed by AO: kept as text
         self.assertEqual(json.loads(inputs['jars_json'])[0]['new_jar'], 'mina-core-2.2.5.rhlw-00002.jar')
         self.assertIn('lib_json', inputs)
         self.assertEqual(inputs['port'], '8090')

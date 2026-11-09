@@ -2014,7 +2014,7 @@ def _follow_live(h: dict) -> None:
     """Poll one execution until it settles or stops at the approval gate."""
     key = h['key']
     exec_id = h.get('execution_id') or next((x['execution_id'] for x in state()['hosts'] if x['key'] == key), '')
-    deadline = time.time() + int(env('AO_POLL_TIMEOUT', '900'))
+    deadline = time.time() + int(env('AO_POLL_TIMEOUT', '1800'))   # the test in a pod adds minutes
     said: set[str] = set()                 # each hop traced once, for the architecture diagram
 
     def hop(name: str, src: str, dst: str, msg: str) -> None:
@@ -2063,9 +2063,12 @@ def _follow_live(h: dict) -> None:
         test = _out(acts.get(NODE_TEST))
         extra = {}
         if test.get('pipelinerun'):
+            # AO hands JSON-looking artifacts back already parsed; kept as JSON text here, as the demo stores them.
+            def as_text(v):
+                return v if isinstance(v, str) else json.dumps(v)
             extra['test'] = {'passed': test.get('test_passed') in (True, 'true', 'True'), 'image': test.get('test_image', ''),
-                             'health': test.get('test_health', ''), 'osv_open': test.get('osv_open', ''),
-                             'osv_detail': test.get('osv_detail', ''), 'pipelinerun': test.get('pipelinerun', ''),
+                             'health': as_text(test.get('test_health', '')), 'osv_open': str(test.get('osv_open', '')),
+                             'osv_detail': as_text(test.get('osv_detail', '')), 'pipelinerun': test.get('pipelinerun', ''),
                              'sbom_url': test.get('sbom_url', ''), 'reason': test.get('test_reason', '')}
         if commit.get('commit_sha'):
             extra.update(commit_sha=commit['commit_sha'], commit_url=commit.get('commit_url', ''),

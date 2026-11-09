@@ -3870,8 +3870,9 @@ function v2Run(s, readOnly) {
   const testing = (s.hosts || []).some(h => (h.steps || {}).test === 'active');
   if (tests.length || testing) {
     out.push(`<div class="v2-sec"><h3>Test in a pod · OpenShift Pipelines</h3>${tests.map(h => { const t = h.test;
-      let jars = {}; try { jars = (JSON.parse(t.health || '{}').jars) || {}; } catch (e) {}
-      let left = {}; try { left = JSON.parse(t.osv_detail || '{}'); } catch (e) {}
+      const obj = v => (v && typeof v === 'object') ? v : JSON.parse(v || '{}');
+      let jars = {}; try { jars = obj(t.health).jars || {}; } catch (e) {}
+      let left = {}; try { left = obj(t.osv_detail); } catch (e) {}
       return `<div class="v2-card"><b>${esc(h.app)}</b>
         <span class="v2-badge ${t.passed ? 'ok' : 'bad'}">${t.passed ? 'Passed' : 'Failed'}</span>
         <span class="mono muted-sm"> ${esc(t.pipelinerun || '')}</span>
@@ -4392,7 +4393,7 @@ const V2_NODES = [
   { id: 'gitea',     x: 229, y: 271, w: 98,  h: 20, ext: 1, mid: 1, t: 'GITEA' },
   { id: 'aap',       x: 52,  y: 310, w: 164, h: 38, ext: 1, t: 'RED HAT AAP', s: 'sync & run the playbook' },
   { id: 'servers',   x: 229, y: 312, w: 98,  h: 20, ext: 1, mid: 1, t: 'TELCO SITES' },
-  { id: 'pipelines', x: 229, y: 336, w: 106, h: 20, ext: 1, mid: 1, t: 'OPENSHIFT PIPELINES' },
+  { id: 'pipelines', x: 229, y: 336, w: 98,  h: 20, ext: 1, mid: 1, t: 'OCP PIPELINES' },
   { id: 'report',    x: 52,  y: 366, w: 164, h: 36, t: '4 · REPORT AGENT', s: 'PDF status report per run' },
   { id: 'results',   x: 52,  y: 414, w: 164, h: 36, t: '5 · RESULTS AGENT', s: 'BOM write-back · history → RAG' },
 ];

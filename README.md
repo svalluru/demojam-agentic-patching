@@ -463,9 +463,9 @@ v2 tab with the numbered diagram; this is the same thing in text.
                                         advisories
 
  AO workflow "App Patch v2", one run per server:
-   4 Commit to Gitea ──▶ route ──LAB─────────────────────▶ 6 Sync & Run ──▶ Verify ──▶ 7 Report ──▶ 8 Results
-     cosign provenance           └─LIVE─▶ 5 Approval ──▶     (AAP)           (playbook)  (PDF)        (BOM + history)
-     + playbook commit                    (this console)
+   4 Commit to Gitea ──▶ Test in a pod ──▶ route ──LAB──────────────────▶ 6 Sync & Run ──▶ Verify ──▶ 7 Report ──▶ 8 Results
+     every jar checked     (AAP → OCP              └─LIVE─▶ 5 Approval ─▶    (AAP)           (playbook)  (PDF)        (BOM + history)
+     + playbook commit      Pipelines)                      (this console)
 ```
 
 1. **Intake.** Nexus calls `POST /api/v2/webhook` when its
@@ -528,6 +528,37 @@ calling which service, on OpenShift AI or Ansible Automation Platform.
 that fails its health check and is rolled back. Code: `appv2.py`; tests:
 `python3 -m unittest discover -s tests`.
 
+#### osv.dev packages, several jars per change, and the test in a pod
+
+**Include osv.dev packages** (setting `APPV2_OSV`, off by default). Assess then also asks osv.dev about every
+Maven library the affected apps run (v1's scanner client, `lightwell/scanner/osv.py`; demo mode reads its saved
+answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Lightwell build fixes:
+
+| Row | When | Offered |
+|---|---|---|
+| Lightwell build | Lightwell has a build of the same version | yes: Red Hat provenance, no version change |
+| Upstream fix | no Lightwell build; the lowest release that clears every advisory is on the same major line | yes: from Nexus's `maven-central` proxy, checked against Maven Central's sha1 |
+| Major upgrade | the fix is only in a new major version | no: a code change for the app team |
+| Still open | the fix being applied leaves advisories open on its own library | no: information |
+
+Each row has a Reasoning line from the app history store and the LLM. Ticked rows (before **Prepare remediation**)
+join that app's playbook: **one playbook swaps every jar in the change** with one backup, one restart, one health
+check and one rollback. The commit job checks each jar (cosign for Lightwell builds, sha1 for upstream ones).
+
+**Test in a pod** (OpenShift Pipelines). AO's second node, job template **App Patch v2 - Test in a Pod**, starts
+the `app-v2-test` pipeline (`pipelines-setup/pipeline.yaml`) through the Kubernetes API. The pipeline:
+1. fetches every jar the app runs, with the change applied, and checks each one;
+2. builds the image with buildah;
+3. starts it as a sidecar and checks that `/health` reports each new jar;
+4. re-queries osv.dev for the final jar set.
+
+The job commits an SBOM of the tested jars beside the playbook in Gitea. A failed test stops that site's run, so
+no site is touched. The console shows the evidence (image, `/health`, the osv.dev count, the SBOM) on the
+approval screen and in the report.
+
+First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus oss-inventory's upstream mina-core
+`2.1.13`. The pod test passed, and node1 is healthy on both jars; node3 was untouched.
+
 #### The telco scenario
 
 The estate is a telco's, and the story is *a NETCONF library fix reaches the
@@ -585,7 +616,8 @@ On a fresh lab, in this order. Each step is idempotent.
 ./console-app-ocp-setup/deploy.sh                 # the console on OpenShift (the webhook calls it there)
 ./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy, the webhook
 git push                                          # AAP reads the v2 setup playbooks from GitHub
-./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates, runner, the BOMs' apps on node1-3
+./pipelines-setup/deploy.sh                       # OpenShift Pipelines, the app-v2-test pipeline, the AAP token
+./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates (incl. Test in a Pod), runner, the apps
 ./rag-setup/ingest.py --route "$LLAMA_STACK_URL" --name app_patch_history_telco --dir app-data/history
 #   then set APP_VECTOR_DB_ID to the vs_... it prints
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
@@ -601,6 +633,8 @@ DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-
 | `NEXUS_ACCEPT_EULA=true` | Nexus Community Edition serves nothing until its EULA is accepted; deploy.sh accepts it only with this set |
 | `TARGET_INVENTORY`, `MACHINE_CREDENTIAL` | The AAP inventory and machine credential for the app servers (`Workshop Inventory` / `Workshop Credential` on the current lab) |
 | `NEXUS_URL`, `NEXUS_ADMIN_PASSWORD`, `NEXUS_WEBHOOK_SECRET` | Written by `nexus-setup/deploy.sh` |
+| `APPV2_PIPELINE_TOKEN`, `APPV2_PIPELINE_NAMESPACE` | Written by `pipelines-setup/deploy.sh`: the `app-v2-runner` service account AAP starts PipelineRuns with |
+| `APPV2_OSV` | `true` to list osv.dev packages at Assess (also in Settings) |
 
 No Gitea token is needed: the setup reuses the lab's **Gitea API** credential
 (from `CVE - Fetch and Commit`) for the commit job, and the lab's Gitea
@@ -640,6 +674,8 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 | Commit job fails at "Verify the build's SLSA provenance" | The build or its bundle does not verify; nothing is committed. Needs cosign 3, which the job downloads, pinned by checksum |
 | Sync and Run fails "is not the approved playbook" | The file in Gitea changed after the commit; the runner will not run it |
 | AO rejects the workflow import: approval "missing a connection from the 'Approved' branch" | The edge out of an approval node needs `"from_port": "approved"` |
+| Reasoning says "No history found" everywhere after a lab restart | The vector store kept its file list but lost its vectors. Re-ingest `app-data/history` into a new store and set `APP_VECTOR_DB_ID` |
+| Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
 ### Demo guide
 
