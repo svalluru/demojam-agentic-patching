@@ -26,6 +26,7 @@ import hmac
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import uuid
 from datetime import datetime, timezone
@@ -485,6 +486,21 @@ def helpful_info(event: dict, imp: dict) -> tuple[str, str]:
         'rules' if not H.demo_mode() else 'staged'
 
 
+def _search_all(store: str, queries: dict[str, str]) -> dict[str, list[str]]:
+    """{key: hits} for many app history searches at once. Each search is a few seconds (embedding plus the vector
+    store), and they do not depend on each other, so they run side by side. A failed search is no hits."""
+    def one(q: str) -> list[str]:
+        try:
+            return H.rag_search(store, q) or []
+        except Exception:
+            return []
+    if not queries:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(queries))) as pool:
+        futures = {k: pool.submit(one, q) for k, q in queries.items()}
+        return {k: f.result() for k, f in futures.items()}
+
+
 def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     """({target key: one line}, source). What the history says about patching this app on this server.
 
@@ -498,12 +514,10 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     if not store or not H.rag_search:
         return {t['key']: 'No app history store configured (APP_VECTOR_DB_ID).' for t in targets}, 'none'
     excerpts: dict[str, str] = {}
+    found = _search_all(store, {t['key']: f"patch history of {t['app']} on {t['host'].split('.')[0]}" for t in targets})
     for t in targets:
         short = t['host'].split('.')[0]
-        try:
-            hits = H.rag_search(store, f"patch history of {t['app']} on {short}")
-        except Exception:
-            hits = []
+        hits = found.get(t['key']) or []
         mine = [h for h in hits if t['app'] in h and re.search(rf'\b{re.escape(short)}\b', h)]
         if mine:
             excerpts[t['key']] = '\n---\n'.join(mine)[:2500]
@@ -511,8 +525,8 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     if not excerpts:
         return out, 'rag'
     keys = list(excerpts)
-    prompt = ('For each numbered app and server below, write ONE short sentence a reviewer needs before a library '
-              'jar is swapped and the service restarted: timing, past failures, traffic windows. Use only the '
+    prompt = ('For each numbered app and server below, write ONE short sentence (at most 25 words) a reviewer needs '
+              'before a library jar is swapped and the service restarted: timing, past failures, traffic windows. Use only the '
               'records given. Answer as JSON, {"1": "...", "2": "..."}, and nothing else.\n\n'
               + '\n\n'.join(f"{i + 1}. {k.replace('|', ' on ')}\n{excerpts[k]}" for i, k in enumerate(keys)))
     try:
@@ -552,8 +566,22 @@ def _major(v: str) -> str:
     return re.split(r'[.\-]', upstream(v))[0]
 
 
+_LW_BUILDS: dict[str, Any] = {}
+
+
 def _lightwell_builds() -> dict[tuple[str, str, str], dict]:
-    """(group, artifact, upstream version) -> the newest Lightwell build of it that names CVEs, with those CVEs."""
+    """(group, artifact, upstream version) -> the newest Lightwell build of it that names CVEs, with those CVEs.
+    One Lightwell call per library version the apps run, so kept for 10 minutes (live; the BOM can change it)."""
+    key = json.dumps(sorted((k[0], k[1], sorted(v)) for k, v in _installed().items()))
+    hit = _LW_BUILDS.get('v')
+    if not H.demo_mode() and hit and hit[0] == key and time.time() - hit[1] < 600:
+        return hit[2]
+    out = _lightwell_builds_uncached()
+    _LW_BUILDS['v'] = (key, time.time(), out)
+    return out
+
+
+def _lightwell_builds_uncached() -> dict[tuple[str, str, str], dict]:
     out: dict[tuple[str, str, str], dict] = {}
     for r in (catalog('mine', 1, 1000).get('rows') or []):
         key = (r['group'], r['artifact'], r['upstream'])
@@ -638,6 +666,13 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
             'reasoning_source': rsource, 'error': ''}
 
 
+def _two_sentences(text: str) -> str:
+    """At most two sentences: the model does not always keep to the length it is asked for, and the cell is small."""
+    parts = re.split(r'(?<=[.!?])\s+', ' '.join(text.split()))
+    keep = 3 if parts and re.fullmatch(r'(TAKE|SKIP)[.:]?', parts[0], re.I) else 2   # a bare "SKIP." is a label
+    return ' '.join(parts[:keep]).strip()
+
+
 def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
     """{row id: one or two sentences}: why take it now or not, from the app history store and the LLM."""
     if not rows:
@@ -647,11 +682,9 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
     store = env('APP_VECTOR_DB_ID')
     excerpts = {}
     if store and H.rag_search:
+        found = _search_all(store, {r['id']: f"{r['app']} {r['artifact']} patch history" for r in rows})
         for r in rows:
-            try:
-                hits = [h for h in H.rag_search(store, f"{r['app']} {r['artifact']} patch history") if r['app'] in h]
-            except Exception:
-                hits = []
+            hits = [h for h in found.get(r['id']) or [] if r['app'] in h]
             if hits:
                 excerpts[r['id']] = '\n---\n'.join(hits)[:1200]
     if not H.llm:
@@ -673,12 +706,12 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
                       for i, r in enumerate(rows))
     prompt = ('You advise a telco operations team patching application libraries in a change window. Each library '
               'below would ride the same restart as a Lightwell fix already being applied. For each numbered library '
-              'write one or two sentences: whether to take the proposed change in this window and why, how it '
+              'write at most 35 words: start with TAKE or SKIP, then whether to take the proposed change in this window and why, how it '
               'affects the running app (API change or not, what to verify), and anything the history says. Use only '
               'the facts and history given. Answer as JSON, {"1": "...", "2": "..."}, nothing else.\n\n' + facts)
     try:
         parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
-        return {r['id']: str(parsed.get(str(i + 1)) or '').strip() or r['why'] for i, r in enumerate(rows)}, \
+        return {r['id']: _two_sentences(str(parsed.get(str(i + 1)) or '')) or r['why'] for i, r in enumerate(rows)}, \
             'rag+llm' if excerpts else 'llm'
     except Exception:
         return {}, 'rules'
@@ -1175,26 +1208,51 @@ def _assess(ev: dict) -> None:
         H.demo_pause(1.2)
         imp = impact(ev, load_bom())
         _trace('inventory', 'intake', f"{len(imp['targets'])} server(s) in {len(imp['apps'])} app(s)")
-        if imp['targets']:
+        # The sites are known now: show them at once. The three slow parts (the reasoning per site, the osv.dev
+        # packages, the agent's note) are independent, so they run side by side and each fills in when it is done.
+        imp['pending'] = [k for k, on in (('reasoning', bool(imp['targets'])),
+                                          ('extra', osv_enabled() and bool(imp['targets'])),
+                                          ('info', True)) if on]
+        _set(impact=json.loads(json.dumps(imp)))
+
+        def fill(**kw) -> None:
+            with _LOCK:
+                cur = _RUN.get('impact') or {}
+                cur.update({k: v for k, v in kw.items() if k != 'done'})
+                cur['pending'] = [p for p in cur.get('pending', []) if p != kw.get('done')]
+            _persist()
+
+        def do_reasoning() -> None:
             _trace('inventory', 'reasoning', f"past changes for {len(imp['targets'])} app/server pair(s)")
             H.demo_pause(1.0)
             notes, rsource = reasoning(imp['targets'])
             if rsource == 'rag+llm':
                 _trace('reasoning', 'llm', 'one line per app and server')
-            for t in imp['targets']:
-                t['reasoning'] = notes.get(t['key'], '')
-            imp['reasoning_source'] = rsource
-        if osv_enabled() and imp['targets']:
+            targets = [{**t, 'reasoning': notes.get(t['key'], '')} for t in imp['targets']]
+            fill(targets=targets, reasoning_source=rsource, done='reasoning')
+
+        def do_extra() -> None:
             _trace('inventory', 'osv', f"what else is open on {', '.join(imp['apps'])}?")
             H.demo_pause(1.0)
-            imp['extra'] = extras(ev, imp, load_bom())
-            offered = [r for r in imp['extra']['rows'] if r['selectable']]
-            _trace('osv', 'inventory', f"{len(imp['extra']['rows'])} open library(ies), {len(offered)} with a fix to offer"
-                   + (f" ({imp['extra']['error']})" if imp['extra'].get('error') else ''))
-        if H.llm and not H.demo_mode() and imp['targets']:
-            _trace('inventory', 'llm', 'note for the reviewer')
-        info, source = helpful_info(ev, imp)
-        _set(impact=imp, info=info, info_source=source)
+            extra = extras(ev, imp, load_bom())
+            offered = [r for r in extra['rows'] if r['selectable']]
+            _trace('osv', 'inventory', f"{len(extra['rows'])} open library(ies), {len(offered)} with a fix to offer"
+                   + (f" ({extra['error']})" if extra.get('error') else ''))
+            fill(extra=extra, done='extra')
+
+        def do_info() -> None:
+            if H.llm and not H.demo_mode() and imp['targets']:
+                _trace('inventory', 'llm', 'note for the reviewer')
+            info, source = helpful_info(ev, imp)
+            _set(info=info, info_source=source)
+            fill(done='info')
+
+        jobs = [do_info] + ([do_reasoning] if 'reasoning' in imp['pending'] else []) \
+            + ([do_extra] if 'extra' in imp['pending'] else [])
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            for f in [pool.submit(j) for j in jobs]:
+                f.result()
+        imp = state()['impact']
         _stage('impact', 'done')
         if not imp['targets']:
             for k in STAGES[2:]:
@@ -1669,11 +1727,9 @@ def _estate_reasoning_live(rows: list[dict]) -> tuple[dict, str]:
     store = env('APP_VECTOR_DB_ID')
     excerpts = {}
     if store and H.rag_search:
+        found = _search_all(store, {r['app']: f"patch history of {r['app']}" for r in rows})
         for r in rows:
-            try:
-                hits = [h for h in H.rag_search(store, f"patch history of {r['app']}") if r['app'] in h]
-            except Exception:
-                hits = []
+            hits = [h for h in found.get(r['app']) or [] if r['app'] in h]
             if hits:
                 excerpts[r['app']] = '\n---\n'.join(hits)[:1800]
     out = {r['app']: _estate_rule(r) for r in rows}

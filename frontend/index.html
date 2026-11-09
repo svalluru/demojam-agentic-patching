@@ -3832,7 +3832,7 @@ function v2Run(s, readOnly) {
           <td>${x.domain ? `<span class="v2-dom">${esc(x.domain)}</span>` : ''}</td>
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}</td>
-          <td class="v2-reason">${esc(x.reasoning || '')}</td>
+          <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')}</td>
           <td>${h ? `<span class="v2-steps">${STEP_KEYS.map(k =>
             `<i class="${esc((h.steps || {})[k] || '')}" title="${k}: ${esc((h.steps || {})[k] || 'pending')}"></i>`).join('')}</span>` : ''}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
@@ -3845,9 +3845,12 @@ function v2Run(s, readOnly) {
           ${pick ? 'Untick a row to leave it out of this run; LIVE sites still wait for approval.' : ''}</div>` : '')
       + ((s.impact.other || []).length ? `<div class="muted-sm" style="margin-top:8px">Left alone: ${s.impact.other.map(o =>
           `<b>${esc(o.app)}</b> (${esc(o.installed)}, ${esc(o.why)})`).join('; ')}</div>` : '')
-      + (s.info ? `<div class="v2-card" style="margin-top:10px"><b>Agent note.</b> ${esc(s.info)}</div>` : '')
+      + (s.info ? `<div class="v2-card" style="margin-top:10px"><b>Agent note.</b> ${esc(s.info)}</div>`
+         : (s.impact.pending || []).includes('info') ? '<div class="muted-sm" style="margin-top:10px">Writing the agent note…</div>' : '')
       + `</div>`);
     if (s.impact.extra) out.push(v2Extras(s, readOnly));
+    else if ((s.impact.pending || []).includes('extra')) out.push(`<div class="v2-sec"><h3>Also open on these apps · osv.dev</h3>
+      <div class="empty"><div class="spinner"></div><span>Asking osv.dev and Lightwell…</span></div></div>`);
   }
   if (s.status === 'generating' && !s.playbooks) {
     out.push('<div class="empty"><div class="spinner"></div><span>The playbook agent is drafting…</span></div>');
