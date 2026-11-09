@@ -1011,5 +1011,56 @@ class PlanAFix(unittest.TestCase):
             appv2.load_bom, appv2._lightwell_builds = real_bom, real_lw
 
 
+
+class PipelineStrip(unittest.TestCase):
+    def live_run(self, k8s):
+        demo(OCP_API_URL='https://api.cluster-x.example.com:6443')
+        appv2.configure(demo_mode=lambda: False, k8s_get=k8s)
+        with appv2._LOCK:
+            appv2._RUN.update(status='running', run_id='abc123')
+
+    def test_tasks_steps_and_log(self):
+        def tr(task, status, steps, pod):
+            return {'metadata': {'labels': {'tekton.dev/pipelineTask': task}},
+                    'status': {'conditions': [{'type': 'Succeeded', 'status': status}], 'startTime': '2026-11-09T10:00:00Z',
+                               'completionTime': '2026-11-09T10:00:30Z' if status == 'True' else '', 'podName': pod,
+                               'steps': steps}}
+
+        def k8s(path, text=False):
+            if path.endswith('/pipelineruns/app-v2-inventory-service-abc123'):
+                return {'status': {'conditions': [{'type': 'Succeeded', 'status': 'Unknown'}]}}
+            if '/taskruns?' in path:
+                return {'items': [tr('fetch', 'True', [{'name': 'fetch-check-scan', 'terminated': {'exitCode': 0}}], 'p1'),
+                                  tr('build', 'Unknown', [{'name': 'build', 'running': {}}, {'name': 'push', 'waiting': {}}], 'p2')]}
+            if '/pods/p2/log' in path:
+                self.assertIn('container=step-build', path)
+                return 'line 1\nSTEP 3/5: COPY lib/ /deployments/lib/\n'
+            raise AssertionError(path)
+        self.live_run(k8s)
+        out = appv2.pipeline_status('inventory-service')
+        self.assertEqual(out['state'], 'running')
+        self.assertEqual([(t['task'], t['state']) for t in out['tasks']],
+                         [('fetch', 'succeeded'), ('build', 'running'), ('health', 'pending')])
+        self.assertEqual(out['tasks'][1]['step'], 'build')
+        self.assertEqual(out['tasks'][1]['log'][-1], 'STEP 3/5: COPY lib/ /deployments/lib/')
+        self.assertEqual(out['console_url'], 'https://console-openshift-console.apps.cluster-x.example.com'
+                                             '/k8s/ns/agentic-patching/tekton.dev~v1~PipelineRun/app-v2-inventory-service-abc123')
+
+    def test_not_started_yet_is_pending(self):
+        def k8s(path, text=False):
+            raise OSError('HTTP Error 404: Not Found')
+        self.live_run(k8s)
+        out = appv2.pipeline_status('inventory-service')
+        self.assertEqual((out['state'], [t['state'] for t in out['tasks']]), ('pending', ['pending'] * 3))
+
+    def test_demo_run_stages_the_strip(self):
+        with_osv()
+        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        appv2.start_generate(['inventory-service|lab']); wait_for({'generated'})
+        appv2.start_dispatch(); wait_for({'complete'}, 10)
+        out = appv2.pipeline_status('inventory-service')
+        self.assertEqual((out['state'], [t['state'] for t in out['tasks']]), ('succeeded', ['succeeded'] * 3))
+
+
 if __name__ == '__main__':
     unittest.main()

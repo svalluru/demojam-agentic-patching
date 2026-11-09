@@ -4168,6 +4168,20 @@ def lightwell_builds(group: str, artifact: str) -> list[dict]:
     return _lightwell_catalog().package_facts('maven', f'{group}:{artifact}').get('remediated') or []
 
 
+def k8s_get(path: str, text: bool = False) -> Any:
+    """Applications v2: one read-only GET against the cluster API, as the app-v2-runner service account
+    (APPV2_PIPELINE_TOKEN), for the test-in-a-pod task strip. Base: APPV2_PIPELINE_API_URL, else OCP_API_URL, else the
+    in-cluster address."""
+    token = env('APPV2_PIPELINE_TOKEN')
+    if not token:
+        raise RuntimeError('APPV2_PIPELINE_TOKEN not set')
+    base = (env('APPV2_PIPELINE_API_URL') or env('OCP_API_URL') or 'https://kubernetes.default.svc').rstrip('/')
+    req = urllib.request.Request(base + path, headers={'Authorization': f'Bearer {token}'})
+    with urllib.request.urlopen(req, timeout=15, context=ssl._create_unverified_context()) as r:
+        body = r.read().decode('utf-8', 'replace')
+    return body if text else json.loads(body)
+
+
 def osv_lookup(queries: list) -> dict:
     """Applications v2: osv.dev advisories for [(ecosystem, name, version)], through the scanner's client (live) or
     its saved answers (lightwell/demo/osv.json, demo). Same summaries v1's scan shows."""
@@ -4218,7 +4232,8 @@ def app_history_add(store: str, path: Path) -> None:
 appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
-                rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds)
+                rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
+                k8s_get=k8s_get)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4497,6 +4512,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200 if run else 404, {'ok': bool(run), 'run': run})
             else:
                 self._send(200, {'ok': True, 'runs': appv2.runs()})
+        elif path == '/api/v2/pipeline':
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send(200, appv2.pipeline_status((q.get('app') or [''])[0]))
         elif path == '/api/v2/estate':
             try:
                 self._send(200, appv2.estate())

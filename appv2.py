@@ -74,6 +74,7 @@ class _Hooks:
     lightwell_get: Callable[..., dict] | None = None            # (path, **params) -> Lightwell API body
     osv_lookup: Callable[[list], dict] | None = None             # [(ecosystem, name, version)] -> {key: [advisory]}
     lightwell_builds: Callable[[str, str], list] | None = None   # (group, artifact) -> [{version, build}], every version
+    k8s_get: Callable[..., Any] | None = None                   # (api path, text=False) -> JSON body, or text for logs
 
 
 H = _Hooks()
@@ -1564,7 +1565,29 @@ def _simulate() -> None:
     # The test in a pod, staged: one PipelineRun per app (the sites of an app run the same jars).
     _trace('ao', 'aap', 'test the change in a pod')
     _trace('aap', 'pipelines', f"{len({h['app'] for h in active})} PipelineRun(s): build the app with the change, start it, check /health")
-    H.demo_pause(1.6)
+    # The task strip, staged: fetch -> build -> health, each running then done, with the kind of log line each prints.
+    apps = sorted({h['app'] for h in active})
+    lines = {'fetch': ['zookeeper-3.5.9.rhlw-00001.jar: 1052417 bytes, sha256 (verified by the commit job)'],
+             'build': ['STEP 3/5: COPY lib/ /deployments/lib/', 'Pushing image to the internal registry'],
+             'health': ["health: {'status': 'UP', ...}"]}
+    t0 = now_iso()
+    for i, task in enumerate(PIPELINE_TASKS):
+        with _LOCK:
+            sim = _RUN.setdefault('pipe_sim', {})
+            for app in apps:
+                cur = sim.setdefault(app, {'name': f'app-v2-{app}-{st["run_id"]}', 'state': 'running', 'console_url': '',
+                                           'tasks': [{'task': t, 'state': 'pending'} for t in PIPELINE_TASKS]})
+                cur['tasks'][i] = {'task': task, 'state': 'running', 'started': now_iso(), 'step': task, 'log': lines[task]}
+        _persist()
+        H.demo_pause(0.6)
+        with _LOCK:
+            for app in apps:
+                cur = _RUN['pipe_sim'][app]
+                cur['tasks'][i].update(state='succeeded', finished=now_iso(), log=[])
+                if i == len(PIPELINE_TASKS) - 1:
+                    cur['state'] = 'succeeded'
+        _persist()
+    del t0
     pbs = {p['app']: p for p in st.get('playbooks') or []}
     for h in active:
         changes = (pbs.get(h['app']) or {}).get('changes') or [change_for_event(st['event'], h)]
@@ -2341,6 +2364,75 @@ def test_inputs(app_name: str, changes: list[dict]) -> dict:
             'probes': ','.join(f"{x['artifact']}={PROBE_CLASS[x['artifact']]}" for x in lib if x['artifact'] in PROBE_CLASS),
             'port': port.group(1) if port else '8080',
             'expect_json': json.dumps({c['artifact']: c['new_jar'] for c in changes if c['artifact'] in PROBE_CLASS})}
+
+
+PIPELINE_TASKS = ('fetch', 'build', 'health')
+
+
+def pipeline_run_name(app_name: str, run_id: str) -> str:
+    """The PipelineRun the test job creates for this app and run (app_v2_test_pod.yml uses the same rule)."""
+    name = re.sub(r'[^a-z0-9-]', '-', f'app-v2-{app_name}-{run_id}'.lower())[:63]
+    return name.rstrip('-')
+
+
+def _console_url(name: str, ns: str) -> str:
+    base = env('OCP_CONSOLE_URL', '').rstrip('/')
+    if not base:
+        m = re.match(r'https://api\.([^:/]+)', env('APPV2_PIPELINE_API_URL', '') or env('OCP_API_URL', ''))
+        base = f'https://console-openshift-console.apps.{m.group(1)}' if m else ''
+    return f'{base}/k8s/ns/{ns}/tekton.dev~v1~PipelineRun/{name}' if base else ''
+
+
+def pipeline_status(app_name: str) -> dict:
+    """The test in a pod as it runs, for the console's task strip: the PipelineRun's tasks (fetch, build, health),
+    each one's state, times and current step, and the last log lines of the step running or failed. Read only."""
+    st = state()
+    if H.demo_mode():
+        return (st.get('pipe_sim') or {}).get(app_name) or {'state': 'pending', 'tasks': []}
+    if not st.get('run_id') or not H.k8s_get:
+        return {'state': 'unknown', 'tasks': [], 'error': 'no cluster access configured (APPV2_PIPELINE_TOKEN)'}
+    ns = env('APPV2_PIPELINE_NAMESPACE', 'agentic-patching')
+    name = pipeline_run_name(app_name, st['run_id'])
+    out = {'name': name, 'console_url': _console_url(name, ns), 'tasks': []}
+    try:
+        pr = H.k8s_get(f'/apis/tekton.dev/v1/namespaces/{ns}/pipelineruns/{name}')
+    except Exception as exc:
+        if '404' in str(exc):
+            return {**out, 'state': 'pending', 'tasks': [{'task': t, 'state': 'pending'} for t in PIPELINE_TASKS]}
+        return {**out, 'state': 'unknown', 'error': str(exc)[:200]}
+
+    def cond_state(obj: dict) -> tuple[str, str]:
+        c = next((x for x in (obj.get('status') or {}).get('conditions') or [] if x.get('type') == 'Succeeded'), {})
+        return ({'True': 'succeeded', 'False': 'failed'}.get(c.get('status'), 'running' if c else 'pending'),
+                c.get('message', ''))
+    out['state'], out['message'] = cond_state(pr)
+    try:
+        trs = (H.k8s_get(f'/apis/tekton.dev/v1/namespaces/{ns}/taskruns?labelSelector='
+                         f'tekton.dev%2FpipelineRun%3D{name}') or {}).get('items') or []
+    except Exception:
+        trs = []
+    by = {(tr.get('metadata') or {}).get('labels', {}).get('tekton.dev/pipelineTask'): tr for tr in trs}
+    for task in PIPELINE_TASKS:
+        tr = by.get(task)
+        if not tr:
+            out['tasks'].append({'task': task, 'state': 'pending'})
+            continue
+        stt = tr.get('status') or {}
+        state_, msg = cond_state(tr)
+        steps = stt.get('steps') or []
+        cur = next((x for x in steps if 'running' in x), None) or \
+            next((x for x in steps if (x.get('terminated') or {}).get('exitCode', 0) != 0), None) or (steps[-1] if steps else None)
+        row = {'task': task, 'state': state_, 'started': stt.get('startTime', ''), 'finished': stt.get('completionTime', ''),
+               'step': (cur or {}).get('name', ''), 'message': msg[:200] if state_ == 'failed' else ''}
+        if cur and stt.get('podName') and state_ in ('running', 'failed'):
+            try:
+                text = H.k8s_get(f"/api/v1/namespaces/{ns}/pods/{stt['podName']}/log?container={cur.get('container') or 'step-' + cur['name']}"
+                                 f"&tailLines={3 if state_ == 'running' else 6}", text=True)
+                row['log'] = [line[:200] for line in str(text).strip().splitlines()[-(3 if state_ == 'running' else 6):]]
+            except Exception:
+                row['log'] = []
+        out['tasks'].append(row)
+    return out
 
 
 def _osv_rescan(app_name: str, changes: list[dict]) -> dict:

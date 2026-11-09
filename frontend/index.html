@@ -2009,7 +2009,18 @@
   .v2-changes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 4px; font-size: 12.5px; }
   .v2-changes > span { display: inline-flex; gap: 6px; align-items: center; }
   .v2-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 9px; margin-left: 6px; }
-  .v2-badge.ok { background: #e7f2e4; color: #2a6a23; } .v2-badge.bad { background: #fbe5e5; color: #a30000; }
+  .v2-badge.ok { background: #e7f2e4; color: #2a6a23; } .v2-badge.run { background: #e7f1fa; color: #0066cc; }
+  .v2-pipe { margin: 8px 0 4px; }
+  .v2-pipehead { display: flex; gap: 12px; align-items: baseline; }
+  .v2-pipetasks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; }
+  .v2-pipetask { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 10px; border-radius: 12px; border: 1px solid #d2d2d2; }
+  .v2-pipetask i { font-style: normal; }
+  .v2-pipetask.running { border-color: #0066cc; color: #0066cc; } .v2-pipetask.running i { animation: v2pulse 1s infinite; }
+  .v2-pipetask.succeeded { border-color: #3e8635; color: #2a6a23; } .v2-pipetask.failed { border-color: #c9190b; color: #a30000; }
+  .v2-pipetask.pending { color: #6a6e73; }
+  .v2-pipearrow { color: #b8bbbe; }
+  .v2-pipelog { margin: 6px 0 0; padding: 6px 8px; background: #151515; color: #e0e0e0; border-radius: 6px; font-size: 11.5px; white-space: pre-wrap; }
+  @keyframes v2pulse { 50% { opacity: .3; } } .v2-badge.bad { background: #fbe5e5; color: #a30000; }
   .v2-k { font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
           color: var(--muted); margin-bottom: 6px; }
   .v2-rf { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
@@ -3626,8 +3637,44 @@ function v2Poll() {
 
 async function v2Tick() {
   try { v2.state = await v2Fetch('/api/v2/state'); } catch (e) { /* keep the last view */ }
+  await v2PipePoll();
   v2Render();
   v2Poll();
+}
+
+// The test in a pod's task strip: asked for each app whose test is running, and once more when it has settled.
+async function v2PipePoll() {
+  const s = v2.state || {};
+  if (!s.run_id || !s.hosts) return;
+  if (!v2.pipe || v2.pipe.run !== s.run_id) v2.pipe = { run: s.run_id, apps: {} };
+  const apps = [...new Set(s.hosts.filter(h => ['active', 'done', 'failed'].includes((h.steps || {}).test)).map(h => h.app))];
+  await Promise.all(apps.map(async app => {
+    const prev = v2.pipe.apps[app];
+    const running = s.hosts.some(h => h.app === app && (h.steps || {}).test === 'active');
+    if (!running && prev && ['succeeded', 'failed'].includes(prev.state)) return;     // settled and already shown
+    try { v2.pipe.apps[app] = await v2Fetch(`/api/v2/pipeline?app=${encodeURIComponent(app)}`); } catch (e) { /* next tick */ }
+  }));
+}
+
+const PIPE_ICON = { pending: '○', running: '●', succeeded: '✓', failed: '✗', unknown: '?' };
+function v2Dur(a, b) {
+  if (!a) return '';
+  const sec = Math.max(0, Math.round(((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000));
+  return sec >= 60 ? `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s` : `${sec}s`;
+}
+function v2PipeStrip(app) {
+  const p = ((v2.pipe || {}).apps || {})[app];
+  if (!p) return '';
+  const tasks = p.tasks || [];
+  const live = tasks.find(t => t.state === 'running') || tasks.find(t => t.state === 'failed');
+  return `<div class="v2-pipe">
+    <div class="v2-pipehead"><span class="mono muted-sm">${esc(p.name || '')}</span>
+      ${p.console_url ? `<a class="muted-sm" href="${esc(p.console_url)}" target="_blank" rel="noopener">Open in OpenShift console ↗</a>` : ''}
+      ${p.error ? `<span class="muted-sm">${esc(p.error)}</span>` : ''}</div>
+    <div class="v2-pipetasks">${tasks.map(t => `<span class="v2-pipetask ${esc(t.state)}" title="${esc(t.message || t.state)}">
+        <i>${PIPE_ICON[t.state] || '○'}</i> ${esc(t.task)} <span class="muted-sm">${esc(v2Dur(t.started, t.finished))}${t.state === 'running' && t.step && t.step !== t.task ? ` · ${esc(t.step)}` : ''}</span></span>`).join('<span class="v2-pipearrow">──</span>')}</div>
+    ${live && (live.log || []).length ? `<pre class="v2-pipelog">${esc(live.task)}: ${(live.log || []).map(esc).join('\n')}</pre>` : ''}
+  </div>`;
 }
 
 async function v2Act(path, body) {
@@ -3907,20 +3954,22 @@ function v2Run(s, readOnly) {
   }
   const tests = Object.values(Object.fromEntries((s.hosts || []).filter(h => h.test).map(h => [h.app, h])));
   const testing = (s.hosts || []).some(h => (h.steps || {}).test === 'active');
+  const underTest = [...new Set((s.hosts || []).filter(h => (h.steps || {}).test === 'active' && !h.test).map(h => h.app))];
   if (tests.length || testing) {
-    out.push(`<div class="v2-sec"><h3>Test in a pod · OpenShift Pipelines</h3>${tests.map(h => { const t = h.test;
+    out.push(`<div class="v2-sec"><h3>Test in a pod · OpenShift Pipelines</h3>${underTest.map(app => `<div class="v2-card"><b>${esc(app)}</b>
+        <span class="v2-badge run">Running</span>${v2PipeStrip(app) || '<div class="empty"><div class="spinner"></div><span>Waiting for the PipelineRun to start…</span></div>'}</div>`).join('')}${tests.map(h => { const t = h.test;
       const obj = v => (v && typeof v === 'object') ? v : JSON.parse(v || '{}');
       let jars = {}; try { jars = obj(t.health).jars || {}; } catch (e) {}
       let left = {}; try { left = obj(t.osv_detail); } catch (e) {}
       return `<div class="v2-card"><b>${esc(h.app)}</b>
         <span class="v2-badge ${t.passed ? 'ok' : 'bad'}">${t.passed ? 'Passed' : 'Failed'}</span>
-        <span class="mono muted-sm"> ${esc(t.pipelinerun || '')}</span>
+        ${v2PipeStrip(h.app) || `<span class="mono muted-sm"> ${esc(t.pipelinerun || '')}</span>`}
         <div class="muted-sm" style="margin-top:6px">Built <span class="mono">${esc(t.image || '')}</span> with the whole change, started it in a pod, and asked <span class="mono">/health</span>:</div>
         <div class="v2-changes">${Object.entries(jars).map(([k, v]) => `<span class="mono">${esc(k)}: <b>${esc(v)}</b></span>`).join('') || '<span class="muted-sm">no answer</span>'}</div>
         <div class="muted-sm">osv.dev on the final jar set: <b>${esc(String(t.osv_open))}</b> advisory(ies) listed${Object.keys(left).length ? ' (' + Object.entries(left).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(', ') + ')' : ''}. Lightwell builds are looked up by their upstream version, so their own fixes still count here.
           ${t.sbom_url ? ` · <a href="${esc(t.sbom_url)}" target="_blank" rel="noopener">SBOM of the tested jars ↗</a>` : ''}</div>
         ${t.reason && !t.passed ? `<div class="v2-detail">${esc(t.reason)}</div>` : ''}</div>`; }).join('')}
-      ${testing && !tests.length ? '<div class="empty"><div class="spinner"></div><span>Building and starting the app in a pod…</span></div>' : ''}</div>`);
+</div>`);
   }
   if (s.hosts) {
     // Agents 4 and 5, as on the infrastructure side: a report for the change board, and what was fed back.
