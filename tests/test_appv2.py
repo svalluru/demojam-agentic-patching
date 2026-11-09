@@ -975,28 +975,40 @@ class PlanAFix(unittest.TestCase):
             self.assertIn(section, md)
         self.assertIn('- 1 need an upgrade to the version shown', md)
 
-    def test_plan_run_swaps_every_planned_jar(self):
-        sel = [{'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'},
-               {'id': 'inventory-service|org.postgresql:postgresql', 'source': 'lightwell'}]
-        self.assertEqual(appv2.start_plan('inventory-service', ['lightwell', 'another', 'osv'], False, sel)[0], 200)
-        st = wait_for({'assessed'})
-        self.assertEqual(st['event']['kind'], 'plan')
-        self.assertEqual([t['site'] for t in st['impact']['targets']], ['lab', 'core-dc-1'])
-        appv2.start_generate(['inventory-service|lab'])
-        pb = wait_for({'generated'})['playbooks'][0]
-        self.assertEqual([(c['artifact'], c['to'], c['source']) for c in pb['changes']],
-                         [('postgresql', '42.3.3.rhlw-00006', 'lightwell'), ('mina-core', '2.1.13', 'upstream')])
-        self.assertTrue(pb['ok'])
-        appv2.start_dispatch()
-        st = wait_for({'complete'}, 10)
-        self.assertEqual(st['summary']['patched'], 1)
-        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.mina:mina-core'], '2.1.13')
-        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'], '42.3.3.rhlw-00006')
-        self.assertTrue(st['report']['file'].endswith('.pdf') and ' ' not in st['report']['file'])
+    def test_download_mapping_matches_the_run(self):
+        # The Change list sends run options (lightwell / upstream); the download maps them to plan sources
+        # (lightwell / another / osv). Both must name the same jars.
+        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        appv2.start_generate(['inventory-service|lab'], ['inventory-service|org.apache.mina:mina-core'])
+        jars = [c['new_jar'] for c in wait_for({'generated'})['playbooks'][0]['changes']]
+        p = appv2.app_plan('inventory-service', ['lightwell', 'another', 'osv'], False,
+                           [{'id': 'inventory-service|org.apache.zookeeper:zookeeper', 'source': 'lightwell'},
+                            {'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'}])
+        self.assertEqual(sorted(r['change']['new_jar'] for r in p['changes']), sorted(jars))
 
-    def test_nothing_selected_is_refused(self):
-        self.assertEqual(appv2.start_plan('inventory-service', ['lightwell'], False, [])[0], 400)
-        self.assertEqual(appv2.start_plan('no-such-app')[0], 404)
+    def test_major_option_needs_allow_major(self):
+        bom = [{'app': 'a', 'path': '/opt/apps/a', 'health_url': 'http://localhost:1/health',
+                'servers': [{'host': 'h', 'site': 'lab', 'env': 'qa'}], 'dependencies': [
+                    {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
+                    {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]}]
+        real_bom, real_lw = appv2.load_bom, appv2._lightwell_builds
+        appv2.load_bom = lambda: bom
+        appv2._lightwell_builds = lambda: {}          # no Lightwell spring-security build: only the major fix is left
+        try:
+            appv2.start_assess('evt-zookeeper'); st = wait_for({'assessed'})
+            row = next(r for r in st['impact']['extra']['rows'] if r['artifact'] == 'spring-security-web')
+            self.assertEqual((row['kind'], row['options'][0]['to'], row['options'][0]['major']), ('major', '6.5.11', True))
+            rid = row['id']
+            appv2.start_generate(None, [rid])
+            self.assertEqual(wait_for({'generated'})['extra_selected'], [])          # refused without allow_major
+            appv2.reset(); with_osv(); appv2.load_bom = lambda: bom; appv2._lightwell_builds = lambda: {}
+            appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+            appv2.start_generate(None, [rid], allow_major=True)
+            st = wait_for({'generated'})
+            self.assertEqual(st['extra_selected'], [rid])
+            self.assertIn('spring-security-web-6.5.11.jar', [c['new_jar'] for c in st['playbooks'][0]['changes']])
+        finally:
+            appv2.load_bom, appv2._lightwell_builds = real_bom, real_lw
 
 
 if __name__ == '__main__':

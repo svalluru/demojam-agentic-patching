@@ -749,7 +749,10 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
                                f"Lightwell has {o['to']}, a version change from {base}, fixing {', '.join(o['cves']) or 'its listed CVEs'}"
                                for o in opts) + f'. No Lightwell build at {base}.'))
             elif fix_all:
-                row.update(kind='major', to=fix_all,
+                # Offered only when the operator allows major upgrades (the Change list's major chip).
+                row.update(kind='major', to=fix_all, source='upstream', default=0,
+                           options=[{'source': 'upstream', 'to': fix_all, 'version_change': True, 'major': True,
+                                     'cves': [a.get('cve') or a.get('id') for a in open_]}],
                            why=f'Only fixed in {fix_all}, a major upgrade: a code change for the app team, not a jar swap.')
             else:
                 row.update(kind='none', why='No fixed version published yet.')
@@ -1376,7 +1379,8 @@ def _assess(ev: dict) -> None:
         _set(status='failed', error=str(exc))
 
 
-def start_generate(targets: list[str] | None = None, extra: list[str] | None = None) -> tuple[int, dict]:
+def start_generate(targets: list[str] | None = None, extra: list[str] | None = None,
+                   allow_major: bool = False) -> tuple[int, dict]:
     """Prepare the remediation for the selected sites (all of them when targets is None): a playbook for each app
     they run, swapping the Lightwell build and any osv.dev packages selected for that app (none when extra is
     None). The site selection carries to the run, which can narrow it but not widen it."""
@@ -1392,7 +1396,7 @@ def start_generate(targets: list[str] | None = None, extra: list[str] | None = N
         _RUN['selected'] = chosen
         apps = {k.split('|', 1)[0] for k in chosen}
         offered = {r['id']: len(r.get('options') or [1]) for r in ((_RUN['impact'].get('extra') or {}).get('rows') or [])
-                   if r['selectable']}
+                   if r['selectable'] or (allow_major and r['kind'] == 'major')}
         picked = []
         for x in extra or []:                # "row id" for its default option, or "row id::option index"
             rid, _, opt = x.partition('::')
@@ -1418,17 +1422,6 @@ def _generate() -> None:
             target = next((t for t in imp['targets'] if t['app'] == app and t['key'] in selected), None)
             if target is None:
                 continue                     # none of its sites selected: nothing to prepare
-            if st.get('plan'):
-                changes = [r['change'] for r in st['plan']['changes']]
-                _trace('intake', 'playbook', f"draft for {app} ({len(changes)} jars, from the plan)")
-                H.demo_pause(1.4)
-                text, source, checks, note = draft_playbook(ev, target, changes)
-                ok = all(c['ok'] for c in checks)
-                _trace('playbook', 'intake', f"{app}: {'checks passed' if ok else 'checks FAILED'} ({source})")
-                playbooks.append({'app': app, 'filename': f"app-v2/{app}-plan-{st['run_id']}.yml", 'changes': changes,
-                                  'text': text, 'source': source, 'checks': checks, 'ok': ok, 'note': note,
-                                  'sha256': hashlib.sha256(text.encode()).hexdigest()})
-                continue
             rows = {r['id']: r for r in ((imp.get('extra') or {}).get('rows') or [])}
             chosen = [(x.partition('::')[0], x.partition('::')[2]) for x in st.get('extra_selected') or []]
             extra_changes = [change_for_extra(rows[rid], int(opt) if opt else None)
@@ -1709,9 +1702,8 @@ def write_report(st: dict) -> dict:
     now = datetime.now(timezone.utc)
     doc = pdf.Doc()
     doc.text('Application Patch Report', size=19, bold=True)
-    doc.text((f"Plan a fix · {ev['group']} · {ev['version']}  ·  " if ev.get('kind') == 'plan' else
-              f"{ev['group']}:{ev['artifact']}  ·  {upstream(ev['version'])} → {ev['version']}  ·  ")
-             + f"{now.strftime('%d %b %Y %H:%M UTC')}", size=9.5, color='#6a6e73')
+    doc.text(f"{ev['group']}:{ev['artifact']}  ·  {upstream(ev['version'])} → {ev['version']}  ·  "
+             f"{now.strftime('%d %b %Y %H:%M UTC')}", size=9.5, color='#6a6e73')
     doc.rule()
     doc.gap(4)
     if st.get('simulated'):
@@ -1814,7 +1806,7 @@ def feed_history(st: dict) -> dict:
 #   another    a Lightwell build of a newer version on the same major line (a version change)
 #   osv        the lowest upstream release that clears every advisory (a major upgrade only if allowed)
 # The operator ticks the packages and can pick another allowed source per package; the result is a remediation plan
-# (markdown, the shape of v1's) and, when approved, a normal App Patch v2 run of exactly those jar swaps.
+# (markdown, the shape of v1's), downloaded from the Change list of a fix's run.
 
 PLAN_SOURCES = ('lightwell', 'another', 'osv')
 SEVERITY_RANK = {'critical': 0, 'high': 1, 'moderate': 2, 'medium': 2, 'low': 3, 'unknown': 4}
@@ -1998,67 +1990,6 @@ def plan_markdown(plan: dict) -> str:
         out += ['', 'Review the Lightwell items against your own advisory list before approving: coverage is only as '
                 'complete as what Lightwell lists for each build.', '']
     return '\n'.join(out)
-
-
-def start_plan(app_name: str, sources: list[str] | None = None, allow_major: bool = False,
-               select: list[dict] | None = None) -> tuple[int, dict]:
-    """A run from a plan: no incoming build, the app's sites as targets, the plan's changes as the change list.
-    From 'assessed' on it is an ordinary run: Prepare remediation, Run, the gate, the pod test, Report, Results."""
-    if busy():
-        return 409, {'ok': False, 'error': 'a v2 run is already in progress'}
-    plan = app_plan(app_name, sources, allow_major, select)
-    if plan is None:
-        return 404, {'ok': False, 'error': f'no app {app_name}'}
-    if not plan['changes']:
-        return 400, {'ok': False, 'error': 'nothing selected to change'}
-    if not plan['sites']:
-        return 400, {'ok': False, 'error': f'{app_name} has no servers to patch'}
-    n = len(plan['changes'])
-    ev = {'id': f'plan-{app_name}', 'kind': 'plan', 'source': 'plan', 'group': app_name, 'artifact': 'remediation plan',
-          'version': f"{n} librar{'ies' if n != 1 else 'y'}",
-          'cves': sorted({x for r in plan['changes'] for x in r['change']['cves']}),
-          'note': f"Plan a fix for {app_name}: " + ', '.join(f"{r['artifact']} {r['installed']} -> {r['to']}" for r in plan['changes'])}
-    with _LOCK:
-        _RUN.clear()
-        _RUN.update(status='assessing', run_id=uuid.uuid4().hex[:8], event=ev, events=[], plan=plan,
-                    stages={k: 'pending' for k in STAGES}, started_at=now_iso())
-    _persist()
-    threading.Thread(target=_assess_plan, args=(ev, plan), daemon=True, name='appv2-plan').start()
-    return 200, {'ok': True}
-
-
-def _assess_plan(ev: dict, plan: dict) -> None:
-    try:
-        app = next(a for a in load_bom() if a['app'] == plan['app'])
-        _stage('intake', 'done')
-        _trace('console', 'inventory', f"plan a fix for {plan['app']}: {len(plan['changes'])} library(ies)")
-        _stage('impact', 'active')
-        targets = [{'key': f"{app['app']}|{s['host']}", 'domain': app.get('domain', ''), 'order': i,
-                    'site': s.get('site', s['host']), 'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
-                    'env': s.get('env', 'prod'), 'path': app.get('path', ''), 'service': app.get('service', app['app']),
-                    'health_url': app.get('health_url', ''),
-                    'installed': ', '.join(f"{r['artifact']} {r['installed']}" for r in plan['changes'])}
-                   for i, s in enumerate(app.get('servers', []))]
-        targets.sort(key=lambda t: (t['env'] != 'qa', t['order']))
-        imp = {'targets': targets, 'other': [], 'apps': [app['app']], 'plan': True}
-        _set(impact=json.loads(json.dumps(imp)))
-        _trace('inventory', 'reasoning', f"past changes for {len(targets)} site(s)")
-        H.demo_pause(1.0)
-        notes, rsource = reasoning(targets)
-        for t in targets:
-            t['reasoning'] = notes.get(t['key'], '')
-        imp['reasoning_source'] = rsource
-        qa = [t for t in targets if t['env'] == 'qa']
-        info = (f"{len(plan['changes'])} jar swap(s) on {plan['app']} at {len(targets)} site(s): "
-                + ', '.join(f"{r['artifact']} {r['installed']} -> {r['to']}" for r in plan['changes'])
-                + f". The lab goes first ({', '.join(t['site'] for t in qa) or 'none'}); live sites wait for approval. "
-                'One restart per site; every jar rolls back if the health check fails.')
-        _set(impact=imp, info=info, info_source='rules')
-        _stage('impact', 'done')
-        _set(status='assessed')
-    except Exception as exc:
-        _stage('impact', 'failed')
-        _set(status='failed', error=str(exc))
 
 
 # ---------------------------------------------------------------------------- the telco estate
