@@ -656,15 +656,26 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
                 excerpts[r['id']] = '\n---\n'.join(hits)[:1200]
     if not H.llm:
         return {}, 'rules'
-    facts = '\n'.join(
-        f"{i + 1}. {r['app']} (sites {', '.join(r['sites'])}): {r['artifact']} {r['installed']}; open: "
-        + ', '.join(f"{a['id']} {a['severity']}" for a in r['advisories'][:6])
-        + f"; proposal: {r['why']}" + (f"\n   history: {excerpts[r['id']]}" if r['id'] in excerpts else '')
-        for i, r in enumerate(rows))
-    prompt = ('You advise a telco operations team patching application libraries in a change window. For each '
-              'numbered library below write one or two sentences: whether to take the proposed change in this '
-              'window and why, how it affects the running app (restart, API change, what to verify), using only the '
-              'facts and history given. Answer as JSON, {"1": "...", "2": "..."}, nothing else.\n\n' + facts)
+    def fact(r: dict) -> str:
+        sev = ', '.join(f"{a['id']} ({a['severity']})" for a in r['advisories'][:6]) or 'none'
+        if r['kind'] == 'lightwell':
+            what = (f"proposed: Lightwell build {r['to']} (same version, Red Hat provenance). It fixes these CVEs that "
+                    f"are open on the app today: {', '.join(r['lightwell_covers']) or 'none listed'}. Still open after it: {sev}.")
+        elif r['kind'] == 'upstream':
+            same_minor = upstream(r['installed']).split('.')[:2] == r['to'].split('.')[:2]
+            line = (f"a patch release on the same {'.'.join(r['to'].split('.')[:2])} line" if same_minor
+                    else 'the same major line, a minor version change')
+            what = f"open today: {sev}. Proposed: upstream {r['to']}, {line}, which fixes all of them."
+        else:
+            what = f"open today: {sev}. {r['why']} Not offered in this change."
+        return f"{r['app']} (sites {', '.join(r['sites'])}): {r['artifact']} {r['installed']}. {what}"
+    facts = '\n'.join(f"{i + 1}. {fact(r)}" + (f"\n   history: {excerpts[r['id']]}" if r['id'] in excerpts else '')
+                      for i, r in enumerate(rows))
+    prompt = ('You advise a telco operations team patching application libraries in a change window. Each library '
+              'below would ride the same restart as a Lightwell fix already being applied. For each numbered library '
+              'write one or two sentences: whether to take the proposed change in this window and why, how it '
+              'affects the running app (API change or not, what to verify), and anything the history says. Use only '
+              'the facts and history given. Answer as JSON, {"1": "...", "2": "..."}, nothing else.\n\n' + facts)
     try:
         parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
         return {r['id']: str(parsed.get(str(i + 1)) or '').strip() or r['why'] for i, r in enumerate(rows)}, \

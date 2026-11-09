@@ -10,4 +10,5 @@ What happened:
 oss-inventory pins mina-core 2.1.6 for its SFTP export; 2.2.x changed the API it uses.
 
 Lessons:
-mina-core fixes for 2.2.x do not apply to oss-inventory; it needs a 2.1.6 build.
+mina-core fixes for 2.2.x do not apply to oss-inventory: moving to 2.2 breaks its SFTP export. Patch releases on the
+2.1 line (2.1.x) keep the API it uses and are safe to take.

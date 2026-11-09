@@ -49,6 +49,8 @@
       loop: "{{ lib }}"
       loop_control: { label: "{{ item.url | basename }}" }
 
+    # One expression for the whole body: Ansible turns a template that renders to JSON back into a list or dict, and
+    # Tekton's params here are strings. Built in one go, the inner to_json results stay strings.
     - name: Start the pipeline
       ansible.builtin.uri:
         url: "{{ ocp_url }}/apis/tekton.dev/v1/namespaces/{{ ocp_ns }}/pipelineruns"
@@ -57,29 +59,20 @@
         validate_certs: false
         body_format: json
         status_code: [201]
-        body:
-          apiVersion: tekton.dev/v1
-          kind: PipelineRun
-          metadata:
-            name: "{{ run_name | truncate(60, true, '') | regex_replace('[^a-z0-9-]', '-') }}"
-            labels: { app-v2/app: "{{ app }}", app-v2/run: "{{ run_id }}" }
-          spec:
-            pipelineRef: { name: app-v2-test }
-            params:
-              - { name: app, value: "{{ app }}" }
-              - { name: run_id, value: "{{ run_id }}" }
-              - { name: jars, value: "{{ tested | to_json }}" }
-              - { name: probes, value: "{{ probes }}" }
-              - { name: port, value: "{{ port | string }}" }
-              - { name: expect, value: "{{ (expect_json if expect_json is string else (expect_json | to_json)) }}" }
-            workspaces:
-              - name: source
-                volumeClaimTemplate:
-                  spec:
-                    accessModes: [ReadWriteOnce]
-                    resources: { requests: { storage: 1Gi } }
-              - name: app
-                configMap: { name: app-v2-healthserver }
+        body: >-
+          {{ {'apiVersion': 'tekton.dev/v1', 'kind': 'PipelineRun',
+              'metadata': {'name': run_name | truncate(60, true, '') | regex_replace('[^a-z0-9-]', '-'),
+                           'labels': {'app-v2/app': app, 'app-v2/run': run_id | string}},
+              'spec': {'pipelineRef': {'name': 'app-v2-test'},
+                       'params': [{'name': 'app', 'value': app},
+                                  {'name': 'run_id', 'value': run_id | string},
+                                  {'name': 'jars', 'value': tested | to_json},
+                                  {'name': 'probes', 'value': probes | string},
+                                  {'name': 'port', 'value': port | string},
+                                  {'name': 'expect', 'value': expect_json if expect_json is string else (expect_json | to_json)}],
+                       'workspaces': [{'name': 'source', 'volumeClaimTemplate': {'spec': {
+                                          'accessModes': ['ReadWriteOnce'], 'resources': {'requests': {'storage': '1Gi'}}}}},
+                                      {'name': 'app', 'configMap': {'name': 'app-v2-healthserver'}}]}} }}
       register: created
       no_log: true
 
