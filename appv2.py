@@ -722,10 +722,18 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
                 f'Still open after the Lightwell build: {len(open_)} advisory(ies); upstream {fix_all} closes them.'
                 if fix_all else f'Still open after the Lightwell build: {len(open_)} advisory(ies), no fix published.'))
         elif build and not is_lightwell(dep['version']):
-            row.update(kind='lightwell', to=build['build'], source='lightwell', selectable=True,
-                       options=[{'source': 'lightwell', 'to': build['build'], 'version_change': False,
-                                 'cves': list(build['cves'])}], default=0,
-                       why=f"Lightwell build of the same version fixes {', '.join(build['cves'])}.")
+            # The Lightwell build first (same version, Red Hat provenance); the upstream release as the alternative,
+            # since it can close what the build leaves open (a major one only behind "Major upgrades").
+            opts = [{'source': 'lightwell', 'to': build['build'], 'version_change': False, 'cves': list(build['cves'])}]
+            # The upstream release that clears every advisory on this version, the build's own ones included.
+            every = [a.get('suggested_fix') for a in advisories if a.get('suggested_fix')]
+            up = max(every, key=_vkey) if every else ''
+            if up and _vkey(up) > _vkey(base) and all(a.get('suggested_fix') for a in advisories):
+                opts.append({'source': 'upstream', 'to': up, 'version_change': True, 'major': _major(up) != _major(base),
+                             'cves': sorted({a.get('cve') or a.get('id') for a in advisories})})
+            row.update(kind='lightwell', to=build['build'], source='lightwell', selectable=True, options=opts, default=0,
+                       why=f"Lightwell build of the same version fixes {', '.join(build['cves'])}."
+                           + (f" Upstream {opts[1]['to']} would also close the {len(open_)} it leaves open." if len(opts) > 1 and open_ else ''))
         else:
             # No Lightwell build of this version. Up to two ways forward on the same major line: the upstream fix,
             # and a Lightwell build of a newer version (Red Hat provenance, but a version change).
