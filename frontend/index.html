@@ -4178,12 +4178,10 @@ function v2Estate(c) {
   const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
     App severity weighs what the app touches, whether a Lightwell fix exists, and how hard the restart is.</div>`;
   const RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-  const sorted = list => v2.estateSort === 'severity'
-    ? [...list].sort((a, b) => (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9) || a.app.localeCompare(b.app)) : list;
+  // Always by App severity, most severe first.
+  const sorted = list => [...list].sort((a, b) => (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9) || a.app.localeCompare(b.app));
   const rows = sorted(c.rows || []);
-  const bar = `<div class="v2-estbar"><span class="muted-sm">Sort by</span>
-      <button class="pill ${v2.estateSort !== 'severity' ? 'active' : ''}" data-v2-sort="domain">Domain</button>
-      <button class="pill ${v2.estateSort === 'severity' ? 'active' : ''}" data-v2-sort="severity">App severity</button>
+  const bar = `<div class="v2-estbar"><span class="muted-sm">Sorted by App severity, most severe first.</span>
       ${c.refreshing ? '<span class="muted-sm">refreshing…</span>' : c.stale ? `<span class="muted-sm">could not refresh: ${esc(c.stale)}</span>` : ''}</div>`;
   return `${bar}<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
     <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">billing, inventory, customer channels</span></div>
@@ -4199,8 +4197,6 @@ document.getElementById('v2-body').addEventListener('click', async ev => {
   }
   if (ev.target.closest('[data-v2-cldl]')) { try { await v2ClDownload(); } catch (e) { toast(esc(e.message), true); } return; }
   if (ev.target.closest('[data-v2-clprep]')) { document.getElementById('v2-go').click(); return; }
-  const sortBtn = ev.target.closest('[data-v2-sort]');
-  if (sortBtn) { v2.estateSort = sortBtn.dataset.v2Sort; v2Render(); return; }
   const a = ev.target.closest('[data-v2-assess]');
   if (a) { v2.view = 'run'; v2Act('/api/v2/assess', { event_id: a.dataset.v2Assess }); return; }
   const d = ev.target.closest('[data-v2-decide]');
