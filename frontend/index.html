@@ -3715,6 +3715,10 @@ function v2Render() {
     const extra = (v2.extraRun === s.run_id && v2.extraSel) ? v2.extraSel.size : 0;
     go.textContent = (picked === t.length ? 'Prepare remediation' : `Prepare remediation for ${picked} of ${t.length} sites`)
       + (extra ? ` (+${extra} osv.dev)` : '');
+  } else if (s.status === 'generating') {
+    // Shown, greyed out, until the playbooks are ready; then it becomes Run.
+    go.hidden = false; go.dataset.act = ''; go.disabled = true;
+    go.textContent = 'Preparing remediation…';
   } else if (s.status === 'generated') {
     const t = (s.impact.targets || []).filter(x => !s.selected || s.selected.includes(x.key));
     const picked = t.filter(x => v2.sel && v2.sel.has(x.key));
@@ -4005,10 +4009,15 @@ document.getElementById('v2-body').addEventListener('change', async ev => {
 document.getElementById('v2-go').addEventListener('click', ev => {
   // Held in a const: ev.currentTarget is null again by the time the request settles.
   const btn = ev.currentTarget;
+  if (!btn.dataset.act) return;
   btn.disabled = true;
+  if (btn.dataset.act === 'generate') btn.textContent = 'Preparing remediation…';
   const body = ['dispatch', 'generate'].includes(btn.dataset.act) ? { targets: [...(v2.sel || [])] } : {};
   if (btn.dataset.act === 'generate') body.extra = [...(v2.extraSel || [])];
-  v2Act(`/api/v2/${btn.dataset.act}`, body).finally(() => { btn.disabled = false; });
+  // Re-enabled only if the run is not now busy: while it prepares, the render keeps it greyed out.
+  v2Act(`/api/v2/${btn.dataset.act}`, body).finally(() => {
+    if (!V2_BUSY.includes((v2.state || {}).status)) btn.disabled = false;
+  });
 });
 document.getElementById('v2-views').addEventListener('click', async ev => {
   const b = ev.target.closest('[data-v2-view]');
