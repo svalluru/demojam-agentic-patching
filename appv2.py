@@ -648,11 +648,22 @@ def _lightwell_newer(group: str, artifact: str, base: str) -> dict | None:
     if not cands:
         return None
     pick = dict(min(cands, key=lambda b: _vkey(b['version'])))
-    if not pick.get('cves') and H.fixed_cves and not H.demo_mode():
+    if not pick.get('cves') and H.lightwell_get and not H.demo_mode():
+        # The newest build of a version is not always one an advisory names (a later rebuild); offer the newest build
+        # that an advisory does name, with its CVEs, as the inbox does.
         try:
-            pick['cves'] = sorted(H.fixed_cves(group, artifact, pick['build']))
+            body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}', package_version=pick['version'], limit=100)
+            named: dict[str, set] = {}
+            for adv in body.get('data') or []:
+                ids = {i for i in [adv.get('advisory_id', '')] + list(adv.get('aliases') or []) if str(i).startswith('CVE-')}
+                for b in adv.get('fixed_versions') or []:
+                    if RHLW.match(b) and upstream(b) == pick['version']:
+                        named.setdefault(b, set()).update(ids)
+            if named:
+                best = max(named, key=lambda b: int(RHLW.match(b).group('build')))
+                pick.update(build=best, cves=sorted(named[best]))
         except Exception:
-            pick['cves'] = []
+            pass
     return pick
 
 
