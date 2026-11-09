@@ -75,6 +75,8 @@ class _Hooks:
     osv_lookup: Callable[[list], dict] | None = None             # [(ecosystem, name, version)] -> {key: [advisory]}
     lightwell_builds: Callable[[str, str], list] | None = None   # (group, artifact) -> [{version, build}], every version
     k8s_get: Callable[..., Any] | None = None                   # (api path, text=False) -> JSON body, or text for logs
+    k8s_patch: Callable[[str, dict], Any] | None = None         # (api path, merge patch) -> body; cancels a PipelineRun
+    aap_call: Callable[..., Any] | None = None                  # (path, method='GET', body=None) -> AAP controller API
 
 
 H = _Hooks()
@@ -1184,7 +1186,7 @@ def _persist() -> None:
 
 
 # What a console restart interrupts. These ran in a thread of the process that died, so they are not coming back.
-_IN_PROCESS = {'assessing': 'assess', 'generating': 'generate', 'dispatching': 'dispatch'}
+_IN_PROCESS = {'assessing': 'assess', 'generating': 'generate', 'dispatching': 'dispatch', 'cancelling': 'cancel'}
 
 
 def restore() -> dict:
@@ -1269,7 +1271,7 @@ def _set(**kw) -> None:
 
 def busy() -> bool:
     with _LOCK:
-        return _RUN.get('status') in ('assessing', 'generating', 'dispatching', 'running')
+        return _RUN.get('status') in ('assessing', 'generating', 'dispatching', 'running', 'cancelling')
 
 
 def enrich(event: dict) -> None:
@@ -1588,6 +1590,8 @@ def _simulate() -> None:
                     cur['state'] = 'succeeded'
         _persist()
     del t0
+    if state().get('cancelling'):
+        return
     pbs = {p['app']: p for p in st.get('playbooks') or []}
     for h in active:
         changes = (pbs.get(h['app']) or {}).get('changes') or [change_for_event(st['event'], h)]
@@ -1609,6 +1613,8 @@ def _simulate() -> None:
 def _run_host_sim(h: dict, delay: float = 1.0) -> None:
     key = h['key']
     for step in ('sync', 'remediate', 'verify'):
+        if state().get('cancelling'):
+            return
         _host(key, steps={step: 'active'})
         if step == 'sync':
             _trace('ao', 'aap', f'{_label(h)}: sync and run')
@@ -1661,8 +1667,182 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
     return 200, {'ok': True}
 
 
+# ---------------------------------------------------------------------------- cancel a run
+
+CANCELLABLE = ('dispatching', 'running', 'awaiting_approval')
+
+
+def cancel_run() -> tuple[int, dict]:
+    """Stop the run: cancel its AO executions, any App Patch v2 AAP job still running, and its PipelineRuns; then check
+    every site the playbook may have reached and say plainly what, if anything, was left half done."""
+    st = state()
+    if st.get('status') not in CANCELLABLE:
+        return 409, {'ok': False, 'error': f"nothing to cancel (the run is {st.get('status')})"}
+    _set(cancelling=True, status='cancelling', cancel={'started_at': now_iso(), 'steps': [], 'sites': []})
+    _trace('console', 'ao', 'cancel the run')
+    threading.Thread(target=_cancel, args=(st,), daemon=True, name='appv2-cancel').start()
+    return 200, {'ok': True}
+
+
+def _cancel_step(what: str, ok: bool, detail: str = '') -> None:
+    with _LOCK:
+        _RUN.setdefault('cancel', {}).setdefault('steps', []).append({'what': what, 'ok': ok, 'detail': detail})
+    _persist()
+
+
+def _cancel(st: dict) -> None:
+    active = [h for h in st.get('hosts') or [] if h['outcome'] in ('queued', 'running', 'awaiting_approval')]
+    # Sites the playbook may have reached: its run step had started.
+    reached = [h for h in active if (h.get('steps') or {}).get('sync') in ('active', 'done')
+               or (h.get('steps') or {}).get('remediate') in ('active', 'done')]
+    for h in active:
+        _host(h['key'], outcome='cancelled', detail='Cancelled by the operator.',
+              steps={k: 'skipped' for k, v in (h.get('steps') or {}).items() if v in ('active', 'waiting', 'pending', None)}
+              | {k: 'skipped' for k in HOST_STEPS if k not in (h.get('steps') or {})})
+    if st.get('simulated'):
+        _cancel_step('Simulated executions stopped', True, f'{len(active)} site(s)')
+        sites = [{'key': h['key'], 'site': h.get('site') or h['host'], 'host': h['host'], 'clean': True,
+                  'state': 'untouched' if h not in reached else 'untouched (demo: no server was changed)', 'detail': ''}
+                 for h in active]
+        return _cancel_done(st, sites)
+    # 1. AO executions.
+    for h in active:
+        ex = h.get('execution_id')
+        if not ex:
+            continue
+        try:
+            H.ao_call(f'/api/v1/executions/{ex}/cancel', 'POST', {})
+            _cancel_step(f'AO execution for {_label(h)} cancelled', True, ex)
+        except Exception as exc:
+            _cancel_step(f'AO execution for {_label(h)} not cancelled', False, f'{ex}: {str(exc)[:200]}')
+    # 2. AAP jobs AO had already launched: AO's cancel does not reach a job that is running.
+    if H.aap_call:
+        try:
+            jobs = (H.aap_call('/jobs/?status__in=pending,waiting,running&order_by=-id&page_size=50') or {}).get('results') or []
+            mine = [j for j in jobs if str(j.get('name', '')).startswith('App Patch v2') and str(j.get('created', '')) >= st.get('started_at', '')]
+            for j in mine:
+                H.aap_call(f"/jobs/{j['id']}/cancel/", 'POST', {})
+            deadline = time.time() + 45
+            left = list(mine)
+            while left and time.time() < deadline:
+                time.sleep(3)
+                left = [j for j in left if (H.aap_call(f"/jobs/{j['id']}/") or {}).get('status') in ('pending', 'waiting', 'running')]
+            for j in mine:
+                gone = j not in left
+                _cancel_step(f"AAP job {j['id']} ({j['name']}) {'cancelled' if gone else 'still running'}", gone,
+                             '' if gone else 'cancel it in AAP; it may still change the host')
+            if not mine:
+                _cancel_step('No App Patch v2 AAP job was running', True)
+        except Exception as exc:
+            _cancel_step('AAP jobs not checked', False, str(exc)[:200])
+    else:
+        _cancel_step('AAP jobs not checked', False, 'no AAP access configured (AAP_BASE_URL, AAP_TOKEN)')
+    # 3. PipelineRuns still running.
+    ns = env('APPV2_PIPELINE_NAMESPACE', 'agentic-patching')
+    for app in sorted({h['app'] for h in active}):
+        name = pipeline_run_name(app, st['run_id'])
+        try:
+            pr = H.k8s_get(f'/apis/tekton.dev/v1/namespaces/{ns}/pipelineruns/{name}') if H.k8s_get else None
+            cond = next((c for c in ((pr or {}).get('status') or {}).get('conditions') or [] if c.get('type') == 'Succeeded'), {})
+            if pr and cond.get('status') not in ('True', 'False'):
+                H.k8s_patch(f'/apis/tekton.dev/v1/namespaces/{ns}/pipelineruns/{name}', {'spec': {'status': 'Cancelled'}})
+                _cancel_step(f'PipelineRun {name} cancelled', True)
+        except Exception as exc:
+            if '404' not in str(exc):
+                _cancel_step(f'PipelineRun {name} not cancelled', False, str(exc)[:200])
+    # 4. What the sites look like now.
+    sites = [{'key': h['key'], 'site': h.get('site') or h['host'], 'host': h['host'], 'clean': True,
+              'state': 'untouched: stopped before the playbook ran', 'detail': ''} for h in active if h not in reached]
+    sites += _check_sites(st, reached)
+    _cancel_done(st, sites)
+
+
+def _check_sites(st: dict, hosts: list[dict]) -> list[dict]:
+    """For each site the playbook may have reached: its lib folder, backup folder and service, read through an AAP
+    ad-hoc command, against the run's change list. Clean is either untouched (old jars, empty backup) or fully
+    patched (new jars, old ones in backup); anything else is reported with how to put it back."""
+    if not hosts:
+        return []
+    pbs = {p['app']: p for p in st.get('playbooks') or []}
+    out = []
+    try:
+        res = _adhoc_read([h['host'].split('.')[0] for h in hosts],
+                          'for a in ' + ' '.join(sorted({h["app"] for h in hosts})) + '; do echo "== $a"; '
+                          'ls /opt/apps/$a/lib; echo "-- backup"; ls /opt/apps/$a/backup; echo "-- service"; '
+                          'systemctl is-active $a; done')
+    except Exception as exc:
+        return [{'key': h['key'], 'site': h.get('site') or h['host'], 'host': h['host'], 'clean': False,
+                 'state': 'not checked', 'detail': f'could not read the host ({str(exc)[:160]}); check /opt/apps/{h["app"]} by hand'}
+                for h in hosts]
+    for h in hosts:
+        text = res.get(h['host'].split('.')[0], '')
+        block = text.split(f"== {h['app']}", 1)[-1].split('\n== ', 1)[0]
+        lib = block.split('-- backup')[0].split()
+        backup = block.split('-- backup', 1)[-1].split('-- service')[0].split()
+        svc = block.split('-- service', 1)[-1].split()[:1]
+        changes = (pbs.get(h['app']) or {}).get('changes') or []
+        old = [c['old_jar'] for c in changes]
+        new = [c['new_jar'] for c in changes]
+        untouched = all(j in lib for j in old) and not any(j in lib for j in new) and not backup
+        patched = all(j in lib for j in new) and not any(j in lib for j in old)
+        up = svc == ['active']
+        if (untouched or patched) and up:
+            out.append({'key': h['key'], 'site': h.get('site') or h['host'], 'host': h['host'], 'clean': True,
+                        'state': 'untouched' if untouched else 'patched before the cancel landed (left patched)', 'detail': ''})
+            continue
+        fix = (f"on {h['host']}: " + '; '.join(f"cp /opt/apps/{h['app']}/backup/{c['old_jar']} /opt/apps/{h['app']}/lib/ && rm -f /opt/apps/{h['app']}/lib/{c['new_jar']}"
+                                                for c in changes) + f"; systemctl restart {h['app']}")
+        out.append({'key': h['key'], 'site': h.get('site') or h['host'], 'host': h['host'], 'clean': False,
+                    'state': 'half changed' if (lib or backup) else 'not readable',
+                    'detail': f"lib: {', '.join(lib) or '—'}; backup: {', '.join(backup) or 'empty'}; service: {svc[0] if svc else 'unknown'}. "
+                              f"To put it back: {fix}"})
+    return out
+
+
+def _adhoc_read(hosts: list[str], script: str) -> dict[str, str]:
+    """{host: stdout} of a read-only shell command on the app servers, as an AAP ad-hoc command."""
+    from urllib.parse import quote
+    inv = ((H.aap_call(f"/inventories/?name={quote(env('TARGET_INVENTORY', 'lab-inventory'))}") or {}).get('results') or [{}])[0].get('id')
+    cred = ((H.aap_call(f"/credentials/?name={quote(env('MACHINE_CREDENTIAL', 'lab-credential'))}") or {}).get('results') or [{}])[0].get('id')
+    if not inv or not cred:
+        raise RuntimeError('TARGET_INVENTORY / MACHINE_CREDENTIAL not found in AAP')
+    job = H.aap_call('/ad_hoc_commands/', 'POST', {'inventory': inv, 'credential': cred, 'module_name': 'shell',
+                                                   'module_args': script, 'limit': ','.join(hosts)})
+    for _ in range(60):
+        st = H.aap_call(f"/ad_hoc_commands/{job['id']}/") or {}
+        if st.get('status') in ('successful', 'failed', 'error', 'canceled'):
+            break
+        time.sleep(3)
+    out = {}
+    for e in (H.aap_call(f"/ad_hoc_commands/{job['id']}/events/?page_size=200") or {}).get('results') or []:
+        if e.get('event') in ('runner_on_ok', 'runner_on_failed'):
+            out[e.get('host_name', '')] = ((e.get('event_data') or {}).get('res') or {}).get('stdout', '')
+    return out
+
+
+def _cancel_done(st: dict, sites: list[dict]) -> None:
+    with _LOCK:
+        c = _RUN.setdefault('cancel', {})
+        c.update(sites=sites, clean=all(x['clean'] for x in sites) and all(s_['ok'] for s_ in c.get('steps', [])),
+                 finished_at=now_iso())
+        for k, v in (_RUN.get('stages') or {}).items():
+            if v in ('active', 'pending', 'waiting'):
+                _RUN['stages'][k] = 'skipped'
+        _RUN['cancelling'] = False
+        _RUN['status'] = 'cancelled'
+        _RUN['finished_at'] = now_iso()
+    _persist()
+    bad = [x for x in sites if not x['clean']]
+    _trace('console', 'console', 'run cancelled' + (f"; {len(bad)} site(s) need attention" if bad else '; every site clean'))
+    outcomes = [h['outcome'] for h in state().get('hosts') or []]
+    _set(summary={k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped', 'cancelled')})
+    _record(state())
+
+
 def _maybe_finish() -> None:
     st = state()
+    if st.get('cancelling') or st.get('status') == 'cancelled':
+        return
     hosts = st.get('hosts') or []
     if not hosts or any(h['outcome'] in ('queued', 'running') for h in hosts):
         return
@@ -2518,6 +2698,8 @@ def _follow_live(h: dict) -> None:
 
     while exec_id and time.time() < deadline:
         time.sleep(3)
+        if state().get('cancelling') or next((x for x in state().get('hosts') or [] if x['key'] == key), {}).get('outcome') == 'cancelled':
+            return                           # Cancel run owns this site now
         try:
             ex = H.ao_call(f'/api/v1/executions/{exec_id}') or {}
             acts = _activities(exec_id)

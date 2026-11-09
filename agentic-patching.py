@@ -4182,6 +4182,24 @@ def k8s_get(path: str, text: bool = False) -> Any:
     return body if text else json.loads(body)
 
 
+def k8s_patch(path: str, body: dict) -> Any:
+    """A merge patch with the app-v2-runner token: used only to cancel a running PipelineRun."""
+    base = (env('APPV2_PIPELINE_API_URL') or env('OCP_API_URL') or 'https://kubernetes.default.svc').rstrip('/')
+    req = urllib.request.Request(base + path, method='PATCH', data=json.dumps(body).encode(),
+                                 headers={'Authorization': f"Bearer {env('APPV2_PIPELINE_TOKEN')}",
+                                          'Content-Type': 'application/merge-patch+json'})
+    with urllib.request.urlopen(req, timeout=15, context=ssl._create_unverified_context()) as r:
+        return json.loads(r.read() or b'{}')
+
+
+def aap_call(path: str, method: str = 'GET', body: Any = None) -> Any:
+    """Applications v2 Cancel run: the AAP controller API (AAP_BASE_URL, AAP_TOKEN)."""
+    if not (env('AAP_BASE_URL') and env('AAP_TOKEN')):
+        raise RuntimeError('AAP_BASE_URL / AAP_TOKEN not set')
+    return http_json(env('AAP_BASE_URL').rstrip('/') + path, method=method, body=body,
+                     headers={'Authorization': f"Bearer {env('AAP_TOKEN')}"}, verify=False, timeout=60)
+
+
 def osv_lookup(queries: list) -> dict:
     """Applications v2: osv.dev advisories for [(ecosystem, name, version)], through the scanner's client (live) or
     its saved answers (lightwell/demo/osv.json, demo). Same summaries v1's scan shows."""
@@ -4233,7 +4251,7 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
-                k8s_get=k8s_get)
+                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4932,6 +4950,8 @@ class Handler(BaseHTTPRequestHandler):
                     else (200, {**plan, 'markdown': appv2.plan_markdown(plan)})
             except Exception as exc:
                 code, body = 502, {'ok': False, 'error': str(exc)}
+        elif path == '/api/v2/cancel':
+            code, body = appv2.cancel_run()
         elif path == '/api/v2/reset':
             appv2.reset()
             code, body = 200, {'ok': True}

@@ -2009,7 +2009,11 @@
   .v2-changes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 4px; font-size: 12.5px; }
   .v2-changes > span { display: inline-flex; gap: 6px; align-items: center; }
   .v2-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 9px; margin-left: 6px; }
-  .v2-badge.ok { background: #e7f2e4; color: #2a6a23; } .v2-badge.run { background: #e7f1fa; color: #0066cc; }
+  .v2-badge.ok { background: #e7f2e4; color: #2a6a23; }
+  .go-patch.danger { background: #fff; color: #a30000; border: 1px solid #c9190b; }
+  .v2-cancel.ok { border-left: 4px solid #3e8635; } .v2-cancel.bad { border-left: 4px solid #c9190b; background: #fdf3f2; }
+  .v2-cancellist { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; }
+  .v2-cancellist li { margin: 3px 0; } .v2-cancellist li.bad { color: #a30000; } .v2-badge.run { background: #e7f1fa; color: #0066cc; }
   .v2-pipe { margin: 8px 0 4px; }
   .v2-pipehead { display: flex; gap: 12px; align-items: baseline; }
   .v2-pipetasks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; }
@@ -3583,7 +3587,7 @@ renderV2Stages(null);
 // pairs, reset to all of them each time a run is assessed.
 const v2 = { events: [], state: {}, view: 'inbox', timer: null, sel: null, selRun: '', estate: null,
              catScope: 'mine', catPage: 1, catalog: null, runs: [], past: null };
-const V2_BUSY = ['assessing', 'generating', 'dispatching', 'running'];
+const V2_BUSY = ['assessing', 'generating', 'dispatching', 'running', 'cancelling'];
 
 async function v2Fetch(path, body) {
   const r = await fetch(path, body === undefined ? {} : {
@@ -3695,7 +3699,7 @@ function v2Badge(h) {
   const m = {
     patched: ['ok', 'Patched'], rolled_back: ['fail', 'Rolled back'], rejected: ['fail', 'Rejected'],
     failed: ['fail', 'Failed'], awaiting_approval: ['review', 'Awaiting approval'],
-    running: ['work', 'Running'], queued: ['work', 'Queued'], skipped: ['ok', 'Not selected'],
+    running: ['work', 'Running'], queued: ['work', 'Queued'], skipped: ['ok', 'Not selected'], cancelled: ['fail', 'Cancelled'],
   }[h.outcome] || ['work', h.outcome || '—'];
   return `<span class="badge ${m[0]}">${m[1]}</span>`;
 }
@@ -3738,6 +3742,7 @@ function v2Render() {
   const sub = document.getElementById('v2-sub');
   const body = document.getElementById('v2-body');
   go.hidden = true;
+  go.classList.remove('danger');
   back.hidden = true;
   sub.hidden = false;
 
@@ -3788,6 +3793,12 @@ function v2Render() {
     const extra = v2ClPicked(s).length;
     go.textContent = (picked === t.length ? 'Prepare remediation' : `Prepare remediation for ${picked} of ${t.length} sites`)
       + (extra ? ` (+${extra} osv.dev)` : '');
+  } else if (['dispatching', 'running', 'awaiting_approval'].includes(s.status)) {
+    go.hidden = false; go.dataset.act = 'cancel'; go.disabled = false;
+    go.textContent = 'Cancel run'; go.classList.add('danger');
+  } else if (s.status === 'cancelling') {
+    go.hidden = false; go.dataset.act = ''; go.disabled = true;
+    go.textContent = 'Cancelling…'; go.classList.add('danger');
   } else if (s.status === 'generating') {
     // Shown, greyed out, until the playbooks are ready; then it becomes Run.
     go.hidden = false; go.dataset.act = ''; go.disabled = true;
@@ -3890,6 +3901,17 @@ function v2Run(s, readOnly) {
     <div class="muted-sm" style="margin-top:6px">${e.note ? `${esc(e.note)} ` : ''}Same version, Red Hat-patched; fixed CVEs from the Lightwell advisories API.</div>
   </div>`);
 
+  if (s.cancel) {
+    const c = s.cancel, bad = (c.sites || []).filter(x => !x.clean), badSteps = (c.steps || []).filter(x => !x.ok);
+    const done = s.status === 'cancelled';
+    out.push(`<div class="v2-card v2-cancel ${done ? (c.clean ? 'ok' : 'bad') : ''}" style="margin-bottom:14px">
+      <b>${done ? (c.clean ? 'Run cancelled · everything cleaned up' : 'Run cancelled · something needs attention') : 'Cancelling the run…'}</b>
+      <ul class="v2-cancellist">${(c.steps || []).map(x => `<li class="${x.ok ? 'ok' : 'bad'}">${x.ok ? '✓' : '⚠'} ${esc(x.what)}${x.detail ? ` <span class="muted-sm">${esc(x.detail)}</span>` : ''}</li>`).join('')}
+        ${(c.sites || []).map(x => `<li class="${x.clean ? 'ok' : 'bad'}">${x.clean ? '✓' : '⚠'} <b>${esc(x.site)}</b> (${esc(x.host)}): ${esc(x.state)}${x.detail ? `<div class="v2-detail">${esc(x.detail)}</div>` : ''}</li>`).join('')}
+        ${!done ? '<li class="muted-sm"><span class="spinner sm"></span> stopping AO, AAP and the pod tests, then checking the sites…</li>' : ''}</ul>
+      ${done && (bad.length || badSteps.length) ? `<div class="muted-sm" style="margin-top:6px">Not cleaned up: ${[...badSteps.map(x => esc(x.what)), ...bad.map(x => esc(x.site + ' ' + x.state))].join('; ')}. Follow the steps above before running again.</div>` : ''}
+    </div>`);
+  }
   if (s.status === 'assessing' && !s.impact) {
     out.push('<div class="empty"><div class="spinner"></div><span>Finding the affected sites…</span></div>');
   }
@@ -3971,7 +3993,7 @@ function v2Run(s, readOnly) {
         ${t.reason && !t.passed ? `<div class="v2-detail">${esc(t.reason)}</div>` : ''}</div>`; }).join('')}
 </div>`);
   }
-  if (s.hosts) {
+  if (s.hosts && !s.cancel) {
     // Agents 4 and 5, as on the infrastructure side: a report for the change board, and what was fed back.
     const done = s.status === 'complete';
     const rep = s.report || {};
@@ -4222,6 +4244,12 @@ document.getElementById('v2-go').addEventListener('click', ev => {
   // Held in a const: ev.currentTarget is null again by the time the request settles.
   const btn = ev.currentTarget;
   if (!btn.dataset.act) return;
+  if (btn.dataset.act === 'cancel') {
+    if (!confirm('Cancel this run?\n\nThe console stops the AO executions, any App Patch v2 job still running in AAP, and the pod tests, then checks each site the playbook may have reached and tells you if anything was left half done.')) return;
+    btn.disabled = true; btn.textContent = 'Cancelling…';
+    v2Act('/api/v2/cancel', {});
+    return;
+  }
   btn.disabled = true;
   if (btn.dataset.act === 'generate') btn.textContent = 'Preparing remediation…';
   const body = ['dispatch', 'generate'].includes(btn.dataset.act) ? { targets: [...(v2.sel || [])] } : {};

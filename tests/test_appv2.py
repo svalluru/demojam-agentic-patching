@@ -1062,5 +1062,75 @@ class PipelineStrip(unittest.TestCase):
         self.assertEqual((out['state'], [t['state'] for t in out['tasks']]), ('succeeded', ['succeeded'] * 3))
 
 
+
+class CancelRun(unittest.TestCase):
+    def test_demo_cancel_at_the_gate(self):
+        demo()
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate(); wait_for({'generated'})
+        appv2.start_dispatch(); wait_for({'awaiting_approval'})
+        self.assertEqual(appv2.cancel_run()[0], 200)
+        st = wait_for({'cancelled'})
+        self.assertTrue(st['cancel']['clean'])
+        gated = [h for h in st['hosts'] if h['env'] != 'qa' and h['outcome'] != 'skipped']
+        self.assertTrue(gated and all(h['outcome'] == 'cancelled' for h in gated))
+        self.assertEqual(appv2.cancel_run()[0], 409)                  # nothing left to cancel
+
+    def test_live_cancel_reports_a_half_changed_site(self):
+        demo()
+        calls = []
+
+        def ao(path, method='GET', body=None):
+            calls.append(('ao', method, path))
+            return {}
+
+        def aap(path, method='GET', body=None):
+            calls.append(('aap', method, path))
+            if path.startswith('/jobs/?'):
+                return {'results': [{'id': 7, 'name': 'App Patch v2 - Sync and Run', 'created': '2999-01-01T00:00:00Z'}]}
+            if path == '/jobs/7/':
+                return {'status': 'canceled'}
+            if path.startswith('/inventories/') or path.startswith('/credentials/'):
+                return {'results': [{'id': 1}]}
+            if path == '/ad_hoc_commands/':
+                return {'id': 9}
+            if path == '/ad_hoc_commands/9/':
+                return {'status': 'successful'}
+            if path.startswith('/ad_hoc_commands/9/events/'):
+                # node1: the backup was taken and the new jar is in, but the old one is gone and the service is down.
+                return {'results': [{'event': 'runner_on_ok', 'host_name': 'node1', 'event_data': {'res': {'stdout':
+                        '== inventory-service\npostgresql-42.3.3.jar\nzookeeper-3.5.9.rhlw-00001.jar\n-- backup\n'
+                        'zookeeper-3.5.9.jar\n-- service\ninactive'}}}]}
+            return {}
+
+        def k8s(path, text=False):
+            return {'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}]}}
+        appv2.configure(demo_mode=lambda: False, ao_call=ao, aap_call=aap, k8s_get=k8s, k8s_patch=lambda p, b: {})
+        appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
+        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'zookeeper')
+        h = {'key': 'inventory-service|node1', 'app': 'inventory-service', 'host': 'node1', 'site': 'lab', 'env': 'qa',
+             'outcome': 'running', 'execution_id': 'ex1', 'steps': {'commit': 'done', 'test': 'done', 'sync': 'active'}}
+        try:
+            with appv2._LOCK:
+                appv2._RUN.clear()
+                appv2._RUN.update(status='running', run_id='r1', event=ev, events=[], started_at='2026-01-01T00:00:00Z',
+                                  stages={k: 'pending' for k in appv2.STAGES}, hosts=[h],
+                                  impact={'targets': [], 'apps': ['inventory-service'], 'other': []},
+                                  playbooks=[{'app': 'inventory-service', 'changes': [{'old_jar': 'zookeeper-3.5.9.jar',
+                                              'new_jar': 'zookeeper-3.5.9.rhlw-00001.jar'}]}])
+            self.assertEqual(appv2.cancel_run()[0], 200)
+            st = wait_for({'cancelled'})
+        finally:
+            appv2.time = time
+        self.assertIn(('ao', 'POST', '/api/v1/executions/ex1/cancel'), calls)
+        self.assertIn(('aap', 'POST', '/jobs/7/cancel/'), calls)
+        site = st['cancel']['sites'][0]
+        self.assertFalse(site['clean'])
+        self.assertFalse(st['cancel']['clean'])
+        self.assertIn('cp /opt/apps/inventory-service/backup/zookeeper-3.5.9.jar', site['detail'])
+        self.assertIn('service: inactive', site['detail'])
+        self.assertEqual(st['hosts'][0]['outcome'], 'cancelled')
+
+
 if __name__ == '__main__':
     unittest.main()
