@@ -7,22 +7,97 @@
       "id": "trigger_manual",
       "name": "Lightwell build",
       "type": "manual_trigger",
-      "position": {"x": 0, "y": 300},
+      "position": {
+        "x": 0,
+        "y": 300
+      },
       "parameters": {
         "input_schema": {
           "type": "object",
-          "required": ["host", "group", "playbook_b64", "playbook_sha256", "playbook_filename", "jar_url"],
+          "required": [
+            "host",
+            "group",
+            "playbook_b64",
+            "playbook_sha256",
+            "playbook_filename",
+            "jar_url"
+          ],
           "properties": {
-            "host": {"type": "string", "default": "node1", "description": "Target host in the AAP inventory"},
-            "group": {"type": "string", "default": "qa_auto", "description": "qa_auto runs straight through; prod_review waits for approval"},
-            "app": {"type": "string", "default": "", "description": "The app being patched"},
-            "run_id": {"type": "string", "default": "", "description": "The console's run id"},
-            "gitea_repo": {"type": "string", "default": "lab-user/app_v2_playbooks", "description": "owner/name of the playbooks repository"},
-            "playbook_filename": {"type": "string", "default": "", "description": "Where the playbook goes in the repository (app-v2/...yml)"},
-            "playbook_b64": {"type": "string", "default": "", "description": "The generated playbook, base64"},
-            "playbook_sha256": {"type": "string", "default": "", "description": "Its sha256, checked before commit and again before it runs"},
-            "jar_url": {"type": "string", "default": "", "description": "The Lightwell build in Nexus"},
-            "provenance_url": {"type": "string", "default": "", "description": "Its provenance bundle in Nexus"}
+            "host": {
+              "type": "string",
+              "default": "node1",
+              "description": "Target host in the AAP inventory"
+            },
+            "group": {
+              "type": "string",
+              "default": "qa_auto",
+              "description": "qa_auto runs straight through; prod_review waits for approval"
+            },
+            "app": {
+              "type": "string",
+              "default": "",
+              "description": "The app being patched"
+            },
+            "run_id": {
+              "type": "string",
+              "default": "",
+              "description": "The console's run id"
+            },
+            "gitea_repo": {
+              "type": "string",
+              "default": "lab-user/app_v2_playbooks",
+              "description": "owner/name of the playbooks repository"
+            },
+            "playbook_filename": {
+              "type": "string",
+              "default": "",
+              "description": "Where the playbook goes in the repository (app-v2/...yml)"
+            },
+            "playbook_b64": {
+              "type": "string",
+              "default": "",
+              "description": "The generated playbook, base64"
+            },
+            "playbook_sha256": {
+              "type": "string",
+              "default": "",
+              "description": "Its sha256, checked before commit and again before it runs"
+            },
+            "jar_url": {
+              "type": "string",
+              "default": "",
+              "description": "The Lightwell build in Nexus"
+            },
+            "provenance_url": {
+              "type": "string",
+              "default": "",
+              "description": "Its provenance bundle in Nexus"
+            },
+            "jars_json": {
+              "type": "string",
+              "default": "",
+              "description": "Every jar in the change: [{new_jar, url, source, provenance_url | sha1_url}] (JSON)"
+            },
+            "lib_json": {
+              "type": "string",
+              "default": "",
+              "description": "Every jar the app runs after the change, for the test in a pod (JSON)"
+            },
+            "probes": {
+              "type": "string",
+              "default": "",
+              "description": "The /health probes (library=class,...)"
+            },
+            "port": {
+              "type": "string",
+              "default": "8080",
+              "description": "The app port"
+            },
+            "expect_json": {
+              "type": "string",
+              "default": "{}",
+              "description": "{library: new jar} the test expects /health to report (JSON)"
+            }
           }
         }
       }
@@ -33,8 +108,17 @@
       "id": "commit_to_gitea",
       "name": "Verify Build & Commit to Gitea",
       "type": "aap_job_template",
-      "position": {"x": 360, "y": 300},
-      "settings": {"retry_policy": {"max_retries": 2, "initial_interval": 10, "backoff_coefficient": 2.0}},
+      "position": {
+        "x": 360,
+        "y": 300
+      },
+      "settings": {
+        "retry_policy": {
+          "max_retries": 2,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      },
       "parameters": {
         "diff_mode": false,
         "extra_vars": {
@@ -45,7 +129,8 @@
           "playbook_b64": "${trigger.playbook_b64}",
           "playbook_sha256": "${trigger.playbook_sha256}",
           "jar_url": "${trigger.jar_url}",
-          "provenance_url": "${trigger.provenance_url}"
+          "provenance_url": "${trigger.provenance_url}",
+          "jars_json": "${trigger.jars_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -54,14 +139,59 @@
       }
     },
     {
+      "id": "test_in_pod",
+      "name": "Test in a Pod (OpenShift Pipelines)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 560,
+        "y": 300
+      },
+      "settings": {
+        "retry_policy": {
+          "max_retries": 0,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "run_id": "${trigger.run_id}",
+          "gitea_repo": "${trigger.gitea_repo}",
+          "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
+          "lib_json": "${trigger.lib_json}",
+          "sha256s_json": "${commit_to_gitea.artifacts.jar_sha256s_json}",
+          "probes": "${trigger.probes}",
+          "port": "${trigger.port}",
+          "expect_json": "${trigger.expect_json}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "App Patch v2 - Test in a Pod",
+        "organization_name": "Default"
+      }
+    },
+    {
       "id": "route_switch",
       "name": "Route by environment",
       "type": "switch",
-      "position": {"x": 720, "y": 300},
+      "position": {
+        "x": 920,
+        "y": 300
+      },
       "parameters": {
         "cases": [
-          {"port": "case_0", "label": "QA (no approval)", "condition": "${trigger.group} == 'qa_auto'"},
-          {"port": "case_1", "label": "Prod (approval)", "condition": "${trigger.group} == 'prod_review'"}
+          {
+            "port": "case_0",
+            "label": "QA (no approval)",
+            "condition": "${trigger.group} == 'qa_auto'"
+          },
+          {
+            "port": "case_1",
+            "label": "Prod (approval)",
+            "condition": "${trigger.group} == 'prod_review'"
+          }
         ],
         "default_port": "default"
       }
@@ -70,15 +200,17 @@
       "id": "run_app_patch",
       "name": "Sync & Run (QA)",
       "type": "aap_job_template",
-      "position": {"x": 1080, "y": 120},
+      "position": {
+        "x": 1280,
+        "y": 120
+      },
       "parameters": {
         "diff_mode": false,
         "extra_vars": {
           "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
           "playbook_sha256": "${trigger.playbook_sha256}",
           "target_hosts": "${trigger.host}",
-          "nexus_jar_url": "${trigger.jar_url}",
-          "verified_sha256": "${commit_to_gitea.artifacts.jar_sha256}"
+          "verified_sha256s": "${commit_to_gitea.artifacts.jar_sha256s_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -90,22 +222,27 @@
       "id": "approval_prod",
       "name": "Approve Production Patch",
       "type": "approval",
-      "position": {"x": 1080, "y": 460},
+      "position": {
+        "x": 1280,
+        "y": 460
+      },
       "parameters": {}
     },
     {
       "id": "run_app_patch_prod",
       "name": "Sync & Run (Prod)",
       "type": "aap_job_template",
-      "position": {"x": 1440, "y": 460},
+      "position": {
+        "x": 1640,
+        "y": 460
+      },
       "parameters": {
         "diff_mode": false,
         "extra_vars": {
           "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
           "playbook_sha256": "${trigger.playbook_sha256}",
           "target_hosts": "${trigger.host}",
-          "nexus_jar_url": "${trigger.jar_url}",
-          "verified_sha256": "${commit_to_gitea.artifacts.jar_sha256}"
+          "verified_sha256s": "${commit_to_gitea.artifacts.jar_sha256s_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -115,10 +252,32 @@
     }
   ],
   "edges": [
-    {"from": "trigger_manual", "to": "commit_to_gitea"},
-    {"from": "commit_to_gitea", "to": "route_switch"},
-    {"from": "route_switch", "to": "run_app_patch", "from_port": "case_0"},
-    {"from": "route_switch", "to": "approval_prod", "from_port": "case_1"},
-    {"from": "approval_prod", "to": "run_app_patch_prod", "from_port": "approved"}
+    {
+      "from": "trigger_manual",
+      "to": "commit_to_gitea"
+    },
+    {
+      "from": "commit_to_gitea",
+      "to": "test_in_pod"
+    },
+    {
+      "from": "test_in_pod",
+      "to": "route_switch"
+    },
+    {
+      "from": "route_switch",
+      "to": "run_app_patch",
+      "from_port": "case_0"
+    },
+    {
+      "from": "route_switch",
+      "to": "approval_prod",
+      "from_port": "case_1"
+    },
+    {
+      "from": "approval_prod",
+      "to": "run_app_patch_prod",
+      "from_port": "approved"
+    }
   ]
 }

@@ -1,0 +1,161 @@
+---
+# Applications v2, second node of the AO workflow "App Patch v2": test the change in a pod before any site.
+# Job template "App Patch v2 - Test in a Pod" (aap-setup/create-app-v2-objects.py). Runs on localhost.
+#
+# Starts the OpenShift Pipelines PipelineRun app-v2-test (pipelines-setup/pipeline.yaml) through the Kubernetes API
+# (ansible.builtin.uri: no collection needed), waits for it, and fails unless the app came up on the new jars. Every
+# jar the app runs is checked again inside the pipeline: the changed ones against the sha256 the commit job verified,
+# the rest against Maven Central's sha1. The tested jar set is also written as a CycloneDX SBOM and committed to Gitea
+# beside the playbook.
+#
+# Variables (from the AO workflow):
+#   app, run_id, playbook_filename
+#   lib_json        every jar the app runs after the change: [{group, artifact, version, url, changed}] (JSON)
+#   sha256s_json    {new jar name: sha256} from the commit job (JSON)
+#   probes, port    the app's /health probes and port
+#   expect_json     {library: new jar name} for the changed libraries (JSON)
+#   gitea_repo
+# Environment, from the credentials attached to the template: OCP_API_URL, OCP_TOKEN, OCP_NAMESPACE (the
+# "App Patch v2 OpenShift" credential) and GITEA_URL, GITEA_TOKEN (the lab's Gitea API credential). Neither token is
+# printed.
+#
+# Reports with set_stats: test_passed, test_image, test_health, osv_open, osv_detail, pipelinerun, sbom_url.
+- name: App Patch v2 - test the change in a pod
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ocp_url: "{{ lookup('ansible.builtin.env', 'OCP_API_URL') | default('https://kubernetes.default.svc', true) }}"
+    ocp_token: "{{ lookup('ansible.builtin.env', 'OCP_TOKEN') }}"
+    ocp_ns: "{{ lookup('ansible.builtin.env', 'OCP_NAMESPACE') | default('agentic-patching', true) }}"
+    gitea_url: "{{ lookup('ansible.builtin.env', 'GITEA_URL') | default('', true) }}"
+    gitea_token: "{{ lookup('ansible.builtin.env', 'GITEA_TOKEN') | default(lookup('ansible.builtin.env', 'GITEA_PASSWORD'), true) }}"
+    gitea_repo: lab-user/app_v2_playbooks
+    lib: "{{ lib_json if lib_json is not string else (lib_json | from_json) }}"
+    sums: "{{ sha256s_json if sha256s_json is mapping else (sha256s_json | from_json) }}"
+    run_name: "app-v2-{{ app }}-{{ run_id }}-{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=5) }}"
+  tasks:
+    - name: Check the inputs and the OpenShift credential
+      ansible.builtin.assert:
+        that:
+          - ocp_token | length > 0
+          - app | default('') | length > 0
+          - lib | length > 0
+        fail_msg: Needs the "App Patch v2 OpenShift" credential (OCP_TOKEN) and app, lib_json from the workflow.
+
+    - name: Attach each changed jar's verified sha256
+      ansible.builtin.set_fact:
+        tested: "{{ (tested | default([])) + [item | combine({'sha256': sums[item.url | basename]} if item.changed | default(false) else {})] }}"
+      loop: "{{ lib }}"
+      loop_control: { label: "{{ item.url | basename }}" }
+
+    - name: Start the pipeline
+      ansible.builtin.uri:
+        url: "{{ ocp_url }}/apis/tekton.dev/v1/namespaces/{{ ocp_ns }}/pipelineruns"
+        method: POST
+        headers: { Authorization: "Bearer {{ ocp_token }}" }
+        validate_certs: false
+        body_format: json
+        status_code: [201]
+        body:
+          apiVersion: tekton.dev/v1
+          kind: PipelineRun
+          metadata:
+            name: "{{ run_name | truncate(60, true, '') | regex_replace('[^a-z0-9-]', '-') }}"
+            labels: { app-v2/app: "{{ app }}", app-v2/run: "{{ run_id }}" }
+          spec:
+            pipelineRef: { name: app-v2-test }
+            params:
+              - { name: app, value: "{{ app }}" }
+              - { name: run_id, value: "{{ run_id }}" }
+              - { name: jars, value: "{{ tested | to_json }}" }
+              - { name: probes, value: "{{ probes }}" }
+              - { name: port, value: "{{ port | string }}" }
+              - { name: expect, value: "{{ (expect_json if expect_json is string else (expect_json | to_json)) }}" }
+            workspaces:
+              - name: source
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    resources: { requests: { storage: 1Gi } }
+              - name: app
+                configMap: { name: app-v2-healthserver }
+      register: created
+      no_log: true
+
+    - name: Wait for it
+      ansible.builtin.uri:
+        url: "{{ ocp_url }}/apis/tekton.dev/v1/namespaces/{{ ocp_ns }}/pipelineruns/{{ created.json.metadata.name }}"
+        headers: { Authorization: "Bearer {{ ocp_token }}" }
+        validate_certs: false
+      register: pr
+      until: >-
+        (pr.json.status.conditions | default([]) | selectattr('type', 'equalto', 'Succeeded')
+         | map(attribute='status') | first | default('Unknown')) in ['True', 'False']
+      retries: 120
+      delay: 10
+      no_log: true
+
+    - name: Read the outcome
+      ansible.builtin.set_fact:
+        cond: "{{ pr.json.status.conditions | selectattr('type', 'equalto', 'Succeeded') | first }}"
+        results: "{{ dict((pr.json.status.results | default([])) | map(attribute='name') | zip((pr.json.status.results | default([])) | map(attribute='value'))) }}"
+
+    - name: The tested jar set, as a CycloneDX SBOM
+      ansible.builtin.set_fact:
+        sbom:
+          bomFormat: CycloneDX
+          specVersion: "1.5"
+          metadata:
+            component: { type: application, name: "{{ app }}", version: "{{ run_id }}" }
+            properties: [{ name: "app-v2:pipelinerun", value: "{{ created.json.metadata.name }}" }]
+          components: []
+
+    - name: Fill in the components
+      ansible.builtin.set_fact:
+        sbom: >-
+          {{ sbom | combine({'components': sbom.components + [{
+               'type': 'library', 'group': item.group, 'name': item.artifact, 'version': item.version,
+               'purl': 'pkg:maven/' ~ item.group ~ '/' ~ item.artifact ~ '@' ~ item.version,
+               'hashes': ([{'alg': 'SHA-256', 'content': item.sha256}] if item.sha256 is defined else [])}]}) }}
+      loop: "{{ tested }}"
+      loop_control: { label: "{{ item.artifact }}" }
+
+    - name: Commit the SBOM beside the playbook
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ gitea_repo }}/contents/{{ playbook_filename | regex_replace('\\.yml$', '.sbom.json') }}"
+        method: POST
+        headers: { Authorization: "token {{ gitea_token }}" }
+        body_format: json
+        body:
+          content: "{{ sbom | to_nice_json | b64encode }}"
+          message: "App Patch v2: {{ app }} run {{ run_id }} tested jar set (SBOM)"
+        status_code: [201, 422]
+        validate_certs: false
+      when: gitea_url | length > 0 and gitea_token | length > 0 and playbook_filename | default('') | length > 0
+      register: sbom_commit
+      failed_when: false
+      no_log: true
+
+    - name: Report the test
+      ansible.builtin.set_stats:
+        data:
+          test_passed: "{{ cond.status == 'True' and results.passed | default('false') == 'true' }}"
+          test_image: "{{ results.image | default('') }}"
+          test_health: "{{ results.health | default('') }}"
+          osv_open: "{{ results.osv_open | default('unknown') }}"
+          osv_detail: "{{ results.osv_detail | default('') }}"
+          pipelinerun: "{{ created.json.metadata.name }}"
+          test_reason: "{{ cond.message | default('') | truncate(300) }}"
+          sbom_url: >-
+            {{ (gitea_url ~ '/' ~ gitea_repo ~ '/src/branch/main/' ~ (playbook_filename | regex_replace('\.yml$', '.sbom.json')))
+               if (sbom_commit.status | default(0)) in [201, 422] else '' }}
+
+    - name: Stop here unless the app came up on the new jars
+      ansible.builtin.assert:
+        that:
+          - cond.status == 'True'
+          - results.passed | default('false') == 'true'
+        fail_msg: >-
+          The test in a pod did not pass ({{ created.json.metadata.name }}): {{ cond.message | default('') | truncate(200) }}
+          {{ results.health | default('') | truncate(300) }}

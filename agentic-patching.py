@@ -3927,6 +3927,13 @@ SETTINGS: tuple[Setting, ...] = (
             'workflow commits the generated playbooks here.'),
     Setting('AO_APP_V2_WORKFLOW', 'Applications v2', 'AO workflow', 'str',
             'App Patch v2', 'Imported from ao-setup/app_v2_workflow.json.'),
+    Setting('APPV2_OSV', 'Applications v2', 'Include osv.dev packages', 'bool', 'false',
+            'Assess also lists what else osv.dev reports open on the affected apps: a '
+            'Lightwell build of the same version when there is one, else the upstream '
+            'fix on the same major line. Selected ones are swapped in the same change.'),
+    Setting('NEXUS_CENTRAL_REPOSITORY', 'Applications v2', 'Nexus Maven Central proxy', 'str',
+            'maven-central', 'Where upstream jars (osv.dev fixes) are fetched from, '
+            'checked against Maven Central\'s published sha1.'),
 
     # --- server -----------------------------------------------------------
     Setting('CONSOLE_HOST', 'Server', 'Bind host', 'str', '127.0.0.1',
@@ -4155,6 +4162,18 @@ def lightwell_get(path: str, **params) -> dict:
     return _lightwell_catalog()._get(path, **params)
 
 
+def osv_lookup(queries: list) -> dict:
+    """Applications v2: osv.dev advisories for [(ecosystem, name, version)], through the scanner's client (live) or
+    its saved answers (lightwell/demo/osv.json, demo). Same summaries v1's scan shows."""
+    if str(LIGHTWELL_DIR) not in sys.path:
+        sys.path.append(str(LIGHTWELL_DIR))
+    from types import SimpleNamespace
+    from scanner.osv import FixtureOsv, OsvClient
+    client = (FixtureOsv(LIGHTWELL_DIR / 'demo' / 'osv.json') if demo_mode()
+              else OsvClient(env('OSV_BASE_URL', 'https://api.osv.dev')))
+    return client.lookup([SimpleNamespace(ecosystem=e, name=n, version=v) for e, n, v in queries])
+
+
 def app_history_search(store: str, query: str) -> list[str]:
     """Vector search in the app history store; the text of each hit. Same call as the infra history."""
     if not LLAMA_URL:
@@ -4193,7 +4212,7 @@ def app_history_add(store: str, path: Path) -> None:
 appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
-                rag_add=app_history_add)
+                rag_add=app_history_add, osv_lookup=osv_lookup)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -4865,9 +4884,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/v2/assess':
             code, body = appv2.start_assess(str(payload.get('event_id', '')))
         elif path == '/api/v2/generate':
-            targets = payload.get('targets')
+            targets, extra = payload.get('targets'), payload.get('extra')
             code, body = appv2.start_generate(
-                [str(t) for t in targets] if isinstance(targets, list) else None)
+                [str(t) for t in targets] if isinstance(targets, list) else None,
+                [str(x) for x in extra] if isinstance(extra, list) else None)
         elif path == '/api/v2/dispatch':
             targets = payload.get('targets')
             code, body = appv2.start_dispatch(

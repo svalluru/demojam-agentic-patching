@@ -249,7 +249,7 @@ class DemoRun(unittest.TestCase):
         self.assertEqual(st['stages']['verify'], 'failed')
         # core-dc-2 rolled back, so nfvo-orchestrator's BOM stays on 2.2.5.
         self.assertNotIn('nfvo-orchestrator|org.apache.mina:mina-core', appv2._BOM_UPDATES)
-        self.assertEqual(st['feedback']['bom'], [{'app': 'nfvo-orchestrator', 'version': '2.2.5', 'changed': False}])
+        self.assertEqual(st['feedback']['bom'], [{'app': 'nfvo-orchestrator', 'version': '2.2.5', 'changed': False, 'also': []}])
         self.assertEqual(st['feedback']['history']['records'], 4)
         # The Report agent's PDF.
         self.assertEqual(st['stages']['report'], 'done')
@@ -677,6 +677,207 @@ class Feedback(unittest.TestCase):
         self.assertEqual([s for s, _ in added], ['vs_apps'])
         self.assertIn('nfvo-orchestrator-lab-mina-core-PATCHED', added[0][1])
         self.assertIn('Site: lab', next((Path(d) / 'app-history').glob('*.md')).read_text())
+
+
+
+def with_osv():
+    """Demo mode with osv.dev on, answered from lightwell/demo/osv.json (the scanner's saved answers)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lightwell'))
+    from scanner.osv import FixtureOsv
+    fx = FixtureOsv(Path(__file__).resolve().parents[1] / 'lightwell' / 'demo' / 'osv.json')
+    demo(APPV2_OSV='true')
+    appv2.configure(osv_lookup=lambda q: fx.lookup([types.SimpleNamespace(ecosystem=e, name=n, version=v) for e, n, v in q]))
+
+
+def wait_for(statuses, timeout=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        if appv2.state().get('status') in statuses:
+            return appv2.state()
+        time.sleep(0.02)
+    raise AssertionError(f"stuck at {appv2.state().get('status')}")
+
+
+class Extras(unittest.TestCase):
+    def rows(self, event_id='evt-zookeeper'):
+        appv2.start_assess(event_id)
+        return {r['id']: r for r in wait_for({'assessed'})['impact']['extra']['rows']}
+
+    def test_off_by_default(self):
+        demo()
+        appv2.start_assess('evt-zookeeper')
+        self.assertNotIn('extra', wait_for({'assessed'})['impact'])
+
+    def test_upstream_on_the_same_line(self):
+        with_osv()
+        r = self.rows()['oss-inventory|org.apache.mina:mina-core']
+        self.assertEqual((r['kind'], r['to'], r['selectable']), ('upstream', '2.1.13', True))
+        self.assertEqual(len(r['advisories']), 6)
+        self.assertIn('2.1 line', r['reasoning'])
+
+    def test_lightwell_build_preferred_and_its_cves_removed(self):
+        with_osv()
+        r = self.rows()['nfvo-orchestrator|org.springframework.security:spring-security-web']
+        self.assertEqual((r['kind'], r['to']), ('lightwell', '5.7.11.rhlw-00006'))
+        self.assertEqual(sorted(r['lightwell_covers']), ['CVE-2024-38821', 'CVE-2026-22732'])
+        self.assertNotIn('CVE-2024-38821', [a['id'] for a in r['advisories']])   # fixed by Lightwell: not "open"
+
+    def test_the_events_own_package_is_information_only(self):
+        with_osv()
+        r = self.rows('evt-mina-core')['nfvo-orchestrator|org.apache.mina:mina-core']
+        self.assertEqual((r['kind'], r['selectable'], r['to']), ('residual', False, '2.2.8'))
+        self.assertNotIn('CVE-2026-41635', [a['id'] for a in r['advisories']])
+
+    def test_major_upgrade_is_listed_not_offered(self):
+        with_osv()
+        bom = [{'app': 'a', 'servers': [{'host': 'h', 'env': 'qa'}], 'dependencies': [
+            {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
+            {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]}]
+        appv2.configure(lightwell_get=None)
+        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'zookeeper')
+        imp = appv2.impact(ev, bom)
+        real = appv2._lightwell_builds
+        appv2._lightwell_builds = lambda: {}          # as if Lightwell had no spring-security build
+        try:
+            rows = {r['artifact']: r for r in appv2.extras(ev, imp, bom)['rows']}
+        finally:
+            appv2._lightwell_builds = real
+        self.assertEqual((rows['spring-security-web']['kind'], rows['spring-security-web']['selectable']), ('major', False))
+
+    def test_osv_down_leaves_the_run_alone(self):
+        with_osv()
+        appv2.configure(osv_lookup=lambda q: (_ for _ in ()).throw(OSError('osv.dev unreachable')))
+        appv2.start_assess('evt-zookeeper')
+        st = wait_for({'assessed'})
+        self.assertEqual(st['impact']['extra']['rows'], [])
+        self.assertIn('unreachable', st['impact']['extra']['error'])
+
+
+class MultiJar(unittest.TestCase):
+    def setUp(self):
+        with_osv()
+        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+
+    def test_selected_extra_joins_that_apps_playbook_only(self):
+        self.assertEqual(appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core', 'not|offered'])[0], 200)
+        st = wait_for({'generated'})
+        pbs = {p['app']: p for p in st['playbooks']}
+        self.assertEqual([(c['artifact'], c['source']) for c in pbs['oss-inventory']['changes']],
+                         [('zookeeper', 'lightwell'), ('mina-core', 'upstream')])
+        self.assertEqual(len(pbs['nfvo-orchestrator']['changes']), 1)
+        text = pbs['oss-inventory']['text']
+        self.assertIn('new_jar: mina-core-2.1.13.jar', text)
+        self.assertIn('/maven2/org/apache/mina/mina-core/2.1.13/', text)        # upstream, not the Lightwell repo
+        self.assertTrue(all(c['ok'] for c in appv2.check_playbook(text, text)))
+        self.assertEqual(st['extra_selected'], ['oss-inventory|org.apache.mina:mina-core'])
+
+    def test_extra_for_an_unselected_app_is_dropped(self):
+        appv2.start_generate(['nfvo-orchestrator|lab'], ['oss-inventory|org.apache.mina:mina-core'])
+        st = wait_for({'generated'})
+        self.assertEqual(st['extra_selected'], [])
+        self.assertEqual([p['app'] for p in st['playbooks']], ['nfvo-orchestrator'])
+
+    def test_a_moved_swap_fails_the_pin(self):
+        appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core'])
+        text = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'oss-inventory')['text']
+        bad = text.replace('new_jar: mina-core-2.1.13.jar', 'new_jar: mina-core-9.9.9.jar')
+        self.assertFalse({c['id']: c['ok'] for c in appv2.check_playbook(bad, text)}['pinned'])
+
+    def test_test_inputs_cover_every_jar(self):
+        appv2.start_generate(None, ['oss-inventory|org.apache.mina:mina-core'])
+        pb = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'oss-inventory')
+        t = appv2.test_inputs('oss-inventory', pb['changes'])
+        lib = {x['artifact']: x for x in json.loads(t['lib_json'])}
+        self.assertEqual(set(lib), {'postgresql', 'zookeeper', 'mina-core'})
+        self.assertTrue(lib['mina-core']['changed'] and lib['zookeeper']['changed'])
+        self.assertFalse(lib['postgresql']['changed'])
+        self.assertEqual(json.loads(t['expect_json']), {'zookeeper': 'zookeeper-3.5.9.rhlw-00001.jar',
+                                                        'mina-core': 'mina-core-2.1.13.jar'})
+        self.assertIn('mina-core=org.apache.mina.core.session.IoSession', t['probes'])
+
+    def test_demo_run_tests_writes_back_and_reports_both_jars(self):
+        appv2.start_generate(['oss-inventory|lab', 'oss-inventory|core-dc-1'], ['oss-inventory|org.apache.mina:mina-core'])
+        wait_for({'generated'})
+        appv2.start_dispatch()
+        wait_for({'awaiting_approval'})
+        appv2.decide('oss-inventory|core-dc-1', 'approved')
+        st = wait_for({'complete'})
+        h = next(x for x in st['hosts'] if x['key'] == 'oss-inventory|lab')
+        self.assertEqual(h['steps']['test'], 'done')
+        self.assertTrue(h['test']['passed'])
+        self.assertEqual(json.loads(h['test']['health'])['jars']['mina-core'], 'mina-core-2.1.13.jar')
+        self.assertIn('mina-core-2.1.13.jar', h['detail'])
+        self.assertEqual(appv2._BOM_UPDATES['oss-inventory|org.apache.mina:mina-core'], '2.1.13')
+        self.assertEqual(appv2._BOM_UPDATES['oss-inventory|org.apache.zookeeper:zookeeper'], '3.5.9.rhlw-00001')
+        self.assertTrue((Path(appv2.reports_dir()) / st['report']['file']).exists())
+
+
+class LiveTestNode(unittest.TestCase):
+    """The live follow reading the test_in_pod node: its evidence, and a failed test stopping the site."""
+
+    def run_with(self, test_status, artifacts):
+        demo()
+        appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
+
+        def ao(path, method='GET', body=None):
+            if path == '/api/v1/workflows':
+                return {'resources': [{'id': 'wf1', 'name': 'App Patch v2'}]}
+            if path == '/api/v1/executions' and method == 'POST':
+                ao.inputs = body['input_data']
+                return {'id': 'ex1'}
+            if path == '/api/v1/executions/ex1':
+                return {'status': 'failed' if test_status == 'failed' else 'completed', 'error_details': 'job failed'}
+            if path == '/api/v1/executions/ex1/activities':
+                acts = [{'temporal_activity_id': 'commit_to_gitea', 'status': 'completed', 'started_at': 't',
+                         'output_data': {'artifacts': {'commit_sha': 'abc', 'provenance_verified': True}}},
+                        {'temporal_activity_id': 'test_in_pod', 'status': test_status, 'started_at': 't',
+                         'output_data': {'artifacts': artifacts}}]
+                if test_status != 'failed':
+                    acts.append({'temporal_activity_id': 'run_app_patch', 'status': 'completed', 'started_at': 't',
+                                 'output_data': {'artifacts': {'patched': True, 'version': 'x.jar'}}})
+                return {'resources': acts}
+            raise AssertionError(path)
+        appv2.configure(demo_mode=lambda: False, ao_call=ao)
+        appv2.EVENTS = appv2.EventStore(None)
+        ev = dict(appv2.DEMO_EVENTS[0])
+        target = {'key': 'nfvo-orchestrator|node1', 'app': 'nfvo-orchestrator', 'host': 'node1', 'env': 'qa',
+                  'installed': '2.2.5', 'path': '/opt/apps/nfvo-orchestrator', 'service': 'nfvo-orchestrator',
+                  'health_url': 'http://localhost:8090/health'}
+        with appv2._LOCK:
+            appv2._RUN.clear()
+            appv2._RUN.update(status='generated', run_id='r1', event=ev, events=[],
+                              stages={k: 'pending' for k in appv2.STAGES},
+                              impact={'targets': [target], 'apps': ['nfvo-orchestrator'], 'other': []},
+                              playbooks=[{'app': 'nfvo-orchestrator', 'filename': 'app-v2/n.yml', 'text': 'x',
+                                          'sha256': '0' * 64, 'ok': True,
+                                          'changes': [appv2.change_for_event(ev, target)]}])
+        try:
+            appv2.start_dispatch()
+            for _ in range(300):
+                if appv2.state().get('status') == 'complete':
+                    break
+                time.sleep(0.01)
+            return appv2.state(), ao.inputs
+        finally:
+            appv2.time = time
+
+    def test_evidence_is_kept(self):
+        st, inputs = self.run_with('completed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'True',
+                                                 'osv_open': '5', 'test_health': '{"status": "UP"}'})
+        h = st['hosts'][0]
+        self.assertEqual((h['outcome'], h['steps']['test']), ('patched', 'done'))
+        self.assertEqual((h['test']['pipelinerun'], h['test']['passed'], h['test']['osv_open']), ('app-v2-n-r1', True, '5'))
+        self.assertEqual(json.loads(inputs['jars_json'])[0]['new_jar'], 'mina-core-2.2.5.rhlw-00002.jar')
+        self.assertIn('lib_json', inputs)
+        self.assertEqual(inputs['port'], '8090')
+
+    def test_failed_test_stops_the_site(self):
+        st, _ = self.run_with('failed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'False',
+                                         'test_reason': 'mina-core reported missing'})
+        h = st['hosts'][0]
+        self.assertEqual((h['outcome'], h['steps']['test']), ('failed', 'failed'))
+        self.assertIn('no site was touched', h['detail'])
+        self.assertIn('mina-core reported missing', h['detail'])
 
 
 if __name__ == '__main__':

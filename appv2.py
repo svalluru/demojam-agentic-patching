@@ -35,12 +35,12 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parent
 
 # The nine stages of a v2 run, in order. The console's stage bar is drawn from the same keys.
-STAGES = ('intake', 'impact', 'generate', 'commit', 'approval', 'sync', 'remediate', 'verify', 'report', 'learn')
+STAGES = ('intake', 'impact', 'generate', 'commit', 'test', 'approval', 'sync', 'remediate', 'verify', 'report', 'learn')
 
 # Node ids in ao-setup/app_v2_workflow.json. The console reads each one's outcome by id. Sync and Run exists once per
 # branch (AO nodes do not join), and its own set_stats (patched / rolled_back, from the generated playbook) is the
 # verify result: the playbook checks health and checksum itself and rolls back on failure.
-NODE_COMMIT, NODE_APPROVAL = 'commit_to_gitea', 'approval_prod'
+NODE_COMMIT, NODE_APPROVAL, NODE_TEST = 'commit_to_gitea', 'approval_prod', 'test_in_pod'
 NODES_RUN = ('run_app_patch', 'run_app_patch_prod')
 
 RHLW = re.compile(r'^(?P<upstream>.+?)\.rhlw-(?P<build>\d+)(?:-n\d+)?$')
@@ -71,6 +71,7 @@ class _Hooks:
     rag_search: Callable[[str, str], list] | None = None        # (vector store id, query) -> hit texts
     rag_add: Callable[[str, Path], None] | None = None          # (vector store id, file) -> added to the store
     lightwell_get: Callable[..., dict] | None = None            # (path, **params) -> Lightwell API body
+    osv_lookup: Callable[[list], dict] | None = None             # [(ecosystem, name, version)] -> {key: [advisory]}
 
 
 H = _Hooks()
@@ -193,6 +194,30 @@ DEMO_ESTATE = {
                       'touched by the mina-core fix.'),
     'selfcare-api': ('LOW', "JavaScript; Lightwell builds aren't available for npm here. Customer-facing, so rely on "
                      'upstream npm updates and the WAF; no action from this console.'),
+}
+
+
+# What the reasoning says about each osv.dev package in demo mode (live: the app history store plus the LLM).
+# Keyed app|group:artifact. The advisories and fix versions themselves are real (osv.dev, 2026-11-09).
+DEMO_EXTRA_REASONING = {
+    'oss-inventory|org.apache.mina:mina-core':
+        'Six critical deserialization CVEs and no Lightwell build at 2.1.6. Take upstream 2.1.13: it stays on the '
+        '2.1 line oss-inventory pins for its SFTP export (the 2.2 API broke it last time), and it rides the same '
+        'restart as this fix.',
+    'nfvo-orchestrator|org.apache.mina:mina-core':
+        "Lightwell's 2.2.5.rhlw-00002 closes the NETCONF deserialization CVE: take it with zookeeper so the "
+        'orchestrator restarts once. Four more critical CVEs stay open until upstream 2.2.8, a version change.',
+    'nfvo-orchestrator|org.springframework.security:spring-security-web':
+        'Lightwell has 5.7.11.rhlw-00006 for two critical CVEs: same version, Red Hat provenance. Two moderate '
+        'ones stay open until a 6.x upgrade, which is the app team\'s change.',
+    'oss-inventory|org.postgresql:postgresql':
+        'Lightwell has 42.3.3.rhlw-00006 for all four CVEs, including SQL injection; same version, so no API risk.',
+    'charging-engine|org.apache.logging.log4j:log4j-core':
+        'Lightwell has 2.24.3.rhlw-00004; billing logs through it, so take it with the next billing-safe window.',
+    'charging-engine|org.apache.avro:avro':
+        'Lightwell has 1.11.0.rhlw-00002 for both CVEs; CDR records are Avro, so verify a CDR round-trip after.',
+    'sba-gateway|org.apache.httpcomponents.client5:httpclient5':
+        'Lightwell has 5.6.2.rhlw-00005; same version, safe to take with the spring-security change.',
 }
 
 
@@ -507,6 +532,147 @@ def _lesson(excerpt: str) -> str:
     return ' '.join((m.group(1) if m else excerpt).split())[:220]
 
 
+# ---------------------------------------------------------------------------- osv.dev packages
+#
+# With "Include osv.dev packages" on, Assess also lists what else is open on the affected apps: osv.dev's advisories
+# for every Maven library they run, minus what a Lightwell build already fixes. Each row proposes one change: a
+# Lightwell build of the same version when there is one (Red Hat provenance), else the lowest upstream version that
+# clears every advisory on the same major line (Maven Central, checked by sha1). A fix only across a major version is
+# listed but not offered: that is a code change, not a jar swap.
+
+def osv_enabled() -> bool:
+    return env('APPV2_OSV', 'false').lower() in ('1', 'true', 'yes', 'on')
+
+
+def _vkey(v: str) -> tuple:
+    return tuple((0, int(p)) if p.isdigit() else (1, p) for p in re.split(r'[.\-]', upstream(v)))
+
+
+def _major(v: str) -> str:
+    return re.split(r'[.\-]', upstream(v))[0]
+
+
+def _lightwell_builds() -> dict[tuple[str, str, str], dict]:
+    """(group, artifact, upstream version) -> the newest Lightwell build of it that names CVEs, with those CVEs."""
+    out: dict[tuple[str, str, str], dict] = {}
+    for r in (catalog('mine', 1, 1000).get('rows') or []):
+        key = (r['group'], r['artifact'], r['upstream'])
+        m = RHLW.match(r['build'])
+        if not m or not r.get('cves'):
+            continue
+        cur = out.get(key)
+        if cur is None or int(m.group('build')) > int(RHLW.match(cur['build']).group('build')):
+            out[key] = {'build': r['build'], 'cves': list(r['cves'])}
+    return out
+
+
+def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
+    """{'rows', 'source', 'error'}: the open osv.dev advisories on the apps in this impact, one row per app and
+    library, with the proposed change. Never raises: osv.dev being down leaves the run as it was."""
+    if not H.osv_lookup:
+        return {'rows': [], 'source': 'none', 'error': 'osv.dev lookup not configured'}
+    by_app = {a['app']: a for a in apps}
+    sites = {}
+    for t in imp['targets']:
+        sites.setdefault(t['app'], []).append(t.get('site') or t['host'])
+    wanted: list[tuple[str, dict]] = []
+    for name in imp['apps']:
+        for dep in (by_app.get(name) or {}).get('dependencies', []):
+            if dep.get('ecosystem', 'maven') == 'maven':
+                wanted.append((name, dep))
+    try:
+        answers = H.osv_lookup([('maven', f"{d['group']}:{d['artifact']}", upstream(d['version'])) for _, d in wanted])
+        lw = _lightwell_builds()
+    except Exception as exc:
+        return {'rows': [], 'source': 'osv.dev', 'error': str(exc)}
+    rows = []
+    for name, dep in wanted:
+        coord = f"{dep['group']}:{dep['artifact']}"
+        base = upstream(dep['version'])
+        advisories = answers.get(('Maven', coord, base)) or []
+        mine = dep['artifact'] == event['artifact'] and dep['group'] == event['group']
+        build = lw.get((dep['group'], dep['artifact'], base))
+        # What Lightwell fixes for this library: the event's own build, the build already installed, or another
+        # Lightwell build of the same version.
+        fixed = set(event.get('cves') or []) if mine else set()
+        if is_lightwell(dep['version']) or (build and not mine):
+            fixed |= set((build or {}).get('cves') or [])
+
+        def ids(a):
+            return {a.get('id'), a.get('cve')} | set(a.get('aliases') or [])
+        open_ = [a for a in advisories if not (ids(a) & fixed)]
+        covered = [a for a in advisories if ids(a) & fixed]
+        if not open_ and not (build and not mine and not is_lightwell(dep['version'])):
+            continue
+        fixes = [a.get('suggested_fix') for a in open_ if a.get('suggested_fix')]
+        fix_all = max(fixes, key=_vkey) if fixes else ''
+        row = {'id': f'{name}|{coord}', 'app': name, 'group': dep['group'], 'artifact': dep['artifact'],
+               'installed': dep['version'], 'sites': sites.get(name, []),
+               'advisories': [{'id': a.get('cve') or a.get('id'), 'severity': a.get('severity', 'unknown'),
+                               'score': a.get('score'), 'fix': a.get('suggested_fix') or '', 'url': a.get('url', '')}
+                              for a in sorted(open_, key=lambda a: -(a.get('score') or 0))],
+               'lightwell_covers': [a.get('cve') or a.get('id') for a in covered],
+               'kind': '', 'to': '', 'source': '', 'selectable': False, 'why': ''}
+        if mine:
+            row.update(kind='residual', to=fix_all, why=(
+                f'Still open after the Lightwell build: {len(open_)} advisory(ies); upstream {fix_all} closes them.'
+                if fix_all else f'Still open after the Lightwell build: {len(open_)} advisory(ies), no fix published.'))
+        elif build and not is_lightwell(dep['version']):
+            row.update(kind='lightwell', to=build['build'], source='lightwell', selectable=True,
+                       why=f"Lightwell build of the same version fixes {', '.join(build['cves'])}.")
+        elif fix_all and _major(fix_all) == _major(base):
+            row.update(kind='upstream', to=fix_all, source='upstream', selectable=True,
+                       why=f'No Lightwell build at {base}; upstream {fix_all} clears every advisory on the same line.')
+        elif fix_all:
+            row.update(kind='major', to=fix_all,
+                       why=f'Only fixed in {fix_all}, a major upgrade: a code change for the app team, not a jar swap.')
+        else:
+            row.update(kind='none', why='No fixed version published yet.')
+        rows.append(row)
+    order = {'lightwell': 0, 'upstream': 1, 'major': 2, 'residual': 3, 'none': 4}
+    rows.sort(key=lambda r: (order[r['kind']], -max([a['score'] or 0 for a in r['advisories']] or [0]), r['app']))
+    notes, rsource = extras_reasoning(rows)
+    for r in rows:
+        r['reasoning'] = notes.get(r['id'], r['why'])
+    return {'rows': rows, 'source': 'saved osv.dev answers' if H.demo_mode() else 'osv.dev',
+            'reasoning_source': rsource, 'error': ''}
+
+
+def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
+    """{row id: one or two sentences}: why take it now or not, from the app history store and the LLM."""
+    if not rows:
+        return {}, 'none'
+    if H.demo_mode():
+        return {r['id']: DEMO_EXTRA_REASONING.get(r['id'], r['why']) for r in rows}, 'staged'
+    store = env('APP_VECTOR_DB_ID')
+    excerpts = {}
+    if store and H.rag_search:
+        for r in rows:
+            try:
+                hits = [h for h in H.rag_search(store, f"{r['app']} {r['artifact']} patch history") if r['app'] in h]
+            except Exception:
+                hits = []
+            if hits:
+                excerpts[r['id']] = '\n---\n'.join(hits)[:1200]
+    if not H.llm:
+        return {}, 'rules'
+    facts = '\n'.join(
+        f"{i + 1}. {r['app']} (sites {', '.join(r['sites'])}): {r['artifact']} {r['installed']}; open: "
+        + ', '.join(f"{a['id']} {a['severity']}" for a in r['advisories'][:6])
+        + f"; proposal: {r['why']}" + (f"\n   history: {excerpts[r['id']]}" if r['id'] in excerpts else '')
+        for i, r in enumerate(rows))
+    prompt = ('You advise a telco operations team patching application libraries in a change window. For each '
+              'numbered library below write one or two sentences: whether to take the proposed change in this '
+              'window and why, how it affects the running app (restart, API change, what to verify), using only the '
+              'facts and history given. Answer as JSON, {"1": "...", "2": "..."}, nothing else.\n\n' + facts)
+    try:
+        parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
+        return {r['id']: str(parsed.get(str(i + 1)) or '').strip() or r['why'] for i, r in enumerate(rows)}, \
+            'rag+llm' if excerpts else 'llm'
+    except Exception:
+        return {}, 'rules'
+
+
 # ---------------------------------------------------------------------------- playbook
 
 def jar_name(artifact: str, version: str) -> str:
@@ -516,60 +682,97 @@ def jar_name(artifact: str, version: str) -> str:
 def jar_url(event: dict) -> str:
     """Where the hosts fetch the build from: Nexus, never packages.redhat.com, so the registry token
     stays in one place and every host gets the copy Nexus already holds."""
-    base = env('NEXUS_URL', 'https://nexus.example').rstrip('/')
-    repo = env('NEXUS_REPOSITORY', 'lightwell-remediated')
-    return (f"{base}/repository/{repo}/{event['group'].replace('.', '/')}/{event['artifact']}/"
-            f"{event['version']}/{jar_name(event['artifact'], event['version'])}")
+    return maven_url(event['group'], event['artifact'], event['version'], env('NEXUS_REPOSITORY', 'lightwell-remediated'))
 
 
-def render_playbook(event: dict, app: dict) -> str:
+def maven_url(group: str, artifact: str, version: str, repo: str) -> str:
+    """A jar in one of the Nexus repositories: lightwell-remediated for Lightwell builds, maven-central (the proxy
+    Nexus ships with) for upstream ones. Without Nexus, upstream jars come from Maven Central itself."""
+    base = env('NEXUS_URL', '').rstrip('/')
+    path = f"{group.replace('.', '/')}/{artifact}/{version}/{jar_name(artifact, version)}"
+    if not base:
+        return (f'https://repo1.maven.org/maven2/{path}' if repo != env('NEXUS_REPOSITORY', 'lightwell-remediated')
+                else f'https://nexus.example/repository/{repo}/{path}')
+    return f'{base}/repository/{repo}/{path}'
+
+
+def change_for_event(event: dict, target: dict) -> dict:
+    url = jar_url(event)
+    return {'group': event['group'], 'artifact': event['artifact'], 'from': target['installed'],
+            'to': event['version'], 'source': 'lightwell', 'cves': list(event.get('cves') or []),
+            'old_jar': jar_name(event['artifact'], target['installed']), 'new_jar': jar_name(event['artifact'], event['version']),
+            'url': url, 'provenance_url': url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json'}
+
+
+def change_for_extra(row: dict) -> dict:
+    """An osv.dev row the operator selected: a Lightwell build (provenance checked) or an upstream release (Maven
+    Central's sha1 checked)."""
+    lw = row['source'] == 'lightwell'
+    url = maven_url(row['group'], row['artifact'], row['to'],
+                    env('NEXUS_REPOSITORY', 'lightwell-remediated') if lw else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central'))
+    out = {'group': row['group'], 'artifact': row['artifact'], 'from': row['installed'], 'to': row['to'],
+           'source': row['source'], 'cves': (row['lightwell_covers'] if lw else [a['id'] for a in row['advisories']]),
+           'old_jar': jar_name(row['artifact'], row['installed']), 'new_jar': jar_name(row['artifact'], row['to']),
+           'url': url}
+    out['provenance_url' if lw else 'sha1_url'] = (url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json') if lw else url + '.sha1'
+    return out
+
+
+def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -> str:
     """The template. Also what the LLM is shown as the shape to follow, and the fallback when its
-    draft does not pass check_playbook()."""
-    old = jar_name(event['artifact'], app['installed'])
-    new = jar_name(event['artifact'], event['version'])
+    draft does not pass check_playbook(). One play per app swaps every jar in its change list together: one
+    backup, one restart, one health check, and a rollback of all of them if anything fails."""
+    changes = changes or [change_for_event(event, app)]
+    swaps = '\n'.join(f'      - {{old_jar: {c["old_jar"]}, new_jar: {c["new_jar"]}, url: "{c["url"]}"}}' for c in changes)
+    what = '; '.join(f"{c['artifact']} {c['from']} -> {c['to']} ({'Lightwell' if c['source'] == 'lightwell' else 'upstream'})"
+                     for c in changes)
+    fixes = sorted({x for c in changes for x in c.get('cves') or []})
     return f"""---
-# Generated by the Applications v2 agent for {app['app']}: {event['artifact']} {app['installed']} -> {event['version']}
-# Fixes: {', '.join(event.get('cves') or []) or 'see Lightwell advisories'}
-- name: Swap {event['artifact']} in {app['app']} for the Lightwell build
+# Generated by the Applications v2 agent for {app['app']}: {what}
+# Fixes: {', '.join(fixes) or 'see the advisories'}
+- name: Swap {', '.join(c['artifact'] for c in changes)} in {app['app']}
   hosts: "{{{{ target_hosts }}}}"
   become: true
   gather_facts: false
   vars:
     lib_dir: {app['path']}/lib
     backup_dir: {app['path']}/backup
-    old_jar: {old}
-    new_jar: {new}
-    jar_url: "{{{{ nexus_jar_url }}}}"
-    jar_sha256: "{{{{ verified_sha256 }}}}"
     service: {app['service']}
     health_url: {app['health_url']}
+    swaps:
+{swaps}
+    jar_sha256s: "{{{{ verified_sha256s if verified_sha256s is mapping else (verified_sha256s | from_json) }}}}"
   tasks:
-    - name: Swap the jar, restart and verify
+    - name: Swap the jars, restart once and verify
       block:
-        - name: Check the vulnerable jar is present
+        - name: Check the jars being replaced are present
           ansible.builtin.stat:
-            path: "{{{{ lib_dir }}}}/{{{{ old_jar }}}}"
-          register: old_stat
+            path: "{{{{ lib_dir }}}}/{{{{ item.old_jar }}}}"
+          loop: "{{{{ swaps }}}}"
+          register: old_stats
 
-        - name: Download the Lightwell build from Nexus, pinned to the verified checksum
+        - name: Download each new jar from Nexus, pinned to its verified checksum
           ansible.builtin.get_url:
-            url: "{{{{ jar_url }}}}"
-            dest: "{{{{ lib_dir }}}}/{{{{ new_jar }}}}"
-            checksum: "sha256:{{{{ jar_sha256 }}}}"
+            url: "{{{{ item.url }}}}"
+            dest: "{{{{ lib_dir }}}}/{{{{ item.new_jar }}}}"
+            checksum: "sha256:{{{{ jar_sha256s[item.new_jar] }}}}"
             mode: "0644"
+          loop: "{{{{ swaps }}}}"
 
-        - name: Back up the old jar
+        - name: Back up the old jars
           ansible.builtin.copy:
-            src: "{{{{ lib_dir }}}}/{{{{ old_jar }}}}"
-            dest: "{{{{ backup_dir }}}}/{{{{ old_jar }}}}"
+            src: "{{{{ lib_dir }}}}/{{{{ item.item.old_jar }}}}"
+            dest: "{{{{ backup_dir }}}}/{{{{ item.item.old_jar }}}}"
             remote_src: true
             mode: "0644"
-          when: old_stat.stat.exists
+          loop: "{{{{ old_stats.results }}}}"
+          when: item.stat.exists
 
-        - name: Remove the old jar
+        - name: Remove the old jars
           ansible.builtin.file:
-            path: "{{{{ lib_dir }}}}/{{{{ old_jar }}}}"
+            path: "{{{{ lib_dir }}}}/{{{{ item.old_jar }}}}"
             state: absent
+          loop: "{{{{ swaps }}}}"
 
         - name: Restart the service
           ansible.builtin.systemd_service:
@@ -585,39 +788,43 @@ def render_playbook(event: dict, app: dict) -> str:
           retries: 12
           delay: 5
 
-        - name: Verify the new jar is the one on disk
+        - name: Verify the new jars are the ones on disk
           ansible.builtin.stat:
-            path: "{{{{ lib_dir }}}}/{{{{ new_jar }}}}"
+            path: "{{{{ lib_dir }}}}/{{{{ item.new_jar }}}}"
             checksum_algorithm: sha256
-          register: new_stat
+          loop: "{{{{ swaps }}}}"
+          register: new_stats
 
-        - name: Verify the checksum matches
+        - name: Verify the checksums match
           ansible.builtin.assert:
             that:
-              - new_stat.stat.exists
-              - new_stat.stat.checksum == jar_sha256
+              - item.stat.exists
+              - item.stat.checksum == jar_sha256s[item.item.new_jar]
+          loop: "{{{{ new_stats.results }}}}"
 
         - name: Report patched
           ansible.builtin.set_stats:
             data:
               patched: true
               rolled_back: false
-              version: "{{{{ new_jar }}}}"
+              version: "{{{{ swaps | map(attribute='new_jar') | join(', ') }}}}"
       rescue:
-        - name: Roll back to the old jar
+        - name: Roll back to the old jars
           ansible.builtin.copy:
-            src: "{{{{ backup_dir }}}}/{{{{ old_jar }}}}"
-            dest: "{{{{ lib_dir }}}}/{{{{ old_jar }}}}"
+            src: "{{{{ backup_dir }}}}/{{{{ item.item.old_jar }}}}"
+            dest: "{{{{ lib_dir }}}}/{{{{ item.item.old_jar }}}}"
             remote_src: true
             mode: "0644"
-          when: old_stat.stat.exists | default(false)
+          loop: "{{{{ old_stats.results | default([]) }}}}"
+          when: item.stat.exists | default(false)
 
-        - name: Remove the new jar
+        - name: Remove the new jars
           ansible.builtin.file:
-            path: "{{{{ lib_dir }}}}/{{{{ new_jar }}}}"
+            path: "{{{{ lib_dir }}}}/{{{{ item.new_jar }}}}"
             state: absent
+          loop: "{{{{ swaps }}}}"
 
-        - name: Restart the service on the old jar
+        - name: Restart the service on the old jars
           ansible.builtin.systemd_service:
             name: "{{{{ service }}}}"
             state: restarted
@@ -627,11 +834,11 @@ def render_playbook(event: dict, app: dict) -> str:
             data:
               patched: false
               rolled_back: true
-              version: "{{{{ old_jar }}}}"
+              version: "{{{{ swaps | map(attribute='old_jar') | join(', ') }}}}"
 
         - name: Fail the run so the workflow records it
           ansible.builtin.fail:
-            msg: "Health check failed after the swap; {{{{ old_jar }}}} restored."
+            msg: "Health check failed after the swap; the old jars were restored."
 """
 
 
@@ -741,20 +948,21 @@ def assemble(template: str, tasks: str) -> str:
     return head + '\n  tasks:\n' + '\n'.join(('    ' + l) if l.strip() else '' for l in tasks.splitlines()) + '\n'
 
 
-def draft_playbook(event: dict, app: dict) -> tuple[str, str, list[dict], str]:
+def draft_playbook(event: dict, app: dict, changes: list[dict] | None = None) -> tuple[str, str, list[dict], str]:
     """(playbook, source, checks, note). In live mode the LLM writes the tasks and the system supplies everything
     it should not decide: the hosts, become, and the paths, jar names and checksum in vars. The checks then judge
     the tasks: allowed modules only, a pinned download, health and checksum verified, a rollback, the report. The
     template stands in when there is no LLM, in demo mode, or when the tasks fail a check, and the note says why."""
-    template = render_playbook(event, app)
+    template = render_playbook(event, app, changes)
     if H.demo_mode() or not H.llm:
         return template, 'template', check_playbook(template, template), ''
     _, example = _split_play(template)
     prompt = ('Write the tasks for an Ansible play, and nothing else: no prose, no code fences, no play header '
               'and no vars, which are supplied. Return a YAML list of tasks starting with "- name:". They must do '
-              'what these example tasks do, using the same variables: download the new jar with a pinned sha256, '
-              'back up and remove the old jar, restart the service, verify health and checksum, report patched / '
-              'rolled_back with set_stats, and roll back in a rescue block. Use only these modules: '
+              'what these example tasks do, using the same variables: for every entry in swaps (loop over it), '
+              'download the new jar with its pinned sha256 from jar_sha256s, back up and remove the old jar; restart '
+              'the service once; verify health and every checksum; report patched / rolled_back with set_stats; and '
+              'roll back every jar in a rescue block. Use only these modules: '
               + ', '.join(sorted(ALLOWED_MODULES)) + '. Keep the example\'s shape exactly: ONE task with a '
               '"block:" list and a "rescue:" list, both keys indented the same, under the same "- name:", and the '
               'tasks inside each indented two spaces further. Two-space indentation throughout.'
@@ -965,6 +1173,13 @@ def _assess(ev: dict) -> None:
             for t in imp['targets']:
                 t['reasoning'] = notes.get(t['key'], '')
             imp['reasoning_source'] = rsource
+        if osv_enabled() and imp['targets']:
+            _trace('inventory', 'osv', f"what else is open on {', '.join(imp['apps'])}?")
+            H.demo_pause(1.0)
+            imp['extra'] = extras(ev, imp, load_bom())
+            offered = [r for r in imp['extra']['rows'] if r['selectable']]
+            _trace('osv', 'inventory', f"{len(imp['extra']['rows'])} open library(ies), {len(offered)} with a fix to offer"
+                   + (f" ({imp['extra']['error']})" if imp['extra'].get('error') else ''))
         if H.llm and not H.demo_mode() and imp['targets']:
             _trace('inventory', 'llm', 'note for the reviewer')
         info, source = helpful_info(ev, imp)
@@ -982,9 +1197,10 @@ def _assess(ev: dict) -> None:
         _set(status='failed', error=str(exc))
 
 
-def start_generate(targets: list[str] | None = None) -> tuple[int, dict]:
+def start_generate(targets: list[str] | None = None, extra: list[str] | None = None) -> tuple[int, dict]:
     """Prepare the remediation for the selected sites (all of them when targets is None): a playbook for each app
-    they run. The selection carries to the run, which can narrow it but not widen it."""
+    they run, swapping the Lightwell build and any osv.dev packages selected for that app (none when extra is
+    None). The site selection carries to the run, which can narrow it but not widen it."""
     with _LOCK:
         if _RUN.get('status') != 'assessed':
             return 409, {'ok': False, 'error': 'assess an event first'}
@@ -993,6 +1209,9 @@ def start_generate(targets: list[str] | None = None) -> tuple[int, dict]:
         if not chosen:
             return 400, {'ok': False, 'error': 'select at least one site'}
         _RUN['selected'] = chosen
+        apps = {k.split('|', 1)[0] for k in chosen}
+        offered = {r['id'] for r in ((_RUN['impact'].get('extra') or {}).get('rows') or []) if r['selectable']}
+        _RUN['extra_selected'] = [x for x in (extra or []) if x in offered and x.split('|', 1)[0] in apps]
         _RUN['status'] = 'generating'
     _persist()
     threading.Thread(target=_generate, daemon=True, name='appv2-generate').start()
@@ -1012,14 +1231,17 @@ def _generate() -> None:
             target = next((t for t in imp['targets'] if t['app'] == app and t['key'] in selected), None)
             if target is None:
                 continue                     # none of its sites selected: nothing to prepare
-            _trace('intake', 'playbook', f'draft for {app}')
+            rows = {r['id']: r for r in ((imp.get('extra') or {}).get('rows') or [])}
+            changes = [change_for_event(ev, target)] + [change_for_extra(rows[x]) for x in st.get('extra_selected') or []
+                                                         if x in rows and rows[x]['app'] == app]
+            _trace('intake', 'playbook', f'draft for {app}' + (f' ({len(changes)} jars)' if len(changes) > 1 else ''))
             if H.llm and not H.demo_mode():
                 _trace('playbook', 'llm', f'draft for {app}')
             H.demo_pause(1.4)
-            text, source, checks, note = draft_playbook(ev, target)
+            text, source, checks, note = draft_playbook(ev, target, changes)
             ok = all(c['ok'] for c in checks)
             _trace('playbook', 'intake', f"{app}: {'checks passed' if ok else 'checks FAILED'} ({source})")
-            playbooks.append({'app': app, 'filename': f"app-v2/{app}-{ev['artifact']}-{st['run_id']}.yml",
+            playbooks.append({'app': app, 'filename': f"app-v2/{app}-{ev['artifact']}-{st['run_id']}.yml", 'changes': changes,
                               'text': text, 'source': source, 'checks': checks, 'ok': ok, 'note': note,
                               'sha256': hashlib.sha256(text.encode()).hexdigest()})
         _set(playbooks=playbooks)
@@ -1034,7 +1256,21 @@ def _generate() -> None:
         _set(status='failed', error=str(exc))
 
 
-SKIPPED_STEPS = {k: 'skipped' for k in ('commit', 'approval', 'sync', 'remediate', 'verify')}
+# The class each library's /health probe looks for, so /health can name the jar it is found in. Used by the sample
+# app's deploy (aap-setup/create-app-v2-objects.py) and the test in a pod.
+PROBE_CLASS = {
+    'mina-core': 'org.apache.mina.core.session.IoSession',
+    'zookeeper': 'org.apache.zookeeper.ZooKeeper',
+    'spring-security-web': 'org.springframework.security.web.FilterChainProxy',
+    'postgresql': 'org.postgresql.Driver',
+    'log4j-core': 'org.apache.logging.log4j.core.LoggerContext',
+    'commons-io': 'org.apache.commons.io.IOUtils',
+    'httpclient5': 'org.apache.hc.client5.http.classic.HttpClient',
+    'avro': 'org.apache.avro.Schema',
+}
+
+HOST_STEPS = ('commit', 'test', 'approval', 'sync', 'remediate', 'verify')
+SKIPPED_STEPS = {k: 'skipped' for k in HOST_STEPS}
 
 
 def start_dispatch(targets: list[str] | None = None) -> tuple[int, dict]:
@@ -1083,7 +1319,7 @@ def _roll_stages() -> None:
     hosts = [h for h in (st.get('hosts') or []) if h['outcome'] != 'skipped']
     if not hosts:
         return
-    for key in ('commit', 'approval', 'sync', 'remediate', 'verify'):
+    for key in HOST_STEPS:
         vals = [h['steps'].get(key) for h in hosts if not (key == 'approval' and h['env'] == 'qa')]
         if not vals:
             _stage(key, 'skipped')
@@ -1119,9 +1355,23 @@ def _simulate() -> None:
     gitea = env('GITEA_URL', 'https://gitea.example') + '/' + env('GITEA_REPO', 'lab-user/app_v2_playbooks')
     for h in active:
         _host(h['key'], commit_sha=sha, commit_url=f'{gitea}/src/commit/{sha}/{h["playbook"]}',
-              provenance='verified', jar_sha256=jar_sha,
-              steps={'commit': 'done', 'approval': 'skipped' if h['env'] == 'qa' else 'waiting'},
-              outcome='running' if h['env'] == 'qa' else 'awaiting_approval')
+              provenance='verified', jar_sha256=jar_sha, steps={'commit': 'done', 'test': 'active'})
+    _roll_stages()
+    # The test in a pod, staged: one PipelineRun per app (the sites of an app run the same jars).
+    _trace('ao', 'aap', 'test the change in a pod')
+    _trace('aap', 'pipelines', f"{len({h['app'] for h in active})} PipelineRun(s): build the app with the change, start it, check /health")
+    H.demo_pause(1.6)
+    pbs = {p['app']: p for p in st.get('playbooks') or []}
+    for h in active:
+        changes = (pbs.get(h['app']) or {}).get('changes') or [change_for_event(st['event'], h)]
+        _host(h['key'], test={
+            'passed': True, 'image': f"image-registry.openshift-image-registry.svc:5000/agentic-patching/app-v2-{h['app']}:{st['run_id']}",
+            'health': json.dumps({'status': 'UP', 'jars': {c['artifact']: c['new_jar'] for c in changes}}),
+            **_osv_rescan(h['app'], changes), 'pipelinerun': f"app-v2-{h['app']}-{st['run_id']}", 'reason': '',
+            'sbom_url': f"{gitea}/src/branch/main/{h['playbook'].replace('.yml', '.sbom.json')}"},
+            steps={'test': 'done', 'approval': 'skipped' if h['env'] == 'qa' else 'waiting'},
+            outcome='running' if h['env'] == 'qa' else 'awaiting_approval')
+    _trace('pipelines', 'aap', 'the app came up on the new jars')
     _roll_stages()
     for h in [x for x in active if x['env'] == 'qa']:
         _run_host_sim(h)
@@ -1146,7 +1396,9 @@ def _run_host_sim(h: dict, delay: float = 1.0) -> None:
             _roll_stages()
             return
         _host(key, steps={step: 'done'})
-    _host(key, outcome='patched', detail=f"{h['service']} healthy on {jar_name(state()['event']['artifact'], state()['event']['version'])}")
+    pb = next((p for p in state().get('playbooks') or [] if p['app'] == h['app']), {})
+    jars = [c['new_jar'] for c in pb.get('changes') or []] or [jar_name(state()['event']['artifact'], state()['event']['version'])]
+    _host(key, outcome='patched', detail=f"{h['service']} healthy on {', '.join(jars)}")
     _trace('aap', 'ao', f'{_label(h)}: patched and healthy')
     _roll_stages()
 
@@ -1214,15 +1466,20 @@ def _learn(st: dict) -> None:
     _stage('learn', 'active')
     _trace('report', 'results', 'feed the outcome back')
     bom = []
+    pbs = {p['app']: p for p in st.get('playbooks') or []}
     for app in st['impact']['apps']:
         mine = [h for h in st['hosts'] if h['app'] == app and h['outcome'] != 'skipped']
+        changes = (pbs.get(app) or {}).get('changes') or [{'group': ev['group'], 'artifact': ev['artifact'],
+                                                          'to': ev['version'], 'from': upstream(ev['version'])}]
         if mine and all(h['outcome'] == 'patched' for h in mine):
             with _LOCK:
-                _BOM_UPDATES[f"{app}|{ev['group']}:{ev['artifact']}"] = ev['version']
-            bom.append({'app': app, 'version': ev['version'], 'changed': True})
-            _trace('results', 'inventory', f"{app}: BOM now {ev['artifact']} {ev['version']}")
+                for c in changes:
+                    _BOM_UPDATES[f"{app}|{c['group']}:{c['artifact']}"] = c['to']
+            bom.append({'app': app, 'version': changes[0]['to'], 'changed': True,
+                        'also': [f"{c['artifact']} {c['to']}" for c in changes[1:]]})
+            _trace('results', 'inventory', f"{app}: BOM now " + ', '.join(f"{c['artifact']} {c['to']}" for c in changes))
         else:
-            bom.append({'app': app, 'version': upstream(ev['version']), 'changed': False})
+            bom.append({'app': app, 'version': changes[0]['from'], 'changed': False, 'also': []})
             _trace('results', 'inventory', f'{app}: BOM unchanged (not every selected site patched)')
     history = feed_history(st)
     _ESTATE_CACHE.clear()
@@ -1262,6 +1519,23 @@ def write_report(st: dict) -> dict:
     doc.text('Fixes', size=11, bold=True)
     doc.text(', '.join(ev.get('cves') or []) or 'Not itemised by Lightwell.', size=9)
     doc.gap(8)
+    changes = [(p['app'], c) for p in st.get('playbooks') or [] for c in p.get('changes') or []]
+    if changes:
+        doc.text('Change list', size=11, bold=True)
+        doc.gap(2)
+        doc.table(['App', 'Library', 'From', 'To', 'Source', 'Checked by'],
+                  [[a, c['artifact'], c['from'], c['to'], 'Lightwell' if c['source'] == 'lightwell' else 'Upstream (osv.dev)',
+                    'cosign provenance' if c['source'] == 'lightwell' else 'Maven Central sha1'] for a, c in changes],
+                  [90, 90, 70, 100, 80, 69])
+        doc.gap(8)
+    tests = {h['app']: h['test'] for h in hosts if h.get('test')}
+    if tests:
+        doc.text('Test in a pod (OpenShift Pipelines)', size=11, bold=True)
+        doc.gap(2)
+        doc.table(['App', 'Result', 'osv.dev open after', 'PipelineRun'],
+                  [[a, 'passed' if t.get('passed') else 'failed', str(t.get('osv_open', '')), t.get('pipelinerun', '')]
+                   for a, t in tests.items()], [100, 60, 100, 239])
+        doc.gap(8)
     doc.text('Per-site outcome', size=11, bold=True)
     doc.gap(2)
     doc.table(['Site', 'App', 'Domain', 'Env', 'Outcome', 'Detail'],
@@ -1631,6 +1905,46 @@ def _wf_id() -> str:
     return _workflow_id[name]
 
 
+def test_inputs(app_name: str, changes: list[dict]) -> dict:
+    """What the test in a pod needs for one app: every jar it runs once the change is in (the changed ones from the
+    change list, the rest from Nexus's Maven Central proxy, or Lightwell's for a build already written back), the
+    /health probes and port, and the jar each changed library must then report."""
+    bom = next((a for a in load_bom() if a['app'] == app_name), {})
+    by = {(c['group'], c['artifact']): c for c in changes}
+    lib = []
+    for d in bom.get('dependencies', []):
+        if d.get('ecosystem', 'maven') != 'maven':
+            continue
+        c = by.get((d['group'], d['artifact']))
+        if c:
+            lib.append({'group': d['group'], 'artifact': d['artifact'], 'version': c['to'], 'url': c['url'], 'changed': True})
+        else:
+            repo = env('NEXUS_REPOSITORY', 'lightwell-remediated') if is_lightwell(d['version']) \
+                else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central')
+            lib.append({'group': d['group'], 'artifact': d['artifact'], 'version': d['version'],
+                        'url': maven_url(d['group'], d['artifact'], d['version'], repo), 'changed': False})
+    port = re.search(r':(\d+)', bom.get('health_url', '')) if bom.get('health_url') else None
+    return {'lib_json': json.dumps(lib),
+            'probes': ','.join(f"{x['artifact']}={PROBE_CLASS[x['artifact']]}" for x in lib if x['artifact'] in PROBE_CLASS),
+            'port': port.group(1) if port else '8080',
+            'expect_json': json.dumps({c['artifact']: c['new_jar'] for c in changes if c['artifact'] in PROBE_CLASS})}
+
+
+def _osv_rescan(app_name: str, changes: list[dict]) -> dict:
+    """The pipeline's osv.dev re-query, for the demo: advisories osv.dev lists against the final jar set (Lightwell
+    builds are asked by their upstream version, so this is an upper bound for them, exact for upstream jars)."""
+    lib = json.loads(test_inputs(app_name, changes)['lib_json'])
+    if not H.osv_lookup:
+        return {'osv_open': 'unknown', 'osv_detail': ''}
+    try:
+        ans = H.osv_lookup([('maven', f"{x['group']}:{x['artifact']}", upstream(x['version'])) for x in lib])
+    except Exception as exc:
+        return {'osv_open': 'unknown', 'osv_detail': json.dumps({'error': str(exc)[:200]})}
+    counts = {f"{x['artifact']} {x['version']}": len(ans.get(('Maven', f"{x['group']}:{x['artifact']}", upstream(x['version']))) or [])
+              for x in lib}
+    return {'osv_open': str(sum(counts.values())), 'osv_detail': json.dumps({k: v for k, v in counts.items() if v})}
+
+
 def _dispatch_live() -> None:
     st = state()
     _set(status='running', simulated=False)
@@ -1651,7 +1965,10 @@ def _dispatch_live() -> None:
                   'playbook_b64': base64.b64encode(pb['text'].encode()).decode(),
                   'playbook_sha256': pb['sha256'],
                   'jar_url': jar_url(ev),
-                  'provenance_url': jar_url(ev).rsplit('.jar', 1)[0] + '.provenance.sigstore.json'}
+                  'provenance_url': jar_url(ev).rsplit('.jar', 1)[0] + '.provenance.sigstore.json',
+                  'jars_json': json.dumps([{k: c[k] for k in ('new_jar', 'url', 'source', 'provenance_url', 'sha1_url')
+                                            if k in c} for c in pb.get('changes') or [change_for_event(ev, h)]]),
+                  **test_inputs(h['app'], pb.get('changes') or [change_for_event(ev, h)])}
         try:
             created = H.ao_call('/api/v1/executions', 'POST', {
                 'workflow_id': wf, 'trigger_node_id': env('AO_APP_V2_TRIGGER_NODE', 'trigger_manual'),
@@ -1677,7 +1994,7 @@ def _out(a: dict | None) -> dict:
     return out if isinstance(out, dict) else {}
 
 
-STEP_OF = {NODE_COMMIT: 'commit', NODE_APPROVAL: 'approval', NODES_RUN[0]: 'sync', NODES_RUN[1]: 'sync'}
+STEP_OF = {NODE_COMMIT: 'commit', NODE_TEST: 'test', NODE_APPROVAL: 'approval', NODES_RUN[0]: 'sync', NODES_RUN[1]: 'sync'}
 AO_STATE = {'completed': 'done', 'succeeded': 'done', 'failed': 'failed', 'running': 'active',
             'waiting': 'waiting', 'pending': 'waiting', 'skipped': 'skipped', 'cancelled': 'failed'}
 
@@ -1725,11 +2042,20 @@ def _follow_live(h: dict) -> None:
             steps['remediate'] = 'active'
         if steps.get('commit') in ('active', 'done'):
             hop('commit', 'ao', 'gitea', f'{_label(h)}: verify the build, commit the playbook')
+        if steps.get('test') in ('active', 'done', 'failed'):
+            hop('test', 'ao', 'aap', f'{_label(h)}: test the change in a pod')
+            hop('pipelines', 'aap', 'pipelines', f'{_label(h)}: build, start, check /health (OpenShift Pipelines)')
         if steps.get('sync') in ('active', 'done'):
             hop('sync', 'ao', 'aap', f'{_label(h)}: sync and run')
             hop('servers', 'aap', 'servers', f'{_label(h)}: swap the jar, restart {h.get("service", "")}')
         commit = _out(acts.get(NODE_COMMIT))
+        test = _out(acts.get(NODE_TEST))
         extra = {}
+        if test.get('pipelinerun'):
+            extra['test'] = {'passed': test.get('test_passed') in (True, 'true', 'True'), 'image': test.get('test_image', ''),
+                             'health': test.get('test_health', ''), 'osv_open': test.get('osv_open', ''),
+                             'osv_detail': test.get('osv_detail', ''), 'pipelinerun': test.get('pipelinerun', ''),
+                             'sbom_url': test.get('sbom_url', ''), 'reason': test.get('test_reason', '')}
         if commit.get('commit_sha'):
             extra.update(commit_sha=commit['commit_sha'], commit_url=commit.get('commit_url', ''),
                          provenance='verified' if commit.get('provenance_verified') else 'not verified',
@@ -1744,7 +2070,11 @@ def _follow_live(h: dict) -> None:
             if verify.get('patched') in (True, 'true', 'True'):
                 outcome, detail = 'patched', f"healthy on {verify.get('version', '')}"
             elif verify.get('rolled_back') in (True, 'true', 'True'):
-                outcome, detail = 'rolled_back', 'health check failed after the swap; old jar restored'
+                outcome, detail = 'rolled_back', 'health check failed after the swap; the old jars were restored'
+            elif steps.get('test') == 'failed':
+                t = extra.get('test') or {}
+                outcome, detail = 'failed', ('The test in a pod did not pass; no site was touched. '
+                                             + (t.get('reason') or str(ex.get('error_details') or ''))[:300])
             else:
                 outcome, detail = 'failed', str(ex.get('error_details') or status)
             _host(key, steps=steps, outcome=outcome, detail=detail, **extra)

@@ -6,16 +6,20 @@
 #
 #   1. The playbook the console generated arrives base64-encoded; its sha256 must match the one the console computed,
 #      so a playbook altered on the way is never committed.
-#   2. The jar and its provenance bundle are downloaded through Nexus, and the provenance is verified with cosign
-#      against Red Hat's PNC Provenance Signing Key 1 (Configure Lightwell Network, "Verify provenance for Java
-#      artifacts"). A build that does not verify is not committed, so it can never reach the gate.
+#   2. Every jar in the change is downloaded through Nexus and checked before anything is committed:
+#      - a Lightwell build: its provenance bundle is verified with cosign against Red Hat's PNC Provenance Signing
+#        Key 1 (Configure Lightwell Network, "Verify provenance for Java artifacts");
+#      - an upstream release (an osv.dev fix): its sha1 must match the one Maven Central publishes.
+#      A jar that does not check out is not committed, so it can never reach the gate.
 #   3. The playbook, and the fixed runner app_v2_run.yml that the Sync and Run job imports it through, are committed to
 #      the Gitea repository through its contents API (the same way the lab's own Fetch and Commit job writes to Gitea).
 #
 # Variables (from the AO trigger):
 #   playbook_b64, playbook_sha256, playbook_filename   the generated playbook and where it goes in the repository
 #   gitea_repo                                         owner/name, default lab-user/app_v2_playbooks
-#   jar_url, provenance_url                            the build in Nexus
+#   jars_json                                          the change: [{new_jar, url, source: lightwell|upstream,
+#                                                      provenance_url | sha1_url}] (JSON). Older triggers send
+#                                                      jar_url and provenance_url for one Lightwell build.
 #   app, run_id                                        for the commit message
 #   init_only                                          true: commit only app_v2_run.yml (create-app-v2-objects.py runs
 #                                                      this once, so the Sync and Run template has a playbook to name)
@@ -24,7 +28,8 @@
 # "Gitea API" credential, which create-app-v2-objects.py reuses): GITEA_URL and GITEA_TOKEN. The token is never
 # printed.
 #
-# Reports with set_stats: playbook_filename, commit_sha, commit_url, jar_sha256, provenance_verified.
+# Reports with set_stats: playbook_filename, commit_sha, commit_url, jar_sha256s_json ({new_jar: sha256}),
+# jar_sha256 (the first jar's), provenance_verified (every Lightwell jar verified), upstream_checked.
 - name: App Patch v2 - verify the build and commit the playbook
   hosts: localhost
   connection: local
@@ -49,8 +54,8 @@
           - playbook_b64 | default('') | length > 0
           - playbook_sha256 | default('') | length == 64
           - playbook_filename is match('^app-v2/[A-Za-z0-9._-]+\.yml$')
-          - jar_url | default('') | length > 0
-        fail_msg: The trigger must send the playbook, its sha256, its filename and the jar URL.
+          - (jars_json | default('') | length > 0) or (jar_url | default('') | length > 0)
+        fail_msg: The trigger must send the playbook, its sha256, its filename and the jars.
       when: not (init_only | default(false) | bool)
 
     - name: Start from a clean working directory
@@ -88,17 +93,52 @@
                    -e, target_hosts=localhost]
           changed_when: false
 
-        - name: Download the Lightwell build through Nexus
-          ansible.builtin.get_url:
-            url: "{{ jar_url }}"
-            dest: "{{ work }}/build.jar"
-            mode: "0644"
+        - name: The jars in this change
+          ansible.builtin.set_fact:
+            jars: >-
+              {{ (jars_json if jars_json is not string else (jars_json | from_json)) if jars_json | default('') | length > 0
+                 else [{'new_jar': jar_url | basename, 'url': jar_url, 'source': 'lightwell',
+                        'provenance_url': provenance_url | default(jar_url | regex_replace('\\.jar$', '.provenance.sigstore.json'))}] }}
 
-        - name: Download its provenance bundle
+        - name: Download each jar through Nexus
           ansible.builtin.get_url:
-            url: "{{ provenance_url }}"
-            dest: "{{ work }}/build.provenance.sigstore.json"
+            url: "{{ item.url }}"
+            dest: "{{ work }}/{{ item.new_jar }}"
             mode: "0644"
+          loop: "{{ jars }}"
+          loop_control: { label: "{{ item.new_jar }}" }
+
+        # Upstream releases carry no Red Hat provenance: they are checked against the sha1 Maven Central publishes.
+        - name: Read Maven Central's sha1 for each upstream jar
+          ansible.builtin.uri:
+            url: "{{ item.sha1_url | default(item.url ~ '.sha1') }}"
+            return_content: true
+          loop: "{{ jars | selectattr('source', 'equalto', 'upstream') | list }}"
+          loop_control: { label: "{{ item.new_jar }}" }
+          register: published_sha1
+
+        - name: Read each upstream jar's sha1
+          ansible.builtin.stat:
+            path: "{{ work }}/{{ item.item.new_jar }}"
+            checksum_algorithm: sha1
+          loop: "{{ published_sha1.results }}"
+          loop_control: { label: "{{ item.item.new_jar }}" }
+          register: upstream_sha1
+
+        - name: Each upstream jar is the one Maven Central published
+          ansible.builtin.assert:
+            that: item.stat.checksum == (item.item.content | trim | split(' ') | first)
+            fail_msg: "{{ item.item.item.new_jar }} does not match Maven Central's sha1; not committing"
+          loop: "{{ upstream_sha1.results }}"
+          loop_control: { label: "{{ item.item.item.new_jar }}" }
+
+        - name: Download each Lightwell build's provenance bundle
+          ansible.builtin.get_url:
+            url: "{{ item.provenance_url }}"
+            dest: "{{ work }}/{{ item.new_jar }}.provenance.sigstore.json"
+            mode: "0644"
+          loop: "{{ jars | selectattr('source', 'equalto', 'lightwell') | list }}"
+          loop_control: { label: "{{ item.new_jar }}" }
           register: prov_dl
           failed_when: require_provenance | bool and prov_dl is failed
           ignore_errors: "{{ not (require_provenance | bool) }}"
@@ -124,7 +164,7 @@
             mode: "0644"
 
         # Sigstore bundle v0.3 (dsseEnvelope), which cosign 3 reads by default; 2.4 could not parse it.
-        - name: Verify the build's SLSA provenance
+        - name: Verify each Lightwell build's SLSA provenance
           ansible.builtin.command:
             argv:
               - "{{ 'cosign' if cosign_present.rc == 0 else work ~ '/cosign' }}"
@@ -134,18 +174,30 @@
               - --key
               - "{{ work }}/pnc.pub"
               - --bundle
-              - "{{ work }}/build.provenance.sigstore.json"
-              - "{{ work }}/build.jar"
+              - "{{ work }}/{{ item.item.new_jar }}.provenance.sigstore.json"
+              - "{{ work }}/{{ item.item.new_jar }}"
+          loop: "{{ prov_dl.results }}"
+          loop_control: { label: "{{ item.item.new_jar }}" }
           register: provenance
           changed_when: false
           failed_when: require_provenance | bool and provenance.rc != 0
-          when: prov_dl is succeeded
+          when: item is succeeded
 
-        - name: Checksum of the verified jar
+        - name: Checksum of each checked jar
           ansible.builtin.stat:
-            path: "{{ work }}/build.jar"
+            path: "{{ work }}/{{ item.new_jar }}"
             checksum_algorithm: sha256
-          register: jar
+          loop: "{{ jars }}"
+          loop_control: { label: "{{ item.new_jar }}" }
+          register: jar_stats
+
+        - name: Note the checksums
+          ansible.builtin.set_fact:
+            jar_sha256s: "{{ dict(jar_stats.results | map(attribute='item.new_jar') | zip(jar_stats.results | map(attribute='stat.checksum'))) }}"
+            provenance_ok: >-
+              {{ (provenance.results | default([]) | length) > 0 and
+                 (provenance.results | rejectattr('rc', 'defined') | list | length) == 0 and
+                 (provenance.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list | length) == 0 }}
 
     # Gitea's contents API, as the lab's own Fetch and Commit job does: a token header, no username, no git binary
     # and no credentials in a clone URL. One commit per file; the runner is only rewritten when it changed.
@@ -204,8 +256,10 @@
           playbook_filename: "{{ playbook_filename | default('') }}"
           commit_sha: "{{ pushed.stdout_lines[-1] }}"
           commit_url: "{{ gitea_url }}/{{ gitea_repo }}/src/commit/{{ pushed.stdout_lines[-1] }}/{{ playbook_filename | default('app_v2_run.yml') }}"
-          jar_sha256: "{{ jar.stat.checksum | default('') }}"
-          provenance_verified: "{{ provenance.rc | default(1) == 0 }}"
+          jar_sha256s_json: "{{ (jar_sha256s | default({})) | to_json }}"
+          jar_sha256: "{{ (jar_stats.results | default([{}]))[0].stat.checksum | default('') }}"
+          provenance_verified: "{{ provenance_ok | default(false) | bool }}"
+          upstream_checked: "{{ upstream_sha1.results | default([]) | map(attribute='item.item.new_jar') | list }}"
 
   post_tasks:
     - name: Remove the working directory

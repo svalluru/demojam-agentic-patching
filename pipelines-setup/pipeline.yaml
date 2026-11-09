@@ -1,0 +1,178 @@
+# Applications v2: "test in a pod". Started by AAP (job template "App Patch v2 - Test in a Pod",
+# aap-setup/playbooks/app_v2_test_pod.yml) for each app in a run, after the commit job has checked every jar and
+# before the run reaches the approval gate or any site.
+#
+#   fetch   every jar the app runs, from its BOM with the change applied, each checked (sha256 from the commit job
+#           for the changed jars, Maven Central's sha1 for the rest); the app (HealthServer.java); a Containerfile;
+#           and an osv.dev re-query of the final jar set
+#   build   OpenShift Pipelines' own buildah task: the image, pushed to the internal registry
+#   test    the image runs as a sidecar; a step asks its /health and checks each changed library reports its new jar
+#
+# Results: passed (true|false), health (the /health body), osv_open (advisories still open on the final jar set),
+# image (what was tested).
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: app-v2-fetch
+spec:
+  params:
+    - name: jars
+      description: '[{"group","artifact","version","url","sha256"?}] every jar the app runs after the change (JSON)'
+    - name: probes
+    - name: port
+  workspaces:
+    - name: source
+    - name: app
+      description: the ConfigMap app-v2-healthserver (HealthServer.java)
+  results:
+    - name: osv_open
+    - name: osv_detail
+  steps:
+    - name: fetch-check-scan
+      image: registry.access.redhat.com/ubi9/python-311
+      env:
+        - { name: JARS, value: $(params.jars) }
+        - { name: PROBES, value: $(params.probes) }
+        - { name: PORT, value: $(params.port) }
+      script: |
+        #!/usr/bin/env python3
+        import hashlib, json, os, pathlib, shutil, urllib.request
+        src = pathlib.Path('$(workspaces.source.path)')
+        lib = src / 'lib'
+        lib.mkdir(parents=True, exist_ok=True)
+        jars = json.loads(os.environ['JARS'])
+        for j in jars:
+            name = j['url'].rsplit('/', 1)[1]
+            data = urllib.request.urlopen(j['url'], timeout=120).read()
+            if j.get('sha256'):
+                got = hashlib.sha256(data).hexdigest()
+                assert got == j['sha256'], f"{name}: sha256 {got} is not the verified {j['sha256']}"
+                how = 'sha256 (verified by the commit job)'
+            else:
+                want = urllib.request.urlopen(j['url'] + '.sha1', timeout=60).read().decode().split()[0]
+                got = hashlib.sha1(data).hexdigest()
+                assert got == want, f"{name}: sha1 {got} is not Maven Central's {want}"
+                how = 'sha1 (Maven Central)'
+            (lib / name).write_bytes(data)
+            print(f'{name}: {len(data)} bytes, {how}')
+        shutil.copy('$(workspaces.app.path)/HealthServer.java', src / 'HealthServer.java')
+        (src / 'Containerfile').write_text(
+            'FROM registry.access.redhat.com/ubi9/openjdk-17:latest\n'
+            'COPY lib/ /deployments/lib/\n'
+            'COPY HealthServer.java /deployments/HealthServer.java\n'
+            f'ENV PORT={os.environ["PORT"]} PROBES={os.environ["PROBES"]}\n'
+            'ENTRYPOINT ["java", "-cp", "/deployments/lib/*", "/deployments/HealthServer.java"]\n')
+        # osv.dev, for the jar set the sites will run: what is still open once this change is in.
+        body = json.dumps({'queries': [{'version': j['version'].split('.rhlw-')[0],
+                                        'package': {'ecosystem': 'Maven', 'name': f"{j['group']}:{j['artifact']}"}}
+                                       for j in jars if j.get('group')]}).encode()
+        try:
+            res = json.load(urllib.request.urlopen(urllib.request.Request(
+                'https://api.osv.dev/v1/querybatch', body, {'Content-Type': 'application/json'}), timeout=60))
+            open_ = {f"{j['artifact']} {j['version']}": len(r.get('vulns') or [])
+                     for j, r in zip([j for j in jars if j.get('group')], res.get('results') or [])}
+            # A Lightwell build is queried by its upstream version, so its own fixes still show here: the count is
+            # an upper bound for those jars, exact for upstream ones.
+            total, detail = str(sum(open_.values())), json.dumps({k: v for k, v in open_.items() if v})
+        except Exception as exc:
+            total, detail = 'unknown', json.dumps({'error': str(exc)[:200]})
+        pathlib.Path('$(results.osv_open.path)').write_text(total)
+        pathlib.Path('$(results.osv_detail.path)').write_text(detail[:1500])
+        print('osv.dev on the final jar set:', total, detail)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: app-v2-health
+spec:
+  params:
+    - name: image
+    - name: port
+    - name: expect
+      description: '{"library": "new jar name"} for each changed library (JSON)'
+  results:
+    - name: passed
+    - name: health
+  sidecars:
+    - name: app
+      image: $(params.image)
+  steps:
+    - name: check
+      image: registry.access.redhat.com/ubi9/python-311
+      env:
+        - { name: PORT, value: $(params.port) }
+        - { name: EXPECT, value: $(params.expect) }
+      script: |
+        #!/usr/bin/env python3
+        import json, os, pathlib, time, urllib.request
+        url = f"http://localhost:{os.environ['PORT']}/health"
+        body, deadline = None, time.time() + 180
+        while time.time() < deadline:
+            try:
+                body = json.load(urllib.request.urlopen(url, timeout=5))
+                break
+            except Exception:
+                time.sleep(3)
+        expect = json.loads(os.environ['EXPECT'])
+        jars = (body or {}).get('jars') or {}
+        wrong = {k: jars.get(k, 'missing') for k, v in expect.items() if jars.get(k) != v}
+        passed = body is not None and body.get('status') == 'UP' and not wrong
+        pathlib.Path('$(results.passed.path)').write_text('true' if passed else 'false')
+        pathlib.Path('$(results.health.path)').write_text(json.dumps(body or {'error': 'no answer from /health'})[:1500])
+        # Recorded, not raised: a failed task drops the pipeline's results, and the AAP job needs them to say why.
+        print('health:', body, 'expected:', expect, 'wrong:', wrong)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: app-v2-test
+spec:
+  params:
+    - name: app
+    - name: run_id
+    - name: jars
+    - name: probes
+    - name: port
+    - name: expect
+  workspaces:
+    - name: source
+    - name: app
+  results:
+    - { name: passed, value: $(tasks.health.results.passed) }
+    - { name: health, value: $(tasks.health.results.health) }
+    - { name: osv_open, value: $(tasks.fetch.results.osv_open) }
+    - { name: osv_detail, value: $(tasks.fetch.results.osv_detail) }
+    - { name: image, value: $(tasks.build.results.IMAGE_URL) }
+  tasks:
+    - name: fetch
+      taskRef: { name: app-v2-fetch }
+      params:
+        - { name: jars, value: $(params.jars) }
+        - { name: probes, value: $(params.probes) }
+        - { name: port, value: $(params.port) }
+      workspaces:
+        - { name: source, workspace: source }
+        - { name: app, workspace: app }
+    - name: build
+      runAfter: [fetch]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah }
+          - { name: namespace, value: openshift-pipelines }
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/app-v2-$(params.app):$(params.run_id)
+        - { name: DOCKERFILE, value: ./Containerfile }
+        - { name: TLSVERIFY, value: "false" }
+      workspaces:
+        - { name: source, workspace: source }
+    - name: health
+      runAfter: [build]
+      taskRef: { name: app-v2-health }
+      params:
+        - name: image
+          value: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/app-v2-$(params.app):$(params.run_id)
+        - { name: port, value: $(params.port) }
+        - { name: expect, value: $(params.expect) }

@@ -56,15 +56,10 @@ Controller, load_env = _v1.Controller, _v1.load_env
 COMMIT_PB = 'aap-setup/playbooks/app_v2_commit.yml'
 SAMPLE_PB = 'aap-setup/playbooks/app_v2_deploy_sample.yml'
 RUN_PB = 'app_v2_run.yml'
-# The class /health probes for each library, so it can name the jar that class loads from.
-PROBE_CLASS = {
-    'mina-core': 'org.apache.mina.core.session.IoSession',
-    'zookeeper': 'org.apache.zookeeper.ZooKeeper',
-    'spring-security-web': 'org.springframework.security.web.FilterChainProxy',
-    'postgresql': 'org.postgresql.Driver',
-    'log4j-core': 'org.apache.logging.log4j.core.LoggerContext',
-    'commons-io': 'org.apache.commons.io.IOUtils',
-}
+TEST_PB = 'aap-setup/playbooks/app_v2_test_pod.yml'
+# The class /health probes for each library: one copy, in appv2.py, which the test in a pod uses too.
+sys.path.insert(0, str(ROOT))
+from appv2 import PROBE_CLASS  # noqa: E402
 
 
 def sample_apps(hosts=None):
@@ -92,6 +87,9 @@ N = {
     'gitea_type': 'Gitea Token (App Patch v2)',
     'gitea_cred': 'Gitea (App Patch v2)',
     'commit_jt': 'App Patch v2 - Commit to Gitea',
+    'test_jt': 'App Patch v2 - Test in a Pod',
+    'ocp_type': 'OpenShift API (App Patch v2)',
+    'ocp_cred': 'OpenShift Pipelines (App Patch v2)',
     'run_jt': 'App Patch v2 - Sync and Run',
     'sample_jt': 'App Patch v2 - Deploy Sample App',
 }
@@ -166,6 +164,7 @@ def main():
 
     if args.delete:
         for endpoint, key in (('/job_templates/', 'sample_jt'), ('/job_templates/', 'run_jt'), ('/job_templates/', 'commit_jt'),
+                              ('/job_templates/', 'test_jt'), ('/credentials/', 'ocp_cred'), ('/credential_types/', 'ocp_type'),
                               ('/credentials/', 'gitea_cred'), ('/credential_types/', 'gitea_type'),
                               ('/projects/', 'gitea_project'), ('/projects/', 'setup_project')):
             row = api.find(endpoint, N[key])
@@ -212,7 +211,7 @@ def main():
     if not args.dry_run:
         sync(setup_id, N['setup_project'])
         listed = api.call('GET', f'/projects/{setup_id}/playbooks/')
-        missing = [p for p in (COMMIT_PB, SAMPLE_PB) if p not in listed]
+        missing = [p for p in (COMMIT_PB, SAMPLE_PB, TEST_PB) if p not in listed]
         if missing:
             sys.exit(f'{N["setup_project"]} does not list {", ".join(missing)}: push them to {branch} and run this again')
 
@@ -250,6 +249,28 @@ def main():
         **common, 'name': N['commit_jt'], 'inventory': build_inv['id'], 'project': setup_id or 0, 'playbook': COMMIT_PB,
         'description': 'Verify a Lightwell build (cosign) and commit a generated playbook to Gitea'})
     attach(commit_id, gitea_cred_id, 'the Gitea credential')
+    # The test in a pod: AAP starts the OpenShift Pipelines run with the token pipelines-setup/deploy.sh wrote.
+    if env('APPV2_PIPELINE_TOKEN'):
+        ocp_type = upsert('/credential_types/', N['ocp_type'], {
+            'name': N['ocp_type'], 'kind': 'cloud', 'description': 'OpenShift API token for the App Patch v2 test in a pod',
+            'inputs': {'fields': [{'id': 'url', 'label': 'API URL', 'type': 'string'},
+                                  {'id': 'namespace', 'label': 'Namespace', 'type': 'string'},
+                                  {'id': 'token', 'label': 'Token', 'type': 'string', 'secret': True}],
+                       'required': ['url', 'namespace', 'token']},
+            'injectors': {'env': {'OCP_API_URL': '{{ url }}', 'OCP_NAMESPACE': '{{ namespace }}', 'OCP_TOKEN': '{{ token }}'}}})
+        ocp_cred = upsert('/credentials/', N['ocp_cred'], {
+            'name': N['ocp_cred'], 'credential_type': ocp_type or 0, 'organization': org,
+            # AAP runs on the same cluster: the in-cluster API address needs no route or external DNS.
+            'inputs': {'url': env('APPV2_PIPELINE_API_URL', 'https://kubernetes.default.svc'),
+                       'namespace': env('APPV2_PIPELINE_NAMESPACE', 'agentic-patching'),
+                       'token': env('APPV2_PIPELINE_TOKEN')}})
+        test_id = upsert('/job_templates/', N['test_jt'], {
+            **common, 'name': N['test_jt'], 'inventory': build_inv['id'], 'project': setup_id or 0, 'playbook': TEST_PB,
+            'description': 'Build the app with the change in OpenShift Pipelines, start it in a pod and check /health'})
+        attach(test_id, ocp_cred, 'the OpenShift credential')
+        attach(test_id, gitea_cred_id, 'the Gitea credential (for the SBOM)')
+    else:
+        say(f'no APPV2_PIPELINE_TOKEN: skipping {N["test_jt"]} (run pipelines-setup/deploy.sh first)')
     sample_id = upsert('/job_templates/', N['sample_jt'], {
         **common, 'name': N['sample_jt'], 'inventory': target_inv['id'], 'project': setup_id or 0, 'playbook': SAMPLE_PB,
         'description': 'Deploy the Applications v2 sample app on log4j 2.24.3'})

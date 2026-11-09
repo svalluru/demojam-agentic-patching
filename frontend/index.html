@@ -1994,6 +1994,16 @@
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(9.5px * var(--ts)); font-weight: 800; letter-spacing: .4px; white-space: nowrap;
             border: 1px solid var(--text); border-radius: 6px; padding: 2px 7px; }
+  .v2-src { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; padding: 1px 7px;
+            border-radius: 9px; border: 1px solid currentColor; white-space: nowrap; }
+  .v2-src.lw { color: #3e8635; } .v2-src.up { color: #0066cc; } .v2-src.no { color: #6a6e73; }
+  .v2-cve.sev-critical { background: #fbe5e5; } .v2-cve.sev-high { background: #fdf0e1; }
+  .v2-cve.sev-moderate, .v2-cve.sev-unknown { color: #795600; border-color: #c9a227; background: #fdf7e3; }
+  .v2-cve.sev-low { color: #6a6e73; border-color: #b8bbbe; background: #f5f5f5; }
+  .v2-changes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 4px; font-size: 12.5px; }
+  .v2-changes > span { display: inline-flex; gap: 6px; align-items: center; }
+  .v2-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 9px; margin-left: 6px; }
+  .v2-badge.ok { background: #e7f2e4; color: #2a6a23; } .v2-badge.bad { background: #fbe5e5; color: #a30000; }
   .v2-k { font-size: calc(10px * var(--ts)); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
           color: var(--muted); margin-bottom: 6px; }
   .v2-rf { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
@@ -3508,7 +3518,9 @@ const APPV2_STAGES = [
   { key: 'generate',  label: 'Playbook',  icon: ICON.doc,
     tip: 'The agent drafts the playbook and checks it: allowed modules only, a pinned checksum, a health check, a rollback.' },
   { key: 'commit',    label: 'Commit',    icon: ICON.branch,
-    tip: 'AO workflow, first job: verify the build\'s provenance with cosign and commit the playbook to Gitea.' },
+    tip: 'AO workflow, first job: check every jar (cosign provenance for Lightwell builds, Maven Central sha1 for upstream ones) and commit the playbook to Gitea.' },
+  { key: 'test',      label: 'Test',      icon: ICON.shield,
+    tip: 'AO workflow, second job: AAP starts an OpenShift Pipelines run that builds the app with the whole change, starts it in a pod, checks /health reports the new jars, and re-scans the final jar set with osv.dev. Nothing reaches a site unless it passes.' },
   { key: 'approval',  label: 'Approval',  icon: ICON.approve,
     tip: 'Prod servers wait for a person, here. QA goes straight through.' },
   { key: 'sync',      label: 'Sync',      icon: ICON.pulse,
@@ -3700,7 +3712,9 @@ function v2Render() {
     const picked = t.filter(x => v2.sel && v2.sel.has(x.key)).length;
     go.hidden = false; go.dataset.act = 'generate';
     go.disabled = !picked;
-    go.textContent = picked === t.length ? 'Prepare remediation' : `Prepare remediation for ${picked} of ${t.length} sites`;
+    const extra = (v2.extraRun === s.run_id && v2.extraSel) ? v2.extraSel.size : 0;
+    go.textContent = (picked === t.length ? 'Prepare remediation' : `Prepare remediation for ${picked} of ${t.length} sites`)
+      + (extra ? ` (+${extra} osv.dev)` : '');
   } else if (s.status === 'generated') {
     const t = (s.impact.targets || []).filter(x => !s.selected || s.selected.includes(x.key));
     const picked = t.filter(x => v2.sel && v2.sel.has(x.key));
@@ -3806,7 +3820,7 @@ function v2Run(s, readOnly) {
     const canPick = x => pick && (!prepared || prepared.has(x.key));
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
     const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
-    const STEP_KEYS = ['commit', 'approval', 'sync', 'remediate', 'verify'];
+    const STEP_KEYS = ['commit', 'test', 'approval', 'sync', 'remediate', 'verify'];
     out.push(`<div class="v2-sec"><h3>Impact and run</h3>`
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
@@ -3833,6 +3847,7 @@ function v2Run(s, readOnly) {
           `<b>${esc(o.app)}</b> (${esc(o.installed)}, ${esc(o.why)})`).join('; ')}</div>` : '')
       + (s.info ? `<div class="v2-card" style="margin-top:10px"><b>Agent note.</b> ${esc(s.info)}</div>` : '')
       + `</div>`);
+    if (s.impact.extra) out.push(v2Extras(s, readOnly));
   }
   if (s.status === 'generating' && !s.playbooks) {
     out.push('<div class="empty"><div class="spinner"></div><span>The playbook agent is drafting…</span></div>');
@@ -3841,12 +3856,31 @@ function v2Run(s, readOnly) {
     out.push(`<div class="v2-sec"><h3>Remediation playbooks</h3>${s.playbooks.map(p => `<div class="v2-card">
       <b>${esc(p.app)}</b> <span class="mono muted-sm">${esc(p.filename)}</span>
       <span class="muted-sm"> · ${p.source === 'llm' ? 'drafted by the LLM' : 'from the checked template'}</span>
+      ${(p.changes || []).length > 1 ? `<div class="v2-changes">${p.changes.map(c => `<span><span class="mono">${esc(c.artifact)} ${esc(c.from)} → <b>${esc(c.to)}</b></span>
+        <span class="v2-src ${c.source === 'lightwell' ? 'lw' : 'up'}">${c.source === 'lightwell' ? 'Lightwell · provenance' : 'Upstream · sha1'}</span></span>`).join('')}
+        <span class="muted-sm">one swap, one restart, one rollback</span></div>` : ''}
       ${p.note ? `<div class="muted-sm">${esc(p.note)}</div>` : ''}
       <div class="v2-checks">${(p.checks || []).map(c =>
         `<span class="${c.ok ? 'ok' : 'no'}" title="${esc(c.detail || '')}">${esc(c.label)}</span>`).join('')}</div>
       <details><summary class="muted-sm" style="cursor:pointer;margin-top:8px">View playbook</summary>
         <pre class="v2-pb">${esc(p.text || '')}</pre></details>
     </div>`).join('')}</div>`);
+  }
+  const tests = Object.values(Object.fromEntries((s.hosts || []).filter(h => h.test).map(h => [h.app, h])));
+  const testing = (s.hosts || []).some(h => (h.steps || {}).test === 'active');
+  if (tests.length || testing) {
+    out.push(`<div class="v2-sec"><h3>Test in a pod · OpenShift Pipelines</h3>${tests.map(h => { const t = h.test;
+      let jars = {}; try { jars = (JSON.parse(t.health || '{}').jars) || {}; } catch (e) {}
+      let left = {}; try { left = JSON.parse(t.osv_detail || '{}'); } catch (e) {}
+      return `<div class="v2-card"><b>${esc(h.app)}</b>
+        <span class="v2-badge ${t.passed ? 'ok' : 'bad'}">${t.passed ? 'Passed' : 'Failed'}</span>
+        <span class="mono muted-sm"> ${esc(t.pipelinerun || '')}</span>
+        <div class="muted-sm" style="margin-top:6px">Built <span class="mono">${esc(t.image || '')}</span> with the whole change, started it in a pod, and asked <span class="mono">/health</span>:</div>
+        <div class="v2-changes">${Object.entries(jars).map(([k, v]) => `<span class="mono">${esc(k)}: <b>${esc(v)}</b></span>`).join('') || '<span class="muted-sm">no answer</span>'}</div>
+        <div class="muted-sm">osv.dev on the final jar set: <b>${esc(String(t.osv_open))}</b> advisory(ies) listed${Object.keys(left).length ? ' (' + Object.entries(left).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(', ') + ')' : ''}. Lightwell builds are looked up by their upstream version, so their own fixes still count here.
+          ${t.sbom_url ? ` · <a href="${esc(t.sbom_url)}" target="_blank" rel="noopener">SBOM of the tested jars ↗</a>` : ''}</div>
+        ${t.reason && !t.passed ? `<div class="v2-detail">${esc(t.reason)}</div>` : ''}</div>`; }).join('')}
+      ${testing && !tests.length ? '<div class="empty"><div class="spinner"></div><span>Building and starting the app in a pod…</span></div>' : ''}</div>`);
   }
   if (s.hosts) {
     // Agents 4 and 5, as on the infrastructure side: a report for the change board, and what was fed back.
@@ -3866,7 +3900,7 @@ function v2Run(s, readOnly) {
       <div class="v2-card"><div class="v2-k">Feedback · agent 5</div>
         <b>${done ? 'Fed back' : 'Pending: fed back when the run completes'}</b>
         <div class="muted-sm" style="margin-top:4px">${done && fb.bom
-          ? fb.bom.map(b => `<div><b>BOM:</b> ${esc(b.app)} ${b.changed ? `now on <span class="mono">${esc(b.version)}</span>` : 'unchanged (not every selected site patched)'}</div>`).join('')
+          ? fb.bom.map(b => `<div><b>BOM:</b> ${esc(b.app)} ${b.changed ? `now on <span class="mono">${esc(b.version)}</span>${(b.also || []).length ? ` and <span class="mono">${esc(b.also.join(', '))}</span>` : ''}` : 'unchanged (not every selected site patched)'}</div>`).join('')
             + `<div><b>History:</b> ${esc(String((fb.history || {}).records || 0))} outcome record(s), ${esc((fb.history || {}).where || '')}.</div>`
           : '<b>BOM:</b> an app moves to the new build only once all its selected sites are patched.<br><b>History:</b> each site\'s outcome (health time, rollbacks) is added to the app history store, so the next Reasoning column learns from it.'}</div></div>
     </div>`);
@@ -3878,6 +3912,34 @@ function v2Run(s, readOnly) {
     out.push(`<div class="degraded"><b>Stopped.</b> ${esc(s.error || '')}</div>`);
   }
   return out.join('');
+}
+
+// osv.dev packages (setting "Include osv.dev packages"): what else is open on the affected apps, and the change the
+// agent proposes for each. Ticked rows join this run's playbooks, chosen before Prepare remediation.
+function v2Extras(s, readOnly) {
+  const x = s.impact.extra || {}, rows = x.rows || [];
+  const pick = !readOnly && s.status === 'assessed';
+  if (v2.extraRun !== s.run_id) { v2.extraSel = new Set(); v2.extraRun = s.run_id; }
+  const chosen = s.extra_selected ? new Set(s.extra_selected) : v2.extraSel;
+  const SRC = { lightwell: ['lw', 'Lightwell build'], upstream: ['up', 'Upstream fix'], major: ['no', 'Major upgrade'],
+                residual: ['no', 'Still open'], none: ['no', 'No fix yet'] };
+  const sev = a => `<span class="v2-cve sev-${esc(a.severity || 'unknown')}" title="${esc(a.severity || '')}${a.score ? ' ' + a.score : ''}${a.fix ? ' · fixed in ' + esc(a.fix) : ''}">${esc(a.id)}</span>`;
+  const body = rows.length ? `<table><thead><tr><th></th><th>Library</th><th>App</th><th>Installed → proposed</th><th>Source</th>
+      <th>Advisories</th><th>Reasoning</th></tr></thead><tbody>${rows.map(r => `<tr>
+        <td>${r.selectable ? `<input type="checkbox" data-v2-extra="${esc(r.id)}" ${chosen.has(r.id) ? 'checked' : ''} ${pick ? '' : 'disabled'}>` : ''}</td>
+        <td><b>${esc(r.artifact)}</b><div class="muted-sm">${esc(r.group)}</div></td>
+        <td>${esc(r.app)}<div class="muted-sm">${esc((r.sites || []).join(', '))}</div></td>
+        <td class="mono nowrap">${esc(r.installed)}${r.to ? ` → <b>${esc(r.to)}</b>` : ''}</td>
+        <td><span class="v2-src ${SRC[r.kind][0]}">${SRC[r.kind][1]}</span></td>
+        <td><span class="v2-cves">${(r.kind === 'lightwell' ? (r.lightwell_covers || []).map(c => `<span class="v2-cve">${esc(c)}</span>`) : r.advisories.slice(0, 4).map(sev)).join('')}</span>
+          ${r.kind === 'lightwell' && r.advisories.length ? `<div class="muted-sm">${r.advisories.length} more open upstream</div>` : ''}
+          ${r.kind !== 'lightwell' && r.advisories.length > 4 ? `<div class="muted-sm">+${r.advisories.length - 4} more</div>` : ''}</td>
+        <td class="v2-reason">${esc(r.reasoning || r.why || '')}</td></tr>`).join('')}</tbody></table>`
+    : `<div class="muted-sm">${x.error ? 'osv.dev did not answer: ' + esc(x.error) : 'Nothing else open on these apps.'}</div>`;
+  return `<div class="v2-sec"><h3>Also open on these apps · osv.dev</h3>${body}
+    <div class="muted-sm" style="margin-top:6px">Advisories from ${esc(x.source || 'osv.dev')}, minus what a Lightwell build fixes. A Lightwell build of the same version is preferred (Red Hat provenance); otherwise the lowest upstream release that clears every advisory on the same major line, checked against Maven Central's sha1. Major upgrades are code changes, so they are listed, not offered.
+    ${pick ? ' Tick the ones to swap in this change: they go into the same playbook, with one restart.' : ''}
+    Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM', llm: 'the LLM', rules: 'worked out from the advisories' }[x.reasoning_source] || '—'}.</div></div>`;
 }
 
 function v2Estate(c) {
@@ -3931,12 +3993,17 @@ document.getElementById('v2-body').addEventListener('change', async ev => {
     if (t.checked) v2.sel.add(t.dataset.v2Sel); else v2.sel.delete(t.dataset.v2Sel);
     v2Render();
   }
+  if (t.dataset.v2Extra) {
+    if (t.checked) v2.extraSel.add(t.dataset.v2Extra); else v2.extraSel.delete(t.dataset.v2Extra);
+    v2Render();
+  }
 });
 document.getElementById('v2-go').addEventListener('click', ev => {
   // Held in a const: ev.currentTarget is null again by the time the request settles.
   const btn = ev.currentTarget;
   btn.disabled = true;
   const body = ['dispatch', 'generate'].includes(btn.dataset.act) ? { targets: [...(v2.sel || [])] } : {};
+  if (btn.dataset.act === 'generate') body.extra = [...(v2.extraSel || [])];
   v2Act(`/api/v2/${btn.dataset.act}`, body).finally(() => { btn.disabled = false; });
 });
 document.getElementById('v2-views').addEventListener('click', async ev => {
@@ -4315,37 +4382,41 @@ const V2_NODES = [
   { id: 'console',   x: 26,  y: 4,   w: 304, h: 28, t: 'CONSOLE', s: 'the operator — you' },
   { id: 'nexus',     x: 52,  y: 48,  w: 164, h: 28, ext: 1, t: 'NEXUS', s: 'proxy of Lightwell · webhook' },
   { id: 'intake',    x: 52,  y: 92,  w: 164, h: 38, t: '1 · INTAKE AGENT', s: 'event · fixed CVEs' },
-  { id: 'lightwell', x: 229, y: 101, w: 98,  h: 20, ext: 1, mid: 1, t: 'LIGHTWELL API' },
+  { id: 'lightwell', x: 229, y: 96,  w: 98,  h: 20, ext: 1, mid: 1, t: 'LIGHTWELL API' },
+  { id: 'osv',       x: 229, y: 120, w: 98,  h: 20, ext: 1, mid: 1, t: 'OSV.DEV' },
   { id: 'inventory', x: 52,  y: 144, w: 164, h: 38, t: '2 · INVENTORY AGENT', s: 'app BOMs · servers' },
-  { id: 'reasoning', x: 229, y: 154, w: 98,  h: 20, ext: 1, mid: 1, t: 'REASONING' },
-  { id: 'llm',       x: 229, y: 178, w: 98,  h: 20, ext: 1, mid: 1, t: 'LLM' },
+  { id: 'reasoning', x: 229, y: 160, w: 98,  h: 20, ext: 1, mid: 1, t: 'REASONING' },
+  { id: 'llm',       x: 229, y: 184, w: 98,  h: 20, ext: 1, mid: 1, t: 'LLM' },
   { id: 'playbook',  x: 52,  y: 196, w: 164, h: 38, t: '3 · PLAYBOOK AGENT', s: 'draft · checks · template' },
   { id: 'ao',        x: 52,  y: 262, w: 164, h: 38, ext: 1, t: 'AUTOMATION ORCH', s: 'App Patch v2 · the gate' },
   { id: 'gitea',     x: 229, y: 271, w: 98,  h: 20, ext: 1, mid: 1, t: 'GITEA' },
   { id: 'aap',       x: 52,  y: 310, w: 164, h: 38, ext: 1, t: 'RED HAT AAP', s: 'sync & run the playbook' },
-  { id: 'servers',   x: 229, y: 319, w: 98,  h: 20, ext: 1, mid: 1, t: 'TELCO SITES' },
+  { id: 'servers',   x: 229, y: 312, w: 98,  h: 20, ext: 1, mid: 1, t: 'TELCO SITES' },
+  { id: 'pipelines', x: 229, y: 336, w: 106, h: 20, ext: 1, mid: 1, t: 'OPENSHIFT PIPELINES' },
   { id: 'report',    x: 52,  y: 366, w: 164, h: 36, t: '4 · REPORT AGENT', s: 'PDF status report per run' },
   { id: 'results',   x: 52,  y: 414, w: 164, h: 36, t: '5 · RESULTS AGENT', s: 'BOM write-back · history → RAG' },
 ];
 const V2_GROUPS = [
-  { x: 222, y: 138, w: 112, h: 66, t: 'OPENSHIFT AI' },
+  { x: 222, y: 146, w: 112, h: 64, t: 'OPENSHIFT AI' },
   { x: 44,  y: 244, w: 180, h: 110, t: 'ANSIBLE AUTOMATION PLATFORM' },
 ];
 const V2_EDGES = [
   { id: 'nex>int', d: 'M134,76 L134,87' },
   { id: 'con>int', d: 'M26,18 L7,18 L7,111 L47,111' },
-  { id: 'int>lw',  d: 'M216,111 L226,111' },
+  { id: 'int>lw',  d: 'M216,106 L226,106' },
+  { id: 'inv>osv', d: 'M216,150 L222,150 L222,130 L226,130' },
   { id: 'int>inv', d: 'M134,130 L134,139' },
-  { id: 'inv>rea', d: 'M216,160 L226,160' },
-  { id: 'rea>llm', d: 'M278,174 L278,175' },
-  { id: 'inv>llm', d: 'M216,172 L222,172 L222,188 L226,188' },
+  { id: 'inv>rea', d: 'M216,168 L226,168' },
+  { id: 'rea>llm', d: 'M278,180 L278,181' },
+  { id: 'inv>llm', d: 'M216,177 L222,177 L222,194 L226,194' },
   { id: 'inv>pb',  d: 'M134,182 L134,191' },
-  { id: 'pb>llm',  d: 'M216,214 L340,214 L340,188 L330,188' },
+  { id: 'pb>llm',  d: 'M216,216 L342,216 L342,194 L330,194' },
   { id: 'con>ao',  d: 'M330,20 L348,20 L348,281 L219,281' },
   { id: 'ao>git',  d: 'M216,276 L226,276' },
   { id: 'ao>aap',  d: 'M120,300 L120,305' },
   { id: 'aap>ao',  d: 'M150,310 L150,305' },
-  { id: 'aap>srv', d: 'M216,329 L226,329' },
+  { id: 'aap>srv', d: 'M216,322 L226,322' },
+  { id: 'aap>pip', d: 'M216,340 L222,340 L222,346 L226,346' },
   { id: 'ao>con',  d: 'M216,290 L356,290 L356,26 L333,26' },
   { id: 'aap>rep', d: 'M134,348 L134,361' },
   { id: 'rep>res', d: 'M134,402 L134,409' },
@@ -4359,6 +4430,7 @@ const V2_EDGE_FOR = {
   'intake>playbook': 'inv>pb', 'playbook>intake': 'inv>pb', 'playbook>llm': 'pb>llm',
   'console>ao': 'con>ao', 'ao>gitea': 'ao>git', 'ao>aap': 'ao>aap', 'aap>ao': 'aap>ao',
   'aap>servers': 'aap>srv', 'inventory>console': 'ao>con',
+  'inventory>osv': 'inv>osv', 'osv>inventory': 'inv>osv', 'aap>pipelines': 'aap>pip', 'pipelines>aap': 'aap>pip',
   'aap>report': 'aap>rep', 'report>results': 'rep>res', 'results>inventory': 'res>inv', 'report>console': 'rep>con',
 };
 const V2_ARCH = {

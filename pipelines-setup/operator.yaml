@@ -1,0 +1,13 @@
+# Red Hat OpenShift Pipelines (Tekton), cluster-wide. Applied by pipelines-setup/deploy.sh when the
+# pipelines.tekton.dev CRD is missing.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator-rh
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
