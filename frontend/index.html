@@ -4167,9 +4167,9 @@ function v2Estate(c) {
   const fix = r => r.fixes.length
     ? `<span class="v2-fit">${r.fixes.length} · ${r.fixes.map(f => esc(f.artifact)).join(', ')}</span>`
     : `<span class="v2-fit no">${r.covered ? 'no fix for these versions' : (r.other || []).includes('npm') ? 'npm not available' : 'not covered yet'}</span>`;
-  const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">Domain · app</th><th>Java</th><th>Python</th><th>JS</th>
+  const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">App · domain</th><th>Java</th><th>Python</th><th>JS</th>
       <th style="width:260px">Lightwell fixes available</th><th style="width:110px">App severity</th><th>Reasoning / impact</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td><b>${esc(r.domain)}</b><div class="muted-sm">${esc(r.app)}</div>
+    ${rows.map(r => `<tr><td><b>${esc(r.app)}</b><div class="muted-sm">${esc(r.domain)}</div>
 </td>
       ${cell(r.languages.java)}${cell(r.languages.python)}${cell(r.languages.js)}
       <td>${fix(r)}</td>
