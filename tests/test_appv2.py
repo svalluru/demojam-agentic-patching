@@ -940,5 +940,64 @@ class LiveTestNode(unittest.TestCase):
         self.assertIn('mina-core reported missing', h['detail'])
 
 
+
+class PlanAFix(unittest.TestCase):
+    def setUp(self):
+        with_osv()
+
+    def pick(self, plan):
+        return {r['artifact']: (r['to'], r['chosen']) for r in plan['changes']}
+
+    def test_source_precedence(self):
+        lw = appv2.app_plan('inventory-service', ['lightwell'])
+        self.assertNotIn('mina-core', self.pick(lw))
+        self.assertIn('Lightwell with Another Build', lw['not_fixable'][0]['why'])
+        self.assertEqual(self.pick(appv2.app_plan('inventory-service', ['lightwell', 'another']))['mina-core'],
+                         ('2.2.5.rhlw-00002', 'another'))
+        self.assertEqual(self.pick(appv2.app_plan('inventory-service', ['osv']))['mina-core'], ('2.1.13', 'osv'))
+
+    def test_major_gate(self):
+        no = appv2.app_plan('workflow-engine', ['osv'])
+        self.assertNotIn('spring-security-web', self.pick(no))
+        self.assertIn('major', next(r for r in no['not_fixable'] if r['artifact'] == 'spring-security-web')['why'])
+        self.assertEqual(self.pick(appv2.app_plan('workflow-engine', ['osv'], True))['spring-security-web'][0], '6.5.11')
+
+    def test_selection_and_override(self):
+        p = appv2.app_plan('inventory-service', ['lightwell', 'another', 'osv'], False,
+                           [{'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'}])
+        self.assertEqual(self.pick(p), {'mina-core': ('2.1.13', 'osv')})
+        self.assertEqual(sorted(r['artifact'] for r in p['left_out']), ['postgresql', 'zookeeper'])
+        self.assertIn('/maven-central/org/apache/mina/mina-core/2.1.13/', p['changes'][0]['change']['url']
+                      .replace('/maven2/', '/maven-central/'))
+        md = appv2.plan_markdown(p)
+        for section in ('# Remediation plan: inventory-service', '## Summary', '## Changes', '## Rollout',
+                        '## Repository setup', '## Left out of this plan', '## Draft change (dry run)'):
+            self.assertIn(section, md)
+        self.assertIn('- 1 need an upgrade to the version shown', md)
+
+    def test_plan_run_swaps_every_planned_jar(self):
+        sel = [{'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'},
+               {'id': 'inventory-service|org.postgresql:postgresql', 'source': 'lightwell'}]
+        self.assertEqual(appv2.start_plan('inventory-service', ['lightwell', 'another', 'osv'], False, sel)[0], 200)
+        st = wait_for({'assessed'})
+        self.assertEqual(st['event']['kind'], 'plan')
+        self.assertEqual([t['site'] for t in st['impact']['targets']], ['lab', 'core-dc-1'])
+        appv2.start_generate(['inventory-service|lab'])
+        pb = wait_for({'generated'})['playbooks'][0]
+        self.assertEqual([(c['artifact'], c['to'], c['source']) for c in pb['changes']],
+                         [('postgresql', '42.3.3.rhlw-00006', 'lightwell'), ('mina-core', '2.1.13', 'upstream')])
+        self.assertTrue(pb['ok'])
+        appv2.start_dispatch()
+        st = wait_for({'complete'}, 10)
+        self.assertEqual(st['summary']['patched'], 1)
+        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.mina:mina-core'], '2.1.13')
+        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'], '42.3.3.rhlw-00006')
+        self.assertTrue(st['report']['file'].endswith('.pdf') and ' ' not in st['report']['file'])
+
+    def test_nothing_selected_is_refused(self):
+        self.assertEqual(appv2.start_plan('inventory-service', ['lightwell'], False, [])[0], 400)
+        self.assertEqual(appv2.start_plan('no-such-app')[0], 404)
+
+
 if __name__ == '__main__':
     unittest.main()

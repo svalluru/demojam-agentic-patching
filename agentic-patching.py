@@ -4901,6 +4901,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/v2/decide':
             code, body = appv2.decide(str(payload.get('key') or payload.get('host', '')),
                                       str(payload.get('decision', '')))
+        elif path in ('/api/v2/plan/preview', '/api/v2/plan/start'):
+            app_name = str(payload.get('app', ''))
+            sources = [str(x) for x in payload.get('sources') or []] or None
+            major = bool(payload.get('allow_major'))
+            select = payload.get('select') if isinstance(payload.get('select'), list) else None
+            if path.endswith('/start'):
+                code, body = appv2.start_plan(app_name, sources, major, select)
+            else:
+                try:
+                    plan = appv2.app_plan(app_name, sources, major, select)
+                    code, body = (404, {'ok': False, 'error': f'no app {app_name!r}'}) if plan is None \
+                        else (200, {**plan, 'markdown': appv2.plan_markdown(plan)})
+                except Exception as exc:
+                    code, body = 502, {'ok': False, 'error': str(exc)}
         elif path == '/api/v2/reset':
             appv2.reset()
             code, body = 200, {'ok': True}

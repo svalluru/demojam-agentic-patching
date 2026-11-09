@@ -2026,6 +2026,13 @@
   .v2-prio.critical { background: #a30000; } .v2-prio.high { background: var(--red); }
   .v2-prio.medium { background: #b08920; } .v2-prio.low { background: #8a8d90; }
   .v2-estbar { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+  .v2-planbtn { margin-top: 6px; font-size: 11.5px; padding: 2px 10px; }
+  .v2-planrow > td { background: #fafafa; padding: 10px 12px 14px !important; }
+  .v2-planbox { border: 1px solid #d2d2d2; border-radius: 10px; background: #fff; padding: 12px 14px; }
+  .v2-plansrc { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+  .v2-plantab { width: 100%; margin-top: 6px; }
+  .v2-plantab tr.off td { opacity: .5; }
+  .v2-planact { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
   .v2-subframe { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
   .v2-subframe > table, .v2-subframe > .muted-sm { margin: 0 14px; width: calc(100% - 28px); }
   .v2-subframe > .muted-sm { margin-bottom: 12px; }
@@ -3823,7 +3830,13 @@ function v2InitSel(s) {
 
 function v2Run(s, readOnly) {
   const e = s.event, out = [];
-  out.push(`<div class="v2-card" style="margin-bottom:14px">
+  if (e.kind === 'plan') out.push(`<div class="v2-card" style="margin-bottom:14px">
+    <b>Remediation plan</b> · ${esc(e.group)} · ${esc(e.version)} &nbsp;${v2Cves(e.cves)}
+    <div class="v2-changes">${((s.plan || {}).changes || []).map(r => `<span><span class="mono">${esc(r.artifact)} ${esc(r.installed)} → <b>${esc(r.to)}</b></span>
+      <span class="v2-src ${r.chosen === 'osv' ? 'up' : r.chosen === 'another' ? 'vc' : 'lw'}">${esc(FIX_PLAN_LABEL[r.chosen])}</span></span>`).join('')}</div>
+    <div class="muted-sm">From Plan a fix: no incoming build; the jars above, swapped together on each selected site.</div>
+  </div>`);
+  else out.push(`<div class="v2-card" style="margin-bottom:14px">
     ${v2Pkg(e)} <span class="mono">${esc((s.impact && (s.impact.targets[0] || {}).installed) || '')}</span>
     → <span class="mono"><b>${esc(e.version)}</b></span> &nbsp;${v2Cves(e.cves)}
     <div class="muted-sm" style="margin-top:6px">${e.note ? `${esc(e.note)} ` : ''}Same version, Red Hat-patched; fixed CVEs from the Lightwell advisories API.</div>
@@ -3986,6 +3999,71 @@ function v2Extras(s, readOnly) {
     Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM', llm: 'the LLM', rules: 'worked out from the advisories' }[x.reasoning_source] || '—'}.</div></div>`;
 }
 
+// ---- Plan a fix (per app), as Applications v1: choose the sources, tick the packages, then download the plan or
+// prepare it as a run.
+const PLAN_SRC = [
+  ['lightwell', 'Lightwell', 'A Lightwell build of the version already in use. The upstream version stays; the build suffix changes.'],
+  ['another', 'Lightwell with Another Build', 'Lightwell has no build of your version but has one of a newer version on the same major line, so the version changes. Check that it covers your advisories.'],
+  ['osv', 'OSV', 'The lowest version osv.dev lists as fixed. This is an upgrade.']];
+const FIX_PLAN_LABEL = { lightwell: 'Lightwell build', another: 'Lightwell · another build', osv: 'Upstream (OSV)' };
+
+async function v2PlanLoad() {
+  const p = v2.plan;
+  p.loading = true; p.error = ''; v2Render();
+  try {
+    p.data = await v2Fetch('/api/v2/plan/preview', { app: p.app, sources: [...p.sources], allow_major: p.major });
+    // Every change ticked, each on its first allowed source.
+    p.pick = Object.fromEntries((p.data.changes || []).map(r => [r.id, r.chosen]));
+  } catch (e) { p.error = e.message; }
+  p.loading = false; v2Render();
+}
+
+function v2PlanSelect() {
+  return Object.entries(v2.plan.pick || {}).map(([id, source]) => ({ id, source }));
+}
+
+function v2PlanPanel() {
+  const p = v2.plan || {};
+  const d = p.data || {};
+  const srcs = PLAN_SRC.map(([k, l, tip]) => `<label class="v2-check" title="${esc(tip)}"><input type="checkbox" data-v2-plansrc="${k}" ${p.sources.has(k) ? 'checked' : ''}> ${l}</label>`).join('');
+  const head = `<div class="v2-plansrc"><span class="muted-sm">Fixes may come from</span>${srcs}
+      <label class="v2-check" title="An OSV fix that crosses a major version is a code change; off by default."><input type="checkbox" data-v2-planmajor ${p.major ? 'checked' : ''}> Allow major upgrades</label></div>`;
+  if (p.loading && !d.changes) return head + '<div class="empty"><div class="spinner"></div><span>Working out the change list…</span></div>';
+  if (p.error) return head + `<div class="degraded"><b>Could not plan.</b> ${esc(p.error)}</div>`;
+  const rows = d.changes || [];
+  const pick = p.pick || {};
+  const n = Object.keys(pick).length;
+  const sm = d.summary || {};
+  const table = rows.length ? `<table class="v2-plantab"><thead><tr>
+      <th><input type="checkbox" id="v2-plan-all" title="Select all" ${n === rows.length ? 'checked' : ''}></th>
+      <th>Library</th><th>Installed → proposed</th><th>Source</th><th>Issues</th><th>Why</th></tr></thead><tbody>
+    ${rows.map(r => { const on = r.id in pick; const cur = pick[r.id] || r.chosen; const o = r.options.find(x => x.source === cur) || r.options[0];
+      return `<tr class="${on ? '' : 'off'}">
+        <td><input type="checkbox" data-v2-plansel="${esc(r.id)}" ${on ? 'checked' : ''}></td>
+        <td><b>${esc(r.artifact)}</b><div class="muted-sm">${esc(r.group)}</div></td>
+        <td class="mono">${esc(r.installed)} → ${r.options.length > 1
+          ? `<select class="v2-opt" data-v2-planopt="${esc(r.id)}" ${on ? '' : 'disabled'}>${r.options.map(x =>
+              `<option value="${esc(x.source)}" ${x.source === cur ? 'selected' : ''}>${esc(x.to)} · ${esc(FIX_PLAN_LABEL[x.source])}</option>`).join('')}</select>`
+          : `<b>${esc(o.to)}</b>`}</td>
+        <td><span class="v2-src ${o.source === 'osv' ? 'up' : o.source === 'another' ? 'vc' : 'lw'}">${esc(FIX_PLAN_LABEL[o.source])}</span></td>
+        <td class="nowrap">${esc(String(r.issues))} · <span class="v2-cve sev-${esc(r.worst)}">${esc(r.worst)}</span></td>
+        <td class="v2-reason">${esc(o.why || '')}</td></tr>`; }).join('')}</tbody></table>`
+    : '<div class="muted-sm">Nothing to change with the sources allowed.</div>';
+  const nf = (d.not_fixable || []).length || (d.not_covered || []).length ? `<div class="muted-sm" style="margin-top:8px"><b>Not fixable from here:</b> ${
+      (d.not_fixable || []).map(r => `${esc(r.artifact)} ${esc(r.installed)} (${esc(r.why)})`).concat(
+      (d.not_covered || []).map(x => `${esc(x.name)} ${esc(x.version)} (${esc(x.ecosystem)}: no Lightwell builds here${x.issues ? `; ${x.issues} issue(s)` : ''})`)).join('; ')}</div>` : '';
+  const busy = V2_BUSY.includes((v2.state || {}).status);
+  return `<div class="v2-planbox">${head}
+    <div class="muted-sm" style="margin:6px 0">${esc(String(sm.vulnerable || 0))} vulnerable components, ${esc(String(sm.issues || 0))} issues ·
+      ${n} of ${rows.length} change(s) selected · sites: ${(d.sites || []).map(x => `${esc(x.site)} (${x.env === 'qa' ? 'LAB' : 'LIVE'})`).join(', ') || 'none'}</div>
+    ${table}${nf}
+    <div class="v2-planact">
+      <button class="pill" data-v2-plandl ${n ? '' : 'disabled'}>Download plan (.md)</button>
+      <button class="go-patch" data-v2-planrun ${n && (d.sites || []).length && !busy ? '' : 'disabled'}
+        title="${busy ? 'A run is in progress' : 'Start an App Patch v2 run with exactly these jar swaps; sites and approval as usual'}">Prepare remediation (${n} jar${n === 1 ? '' : 's'})</button>
+    </div></div>`;
+}
+
 function v2Estate(c) {
   if (c.loading) return '<div class="empty"><div class="spinner"></div><span>Reading the estate…</span></div>';
   if (c.error) return `<div class="degraded"><b>Could not build the estate.</b> ${esc(c.error)}</div>`;
@@ -3995,11 +4073,14 @@ function v2Estate(c) {
     : `<span class="v2-fit no">${r.covered ? 'no fix for these versions' : (r.other || []).includes('npm') ? 'npm not available' : 'not covered yet'}</span>`;
   const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">Domain · app</th><th>Java</th><th>Python</th><th>JS</th>
       <th style="width:260px">Lightwell fixes available</th><th style="width:110px">App severity</th><th>Reasoning / impact</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td><b>${esc(r.domain)}</b><div class="muted-sm">${esc(r.app)}</div></td>
+    ${rows.map(r => `<tr><td><b>${esc(r.domain)}</b><div class="muted-sm">${esc(r.app)}</div>
+        ${r.covered ? `<button class="pill v2-planbtn ${v2.planApp === r.app ? 'active' : ''}" data-v2-planfix="${esc(r.app)}"
+          title="Choose where the fixes come from and which packages to change, and see exactly which jars would change. Nothing runs until you prepare and approve it">Plan a fix</button>` : ''}</td>
       ${cell(r.languages.java)}${cell(r.languages.python)}${cell(r.languages.js)}
       <td>${fix(r)}</td>
       <td><span class="v2-prio ${esc((r.priority || 'low').toLowerCase())}">${esc(r.priority || '')}</span></td>
-      <td class="v2-reason">${esc(r.note || '')}</td></tr>`).join('')}</tbody></table>`;
+      <td class="v2-reason">${esc(r.note || '')}</td></tr>
+      ${v2.planApp === r.app ? `<tr class="v2-planrow"><td colspan="7">${v2PlanPanel()}</td></tr>` : ''}`).join('')}</tbody></table>`;
   const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
     App severity weighs what the app touches, whether a Lightwell fix exists, and how hard the restart is.</div>`;
   const RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
@@ -4016,6 +4097,32 @@ function v2Estate(c) {
 }
 
 document.getElementById('v2-body').addEventListener('click', async ev => {
+  const pf = ev.target.closest('[data-v2-planfix]');
+  if (pf) {
+    if (v2.planApp === pf.dataset.v2Planfix) { v2.planApp = ''; v2Render(); return; }
+    v2.planApp = pf.dataset.v2Planfix;
+    v2.plan = { app: v2.planApp, sources: new Set(['lightwell']), major: false };
+    v2PlanLoad(); return;
+  }
+  if (ev.target.closest('[data-v2-plandl]')) {
+    try {
+      const d = await v2Fetch('/api/v2/plan/preview', { app: v2.plan.app, sources: [...v2.plan.sources], allow_major: v2.plan.major, select: v2PlanSelect() });
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([d.markdown], { type: 'text/markdown' })),
+        download: `remediation-${v2.plan.app}.md` });
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) { toast(esc(e.message), true); }
+    return;
+  }
+  if (ev.target.closest('[data-v2-planrun]')) {
+    const btn = ev.target.closest('[data-v2-planrun]');
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      await v2Fetch('/api/v2/plan/start', { app: v2.plan.app, sources: [...v2.plan.sources], allow_major: v2.plan.major, select: v2PlanSelect() });
+      v2.planApp = ''; v2.view = 'run';
+      await v2Tick();
+    } catch (e) { toast(esc(e.message), true); btn.disabled = false; }
+    return;
+  }
   const sortBtn = ev.target.closest('[data-v2-sort]');
   if (sortBtn) { v2.estateSort = sortBtn.dataset.v2Sort; v2Render(); return; }
   const a = ev.target.closest('[data-v2-assess]');
@@ -4035,6 +4142,22 @@ document.getElementById('v2-body').addEventListener('click', async ev => {
 });
 document.getElementById('v2-body').addEventListener('change', async ev => {
   const t = ev.target;
+  if (t.dataset.v2Plansrc) {
+    if (t.checked) v2.plan.sources.add(t.dataset.v2Plansrc); else v2.plan.sources.delete(t.dataset.v2Plansrc);
+    if (!v2.plan.sources.size) v2.plan.sources.add('lightwell');
+    v2PlanLoad(); return;
+  }
+  if ('v2Planmajor' in t.dataset) { v2.plan.major = t.checked; v2PlanLoad(); return; }
+  if (t.id === 'v2-plan-all') {
+    v2.plan.pick = t.checked ? Object.fromEntries(((v2.plan.data || {}).changes || []).map(r => [r.id, r.chosen])) : {};
+    v2Render(); return;
+  }
+  if (t.dataset.v2Plansel) {
+    const r = ((v2.plan.data || {}).changes || []).find(x => x.id === t.dataset.v2Plansel);
+    if (t.checked && r) v2.plan.pick[r.id] = r.chosen; else delete v2.plan.pick[t.dataset.v2Plansel];
+    v2Render(); return;
+  }
+  if (t.dataset.v2Planopt) { v2.plan.pick[t.dataset.v2Planopt] = t.value; v2Render(); return; }
   if (t.id === 'v2-cat-mine') { v2.catScope = t.checked ? 'mine' : 'all'; v2.catPage = 1; await v2LoadCatalog(); v2Render(); return; }
   if (t.id === 'v2-sel-all') {
     const st = v2.state, prep = st.selected ? new Set(st.selected) : null;
