@@ -3970,7 +3970,13 @@ function v2Extras(s, readOnly) {
         <td>${(() => { const o = (r.options || [])[chosenOpt(r)]; const k = o ? (o.source === 'upstream' ? 'upstream' : o.version_change ? 'lightwell_vc' : 'lightwell') : r.kind;
           return `<span class="v2-src ${SRC[k][0]}">${SRC[k][1]}</span>`; })()}</td>
         <td><span class="v2-cves">${(r.kind === 'lightwell' ? (r.lightwell_covers || []).map(c => `<span class="v2-cve">${esc(c)}</span>`) : r.advisories.slice(0, 4).map(sev)).join('')}</span>
-          ${r.kind === 'lightwell' && r.advisories.length ? `<div class="muted-sm">${r.advisories.length} more open upstream</div>` : ''}
+          ${r.kind === 'lightwell' && r.advisories.length ? (() => {
+            // What the Lightwell build leaves open: CVEs osv.dev lists for this version that only later upstream
+            // releases fix. Listed on hover.
+            const fixes = r.advisories.map(x => x.fix).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+            const tip = r.advisories.map(x => `${x.id} (${x.severity}${x.fix ? ', fixed in ' + x.fix : ', no fix yet'})`).join('\n');
+            return `<div class="muted-sm" title="${esc(tip)}" style="cursor:help;text-decoration:underline dotted">${r.advisories.length} more still open: fixed only upstream${fixes.length ? ' (' + esc(fixes[fixes.length - 1]) + ')' : ''}</div>`;
+          })() : ''}
           ${r.kind !== 'lightwell' && r.advisories.length > 4 ? `<div class="muted-sm">+${r.advisories.length - 4} more</div>` : ''}</td>
         <td class="v2-reason">${esc(r.reasoning || r.why || '')}</td></tr>`).join('')}</tbody></table>`
     : `<div class="muted-sm">${x.error ? 'osv.dev did not answer: ' + esc(x.error) : 'Nothing else open on these apps.'}</div>`;
