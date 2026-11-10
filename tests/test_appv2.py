@@ -1378,3 +1378,27 @@ class RollbackRoute(unittest.TestCase):
         self.assertEqual((by[appv2.DEMO_FAILING_KEY]['steps']['rollback'], by[appv2.DEMO_FAILING_KEY]['steps']['notify']), ('done', 'done'))
         self.assertEqual(by['workflow-engine|lab']['steps']['notify'], 'done')
         self.assertTrue(any(e['dst'] == 'mattermost' for e in st['events']))
+
+
+class ForcedFailure(unittest.TestCase):
+    """Test only: APPV2_FORCE_FAIL points the verify step at a path the app does not serve; the rollback keeps /health."""
+
+    def test_off_by_default_and_template_is_unchanged(self):
+        demo()
+        self.assertFalse(appv2.force_fail_enabled())
+        app = next(a for a in appv2.DEMO_BOM if a['app'] == 'workflow-engine')
+        self.assertEqual(appv2.verify_url(app), app['health_url'])
+
+    def test_forced_playbook_fails_verify_but_hands_over_the_real_health_url(self):
+        demo(APPV2_FORCE_FAIL='true')
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate(['workflow-engine|lab']); st = wait_for({'generated'})
+        pb = st['playbooks'][0]
+        self.assertTrue(pb['ok'])
+        self.assertEqual(pb['source'], 'template')                            # never an LLM draft
+        self.assertIn('forced failure', pb['note'])
+        text = pb['text']
+        self.assertIn('verify_url: http://localhost:8090/forced-failure', text)
+        self.assertNotIn('/health-', text)                                    # not a prefix of /health
+        self.assertIn("'health_url': health_url", text)                      # the rollback checks the real one
+        self.assertIn('health_url: http://localhost:8090/health', text)

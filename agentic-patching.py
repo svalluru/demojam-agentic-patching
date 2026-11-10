@@ -4056,6 +4056,10 @@ SETTINGS: tuple[Setting, ...] = (
             'workflow commits the generated playbooks here.'),
     Setting('AO_APP_V2_WORKFLOW', 'Applications v2', 'AO workflow', 'str',
             'App Patch v2', 'Imported from ao-setup/app_v2_workflow.json.'),
+    Setting('APPV2_FORCE_FAIL', 'Applications v2', 'Force a failure (test the rollback route)', 'bool', 'false',
+            'Test only. Playbooks prepared while this is on point their verify step at a path the app does '
+            'not serve, so every site in the run fails after the swap and the App Patch v2 workflow takes its '
+            'rollback route (AAP restores the backup) and posts the rolled-back card. Turn it off afterwards.'),
     Setting('APPV2_OSV', 'Applications v2', 'Include osv.dev packages', 'bool', 'false',
             'Assess also lists what else osv.dev reports open on the affected apps: a '
             'Lightwell build of the same version when there is one, else the upstream '

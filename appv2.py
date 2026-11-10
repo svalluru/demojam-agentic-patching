@@ -866,7 +866,7 @@ def change_for_extra(row: dict, option: int | None = None) -> dict:
     return out
 
 
-def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -> str:
+def render_playbook(event: dict, app: dict, changes: list[dict] | None = None, force_fail: bool = False) -> str:
     """The template. Also what the LLM is shown as the shape to follow, and the fallback when its
     draft does not pass check_playbook(). One play per app swaps every jar in its change list together: one
     backup, one restart, one health check. If anything fails, the rescue keeps the backup and reports what the
@@ -888,6 +888,7 @@ def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -
     backup_dir: {app['path']}/backup
     service: {app['service']}
     health_url: {app['health_url']}
+    verify_url: {verify_url(app, force_fail)}
     swaps:
 {swaps}
     jar_sha256s: "{{{{ verified_sha256s if verified_sha256s is mapping else (verified_sha256s | from_json) }}}}"
@@ -930,7 +931,7 @@ def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -
 
         - name: Verify the service is healthy
           ansible.builtin.uri:
-            url: "{{{{ health_url }}}}"
+            url: "{{{{ verify_url }}}}"
             status_code: 200
           register: health
           until: health.status == 200
@@ -974,6 +975,24 @@ def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -
 """
 
 
+# Outside /health on purpose: HealthServer's only context is /health and the JDK server matches contexts by prefix,
+# so /health-anything would still answer 200. Any other path is a 404.
+FORCED_FAIL_PATH = '/forced-failure'
+
+
+def force_fail_enabled() -> bool:
+    """Test only (setting APPV2_FORCE_FAIL): every playbook's verify step asks a path the app does not serve, so the
+    site fails after the swap and the workflow's rollback route runs. The rollback job keeps the real health_url."""
+    return env('APPV2_FORCE_FAIL', 'false').lower() in ('1', 'true', 'yes', 'on')
+
+
+def verify_url(app: dict, force_fail: bool = False) -> str:
+    """What the playbook's verify step asks: the app's health URL, or, when forcing a failure, a path it does not
+    serve (404)."""
+    base = app['health_url']
+    return base.rsplit('/health', 1)[0] + FORCED_FAIL_PATH if force_fail else base
+
+
 def bundle_name(app_name: str, run_id: str) -> str:
     return f'{app_name}-bundle-{run_id}.tgz'
 
@@ -984,7 +1003,7 @@ def bundle_url(app_name: str, run_id: str) -> str:
     return f"{base}/repository/maven-releases/com/lab/appv2/{app_name}-bundle/{run_id}/{bundle_name(app_name, run_id)}"
 
 
-def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: str) -> str:
+def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: str, force_fail: bool = False) -> str:
     """Rebuild from source: deploy the app as Maven built it. The bundle (every resolved jar plus the app's own) is
     downloaded pinned to the checksum the pipeline reported, the current lib folder is backed up whole and replaced,
     the service restarts once, and the changed libraries' jars must be in the new folder. On failure the rescue keeps
@@ -1006,6 +1025,7 @@ def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: 
     staging_dir: {app['path']}/staging-{run_id}
     service: {app['service']}
     health_url: {app['health_url']}
+    verify_url: {verify_url(app, force_fail)}
     bundle_name: {name}
     bundle_url: "{bundle_url(app['app'], run_id)}"
     expect_jars:
@@ -1059,7 +1079,7 @@ def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: 
 
         - name: Verify the service is healthy
           ansible.builtin.uri:
-            url: "{{{{ health_url }}}}"
+            url: "{{{{ verify_url }}}}"
             status_code: 200
           register: health
           until: health.status == 200
@@ -1566,12 +1586,21 @@ def _generate() -> None:
             if H.llm and not H.demo_mode():
                 _trace('playbook', 'llm', f'draft for {app}')
             H.demo_pause(1.4)
+            forced = force_fail_enabled()
             if st.get('test_mode') == 'source':
                 # Rebuild from source deploys the built bundle: the checked template, pinned to the pipeline's checksum.
-                text = render_bundle_playbook(ev, target, changes, st['run_id'])
+                text = render_bundle_playbook(ev, target, changes, st['run_id'], force_fail=forced)
                 source, checks, note = 'template', check_playbook(text, text), 'Rebuild from source: the bundle-deploy template.'
+            elif forced:
+                text = render_playbook(ev, target, changes, force_fail=True)
+                source, checks, note = 'template', check_playbook(text, text), ''
             else:
                 text, source, checks, note = draft_playbook(ev, target, changes)
+            if forced:
+                note = ('TEST: forced failure (setting APPV2_FORCE_FAIL). The verify step asks ' + FORCED_FAIL_PATH
+                        + ', which the app does not serve, so every site in this run fails after the swap and the '
+                        'workflow takes its rollback route. ' + note).strip()
+                _trace('playbook', 'intake', f'{app}: forced failure on (APPV2_FORCE_FAIL): testing the rollback route')
             ok = all(c['ok'] for c in checks)
             _trace('playbook', 'intake', f"{app}: {'checks passed' if ok else 'checks FAILED'} ({source})")
             playbooks.append({'app': app, 'filename': f"app-v2/{app}-{ev['artifact']}-{st['run_id']}.yml", 'changes': changes,

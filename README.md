@@ -516,7 +516,10 @@ v2 tab with the numbered diagram; this is the same thing in text.
    **Rollback route.** AO has no "on failure" edge, so an outcome switch after
    the run reads that report: a failed site goes to `App Patch v2 - Rollback`,
    which restores the backup (each old jar, or the whole lib folder), restarts
-   and checks `/health` on the original jars.
+   and checks `/health` on the original jars. To see it on purpose, turn on
+   **Force a failure** (`APPV2_FORCE_FAIL`, test only) in the gear panel before
+   **Prepare remediation**: the verify step then asks a path the app does not
+   serve, the site fails after the swap, and the workflow rolls it back.
 7. **Notify** (AO and agent 4). Every route ends in a Mattermost card through
    `App Patch v2 - Notify Mattermost` (patched, rolled back, or pod test
    failed), on the lab's channel with the lab's `Mattermost` credential. And a
