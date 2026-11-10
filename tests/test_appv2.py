@@ -23,9 +23,13 @@ def demo(**extra):
     extra.setdefault('APPV2_STATE_DIR', tempfile.mkdtemp(prefix='appv2-test-'))
     extra.setdefault('REPORTS_DIR', tempfile.mkdtemp(prefix='appv2-reports-'))
     appv2.configure(env=lambda k, d='': extra.get(k, d), demo_mode=lambda: True,
-                    demo_pause=lambda f=1.0: None, llm=None, ao_call=None, fixed_cves=None)
+                    demo_pause=lambda f=1.0: None, llm=None, ao_call=None, fixed_cves=None, lab_ping=None)
     appv2.reset()
     appv2._BOM_UPDATES.clear()
+    t = appv2._ESTATE_BG.get('thread')               # a previous test's background estate reasoning
+    if t:
+        t.join(5)
+    appv2._ESTATE_BG.update(thread=None, error='')
 
 
 class Versions(unittest.TestCase):
@@ -688,10 +692,31 @@ class Estate(unittest.TestCase):
                         lightwell_get=lambda path, **p: {'data': []},
                         env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        first = appv2.estate()
+        self.assertTrue(first['pending'])                                     # rule-based notes at once
+        appv2._ESTATE_BG['thread'].join(5)
         rows = {r['app']: r for r in appv2.estate()['rows']}
         self.assertEqual((rows['inventory-service']['priority'], rows['inventory-service']['note']), ('HIGH', 'Feeds topology.'))
         appv2.estate()
-        self.assertEqual(len(calls), 1)                                       # the second open is cached
+        self.assertEqual(len(calls), 1)                                       # later opens are cached
+
+    def test_lab_down_is_reported_fast(self):
+        demo()
+        appv2._ESTATE_CACHE.clear()
+        def down():
+            raise OSError('timed out')
+        appv2.configure(demo_mode=lambda: False, llm=lambda p: '{}', lab_ping=down, rag_search=lambda s, q: [],
+                        lightwell_get=lambda path, **p: {'data': []},
+                        env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
+                                             'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        t0 = time.time()
+        appv2.estate()
+        appv2._ESTATE_BG['thread'].join(5)
+        out = appv2.estate()
+        self.assertLess(time.time() - t0, 5)
+        self.assertFalse(out['pending'])
+        self.assertIn('did not answer', out['lab_error'])
+        self.assertTrue(all(r['note'] for r in out['rows']))                  # rule-based notes still shown
 
 
 class Feedback(unittest.TestCase):

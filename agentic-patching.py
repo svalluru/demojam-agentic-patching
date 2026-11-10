@@ -4200,6 +4200,13 @@ def aap_call(path: str, method: str = 'GET', body: Any = None) -> Any:
                      headers={'Authorization': f"Bearer {env('AAP_TOKEN')}"}, verify=False, timeout=60)
 
 
+def lab_ping() -> None:
+    """Applications v2: raise within 3 seconds when the lab's Llama Stack (history search and LLM) does not answer."""
+    if not LLAMA_URL:
+        raise RuntimeError('LLAMA_STACK_URL not set')
+    http_json(f'{LLAMA_URL}/v1/health', verify=False, timeout=3)
+
+
 def osv_lookup(queries: list) -> dict:
     """Applications v2: osv.dev advisories for [(ecosystem, name, version)], through the scanner's client (live) or
     its saved answers (lightwell/demo/osv.json, demo). Same summaries v1's scan shows."""
@@ -4251,7 +4258,7 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
-                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call)
+                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()

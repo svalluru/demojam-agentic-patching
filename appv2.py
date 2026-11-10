@@ -78,6 +78,7 @@ class _Hooks:
     k8s_get: Callable[..., Any] | None = None                   # (api path, text=False) -> JSON body, or text for logs
     k8s_patch: Callable[[str, dict], Any] | None = None         # (api path, merge patch) -> body; cancels a PipelineRun
     aap_call: Callable[..., Any] | None = None                  # (path, method='GET', body=None) -> AAP controller API
+    lab_ping: Callable[[], None] | None = None                  # raises fast when the lab (llamastack) does not answer
 
 
 H = _Hooks()
@@ -2054,6 +2055,10 @@ def _learn(st: dict) -> None:
             _trace('results', 'inventory', f'{app}: BOM unchanged (not every selected site patched)')
     history = feed_history(st)
     _ESTATE_CACHE.clear()
+    try:
+        _estate_file().unlink()
+    except OSError:
+        pass
     _trace('results', 'inventory', f"{history['records']} outcome record(s) to the app history ({history['where']})")
     H.demo_pause(0.6)
     _stage('learn', 'done')
@@ -2385,10 +2390,10 @@ def estate() -> dict:
                      'languages': a.get('languages') or {},
                      'sites': [s.get('site', s['host']) for s in a.get('servers', [])],
                      'fixes': fixes.get(a['app'], []), 'covered': bool(maven), 'other': other})
-    notes, source = estate_reasoning(rows)
+    notes, source, status = estate_reasoning(rows)
     for r in rows:
         r['priority'], r['note'] = notes.get(r['app'], ('LOW', ''))
-    return {'ok': True, 'rows': rows, 'source': source, 'catalog_source': cat.get('source')}
+    return {'ok': True, 'rows': rows, 'source': source, 'catalog_source': cat.get('source'), **status}
 
 
 def _estate_rule(r: dict) -> tuple[str, str]:
@@ -2405,19 +2410,69 @@ def _estate_rule(r: dict) -> tuple[str, str]:
 _ESTATE_CACHE: dict[str, tuple[dict, str]] = {}
 
 
-def estate_reasoning(rows: list[dict]) -> tuple[dict, str]:
-    """Priority and note per app. Live answers are kept until the estate's facts change or a run feeds the app
-    history (the Results agent clears them), so opening the tab does not cost an LLM call every time."""
+_ESTATE_BG: dict[str, Any] = {'thread': None, 'error': '', 'error_at': 0.0}
+
+
+def _estate_failed(why: str) -> None:
+    _ESTATE_BG.update(error=why, error_at=time.time())
+
+
+def _estate_file() -> Path:
+    return state_dir() / 'appv2-estate-reasoning.json'
+
+
+def estate_reasoning(rows: list[dict]) -> tuple[dict, str, dict]:
+    """(notes, source, status). Priority and note per app, never waiting on the lab: a cached answer (memory, or
+    the state directory after a restart) when the facts match; otherwise the rule-based notes at once, while the app
+    history and the LLM are asked in the background. status: {'pending': bool, 'lab_error': str}."""
     if H.demo_mode():
-        return {r['app']: DEMO_ESTATE.get(r['app'], _estate_rule(r)) for r in rows}, 'staged'
+        return {r['app']: DEMO_ESTATE.get(r['app'], _estate_rule(r)) for r in rows}, 'staged', {}
     key = json.dumps([env('APP_VECTOR_DB_ID'), rows], sort_keys=True)
+    if key not in _ESTATE_CACHE:
+        try:
+            saved = json.loads(_estate_file().read_text())
+            if saved.get('key') == key:
+                _ESTATE_CACHE[key] = ({k: tuple(v) for k, v in saved['notes'].items()}, saved['source'])
+        except (OSError, ValueError, KeyError):
+            pass
     if key in _ESTATE_CACHE:
-        return _ESTATE_CACHE[key]
-    out, source = _estate_reasoning_live(rows)
-    if source != 'rules':
-        _ESTATE_CACHE.clear()
-        _ESTATE_CACHE[key] = (out, source)
-    return out, source
+        notes, source = _ESTATE_CACHE[key]
+        return notes, source, {'pending': False, 'lab_error': ''}
+    t = _ESTATE_BG.get('thread')
+    # A failed attempt is reported for 30 seconds before the next try, so a lab that is down reads as down.
+    recent_failure = _ESTATE_BG.get('error') and time.time() - _ESTATE_BG.get('error_at', 0) < 30
+    if not (t and t.is_alive()) and not recent_failure:
+        _ESTATE_BG['error'] = ''
+        t = threading.Thread(target=_estate_background, args=(key, rows), daemon=True, name='appv2-estate-reasoning')
+        _ESTATE_BG['thread'] = t
+        t.start()
+    return {r['app']: _estate_rule(r) for r in rows}, 'rules', \
+        {'pending': not _ESTATE_BG.get('error'), 'lab_error': _ESTATE_BG.get('error', '')}
+
+
+def _estate_background(key: str, rows: list[dict]) -> None:
+    """The slow part, off the request: a 3-second check that the lab answers first, so a lab that is down is
+    reported at once instead of after every search and the LLM call have timed out."""
+    try:
+        if H.lab_ping:
+            H.lab_ping()
+    except Exception as exc:
+        _estate_failed(f'the lab did not answer ({str(exc)[:120]})')
+        return
+    try:
+        out, source = _estate_reasoning_live(rows)
+    except Exception as exc:
+        _estate_failed(str(exc)[:160])
+        return
+    if source == 'rules':
+        _estate_failed('no answer from the LLM; rule-based notes kept')
+        return
+    _ESTATE_CACHE.clear()
+    _ESTATE_CACHE[key] = (out, source)
+    try:
+        _write_json(_estate_file(), {'key': key, 'source': source, 'notes': {k: list(v) for k, v in out.items()}})
+    except OSError:
+        pass
 
 
 def _estate_reasoning_live(rows: list[dict]) -> tuple[dict, str]:
