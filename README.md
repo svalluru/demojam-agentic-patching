@@ -542,7 +542,7 @@ calling which service, on OpenShift AI or Ansible Automation Platform.
 
 **Demo mode** stages all of it, with real Lightwell builds (`mina-core
 2.2.5.rhlw-00002`, `postgresql 42.3.3.rhlw-00006`, `zookeeper
-3.5.9.rhlw-00001`) and one live site, `workflow-engine` on core-dc-2,
+3.5.9.rhlw-00001`) and one live site, `workflow-engine` on edge-site-1,
 that fails its health check and is rolled back. Code: `appv2.py`; tests:
 `python3 -m unittest discover -s tests`.
 
@@ -610,8 +610,8 @@ the SSH library the NFV orchestrator uses to configure network elements.
 | analytics-agent | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
 | customer-portal | Self-care API gateway | npm only: not covered | none |
 
-Demo mode adds billing-engine and api-gateway and a fourth workflow-engine site,
-core-dc-2. Lightwell today is Java-led (about 1,000 remediated Maven
+Demo mode reads the same BOM files, so its apps, domains, sites and versions
+match live mode exactly. Lightwell today is Java-led (about 1,000 remediated Maven
 packages, 7 Python, no npm), so impact ignores non-Maven dependencies and the
 estate shows them as not covered.
 

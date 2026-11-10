@@ -99,7 +99,7 @@ class Impact(unittest.TestCase):
         imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
         exact = [t for t in imp['targets'] if not t.get('version_change')]
         self.assertEqual({t['app'] for t in exact}, {'workflow-engine'})
-        self.assertEqual([t['site'] for t in exact], ['lab', 'edge-site-1', 'core-dc-1', 'core-dc-2'])
+        self.assertEqual([t['site'] for t in exact], ['lab', 'edge-site-1', 'core-dc-1'])
         self.assertEqual(imp['targets'][0]['env'], 'qa')                      # the lab first, then BOM order
         self.assertEqual(imp['targets'][0]['domain'], 'NFVO / MANO')
         self.assertEqual(imp['other'], [])
@@ -137,7 +137,7 @@ class Impact(unittest.TestCase):
     def test_lab_sites_first_across_apps(self):
         imp = appv2.impact(self.ev('zookeeper'), appv2.load_bom())
         self.assertEqual([t['env'] for t in imp['targets']][:2], ['qa', 'qa'])
-        self.assertEqual(len({t['key'] for t in imp['targets']}), 6)         # both apps have a lab copy
+        self.assertEqual(len({t['key'] for t in imp['targets']}), 5)         # both apps have a lab copy
 
     def test_non_maven_dependencies_are_skipped(self):
         bom = [{'app': 'x', 'servers': [{'host': 'h', 'env': 'qa'}],
@@ -148,9 +148,10 @@ class Impact(unittest.TestCase):
 
     def test_write_back_removes_app_from_next_impact(self):
         ev = self.ev('postgresql')
-        appv2._BOM_UPDATES['billing-engine|org.postgresql:postgresql'] = ev['version']
+        self.assertEqual(appv2.impact(ev, appv2.load_bom())['apps'], ['inventory-service'])
+        appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'] = ev['version']
         imp = appv2.impact(ev, appv2.load_bom())
-        self.assertEqual(imp['apps'], ['inventory-service'])
+        self.assertEqual(imp['apps'], [])
         self.assertIn('already on this build', [o['why'] for o in imp['other']])
 
 
@@ -275,17 +276,17 @@ class DemoRun(unittest.TestCase):
         self.assertEqual(appv2.start_dispatch()[0], 200)
         st = self.wait({'awaiting_approval'})
         gated = [h['key'] for h in st['hosts'] if h['outcome'] == 'awaiting_approval']
-        self.assertEqual(len(gated), 3)
+        self.assertEqual(len(gated), 2)
         self.assertEqual(appv2.decide('workflow-engine|lab', 'approved')[0], 409)   # the lab is not gated
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 3, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 2})
+        self.assertEqual(st['summary'], {'patched': 2, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 2})
         self.assertEqual(st['stages']['verify'], 'failed')
-        # core-dc-2 rolled back, so workflow-engine's BOM stays on 2.2.5.
+        # edge-site-1 rolled back, so workflow-engine's BOM stays on 2.2.5.
         self.assertNotIn('workflow-engine|org.apache.mina:mina-core', appv2._BOM_UPDATES)
         self.assertEqual(st['feedback']['bom'], [{'app': 'workflow-engine', 'version': '2.2.5', 'changed': False, 'also': []}])
-        self.assertEqual(st['feedback']['history']['records'], 4)
+        self.assertEqual(st['feedback']['history']['records'], 3)
         # The Report agent's PDF.
         self.assertEqual(st['stages']['report'], 'done')
         pdf = Path(appv2.reports_dir()) / st['report']['file']
@@ -515,7 +516,7 @@ class Subset(unittest.TestCase):
         self.assertEqual(by['inventory-service|lab']['outcome'], 'patched')
         self.assertEqual(by['workflow-engine|lab']['outcome'], 'skipped')
         self.assertFalse(by['workflow-engine|lab']['execution_id'])         # never sent to AO
-        self.assertEqual(st['summary']['skipped'], 4)
+        self.assertEqual(st['summary']['skipped'], 3)
         # Both inventory-service sites were patched; workflow-engine was not touched, so its BOM stays.
         self.assertIn('inventory-service|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
         self.assertNotIn('workflow-engine|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
@@ -535,7 +536,7 @@ class Subset(unittest.TestCase):
         self.assertEqual(by['inventory-service|lab']['outcome'], 'patched')
         self.assertEqual(by['inventory-service|core-dc-1']['outcome'], 'skipped')
         self.assertEqual(by['workflow-engine|lab']['outcome'], 'skipped')
-        self.assertEqual(st['summary']['skipped'], 5)
+        self.assertEqual(st['summary']['skipped'], 4)
 
     def test_reasoning_is_on_every_target(self):
         demo()
@@ -661,7 +662,7 @@ class Estate(unittest.TestCase):
         demo()
         rows = {r['app']: r for r in appv2.estate()['rows']}
         self.assertEqual(rows['workflow-engine']['group'], 'network')
-        self.assertEqual(rows['billing-engine']['group'], 'it')
+        self.assertEqual(rows['inventory-service']['group'], 'it')
         self.assertEqual({f['artifact'] for f in rows['workflow-engine']['fixes']},
                          {'mina-core', 'zookeeper', 'spring-security-web'})
         self.assertFalse(rows['analytics-agent']['covered'])                         # Python only

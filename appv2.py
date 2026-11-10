@@ -112,7 +112,7 @@ DEMO_EVENTS = [
      'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3.rhlw-00006',
      'received_at': '2026-11-08T17:02:40Z',
      'cves': ['CVE-2022-31197', 'CVE-2022-41946', 'CVE-2024-1597', 'CVE-2026-42198'], 'cves_source': 'lightwell',
-     'note': 'The JDBC driver under billing and inventory; the fix includes a SQL injection.'},
+     'note': 'The JDBC driver under the inventory service; the fix includes a SQL injection.'},
     {'id': 'evt-zookeeper', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
      'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9.rhlw-00001',
      'received_at': '2026-11-08T16:21:05Z', 'cves': ['CVE-2023-44981'], 'cves_source': 'lightwell',
@@ -122,50 +122,34 @@ DEMO_EVENTS = [
 # More real Lightwell builds the estate's libraries have (registry and /advisories, 2026-11-08). In the demo
 # catalog and the estate view, not in the inbox: they have not "arrived" in Nexus in the staged story.
 DEMO_CATALOG_EXTRA = [
-    {'name': 'org.apache.httpcomponents.client5:httpclient5', 'build': '5.6.2.rhlw-00005', 'status': 'remediated',
-     'cves': ['CVE-2026-64607', 'CVE-2026-71290']},
     {'name': 'org.springframework.security:spring-security-web', 'build': '5.7.11.rhlw-00006', 'status': 'remediated',
      'cves': ['CVE-2024-38821', 'CVE-2026-22732']},
-    {'name': 'org.apache.avro:avro', 'build': '1.11.0.rhlw-00002', 'status': 'remediated',
-     'cves': ['CVE-2023-39410', 'CVE-2024-47561']},
 ]
 
 # Telco domains, grouped as on Lightwell's "One implementation, whole network" slide.
 NETWORK_DOMAINS = {'NFVO / MANO', '5G Core (SBA)', 'O-RAN Near-RT RIC', 'IMS / Voice', 'Transport / SDN', 'Edge / MEC'}
 
-DEMO_BOM = [
-    {'app': 'workflow-engine', 'repo': 'lab-user/app-workflow-engine', 'domain': 'NFVO / MANO', 'languages': {'java': 'H', 'python': '', 'js': ''},
-     'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine', 'health_url': 'http://localhost:8080/health',
-     'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'edge-site-1', 'env': 'prod'},
-                 {'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5'},
-                      {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
-                      {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]},
-    {'app': 'inventory-service', 'repo': 'lab-user/app-inventory-service', 'domain': 'OSS – Inventory', 'languages': {'java': 'H', 'python': 'M', 'js': ''},
-     'path': '/opt/apps/inventory-service', 'service': 'inventory-service', 'health_url': 'http://localhost:8081/health',
-     'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'core-dc-1', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
-                      {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
-                      {'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.1.6'}]},
-    {'app': 'billing-engine', 'repo': 'lab-user/app-billing-engine', 'domain': 'BSS – Charging', 'languages': {'java': 'H', 'python': '', 'js': ''},
-     'path': '/opt/apps/billing-engine', 'service': 'billing-engine', 'health_url': 'http://localhost:8082/health',
-     'servers': [{'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
-                      {'group': 'org.apache.avro', 'artifact': 'avro', 'version': '1.11.0'},
-                      {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'}]},
-    {'app': 'api-gateway', 'repo': 'lab-user/app-api-gateway', 'domain': '5G Core (SBA)', 'languages': {'java': 'M', 'python': 'M', 'js': ''},
-     'path': '/opt/apps/api-gateway', 'service': 'api-gateway', 'health_url': 'http://localhost:8083/health',
-     'servers': [{'host': 'edge-site-1', 'env': 'prod'}],
-     'dependencies': [{'group': 'org.apache.httpcomponents.client5', 'artifact': 'httpclient5', 'version': '5.6.2'},
-                      {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]},
-    {'app': 'analytics-agent', 'domain': 'O-RAN Near-RT RIC', 'languages': {'java': '', 'python': 'H', 'js': ''},
-     'servers': [], 'dependencies': [{'ecosystem': 'pypi', 'group': '', 'artifact': 'ricxappframe', 'version': '3.2.2'}]},
-    {'app': 'customer-portal', 'domain': 'Self-care API gateway', 'languages': {'java': '', 'python': '', 'js': 'H'},
-     'servers': [], 'dependencies': [{'ecosystem': 'npm', 'group': '', 'artifact': 'express', 'version': '4.18.2'}]},
-]
+def _demo_bom() -> list[dict]:
+    """The demo estate is the live one: the same BOM files (app-data/bom), so apps, domains, sites and versions
+    always match live mode. Each server is keyed by its site name (lab, edge-site-1, core-dc-1) rather than the lab
+    node it runs on, so a demo key reads workflow-engine|core-dc-1."""
+    apps = []
+    for f in sorted((ROOT / 'app-data' / 'bom').glob('*.json')):
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        for app in (rec if isinstance(rec, list) else [rec]):
+            app['servers'] = [{'host': x.get('site', x['host']), 'site': x.get('site', x['host']), 'env': x.get('env', 'prod')}
+                              for x in app.get('servers', [])]
+            apps.append(app)
+    return apps
+
+
+DEMO_BOM = _demo_bom()
 
 # The staged failure: this pair's health check fails after the swap and the playbook rolls it back.
-DEMO_FAILING_KEY = 'workflow-engine|core-dc-2'
+DEMO_FAILING_KEY = 'workflow-engine|edge-site-1'
 
 # What the reasoning step says per app and site in demo mode. Live mode retrieves the same kind of thing from the
 # app history store (APP_VECTOR_DB_ID, app-data/history/) and has the LLM write one line per row.
@@ -174,12 +158,8 @@ DEMO_REASONING = {
     'workflow-engine|edge-site-1': '120 NEs over NETCONF; drain sessions before restart.',
     'workflow-engine|core-dc-1': '340 NEs; only in the 00:00–04:00 network change window. Last change rolled back on '
                                    'a 30s health window.',
-    'workflow-engine|core-dc-2': 'Standby of core-dc-1. Patch the night after, once core-dc-1 is stable.',
     'inventory-service|lab': 'Lab copy with synthetic topology; safe at any time.',
     'inventory-service|core-dc-1': 'Feeds topology to the orchestrator; patch after the NFVO change has settled.',
-    'billing-engine|core-dc-1': 'CDR backlog grows if down more than 30s; avoid the month-end billing run.',
-    'billing-engine|core-dc-2': 'Standby for billing; patch it before core-dc-1.',
-    'api-gateway|edge-site-1': 'Single instance with no standby; a restart drops in-flight SBA sessions.',
 }
 
 # The estate view's priority and note per app, in demo mode. Live: the app history store plus the Lightwell
@@ -188,14 +168,8 @@ DEMO_ESTATE = {
     'workflow-engine': ('CRITICAL', 'mina-core carries NETCONF to 340 network elements: a compromise here reaches '
                           'every element it configures. Drain NETCONF sessions before the restart, and take the '
                           'zookeeper fix in the same change so the orchestrator restarts once.'),
-    'api-gateway': ('HIGH', 'Fronts the SBA control plane; the spring-security fix closes an authorization bypass. '
-                    'Single instance on edge-site-1 with no standby: a restart drops in-flight sessions, so patch '
-                    'inside the 00:00–04:00 window.'),
     'analytics-agent': ('MEDIUM', 'Python only; Lightwell has no build for its libraries. Track the upstream fixes and keep the '
                  'xApp constrained by RIC platform policy until a fixed build exists.'),
-    'billing-engine': ('CRITICAL', 'The postgresql driver fix covers 4 CVEs including SQL injection on the billing '
-                        'path. A restart stalls CDR intake beyond 30s: avoid the month-end billing run, and patch the '
-                        'standby (core-dc-2) before core-dc-1.'),
     'inventory-service': ('HIGH', 'Feeds network topology to the orchestrator. Patch after the NFVO change has settled, so '
                       'the window never runs with both down. Its mina-core 2.1.6 is a different version and not '
                       'touched by the mina-core fix.'),
@@ -225,12 +199,6 @@ DEMO_EXTRA_REASONING = {
         'ones stay open until a 6.x upgrade, which is the app team\'s change.',
     'inventory-service|org.postgresql:postgresql':
         'Lightwell has 42.3.3.rhlw-00006 for all four CVEs, including SQL injection; same version, so no API risk.',
-    'billing-engine|org.apache.logging.log4j:log4j-core':
-        'Lightwell has 2.24.3.rhlw-00004; billing logs through it, so take it with the next billing-safe window.',
-    'billing-engine|org.apache.avro:avro':
-        'Lightwell has 1.11.0.rhlw-00002 for both CVEs; CDR records are Avro, so verify a CDR round-trip after.',
-    'api-gateway|org.apache.httpcomponents.client5:httpclient5':
-        'Lightwell has 5.6.2.rhlw-00005; same version, safe to take with the spring-security change.',
 }
 
 
@@ -2552,8 +2520,8 @@ def _staged_runs() -> list[dict]:
     out = []
     for i, (ev, day, outcomes) in enumerate([
             (DEMO_EVENTS[2], '2026-11-03', {'inventory-service|lab': 'patched', 'inventory-service|core-dc-1': 'patched'}),
-            (DEMO_EVENTS[1], '2026-10-28', {'billing-engine|core-dc-2': 'patched',
-                                             'billing-engine|core-dc-1': 'rejected'})]):
+            (DEMO_EVENTS[1], '2026-10-28', {'inventory-service|lab': 'patched',
+                                             'inventory-service|core-dc-1': 'rejected'})]):
         hosts = [{'key': k, 'app': k.split('|')[0], 'host': k.split('|')[1],
                   'env': 'qa' if k.endswith('|lab') else 'prod', 'outcome': o, 'commit_sha': f'{i + 7:x}' * 8,
                   'commit_url': '', 'execution_id': f'sim-past-{i}'} for k, o in outcomes.items()]
