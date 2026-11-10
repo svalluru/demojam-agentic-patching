@@ -1604,7 +1604,7 @@ def _generate() -> None:
             ok = all(c['ok'] for c in checks)
             _trace('playbook', 'intake', f"{app}: {'checks passed' if ok else 'checks FAILED'} ({source})")
             playbooks.append({'app': app, 'filename': f"app-v2/{app}-{ev['artifact']}-{st['run_id']}.yml", 'changes': changes,
-                              'text': text, 'source': source, 'checks': checks, 'ok': ok, 'note': note,
+                              'text': text, 'source': source, 'checks': checks, 'ok': ok, 'note': note, 'forced': forced,
                               'sha256': hashlib.sha256(text.encode()).hexdigest()})
         _set(playbooks=playbooks)
         if not all(p['ok'] for p in playbooks):
@@ -1792,18 +1792,20 @@ def _run_host_sim(h: dict, delay: float = 1.0) -> None:
             _trace('aap', 'servers', f'{_label(h)}: swap the jar, restart {h["service"]}')
         _roll_stages()
         H.demo_pause(delay)
-        if step == 'verify' and h['key'] == DEMO_FAILING_KEY:
+        pb = next((p for p in state().get('playbooks') or [] if p['app'] == h['app']), {})
+        if step == 'verify' and (h['key'] == DEMO_FAILING_KEY or pb.get('forced')):
             # The playbook keeps the backup and reports outcome: failed; the workflow takes its rollback route.
+            # The staged site fails as a real service would (503); a forced failure as it does live (404).
+            why = ('Verify the service is healthy: Status code was 404 and not [200] (forced failure, APPV2_FORCE_FAIL)'
+                   if pb.get('forced') else 'Health check failed after the swap (HTTP 503 for 60s)')
             _host(key, steps={'verify': 'failed', 'rollback': 'active'})
             _trace('aap', 'ao', f'{_label(h)}: health check failed (outcome: failed)')
             _trace('ao', 'aap', f'{_label(h)}: rollback route: restore the backup')
             _roll_stages()
             H.demo_pause(delay)
-            pb = next((p for p in state().get('playbooks') or [] if p['app'] == h['app']), {})
             olds = [c['old_jar'] for c in pb.get('changes') or []] or ['the original jar']
             _host(key, steps={'rollback': 'done'}, outcome='rolled_back',
-                  detail=(f"Health check failed after the swap (HTTP 503 for 60s). Rolled back by the workflow "
-                          f"(AAP: App Patch v2 - Rollback): {', '.join(olds)} back, healthy."))
+                  detail=f"{why}. Rolled back by the workflow (AAP: App Patch v2 - Rollback): {', '.join(olds)} back, healthy.")
             _notify_sim(h, 'rolled back')
             return
         _host(key, steps={step: 'done'})

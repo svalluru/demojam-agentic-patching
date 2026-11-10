@@ -1402,3 +1402,20 @@ class ForcedFailure(unittest.TestCase):
         self.assertNotIn('/health-', text)                                    # not a prefix of /health
         self.assertIn("'health_url': health_url", text)                      # the rollback checks the real one
         self.assertIn('health_url: http://localhost:8090/health', text)
+
+
+class ForcedFailureDemo(unittest.TestCase):
+    def test_demo_forced_failure_rolls_back_every_site(self):
+        demo(APPV2_FORCE_FAIL='true')
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate(['workflow-engine|lab', 'workflow-engine|core-dc-1']); wait_for({'generated'})
+        appv2.start_dispatch(); st = wait_for({'awaiting_approval', 'complete'})
+        for h in [x for x in st['hosts'] if x['outcome'] == 'awaiting_approval']:
+            appv2.decide(h['key'], 'approved')
+        st = wait_for({'complete'})
+        ran = [h for h in st['hosts'] if h['outcome'] != 'skipped']
+        self.assertEqual({h['key']: h['outcome'] for h in ran},
+                         {'workflow-engine|lab': 'rolled_back', 'workflow-engine|core-dc-1': 'rolled_back'})
+        self.assertTrue(all(h['steps']['rollback'] == 'done' and h['steps']['notify'] == 'done' for h in ran))
+        self.assertTrue(all('forced failure' in h['detail'] and 'mina-core-2.2.5.jar back' in h['detail'] for h in ran))
+        self.assertEqual(st['summary']['rolled_back'], 2)
