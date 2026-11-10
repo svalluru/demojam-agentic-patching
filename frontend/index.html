@@ -3917,6 +3917,8 @@ function v2Badge(h) {
 
 function v2Render() {
   const live = v2.view === 'past' ? (v2.past || {}) : (v2.state || {});
+  const ran = ((v2.state || {}).hosts || []).some(h => h.outcome && h.outcome !== 'skipped');
+  if (ran !== v2Dispatched) { v2Dispatched = ran; roiOffer(); }
   renderV2Stages(live.stages || {});
   document.getElementById('v2-arch').innerHTML = renderArch(live, V2_ARCH);
 
@@ -4544,6 +4546,8 @@ let paneShow = () => {};
 // carry, because that half of the report is assembled from the server's own
 // run state rather than from anything this page holds.
 let infraDispatched = false;
+// Applications v2: true once a run has dispatched a site. The server reads that run's state itself.
+let v2Dispatched = false;
 
 // The one place that decides whether the report can be asked for. Either side
 // having run is enough — a report with one half and an explicit "nothing has
@@ -4552,7 +4556,7 @@ let infraDispatched = false;
 // of the console.
 function roiOffer() {
   const b = document.getElementById('head-roi');
-  if (b) b.hidden = !(infraDispatched || appCounts);
+  if (b) b.hidden = !(infraDispatched || appCounts || v2Dispatched);
 }
 
 window.appRoi = function (c) {
@@ -6645,6 +6649,10 @@ function roiVal(a, v) {
 // greyed out. Dragging the application baseline with no scan on record would
 // move nothing on the page, and a control that does nothing is worse than an
 // absent one — it reads as a fault.
+// The sliders roi_appv2() reads (agentic-patching.py roi_appv2_effort).
+const ROI_V2_KEYS = ['ROI_PREP_MIN', 'ROI_EXEC_MIN', 'ROI_APPROVAL_MIN', 'ROI_REWORK_PCT', 'ROI_REVIEW_MIN',
+                     'ROI_LEAD_HOURS', 'ROI_APP_TRIAGE_MIN', 'ROI_APP_BUMP_MIN', 'ROI_APP_BUILD_MIN', 'ROI_APP_REVIEW_MIN'];
+
 function roiSliders(roi) {
   const one = a => {
     const [lo, hi, step] = ROI_SLIDE[a.key];
@@ -6659,12 +6667,15 @@ function roiSliders(roi) {
   };
   const all = (roi.assumptions || []).filter(a => ROI_SLIDE[a.key]);
   const sides = roi.sides || {};
+  // Applications v2 is priced from sliders on both sides; with only v2 run, show just the ones it reads.
+  const v2only = sides.appv2 && !sides.infra && !sides.app;
   return ROI_SIDES.map(([side, title, blurb]) => {
-    if (side !== 'shared' && !sides[side]) return '';
+    if (side !== 'shared' && !sides[side] && !sides.appv2) return '';
     // An older report, before the sides existed, has no `side` on its
     // assumptions. Everything then falls into the first group, which is the
     // layout this page had anyway.
-    const rows = all.filter(a => (a.side || 'infra') === side);
+    const rows = all.filter(a => (a.side || 'infra') === side
+      && (!v2only || side === 'shared' || ROI_V2_KEYS.includes(a.key)));
     if (!rows.length) return '';
     return `<div class="roi-slg">
         <div class="h">${esc(title)}<span>${esc(blurb)}</span></div>
@@ -6894,6 +6905,7 @@ function roiTotals(roi) {
   if (sides.infra) parts.push(`${esc(roi.infra.measured.scope)} host(s)`);
   if (sides.app) parts.push(`${esc(roi.app.measured.repos)} repositor`
     + (roi.app.measured.repos === 1 ? 'y' : 'ies'));
+  if (sides.appv2) parts.push(`${esc(roi.appv2.measured.sites)} site(s)`);
 
   return `<div class="stats" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat"><div class="v">${esc(money(roi.currency, c.cost))}</div>
@@ -6909,6 +6921,71 @@ function roiTotals(roi) {
       in nothing else. There is no total of hosts and repositories on this
       page: they are different units of work with different baselines, and a
       combined count of eleven of them would mean nothing.</div>` : ''}`;
+}
+
+// ---- the Applications v2 section ------------------------------------------
+// One Lightwell fix taken to every site that runs it: priced per app (find the version, build and test) and per
+// site (prep, execute and verify, live-site paperwork) from the same sliders as the two halves above. Sites the run
+// did not patch are charged back at the manual rate, so a partial run claims only what it did.
+function roiV2Body(roi) {
+  const s = roi.appv2, sv = s.saved, m = s.measured, left = s.left;
+  const aut = {
+    minutes: s.total_auto_minutes,
+    breakdown: Object.assign({}, s.auto.breakdown, left.minutes > 0 ? { 'Still left by hand': left.minutes } : {}),
+  };
+  const fix = m.event && m.event.artifact ? `${m.event.artifact} ${m.event.version}` : 'the fix';
+  const mult = sv.effort_x
+    ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
+    : `<div class="v sm">No site patched yet</div><div class="k">Operator time</div>`;
+  const waiting = m.status === 'complete' ? '' : `<div class="note">The run is still <b>${esc(m.status)}</b>:
+      ${esc(m.settled)} of ${esc(m.sites)} site(s) settled. Every site not yet patched is charged at the manual rate
+      until it is, so this figure only grows as the run finishes.</div>`;
+  const charge = left.minutes > 0 ? `<div class="roi-be"><b>${esc(left.sites)} site(s)</b> not patched by the run
+      (failed, rolled back, rejected, cancelled or still waiting) are charged to the console at the manual per-site
+      rate: <b>${esc(fmtMin(left.minutes))}</b>, ${esc(money(roi.currency, left.cost))}.</div>` : '';
+  const exp = s.auto.lead_hours != null ? `<div class="roi-be">From the fix arriving to the run finishing:
+      <b>${esc(fmtMin(s.auto.lead_hours * 60))}</b>, against ${esc(s.manual.lead_hours)} h assumed by hand
+      (${s.sla.auto_within ? 'inside' : 'outside'} the ${esc(s.sla.hours)} h deadline).</div>` : '';
+  return `<h2 class="roi-sec">Applications v2
+      <span>${esc(fix)} &middot; ${esc(m.apps)} app(s) &middot; ${esc(m.sites)} site(s), ${esc(m.gated)} live
+        &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
+
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
+        <div class="k">Labour saved</div>
+        <div class="roi-range">${esc(money(roi.currency, sv.cost_low))}&ndash;${esc(money(roi.currency, sv.cost_high))}
+          at &plusmn;${esc(roi.band_pct)}%</div></div>
+      <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div><div class="k">Engineer time saved</div></div>
+      <div class="stat">${mult}</div>
+      <div class="stat"><div class="v sm">${esc(m.patched)} of ${esc(m.sites)}</div><div class="k">Sites patched</div></div>
+    </div>
+
+    <div class="roi-card">
+      <h3>Where the effort goes</h3>
+      <div class="sub">${esc(m.advisories)} advisor${m.advisories === 1 ? 'y' : 'ies'}, ${esc(m.changes)} library
+        change(s) across ${esc(m.app_names.join(', '))}, taken to ${esc(m.sites)} site(s). By hand: triage, finding
+        every site and the fixed version, a build and test per app, then prep, execute and verify per site and the
+        approval paperwork for each live one. With the console: a person reviews the plan per app and approves each
+        live site; the agents, the pod test and AAP do the rest.</div>
+      ${roiBars(roi, s.manual, aut)}
+      ${charge}
+      ${waiting}
+    </div>
+
+    <div class="roi-card">
+      <h3>How it scales</h3>
+      <div class="sub">Labour cost at ${esc(money(roi.currency, roi.rate))}/hour as the same fix reaches more sites,
+        holding this run's share of live sites. By hand every site is another change; here a lab site costs nothing
+        and a live site costs one approval.</div>
+      ${roiCurve(roi, s, 'sites', m.sites, 'Sites running the library', `at ${m.sites} site(s): this run`)}
+    </div>
+
+    <div class="roi-card">
+      <h3>How wrong could this be</h3>
+      <div class="sub">The margin the assumptions have before the conclusion changes.</div>
+      ${roiBreakeven(roi, s)}
+      ${exp}
+    </div>`;
 }
 
 // ---- the infrastructure section -------------------------------------------
@@ -7131,7 +7208,7 @@ function roiBody(roi) {
   // Said plainly rather than left as an absence. A reader looking at an
   // infrastructure-only page should know the other half exists and is empty
   // because nothing ran there, not conclude the console does not do it.
-  const missing = (sides.infra && sides.app) ? '' : `<div class="roi-card">
+  const missing = (sides.infra && sides.app) || sides.appv2 ? '' : `<div class="roi-card">
       <h3>${sides.infra ? 'Application' : 'Infrastructure'}</h3>
       <div class="sub">Nothing has run on this side yet, so there is nothing to
         compare. ${sides.infra
@@ -7147,6 +7224,7 @@ function roiBody(roi) {
   return roiTotals(roi)
     + (sides.infra ? roiInfraBody(roi) : '')
     + (sides.app ? roiAppBody(roi) : '')
+    + (sides.appv2 ? roiV2Body(roi) : '')
     + missing
     + `<h2 class="roi-sec">The record
         <span>Published figures, the whole run store, and the build cost</span></h2>`

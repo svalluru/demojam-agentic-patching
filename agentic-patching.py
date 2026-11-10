@@ -3288,6 +3288,116 @@ def roi_app(app: dict, b: dict) -> dict:
     }
 
 
+# ==========================================================================
+# ROI — Applications v2
+#
+# One Lightwell fix taken to every site that runs the library. The shape of the
+# work is both of the halves above at once: per app (find the fixed version,
+# build and test the change) and per site (prepare the change, execute and
+# verify, and for a live site the approval paperwork). So it is priced from
+# both sets of sliders rather than from a third: an operator who has argued
+# with "build & test per repository" or "execute & verify per host" has already
+# set the number this uses.
+#
+# Counted from the run itself (appv2.state()), never from the browser:
+#   sites      every site the run dispatched (not the ones left unticked)
+#   gated      the live ones, which stop for a person
+#   apps       distinct apps among them; changes: libraries moved, summed per app
+#   advisories distinct CVEs the change list fixes
+# A site that did not end patched (failed, rolled back, rejected, cancelled, or
+# still waiting) is charged back at the manual per-site rate, as the scanner's
+# unfinished work is: a run that patched one of three sites saved one site's
+# labour, and the page says so.
+# ==========================================================================
+
+V2_DONE = ('patched',)
+V2_SETTLED = ('patched', 'failed', 'rolled_back', 'rejected', 'cancelled')
+
+
+def roi_appv2_effort(advisories: int, changes: int, apps: int, sites: int, gated: int,
+                     b: dict) -> tuple[dict, dict]:
+    hands_on = b['app_bump'] * changes + b['app_build'] * apps + b['execute'] * sites
+    manual = {
+        'Triage the advisories': b['app_triage'] * advisories,
+        'Find where it runs and the fixed version': b['app_bump'] * changes,
+        'Build & test the change': b['app_build'] * apps,
+        'Change prep per site': b['prep'] * sites,
+        'Execute & verify per site': b['execute'] * sites,
+        'Approval paperwork, live sites': b['approval'] * gated,
+        'Rework after a break': hands_on * b['rework_pct'] / 100.0,
+    }
+    auto = {
+        'Review the plan': b['app_review'] * apps,
+        'Approve live sites': b['review'] * gated,
+    }
+    return manual, auto
+
+
+def roi_appv2(st: dict, b: dict) -> dict | None:
+    """The v2 run against doing it by hand, or None if no site has been dispatched."""
+    hosts = [h for h in (st.get('hosts') or []) if h.get('outcome') not in (None, '', 'skipped')]
+    if not hosts:
+        return None
+    rate = b['rate']
+    cost = lambda mins: round(mins / 60.0 * rate, 2)
+    apps = sorted({h['app'] for h in hosts})
+    playbooks = [p for p in (st.get('playbooks') or []) if p.get('app') in apps]
+    changes = sum(len(p.get('changes') or []) or 1 for p in playbooks) or len(apps)
+    cves = {c for p in playbooks for ch in (p.get('changes') or []) for c in ch.get('cves') or []}
+    cves |= set((st.get('event') or {}).get('cves') or [])
+    advisories = len(cves) or 1
+    sites, gated = len(hosts), sum(1 for h in hosts if h.get('env') != 'qa')
+    patched = sum(1 for h in hosts if h.get('outcome') in V2_DONE)
+    settled = sum(1 for h in hosts if h.get('outcome') in V2_SETTLED)
+
+    manual, auto = roi_appv2_effort(advisories, changes, len(apps), sites, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    left_sites = sites - patched
+    left = {'Prepare, execute & verify by hand': (b['prep'] + b['execute']) * left_sites}
+    left_min = sum(left.values())
+    total_auto = auto_min + left_min
+    saved_min = manual_min - total_auto
+    band = b['band_pct'] / 100.0
+    low, high = cost(manual_min * (1 - band)), cost(manual_min * (1 + band))
+
+    # How it scales with sites, holding this run's apps, changes and live share.
+    live_share = gated / sites if sites else 0
+    span = max(20, sites * 5)
+    step = max(1, round(span / 8))
+    curve = []
+    for k in sorted(set(list(range(1, span + 1, step)) + [sites, span])):
+        m, a = roi_appv2_effort(advisories, changes, len(apps), k, round(k * live_share), b)
+        curve.append({'sites': k, 'manual': cost(sum(m.values())), 'auto': cost(sum(a.values()))})
+
+    # Exposure: the fix arriving in the console to the run finishing, once something is patched.
+    start = _parse_iso(st.get('started_at') or '')
+    end = _parse_iso(st.get('finished_at') or '') or (datetime.now(timezone.utc) if patched else None)
+    exposure_h = ((end - start).total_seconds() / 3600.0) if (patched and start and end) else None
+
+    return {
+        'measured': {'sites': sites, 'gated': gated, 'apps': len(apps), 'app_names': apps,
+                     'changes': changes, 'advisories': advisories, 'patched': patched, 'settled': settled,
+                     'left_sites': left_sites, 'status': st.get('status'),
+                     'mode': st.get('test_mode', 'swap'), 'simulated': bool(st.get('simulated')),
+                     'event': {k: (st.get('event') or {}).get(k) for k in ('artifact', 'version')}},
+        'manual': {'breakdown': manual, 'minutes': round(manual_min, 1), 'cost': cost(manual_min),
+                   'cost_low': low, 'cost_high': high, 'lead_hours': b['lead_h']},
+        'auto': {'breakdown': auto, 'minutes': round(auto_min, 1), 'cost': cost(auto_min),
+                 'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
+        'left': {'breakdown': left, 'minutes': round(left_min, 1), 'cost': cost(left_min), 'sites': left_sites},
+        'saved': {'minutes': round(saved_min, 1), 'cost': cost(saved_min),
+                  'cost_low': round(low - cost(total_auto), 2), 'cost_high': round(high - cost(total_auto), 2),
+                  'effort_x': round(manual_min / total_auto, 1) if total_auto and patched else None,
+                  'exposure_hours': round(b['lead_h'] - exposure_h, 2) if exposure_h is not None else None},
+        'total_auto_minutes': round(total_auto, 1),
+        'total_auto_cost': cost(total_auto),
+        'curve': curve,
+        'breakeven': {'shrink_pct': round((1 - total_auto / manual_min) * 100, 1) if manual_min else None},
+        'sla': {'hours': b['sla_h'], 'manual_within': b['lead_h'] <= b['sla_h'],
+                'auto_within': (exposure_h <= b['sla_h']) if exposure_h is not None else None},
+    }
+
+
 def roi_infra(state: dict, results: list[dict], b: dict) -> dict:
     """Compare the dispatched run in `state` against the manual baseline.
 
@@ -3522,7 +3632,8 @@ def roi_infra(state: dict, results: list[dict], b: dict) -> dict:
 
 def roi_report(state: dict, overrides: dict | None = None,
                runs: list[dict] | None = None,
-               app_raw: dict | None = None) -> dict:
+               app_raw: dict | None = None,
+               v2_state: dict | None = None) -> dict:
     """Both halves of the console, against the manual baseline for each.
 
     Either half may be absent and the page copes: someone who has dispatched
@@ -3538,11 +3649,12 @@ def roi_report(state: dict, overrides: dict | None = None,
     b = roi_baseline(overrides)
     app_in = roi_app_input(app_raw)
     results = (state.get('patch') or {}).get('results') or []
-    if not results and not app_in:
+    appv2_roi = roi_appv2(v2_state or {}, b)
+    if not results and not app_in and not appv2_roi:
         raise BackendUnavailable(
             'roi', 'nothing has run yet',
-            'dispatch a patch plan on the Infrastructure side, or scan a '
-            'repository on the Application side — this compares against what '
+            'dispatch a patch plan on the Infrastructure side, scan a '
+            'repository on the Application side, or run a fix on Applications v2 — this compares against what '
             'a run actually did, so it needs a run')
 
     infra = roi_infra(state, results, b) if results else None
@@ -3550,14 +3662,14 @@ def roi_report(state: dict, overrides: dict | None = None,
 
     # Hours and money, from whichever sides are present. Deliberately not a
     # count of anything.
-    parts = [(infra or {}).get('saved'), (app or {}).get('saved')]
+    parts = [(infra or {}).get('saved'), (app or {}).get('saved'), (appv2_roi or {}).get('saved')]
     parts = [p for p in parts if p]
     combined = {
         'minutes': round(sum(p['minutes'] for p in parts), 1),
         'cost': round(sum(p['cost'] for p in parts), 2),
         'cost_low': round(sum(p['cost_low'] for p in parts), 2),
         'cost_high': round(sum(p['cost_high'] for p in parts), 2),
-        'both': bool(infra and app),
+        'both': sum(bool(x) for x in (infra, app, appv2_roi)) > 1,
     }
 
     # The payback card is the one place combining the two sides changes the
@@ -3565,7 +3677,8 @@ def roi_report(state: dict, overrides: dict | None = None,
     # once, and recovering its cost from two use cases halves the time it
     # takes. So it is assembled here rather than inside either half.
     lifetime = roi_history(runs, b) if runs else None
-    recovered = ((lifetime or {}).get('cost') or 0) + ((app or {}).get('saved') or {}).get('cost', 0)
+    recovered = ((lifetime or {}).get('cost') or 0) + ((app or {}).get('saved') or {}).get('cost', 0) \
+        + max(0, ((appv2_roi or {}).get('saved') or {}).get('cost', 0))
     per_host = (infra or {}).get('marginal_cost') or 0
     payback = {
         'platform_cost': b['platform'],
@@ -3580,9 +3693,10 @@ def roi_report(state: dict, overrides: dict | None = None,
     }
 
     return {
-        'sides': {'infra': bool(infra), 'app': bool(app)},
+        'sides': {'infra': bool(infra), 'app': bool(app), 'appv2': bool(appv2_roi)},
         'infra': infra,
         'app': app,
+        'appv2': appv2_roi,
         'combined': combined,
         # Hoisted out of the infrastructure half because the caveat is about
         # this console's clocks, and the page leads with it above both
@@ -4775,7 +4889,7 @@ class Handler(BaseHTTPRequestHandler):
         except BackendUnavailable as exc:
             runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
         try:
-            report = roi_report(snapshot, overrides, runs, app)
+            report = roi_report(snapshot, overrides, runs, app, appv2.state())
         except BackendUnavailable as exc:
             self._send(409, {'ok': False, 'error': str(exc.cause),
                              'detail': exc.fix})
