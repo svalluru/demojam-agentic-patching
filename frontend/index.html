@@ -1998,6 +1998,8 @@
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
+  .icon-pill { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; }
+  .icon-pill svg { display: block; }
   .v2-src { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; padding: 1px 7px;
             border-radius: 9px; border: 1px solid currentColor; white-space: nowrap; }
   .v2-src.lw { color: #3e8635; } .v2-src.vc { color: #8a4b00; }
@@ -2853,7 +2855,7 @@
         </div>
         <span class="head-sep"></span>
         <button class="pill" id="v2-back" hidden>&larr; Back</button>
-        <button class="pill" id="v2-refresh" title="Reload this view from the console">Refresh</button>
+        <button class="pill icon-pill" id="v2-refresh" title="Refresh: reload this view" aria-label="Refresh"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
         <button class="go-patch" id="v2-go" hidden></button>
       </div>
     </div>
@@ -2929,7 +2931,7 @@
              on. Hidden unless there is one — see frameHead({ resume }). -->
         <button class="pill" id="head-resume" hidden></button>
         <button class="pill view-toggle" id="view-runs">Patch runs</button>
-        <button class="pill" id="head-refresh" hidden>Refresh</button>
+        <button class="pill icon-pill" id="head-refresh" title="Refresh" aria-label="Refresh" hidden><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
         <!-- Calculate ROI used to live here. It costs both halves of the
              console now, so it belongs to the chrome rather than to this
              frame — see .head-right in the header. -->
