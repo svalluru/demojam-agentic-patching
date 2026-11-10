@@ -1131,6 +1131,8 @@ class InfoAgent:
                 f'{LLAMA_URL}/v1/vector_stores/{VECTOR_DB_ID}/search',
                 method='POST', body={'query': query, 'max_num_results': 5},
                 verify=False, timeout=RAG_TIMEOUT)
+            if _store_lost(found):
+                rag_heal_soon('infra')
         except Exception as exc:
             down = BackendUnavailable('Llama Stack (vector search)', exc,
                                       'check LLAMA_STACK_URL is reachable')
@@ -1141,6 +1143,9 @@ class InfoAgent:
         if not hits:
             # An empty result with no error is the signature of a Llama Stack
             # restart dropping its vector-store registry — see rag-setup README.
+            # The console rebuilds the store in the background; the next
+            # assessment reads the new one.
+            rag_heal_soon('infra')
             raise BackendUnavailable(
                 'RAG', f'vector store {VECTOR_DB_ID} returned no results',
                 'run from the repo root: ./rag-setup/ingest.py --route <route> '
@@ -4225,8 +4230,92 @@ def app_history_search(store: str, query: str) -> list[str]:
         raise RuntimeError('LLAMA_STACK_URL not set')
     found = http_json(f'{LLAMA_URL}/v1/vector_stores/{store}/search', method='POST',
                       body={'query': query, 'max_num_results': 6}, verify=False, timeout=RAG_TIMEOUT)
+    # A broken store answers "not found", or (after a Llama Stack restart) an empty page: a vector search over a store
+    # that has documents always returns its nearest ones. rag_heal() checks before it rebuilds anything.
+    if _store_lost(found) or not (found or {}).get('data'):
+        rag_heal_soon('app')
     return [' '.join(c.get('text', '') for c in (h.get('content') or []) if isinstance(c, dict))
             for h in (found or {}).get('data', [])]
+
+
+# ---- RAG self-healing ----------------------------------------------------
+# After a Llama Stack restart (every lab restart, and the pod restarts on its own) the stores it already had stay
+# listed, files and all, but search reports them "not found": this Llama Stack (0.7.1) does not re-attach them to
+# their Milvus collections. So the console checks its two stores when it starts and whenever a search says the store
+# is gone, and rebuilds a broken one from the files it was made from (ingest.py's ensure()), switches to the new id
+# and writes it to .env. The app history is 7 small files (seconds); the infra history a little more.
+RAG_STORES = {
+    'infra': {'key': 'VECTOR_DB_ID', 'name': 'patch_history', 'dir': ROOT / 'rag-setup' / 'data'},
+    'app': {'key': 'APP_VECTOR_DB_ID', 'name': 'app_patch_history', 'dir': ROOT / 'app-data' / 'history'},
+}
+_RAG_HEAL: dict[str, Any] = {'lock': threading.Lock(), 'last': {}, 'status': {}}
+
+
+def _store_lost(body: Any) -> bool:
+    msg = str(((body or {}).get('error') or {}).get('message', '')) if isinstance(body, dict) else ''
+    return 'not found' in msg.lower()
+
+
+def _ingest_module() -> Any:
+    spec = importlib.util.spec_from_file_location('ingest', ROOT / 'rag-setup' / 'ingest.py')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _set_env_value(key: str, value: str) -> None:
+    """The new id for this process and for the next start (.env, when there is one)."""
+    global VECTOR_DB_ID
+    os.environ[key] = value
+    if key == 'VECTOR_DB_ID':
+        VECTOR_DB_ID = value
+    path = ROOT / '.env'
+    try:
+        text = path.read_text()
+    except OSError:
+        return                                          # in the cluster there is no .env; the secret keeps the old id
+    line = f'{key}={value}'
+    text = re.sub(rf'^{key}=.*$', line, text, flags=re.M) if re.search(rf'^{key}=', text, re.M) \
+        else text.rstrip('\n') + '\n' + line + '\n'
+    path.write_text(text)
+
+
+def rag_heal(kind: str) -> dict:
+    """Check one store; rebuild it if search cannot reach it. {'kind', 'state', 'store', 'detail'}."""
+    spec = RAG_STORES[kind]
+    out = {'kind': kind, 'store': env(spec['key']), 'state': 'unknown', 'detail': '', 'at': time.time()}
+    if demo_mode() or not LLAMA_URL:
+        out['state'] = 'skipped'
+        return out
+    with _RAG_HEAL['lock']:
+        try:
+            ing = _ingest_module()
+            current = env(spec['key'])
+            if current and ing.searchable(LLAMA_URL, current):
+                out['state'] = 'healthy'
+            else:
+                paths = sorted(p for p in spec['dir'].rglob('*') if p.is_file() and p.suffix in ing.TEXT_SUFFIXES)
+                new = ing.ensure(LLAMA_URL, spec['name'], paths)
+                if current and current != new:
+                    ing.call(LLAMA_URL, f'/v1/vector_stores/{current}', 'DELETE', timeout=60)
+                _set_env_value(spec['key'], new)
+                out.update(state='rebuilt', store=new,
+                           detail=f"{spec['name']} rebuilt from {len(paths)} file(s): {current or 'none'} -> {new}")
+                print(f"  rag self-heal: {out['detail']}")
+        except SystemExit as exc:                       # ensure() exits when the rebuild is not searchable either
+            out.update(state='failed', detail=str(exc))
+        except Exception as exc:
+            out.update(state='failed', detail=str(exc)[:200])
+    _RAG_HEAL['status'][kind] = out
+    return out
+
+
+def rag_heal_soon(kind: str) -> None:
+    """Heal in the background, at most once every 2 minutes per store (a burst of failing searches is one heal)."""
+    if time.time() - _RAG_HEAL['last'].get(kind, 0) < 120:
+        return
+    _RAG_HEAL['last'][kind] = time.time()
+    threading.Thread(target=rag_heal, args=(kind,), daemon=True, name=f'rag-heal-{kind}').start()
 
 
 def lightwell_fixed_cves(group: str, artifact: str, version: str) -> list[str]:
@@ -4997,6 +5086,10 @@ def serve(host: str, port: int) -> None:
         # Warm the Telco estate (Lightwell lookups, history searches, one LLM call) so the first click on the tab
         # reads a cache instead of waiting for all of it.
         def warm() -> None:
+            # First make sure both history stores are searchable (a lab restart breaks them), then warm the estate.
+            for kind in ('infra', 'app'):
+                r = rag_heal(kind)
+                print(f"  rag store {kind}: {r['state']}" + (f" ({r['detail']})" if r['detail'] else ''))
             try:
                 appv2.estate()
             except Exception as exc:

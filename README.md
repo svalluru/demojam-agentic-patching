@@ -680,7 +680,7 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 | Commit job fails at "Verify the build's SLSA provenance" | The build or its bundle does not verify; nothing is committed. Needs cosign 3, which the job downloads, pinned by checksum |
 | Sync and Run fails "is not the approved playbook" | The file in Gitea changed after the commit; the runner will not run it |
 | AO rejects the workflow import: approval "missing a connection from the 'Approved' branch" | The edge out of an approval node needs `"from_port": "approved"` |
-| Reasoning says "No history found" everywhere after a lab restart | The vector store kept its file list but lost its vectors. Re-ingest `app-data/history` into a new store and set `APP_VECTOR_DB_ID` |
+| Reasoning says "No history found" once after a lab restart | Llama Stack (0.7.1) does not re-attach its existing vector stores to Milvus when it restarts: they stay listed but search finds nothing. The console heals this itself: it checks both history stores at startup and whenever a search comes back empty or "not found", rebuilds a broken one from `rag-setup/data` or `app-data/history` (`ingest.py`'s `ensure()`), switches to the new id and writes it to `.env`. The next assessment has its history back |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
 ### Demo guide
