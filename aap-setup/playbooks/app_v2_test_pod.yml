@@ -15,11 +15,18 @@
 #   probes, port    the app's /health probes and port
 #   expect_json     {library: new jar name} for the changed libraries (JSON)
 #   gitea_repo
+#   test_mode       swap (default): the jars into the image (pipeline app-v2-test)
+#                   source: clone repo, apply changes_json to pom.xml, mvn package (pipeline app-v2-build); after a
+#                   pass, branch fix/<run_id> with the pom.xml change is pushed to the app's Gitea repository
+#   repo            owner/name of the app's Gitea repository (source mode)
+#   changes_json    [{name: group:artifact, from, to}] (source mode)
+#   nexus_url       the Nexus the build resolves through (source mode)
 # Environment, from the credentials attached to the template: OCP_API_URL, OCP_TOKEN, OCP_NAMESPACE (the
 # "App Patch v2 OpenShift" credential) and GITEA_URL, GITEA_TOKEN (the lab's Gitea API credential). Neither token is
 # printed.
 #
-# Reports with set_stats: test_passed, test_image, test_health, osv_open, osv_detail, pipelinerun, sbom_url.
+# Reports with set_stats: test_passed, test_image, test_health, osv_open, osv_detail, pipelinerun, sbom_url,
+# sha256s_json (what the run step pins: the commit job's jar checksums, or the built bundle's), bundle_url, branch_url.
 - name: App Patch v2 - test the change in a pod
   hosts: localhost
   connection: local
@@ -32,6 +39,9 @@
     gitea_token: "{{ lookup('ansible.builtin.env', 'GITEA_TOKEN') | default(lookup('ansible.builtin.env', 'GITEA_PASSWORD'), true) }}"
     gitea_repo: lab-user/app_v2_playbooks
     lib: "{{ lib_json if lib_json is not string else (lib_json | from_json) }}"
+    mode: "{{ test_mode | default('swap', true) }}"
+    changes: "{{ (changes_json if changes_json is not string else (changes_json | from_json)) if changes_json | default('') | length > 0 else [] }}"
+    branch: "fix/{{ run_id }}"
     sums: "{{ sha256s_json if sha256s_json is mapping else (sha256s_json | from_json) }}"
     # One test per app per run: every site of the app in this run uses the same name, so the first site's execution
     # creates the PipelineRun and the others find it (409) and wait on it instead of building the same image again.
@@ -64,17 +74,30 @@
         body: >-
           {{ {'apiVersion': 'tekton.dev/v1', 'kind': 'PipelineRun',
               'metadata': {'name': run_name,
-                           'labels': {'app-v2/app': app, 'app-v2/run': run_id | string}},
-              'spec': {'pipelineRef': {'name': 'app-v2-test'},
-                       'params': [{'name': 'app', 'value': app},
-                                  {'name': 'run_id', 'value': run_id | string},
-                                  {'name': 'jars', 'value': tested | to_json},
-                                  {'name': 'probes', 'value': probes | string},
-                                  {'name': 'port', 'value': port | string},
-                                  {'name': 'expect', 'value': expect_json if expect_json is string else (expect_json | to_json)}],
-                       'workspaces': [{'name': 'source', 'volumeClaimTemplate': {'spec': {
-                                          'accessModes': ['ReadWriteOnce'], 'resources': {'requests': {'storage': '1Gi'}}}}},
-                                      {'name': 'app', 'configMap': {'name': 'app-v2-healthserver'}}]}} }}
+                           'labels': {'app-v2/app': app, 'app-v2/run': run_id | string, 'app-v2/mode': mode}},
+              'spec': ({'pipelineRef': {'name': 'app-v2-build'},
+                        'params': [{'name': 'app', 'value': app},
+                                   {'name': 'run_id', 'value': run_id | string},
+                                   {'name': 'repo_url', 'value': gitea_url ~ '/' ~ repo ~ '.git'},
+                                   {'name': 'changes', 'value': changes | to_json},
+                                   {'name': 'nexus_url', 'value': nexus_url | string},
+                                   {'name': 'probes', 'value': probes | string},
+                                   {'name': 'port', 'value': port | string},
+                                   {'name': 'expect', 'value': expect_json if expect_json is string else (expect_json | to_json)}],
+                        'workspaces': [{'name': 'source', 'volumeClaimTemplate': {'spec': {
+                                           'accessModes': ['ReadWriteOnce'], 'resources': {'requests': {'storage': '2Gi'}}}}},
+                                       {'name': 'tools', 'configMap': {'name': 'app-v2-tools'}}]}
+                       if mode == 'source' else
+                       {'pipelineRef': {'name': 'app-v2-test'},
+                        'params': [{'name': 'app', 'value': app},
+                                   {'name': 'run_id', 'value': run_id | string},
+                                   {'name': 'jars', 'value': tested | to_json},
+                                   {'name': 'probes', 'value': probes | string},
+                                   {'name': 'port', 'value': port | string},
+                                   {'name': 'expect', 'value': expect_json if expect_json is string else (expect_json | to_json)}],
+                        'workspaces': [{'name': 'source', 'volumeClaimTemplate': {'spec': {
+                                           'accessModes': ['ReadWriteOnce'], 'resources': {'requests': {'storage': '1Gi'}}}}},
+                                       {'name': 'app', 'configMap': {'name': 'app-v2-healthserver'}}]})} }}
       register: created
       no_log: true
 
@@ -93,7 +116,7 @@
       until: >-
         (pr.json.status.conditions | default([]) | selectattr('type', 'equalto', 'Succeeded')
          | map(attribute='status') | first | default('Unknown')) in ['True', 'False']
-      retries: 120
+      retries: 180
       delay: 10
       no_log: true
 
@@ -138,6 +161,67 @@
       failed_when: false
       no_log: true
 
+    # Source mode, after a pass: the pom.xml change that was built and tested, on branch fix/<run> of the app's repo.
+    # The same apply_dependency_changes.py the pipeline ran, on the copy Gitea holds. Nothing is merged.
+    - name: Push branch {{ branch }} with the pom.xml change
+      when: mode == 'source' and cond.status == 'True' and results.passed | default('false') == 'true'
+      block:
+        - name: Create the branch from main (already there is fine)
+          ansible.builtin.uri:
+            url: "{{ gitea_url }}/api/v1/repos/{{ repo }}/branches"
+            method: POST
+            headers: { Authorization: "token {{ gitea_token }}" }
+            body_format: json
+            body: { new_branch_name: "{{ branch }}", old_branch_name: main }
+            status_code: [201, 409]
+            validate_certs: false
+          no_log: true
+
+        - name: Read pom.xml on the branch
+          ansible.builtin.uri:
+            url: "{{ gitea_url }}/api/v1/repos/{{ repo }}/contents/pom.xml?ref={{ branch | urlencode }}"
+            headers: { Authorization: "token {{ gitea_token }}" }
+            validate_certs: false
+          register: pom
+          no_log: true
+
+        - name: Work directory
+          ansible.builtin.tempfile: { state: directory }
+          register: tmp
+
+        - name: Write it and the change list
+          ansible.builtin.copy:
+            dest: "{{ tmp.path }}/{{ item.name }}"
+            content: "{{ item.content }}"
+            mode: "0600"
+          loop:
+            - { name: pom.xml, content: "{{ pom.json.content | b64decode }}" }
+            - { name: changes.json, content: "{{ changes | map('combine', {'manifests': ['pom.xml']}) | list | to_json }}" }
+          loop_control: { label: "{{ item.name }}" }
+
+        - name: Apply the change list
+          ansible.builtin.command:
+            argv: [python3, "{{ playbook_dir }}/files/apply_dependency_changes.py", --root, "{{ tmp.path }}", --changes, "{{ tmp.path }}/changes.json"]
+          changed_when: true
+
+        - name: Commit pom.xml to the branch
+          ansible.builtin.uri:
+            url: "{{ gitea_url }}/api/v1/repos/{{ repo }}/contents/pom.xml"
+            method: PUT
+            headers: { Authorization: "token {{ gitea_token }}" }
+            body_format: json
+            body:
+              branch: "{{ branch }}"
+              sha: "{{ pom.json.sha }}"
+              content: "{{ lookup('ansible.builtin.file', tmp.path ~ '/pom.xml') | b64encode }}"
+              message: >-
+                App Patch v2 run {{ run_id }}: {{ changes | map(attribute='name') | map('regex_replace', '^[^:]*:', '') | join(', ') }}
+                to {{ changes | map(attribute='to') | join(', ') }} (built, tested in a pod, deployed)
+            status_code: [200, 201]
+            validate_certs: false
+          register: branch_commit
+          no_log: true
+
     - name: Report the test
       ansible.builtin.set_stats:
         data:
@@ -148,6 +232,12 @@
           osv_detail: "{{ results.osv_detail | default('') }}"
           pipelinerun: "{{ run_name }}"
           test_reason: "{{ cond.message | default('') | truncate(300) }}"
+          test_mode: "{{ mode }}"
+          bundle_url: "{{ results.bundle_url | default('') }}"
+          sha256s_json: >-
+            {{ ({(results.bundle_url | default('') | basename): results.bundle_sha256 | default('')} if mode == 'source'
+                else sums) | to_json }}
+          branch_url: "{{ (gitea_url ~ '/' ~ repo ~ '/src/branch/' ~ branch) if branch_commit is defined and branch_commit is succeeded and branch_commit is not skipped else '' }}"
           sbom_url: >-
             {{ (gitea_url ~ '/' ~ gitea_repo ~ '/src/branch/main/' ~ (playbook_filename | regex_replace('\.yml$', '.sbom.json')))
                if (sbom_commit.status | default(0)) in [201, 422] else '' }}

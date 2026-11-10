@@ -52,6 +52,7 @@ ALLOWED_MODULES = frozenset({
     'ansible.builtin.stat', 'ansible.builtin.get_url', 'ansible.builtin.copy', 'ansible.builtin.file',
     'ansible.builtin.systemd', 'ansible.builtin.systemd_service', 'ansible.builtin.uri',
     'ansible.builtin.set_stats', 'ansible.builtin.assert', 'ansible.builtin.fail', 'ansible.builtin.debug',
+    'ansible.builtin.unarchive',          # Rebuild from source: unpack the built bundle, downloaded checksum-pinned
 })
 # Keys that may sit beside a module in a task. Anything else at that indent is read as a module.
 TASK_KEYWORDS = frozenset({
@@ -132,26 +133,26 @@ DEMO_CATALOG_EXTRA = [
 NETWORK_DOMAINS = {'NFVO / MANO', '5G Core (SBA)', 'O-RAN Near-RT RIC', 'IMS / Voice', 'Transport / SDN', 'Edge / MEC'}
 
 DEMO_BOM = [
-    {'app': 'workflow-engine', 'domain': 'NFVO / MANO', 'languages': {'java': 'H', 'python': '', 'js': ''},
+    {'app': 'workflow-engine', 'repo': 'lab-user/app-workflow-engine', 'domain': 'NFVO / MANO', 'languages': {'java': 'H', 'python': '', 'js': ''},
      'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine', 'health_url': 'http://localhost:8080/health',
      'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'edge-site-1', 'env': 'prod'},
                  {'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
      'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5'},
                       {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
                       {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]},
-    {'app': 'inventory-service', 'domain': 'OSS – Inventory', 'languages': {'java': 'H', 'python': 'M', 'js': ''},
+    {'app': 'inventory-service', 'repo': 'lab-user/app-inventory-service', 'domain': 'OSS – Inventory', 'languages': {'java': 'H', 'python': 'M', 'js': ''},
      'path': '/opt/apps/inventory-service', 'service': 'inventory-service', 'health_url': 'http://localhost:8081/health',
      'servers': [{'host': 'lab', 'env': 'qa'}, {'host': 'core-dc-1', 'env': 'prod'}],
      'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
                       {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
                       {'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.1.6'}]},
-    {'app': 'billing-engine', 'domain': 'BSS – Charging', 'languages': {'java': 'H', 'python': '', 'js': ''},
+    {'app': 'billing-engine', 'repo': 'lab-user/app-billing-engine', 'domain': 'BSS – Charging', 'languages': {'java': 'H', 'python': '', 'js': ''},
      'path': '/opt/apps/billing-engine', 'service': 'billing-engine', 'health_url': 'http://localhost:8082/health',
      'servers': [{'host': 'core-dc-1', 'env': 'prod'}, {'host': 'core-dc-2', 'env': 'prod'}],
      'dependencies': [{'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3'},
                       {'group': 'org.apache.avro', 'artifact': 'avro', 'version': '1.11.0'},
                       {'group': 'org.apache.logging.log4j', 'artifact': 'log4j-core', 'version': '2.24.3'}]},
-    {'app': 'api-gateway', 'domain': '5G Core (SBA)', 'languages': {'java': 'M', 'python': 'M', 'js': ''},
+    {'app': 'api-gateway', 'repo': 'lab-user/app-api-gateway', 'domain': '5G Core (SBA)', 'languages': {'java': 'M', 'python': 'M', 'js': ''},
      'path': '/opt/apps/api-gateway', 'service': 'api-gateway', 'health_url': 'http://localhost:8083/health',
      'servers': [{'host': 'edge-site-1', 'env': 'prod'}],
      'dependencies': [{'group': 'org.apache.httpcomponents.client5', 'artifact': 'httpclient5', 'version': '5.6.2'},
@@ -460,6 +461,7 @@ def impact(event: dict, apps: list[dict]) -> dict:
                                     'env': s.get('env', 'prod'), 'path': app.get('path', ''),
                                     'service': app.get('service', app['app']),
                                     'health_url': app.get('health_url', ''), 'installed': dep['version'],
+                                    'repo': app.get('repo', ''),
                                     **({'version_change': True, 'to_version': want} if change else {})})
             elif dep.get('version') == event['version']:
                 other.append({'app': app['app'], 'installed': dep['version'], 'why': 'already on this build'})
@@ -1008,6 +1010,146 @@ def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -
 """
 
 
+def bundle_name(app_name: str, run_id: str) -> str:
+    return f'{app_name}-bundle-{run_id}.tgz'
+
+
+def bundle_url(app_name: str, run_id: str) -> str:
+    """Where Rebuild from source puts the built app (pipelines-setup/pipeline.yaml, task package): Nexus maven-releases."""
+    base = env('NEXUS_URL', 'https://nexus.example').rstrip('/')
+    return f"{base}/repository/maven-releases/com/lab/appv2/{app_name}-bundle/{run_id}/{bundle_name(app_name, run_id)}"
+
+
+def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: str) -> str:
+    """Rebuild from source: deploy the app as Maven built it. The bundle (every resolved jar plus the app's own) is
+    downloaded pinned to the checksum the pipeline reported, the current lib folder is backed up whole and replaced,
+    the service restarts once, and the changed libraries' jars must be in the new folder. Rescue puts the old folder
+    back."""
+    what = '; '.join(f"{c['artifact']} {c['from']} -> {c['to']}" for c in changes)
+    expect = '\n'.join(f'      - {c["new_jar"]}' for c in changes)
+    name = bundle_name(app['app'], run_id)
+    return f"""---
+# Generated by the Applications v2 agent for {app['app']} (Rebuild from source): {what}
+# The bundle is what mvn package resolved from the updated pom.xml, built and tested in a pod by OpenShift Pipelines.
+- name: Deploy the rebuilt {app['app']}
+  hosts: "{{{{ target_hosts }}}}"
+  become: true
+  gather_facts: false
+  vars:
+    app_dir: {app['path']}
+    lib_dir: {app['path']}/lib
+    backup_dir: {app['path']}/backup/lib-{run_id}
+    staging_dir: {app['path']}/staging-{run_id}
+    service: {app['service']}
+    health_url: {app['health_url']}
+    bundle_name: {name}
+    bundle_url: "{bundle_url(app['app'], run_id)}"
+    expect_jars:
+{expect}
+    jar_sha256s: "{{{{ verified_sha256s if verified_sha256s is mapping else (verified_sha256s | from_json) }}}}"
+  tasks:
+    - name: Deploy the built app, restart once and verify
+      block:
+        - name: Download the bundle from Nexus, pinned to the checksum the pipeline verified
+          ansible.builtin.get_url:
+            url: "{{{{ bundle_url }}}}"
+            dest: "/tmp/{{{{ bundle_name }}}}"
+            checksum: "sha256:{{{{ jar_sha256s[bundle_name] }}}}"
+            mode: "0600"
+
+        - name: Unpack it into a staging folder
+          ansible.builtin.file:
+            path: "{{{{ staging_dir }}}}"
+            state: directory
+            mode: "0755"
+
+        - name: Unpack the bundle
+          ansible.builtin.unarchive:
+            src: "/tmp/{{{{ bundle_name }}}}"
+            dest: "{{{{ staging_dir }}}}"
+            remote_src: true
+
+        - name: Back up the current libraries, whole
+          ansible.builtin.copy:
+            src: "{{{{ lib_dir }}}}/"
+            dest: "{{{{ backup_dir }}}}/"
+            remote_src: true
+            mode: preserve
+
+        - name: Remove the current libraries
+          ansible.builtin.file:
+            path: "{{{{ lib_dir }}}}"
+            state: absent
+
+        - name: Put the built libraries in place
+          ansible.builtin.copy:
+            src: "{{{{ staging_dir }}}}/lib/"
+            dest: "{{{{ lib_dir }}}}/"
+            remote_src: true
+            mode: preserve
+
+        - name: Restart the service
+          ansible.builtin.systemd_service:
+            name: "{{{{ service }}}}"
+            state: restarted
+
+        - name: Verify the service is healthy
+          ansible.builtin.uri:
+            url: "{{{{ health_url }}}}"
+            status_code: 200
+          register: health
+          until: health.status == 200
+          retries: 12
+          delay: 5
+
+        - name: Verify the changed libraries are the new jars
+          ansible.builtin.stat:
+            path: "{{{{ lib_dir }}}}/{{{{ item }}}}"
+          loop: "{{{{ expect_jars }}}}"
+          register: new_stats
+
+        - name: Verify every one is there
+          ansible.builtin.assert:
+            that: item.stat.exists
+          loop: "{{{{ new_stats.results }}}}"
+
+        - name: Report patched
+          ansible.builtin.set_stats:
+            data:
+              patched: true
+              rolled_back: false
+              version: "{{{{ expect_jars | join(', ') }}}}"
+      rescue:
+        - name: Remove the half-deployed libraries
+          ansible.builtin.file:
+            path: "{{{{ lib_dir }}}}"
+            state: absent
+
+        - name: Roll back to the backed-up libraries
+          ansible.builtin.copy:
+            src: "{{{{ backup_dir }}}}/"
+            dest: "{{{{ lib_dir }}}}/"
+            remote_src: true
+            mode: preserve
+
+        - name: Restart the service on the old libraries
+          ansible.builtin.systemd_service:
+            name: "{{{{ service }}}}"
+            state: restarted
+
+        - name: Report rolled back
+          ansible.builtin.set_stats:
+            data:
+              patched: false
+              rolled_back: true
+              version: previous libraries
+
+        - name: Fail the run so the workflow records it
+          ansible.builtin.fail:
+            msg: "Health check failed after deploying the rebuilt app; the previous libraries were restored."
+"""
+
+
 def pinned_vars(template: str) -> list[str]:
     """The template's vars lines: paths, jar names, service, health URL and the checksum variable. These are set by
     the system, not the LLM; a draft must carry every one of them verbatim."""
@@ -1391,7 +1533,7 @@ def _assess(ev: dict) -> None:
 
 
 def start_generate(targets: list[str] | None = None, extra: list[str] | None = None,
-                   allow_major: bool = False) -> tuple[int, dict]:
+                   allow_major: bool = False, test_mode: str = 'swap') -> tuple[int, dict]:
     """Prepare the remediation for the selected sites (all of them when targets is None): a playbook for each app
     they run, swapping the Lightwell build and any osv.dev packages selected for that app (none when extra is
     None). The site selection carries to the run, which can narrow it but not widen it."""
@@ -1406,6 +1548,12 @@ def start_generate(targets: list[str] | None = None, extra: list[str] | None = N
             return 400, {'ok': False, 'error': 'select at least one site'}
         _RUN['selected'] = chosen
         apps = {k.split('|', 1)[0] for k in chosen}
+        if test_mode == 'source':
+            repos = {b['app']: b.get('repo') for b in load_bom()}
+            missing = sorted(a for a in apps if not repos.get(a))
+            if missing:
+                return 400, {'ok': False, 'error': f"no source repository for {', '.join(missing)}: use Swap libraries"}
+        _RUN['test_mode'] = 'source' if test_mode == 'source' else 'swap'
         offered = {r['id']: len(r.get('options') or [1]) for r in ((_RUN['impact'].get('extra') or {}).get('rows') or [])
                    if r['selectable'] or (allow_major and r['kind'] == 'major')}
         picked = []
@@ -1445,7 +1593,12 @@ def _generate() -> None:
             if H.llm and not H.demo_mode():
                 _trace('playbook', 'llm', f'draft for {app}')
             H.demo_pause(1.4)
-            text, source, checks, note = draft_playbook(ev, target, changes)
+            if st.get('test_mode') == 'source':
+                # Rebuild from source deploys the built bundle: the checked template, pinned to the pipeline's checksum.
+                text = render_bundle_playbook(ev, target, changes, st['run_id'])
+                source, checks, note = 'template', check_playbook(text, text), 'Rebuild from source: the bundle-deploy template.'
+            else:
+                text, source, checks, note = draft_playbook(ev, target, changes)
             ok = all(c['ok'] for c in checks)
             _trace('playbook', 'intake', f"{app}: {'checks passed' if ok else 'checks FAILED'} ({source})")
             playbooks.append({'app': app, 'filename': f"app-v2/{app}-{ev['artifact']}-{st['run_id']}.yml", 'changes': changes,
@@ -1570,15 +1723,19 @@ def _simulate() -> None:
     # The task strip, staged: fetch -> build -> health, each running then done, with the kind of log line each prints.
     apps = sorted({h['app'] for h in active})
     lines = {'fetch': ['zookeeper-3.5.9.rhlw-00001.jar: 1052417 bytes, sha256 (verified by the commit job)'],
+             'clone': ['Cloning into /workspace/source/repo ... done'],
+             'update-pom': ['pom.xml (version): org.apache.zookeeper:zookeeper 3.5.9 -> 3.5.9.rhlw-00001'],
+             'package': ['[INFO] BUILD SUCCESS', 'bundle uploaded to Nexus maven-releases'],
              'build': ['STEP 3/5: COPY lib/ /deployments/lib/', 'Pushing image to the internal registry'],
              'health': ["health: {'status': 'UP', ...}"]}
+    order = PIPELINE_TASKS_SOURCE if st.get('test_mode') == 'source' else PIPELINE_TASKS
     t0 = now_iso()
-    for i, task in enumerate(PIPELINE_TASKS):
+    for i, task in enumerate(order):
         with _LOCK:
             sim = _RUN.setdefault('pipe_sim', {})
             for app in apps:
                 cur = sim.setdefault(app, {'name': f'app-v2-{app}-{st["run_id"]}', 'state': 'running', 'console_url': '',
-                                           'tasks': [{'task': t, 'state': 'pending'} for t in PIPELINE_TASKS]})
+                                           'tasks': [{'task': t, 'state': 'pending'} for t in order]})
                 cur['tasks'][i] = {'task': task, 'state': 'running', 'started': now_iso(), 'step': task, 'log': lines[task]}
         _persist()
         H.demo_pause(0.6)
@@ -1586,7 +1743,7 @@ def _simulate() -> None:
             for app in apps:
                 cur = _RUN['pipe_sim'][app]
                 cur['tasks'][i].update(state='succeeded', finished=now_iso(), log=[])
-                if i == len(PIPELINE_TASKS) - 1:
+                if i == len(order) - 1:
                     cur['state'] = 'succeeded'
         _persist()
     del t0
@@ -1599,7 +1756,12 @@ def _simulate() -> None:
             'passed': True, 'image': f"image-registry.openshift-image-registry.svc:5000/agentic-patching/app-v2-{h['app']}:{st['run_id']}",
             'health': json.dumps({'status': 'UP', 'jars': {c['artifact']: c['new_jar'] for c in changes}}),
             **_osv_rescan(h['app'], changes), 'pipelinerun': f"app-v2-{h['app']}-{st['run_id']}", 'reason': '',
-            'sbom_url': f"{gitea}/src/branch/main/{h['playbook'].replace('.yml', '.sbom.json')}"},
+            'sbom_url': f"{gitea}/src/branch/main/{h['playbook'].replace('.yml', '.sbom.json')}",
+            'mode': st.get('test_mode', 'swap'),
+            'bundle_url': bundle_url(h['app'], st['run_id']) if st.get('test_mode') == 'source' else '',
+            'branch_url': (f"{env('GITEA_URL', 'https://gitea.example')}/"
+                           f"{next((b.get('repo', '') for b in load_bom() if b['app'] == h['app']), '')}/src/branch/fix/{st['run_id']}")
+                          if st.get('test_mode') == 'source' else ''},
             steps={'test': 'done', 'approval': 'skipped' if h['env'] == 'qa' else 'waiting'},
             outcome='running' if h['env'] == 'qa' else 'awaiting_approval')
     _trace('pipelines', 'aap', 'the app came up on the new jars')
@@ -2547,6 +2709,7 @@ def test_inputs(app_name: str, changes: list[dict]) -> dict:
 
 
 PIPELINE_TASKS = ('fetch', 'build', 'health')
+PIPELINE_TASKS_SOURCE = ('clone', 'update-pom', 'package', 'build', 'health')
 
 
 def pipeline_run_name(app_name: str, run_id: str) -> str:
@@ -2578,7 +2741,8 @@ def pipeline_status(app_name: str) -> dict:
         pr = H.k8s_get(f'/apis/tekton.dev/v1/namespaces/{ns}/pipelineruns/{name}')
     except Exception as exc:
         if '404' in str(exc):
-            return {**out, 'state': 'pending', 'tasks': [{'task': t, 'state': 'pending'} for t in PIPELINE_TASKS]}
+            order = PIPELINE_TASKS_SOURCE if st.get('test_mode') == 'source' else PIPELINE_TASKS
+            return {**out, 'state': 'pending', 'tasks': [{'task': t, 'state': 'pending'} for t in order]}
         return {**out, 'state': 'unknown', 'error': str(exc)[:200]}
 
     def cond_state(obj: dict) -> tuple[str, str]:
@@ -2586,13 +2750,18 @@ def pipeline_status(app_name: str) -> dict:
         return ({'True': 'succeeded', 'False': 'failed'}.get(c.get('status'), 'running' if c else 'pending'),
                 c.get('message', ''))
     out['state'], out['message'] = cond_state(pr)
+    # The task names from the PipelineRun itself: app-v2-test (fetch, build, health) or app-v2-build (clone,
+    # update-pom, package, build, health).
+    names = [t.get('name') for t in ((pr.get('status') or {}).get('pipelineSpec') or {}).get('tasks') or [] if t.get('name')]
+    tasks_order = names or (PIPELINE_TASKS_SOURCE if (pr.get('spec') or {}).get('pipelineRef', {}).get('name') == 'app-v2-build'
+                            else PIPELINE_TASKS)
     try:
         trs = (H.k8s_get(f'/apis/tekton.dev/v1/namespaces/{ns}/taskruns?labelSelector='
                          f'tekton.dev%2FpipelineRun%3D{name}') or {}).get('items') or []
     except Exception:
         trs = []
     by = {(tr.get('metadata') or {}).get('labels', {}).get('tekton.dev/pipelineTask'): tr for tr in trs}
-    for task in PIPELINE_TASKS:
+    for task in tasks_order:
         tr = by.get(task)
         if not tr:
             out['tasks'].append({'task': task, 'state': 'pending'})
@@ -2653,7 +2822,12 @@ def _dispatch_live() -> None:
                   'provenance_url': (pb.get('changes') or [change_for_event(ev, h)])[0].get('provenance_url', ''),
                   'jars_json': json.dumps([{k: c[k] for k in ('new_jar', 'url', 'source', 'provenance_url', 'sha1_url')
                                             if k in c} for c in pb.get('changes') or [change_for_event(ev, h)]]),
-                  **test_inputs(h['app'], pb.get('changes') or [change_for_event(ev, h)])}
+                  **test_inputs(h['app'], pb.get('changes') or [change_for_event(ev, h)]),
+                  'test_mode': st.get('test_mode', 'swap'),
+                  'repo': next((b.get('repo', '') for b in load_bom() if b['app'] == h['app']), ''),
+                  'changes_json': json.dumps([{'name': f"{c['group']}:{c['artifact']}", 'from': c['from'], 'to': c['to']}
+                                              for c in pb.get('changes') or [change_for_event(ev, h)]]),
+                  'nexus_url': env('NEXUS_URL', '')}
         try:
             created = H.ao_call('/api/v1/executions', 'POST', {
                 'workflow_id': wf, 'trigger_node_id': env('AO_APP_V2_TRIGGER_NODE', 'trigger_manual'),
@@ -2745,7 +2919,9 @@ def _follow_live(h: dict) -> None:
             extra['test'] = {'passed': test.get('test_passed') in (True, 'true', 'True'), 'image': test.get('test_image', ''),
                              'health': as_text(test.get('test_health', '')), 'osv_open': str(test.get('osv_open', '')),
                              'osv_detail': as_text(test.get('osv_detail', '')), 'pipelinerun': test.get('pipelinerun', ''),
-                             'sbom_url': test.get('sbom_url', ''), 'reason': test.get('test_reason', '')}
+                             'sbom_url': test.get('sbom_url', ''), 'reason': test.get('test_reason', ''),
+                             'mode': test.get('test_mode', 'swap'), 'bundle_url': test.get('bundle_url', ''),
+                             'branch_url': test.get('branch_url', '')}
         if commit.get('commit_sha'):
             extra.update(commit_sha=commit['commit_sha'], commit_url=commit.get('commit_url', ''),
                          provenance='verified' if commit.get('provenance_verified') else 'not verified',

@@ -1132,5 +1132,60 @@ class CancelRun(unittest.TestCase):
         self.assertEqual(st['hosts'][0]['outcome'], 'cancelled')
 
 
+
+class SourceMode(unittest.TestCase):
+    def test_seed_renderer(self):
+        import app_source
+        bom = next(b for b in appv2.DEMO_BOM if b['app'] == 'inventory-service')
+        files = app_source.render(bom, appv2.PROBE_CLASS)
+        self.assertIn('<version>2.1.6</version>', files['pom.xml'])
+        self.assertIn('<artifactId>zookeeper</artifactId>', files['pom.xml'])
+        for cls in ('org.apache.mina.core.session.IoSession', 'org.apache.zookeeper.ZooKeeper', 'org.postgresql.Driver'):
+            self.assertIn(cls + '.class', files['src/main/java/Uses.java'])
+        self.assertEqual([b['app'] for b in app_source.repo_apps()], ['inventory-service', 'workflow-engine'])
+
+    def test_source_mode_playbook_and_trigger(self):
+        demo()
+        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        self.assertEqual(appv2.start_generate(['inventory-service|lab'], None, False, 'source')[0], 200)
+        st = wait_for({'generated'})
+        self.assertEqual(st['test_mode'], 'source')
+        text = st['playbooks'][0]['text']
+        self.assertTrue(all(c['ok'] for c in appv2.check_playbook(text, text)))
+        self.assertIn(f"bundle_name: inventory-service-bundle-{st['run_id']}.tgz", text)
+        self.assertIn('ansible.builtin.unarchive', text)
+        self.assertIn('checksum: "sha256:{{ jar_sha256s[bundle_name] }}"', text)
+
+    def test_no_repo_refuses_source_mode(self):
+        demo()
+        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        real = appv2.load_bom
+        appv2.load_bom = lambda: [dict(b, repo='') for b in real()]
+        try:
+            code, body = appv2.start_generate(['inventory-service|lab'], None, False, 'source')
+        finally:
+            appv2.load_bom = real
+        self.assertEqual(code, 400)
+        self.assertIn('Swap libraries', body['error'])
+
+    def test_strip_follows_a_five_task_pipeline(self):
+        demo()
+        def k8s(path, text=False):
+            if '/pipelineruns/' in path:
+                return {'spec': {'pipelineRef': {'name': 'app-v2-build'}},
+                        'status': {'conditions': [{'type': 'Succeeded', 'status': 'Unknown'}],
+                                   'pipelineSpec': {'tasks': [{'name': n} for n in ('clone', 'update-pom', 'package', 'build', 'health')]}}}
+            if '/taskruns?' in path:
+                return {'items': [{'metadata': {'labels': {'tekton.dev/pipelineTask': 'clone'}},
+                                   'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}], 'steps': []}}]}
+            return ''
+        appv2.configure(demo_mode=lambda: False, k8s_get=k8s)
+        with appv2._LOCK:
+            appv2._RUN.update(status='running', run_id='r9')
+        out = appv2.pipeline_status('inventory-service')
+        self.assertEqual([t['task'] for t in out['tasks']], ['clone', 'update-pom', 'package', 'build', 'health'])
+        self.assertEqual(out['tasks'][0]['state'], 'succeeded')
+
+
 if __name__ == '__main__':
     unittest.main()

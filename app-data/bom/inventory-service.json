@@ -1,17 +1,42 @@
 {
   "app": "inventory-service",
-  "domain": "OSS – Inventory",
-  "languages": {"java": "H", "python": "M", "js": ""},
+  "domain": "OSS \u2013 Inventory",
+  "languages": {
+    "java": "H",
+    "python": "M",
+    "js": ""
+  },
   "path": "/opt/apps/inventory-service",
   "service": "inventory-service",
   "health_url": "http://localhost:8091/health",
+  "repo": "lab-user/app-inventory-service",
   "servers": [
-    {"host": "node1", "site": "lab", "env": "qa"},
-    {"host": "node3", "site": "core-dc-1", "env": "prod"}
+    {
+      "host": "node1",
+      "site": "lab",
+      "env": "qa"
+    },
+    {
+      "host": "node3",
+      "site": "core-dc-1",
+      "env": "prod"
+    }
   ],
   "dependencies": [
-    {"group": "org.postgresql", "artifact": "postgresql", "version": "42.3.3"},
-    {"group": "org.apache.zookeeper", "artifact": "zookeeper", "version": "3.5.9"},
-    {"group": "org.apache.mina", "artifact": "mina-core", "version": "2.1.6"}
+    {
+      "group": "org.postgresql",
+      "artifact": "postgresql",
+      "version": "42.3.3"
+    },
+    {
+      "group": "org.apache.zookeeper",
+      "artifact": "zookeeper",
+      "version": "3.5.9"
+    },
+    {
+      "group": "org.apache.mina",
+      "artifact": "mina-core",
+      "version": "2.1.6"
+    }
   ]
 }

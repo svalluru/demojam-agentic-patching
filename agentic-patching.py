@@ -4930,7 +4930,7 @@ class Handler(BaseHTTPRequestHandler):
             code, body = appv2.start_generate(
                 [str(t) for t in targets] if isinstance(targets, list) else None,
                 [str(x) for x in extra] if isinstance(extra, list) else None,
-                bool(payload.get('allow_major')))
+                bool(payload.get('allow_major')), str(payload.get('test_mode') or 'swap'))
         elif path == '/api/v2/dispatch':
             targets = payload.get('targets')
             code, body = appv2.start_dispatch(

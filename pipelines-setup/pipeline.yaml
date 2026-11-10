@@ -176,3 +176,205 @@ spec:
           value: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/app-v2-$(params.app):$(params.run_id)
         - { name: port, value: $(params.port) }
         - { name: expect, value: $(params.expect) }
+---
+# Applications v2, "Rebuild from source": the app's Gitea repository, cloned; the change list applied to pom.xml with
+# Applications v1's apply_dependency_changes.py; mvn package (dependencies through the Nexus proxies); the built app
+# and every resolved jar as one bundle in Nexus maven-releases, which the sites then deploy; the same image build and
+# /health check as the library swap.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: app-v2-update-pom
+spec:
+  params:
+    - name: changes
+      description: '[{"name": "group:artifact", "from", "to"}] (JSON)'
+  workspaces:
+    - name: source
+    - name: tools
+      description: the ConfigMap app-v2-tools (apply_dependency_changes.py)
+  steps:
+    - name: apply
+      image: registry.access.redhat.com/ubi9/python-311
+      env:
+        - { name: CHANGES, value: $(params.changes) }
+      script: |
+        #!/usr/bin/env python3
+        import json, os, subprocess, sys
+        src = '$(workspaces.source.path)/repo'
+        changes = [dict(c, manifests=['pom.xml']) for c in json.loads(os.environ['CHANGES'])]
+        open('/tmp/changes.json', 'w').write(json.dumps(changes))
+        out = subprocess.run([sys.executable, '$(workspaces.tools.path)/apply_dependency_changes.py', '--root', src,
+                              '--changes', '/tmp/changes.json'], capture_output=True, text=True)
+        print(out.stdout, out.stderr)
+        report = json.loads(out.stdout or '[]')
+        missed = [r['name'] for r in report if not r.get('applied')]
+        if out.returncode or missed:
+            raise SystemExit(f'pom.xml not updated for: {missed or "see above"}')
+        subprocess.run(['git', '-C', src, '--no-pager', 'diff', '--stat'], check=False)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: app-v2-package
+spec:
+  params:
+    - name: app
+    - name: run_id
+    - name: nexus_url
+    - name: probes
+    - name: port
+  workspaces:
+    - name: source
+  results:
+    - name: bundle_url
+    - name: bundle_sha256
+    - name: osv_open
+    - name: osv_detail
+  steps:
+    - name: mvn-package
+      image: registry.access.redhat.com/ubi9/openjdk-17
+      workingDir: $(workspaces.source.path)/repo
+      env:
+        - { name: HOME, value: $(workspaces.source.path) }
+        - name: NEXUS_USER
+          valueFrom: { secretKeyRef: { name: app-v2-nexus, key: username } }
+        - name: NEXUS_PASSWORD
+          valueFrom: { secretKeyRef: { name: app-v2-nexus, key: password } }
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        N="$(params.nexus_url)"
+        cat > "$HOME/settings.xml" <<XML
+        <settings>
+          <mirrors><mirror><id>nexus-central</id><mirrorOf>central</mirrorOf><url>$N/repository/maven-central/</url></mirror></mirrors>
+          <profiles><profile><id>lightwell</id><repositories><repository><id>lightwell-remediated</id>
+            <url>$N/repository/lightwell-remediated/</url></repository></repositories></profile></profiles>
+          <activeProfiles><activeProfile>lightwell</activeProfile></activeProfiles>
+        </settings>
+        XML
+        mvn -B -ntp -s "$HOME/settings.xml" -Dmaven.repo.local="$HOME/.m2" package \
+            dependency:list -DoutputFile="$HOME/deps.txt" -DincludeScope=runtime
+        # The bundle the sites deploy: every resolved jar, plus the app's own.
+        rm -rf "$HOME/bundle" "$HOME/ctx" && mkdir -p "$HOME/bundle/lib" "$HOME/ctx/lib"
+        cp target/lib/*.jar "target/$(params.app).jar" "$HOME/bundle/lib/"
+        tar -C "$HOME/bundle" -czf "$HOME/bundle.tgz" lib
+        SHA=$(sha256sum "$HOME/bundle.tgz" | cut -d' ' -f1)
+        P="com/lab/appv2/$(params.app)-bundle/$(params.run_id)/$(params.app)-bundle-$(params.run_id).tgz"
+        curl -fsS -k -u "$NEXUS_USER:$NEXUS_PASSWORD" --upload-file "$HOME/bundle.tgz" "$N/repository/maven-releases/$P"
+        printf '%s' "$N/repository/maven-releases/$P" > "$(results.bundle_url.path)"
+        printf '%s' "$SHA" > "$(results.bundle_sha256.path)"
+        # The image build context: the same layout as the library swap.
+        cp "$HOME/bundle/lib/"*.jar "$HOME/ctx/lib/"
+        cp src/main/java/HealthServer.java "$HOME/ctx/"
+        printf 'FROM registry.access.redhat.com/ubi9/openjdk-17:latest\nCOPY lib/ /deployments/lib/\nCOPY HealthServer.java /deployments/HealthServer.java\nENV PORT=%s PROBES=%s\nENTRYPOINT ["java", "-cp", "/deployments/lib/*", "/deployments/HealthServer.java"]\n' \
+            "$(params.port)" "$(params.probes)" > "$HOME/ctx/Containerfile"
+        echo "bundle $P sha256 $SHA: $(ls "$HOME/bundle/lib" | wc -l) jars"
+    - name: osv-rescan
+      image: registry.access.redhat.com/ubi9/python-311
+      script: |
+        #!/usr/bin/env python3
+        # osv.dev for the jar set Maven resolved (deps.txt: group:artifact:jar:version:scope).
+        import json, pathlib, re, urllib.request
+        lines = pathlib.Path('$(workspaces.source.path)/deps.txt').read_text().splitlines()
+        coords = []
+        for l in lines:
+            m = re.match(r'\s*([\w.\-]+):([\w.\-]+):jar:([\w.\-]+):\w+', l)
+            if m:
+                coords.append((m.group(1), m.group(2), m.group(3)))
+        body = json.dumps({'queries': [{'version': v.split('.rhlw-')[0], 'package': {'ecosystem': 'Maven', 'name': f'{g}:{a}'}}
+                                       for g, a, v in coords]}).encode()
+        try:
+            res = json.load(urllib.request.urlopen(urllib.request.Request('https://api.osv.dev/v1/querybatch', body,
+                                                                          {'Content-Type': 'application/json'}), timeout=60))
+            counts = {f'{a} {v}': len(r.get('vulns') or []) for (g, a, v), r in zip(coords, res.get('results') or [])}
+            total, detail = str(sum(counts.values())), json.dumps({k: n for k, n in counts.items() if n})
+        except Exception as exc:
+            total, detail = 'unknown', json.dumps({'error': str(exc)[:200]})
+        pathlib.Path('$(results.osv_open.path)').write_text(total)
+        pathlib.Path('$(results.osv_detail.path)').write_text(detail[:1500])
+        print(len(coords), 'resolved jars; osv.dev', total, detail)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: app-v2-build
+spec:
+  params:
+    - name: app
+    - name: run_id
+    - name: repo_url
+    - name: changes
+    - name: nexus_url
+    - name: probes
+    - name: port
+    - name: expect
+  workspaces:
+    - name: source
+    - name: tools
+  results:
+    - { name: passed, value: $(tasks.health.results.passed) }
+    - { name: health, value: $(tasks.health.results.health) }
+    - { name: osv_open, value: $(tasks.package.results.osv_open) }
+    - { name: osv_detail, value: $(tasks.package.results.osv_detail) }
+    - { name: image, value: $(tasks.build.results.IMAGE_URL) }
+    - { name: bundle_url, value: $(tasks.package.results.bundle_url) }
+    - { name: bundle_sha256, value: $(tasks.package.results.bundle_sha256) }
+  tasks:
+    - name: clone
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: openshift-pipelines }
+      params:
+        - { name: URL, value: $(params.repo_url) }
+        - { name: REVISION, value: main }
+        - { name: SUBDIRECTORY, value: repo }
+        - { name: SSL_VERIFY, value: "false" }
+      workspaces:
+        - { name: output, workspace: source }
+    - name: update-pom
+      runAfter: [clone]
+      taskRef: { name: app-v2-update-pom }
+      params:
+        - { name: changes, value: $(params.changes) }
+      workspaces:
+        - { name: source, workspace: source }
+        - { name: tools, workspace: tools }
+    - name: package
+      runAfter: [update-pom]
+      taskRef: { name: app-v2-package }
+      params:
+        - { name: app, value: $(params.app) }
+        - { name: run_id, value: $(params.run_id) }
+        - { name: nexus_url, value: $(params.nexus_url) }
+        - { name: probes, value: $(params.probes) }
+        - { name: port, value: $(params.port) }
+      workspaces:
+        - { name: source, workspace: source }
+    - name: build
+      runAfter: [package]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah }
+          - { name: namespace, value: openshift-pipelines }
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/app-v2-$(params.app):$(params.run_id)
+        - { name: CONTEXT, value: ./ctx }
+        - { name: DOCKERFILE, value: ./ctx/Containerfile }
+        - { name: TLSVERIFY, value: "false" }
+      workspaces:
+        - { name: source, workspace: source }
+    - name: health
+      runAfter: [build]
+      taskRef: { name: app-v2-health }
+      params:
+        - name: image
+          value: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/app-v2-$(params.app):$(params.run_id)
+        - { name: port, value: $(params.port) }
+        - { name: expect, value: $(params.expect) }

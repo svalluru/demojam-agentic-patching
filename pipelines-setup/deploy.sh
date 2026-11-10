@@ -32,6 +32,13 @@ echo "Pipeline in $NS"
 oc create configmap app-v2-healthserver -n "$NS" \
   --from-file=HealthServer.java="$ROOT/aap-setup/playbooks/files/HealthServer.java" \
   --dry-run=client -o yaml | oc apply -f -
+oc create configmap app-v2-tools -n "$NS" \
+  --from-file=apply_dependency_changes.py="$ROOT/aap-setup/playbooks/files/apply_dependency_changes.py" \
+  --dry-run=client -o yaml | oc apply -f -
+# Rebuild from source uploads the built bundle to Nexus maven-releases.
+NEXUS_PW="$(grep -E '^NEXUS_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2- | tr -d "'\"")"
+[ -n "$NEXUS_PW" ] && oc create secret generic app-v2-nexus -n "$NS" --from-literal=username=admin \
+  --from-literal=password="$NEXUS_PW" --dry-run=client -o yaml | oc apply -f - >/dev/null && say "secret app-v2-nexus applied"
 oc apply -n "$NS" -f "$HERE/pipeline.yaml"
 
 echo "Account for AAP"

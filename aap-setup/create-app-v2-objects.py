@@ -57,6 +57,7 @@ COMMIT_PB = 'aap-setup/playbooks/app_v2_commit.yml'
 SAMPLE_PB = 'aap-setup/playbooks/app_v2_deploy_sample.yml'
 RUN_PB = 'app_v2_run.yml'
 TEST_PB = 'aap-setup/playbooks/app_v2_test_pod.yml'
+SEED_PB = 'aap-setup/playbooks/app_v2_seed_repos.yml'
 # The class /health probes for each library: one copy, in appv2.py, which the test in a pod uses too.
 sys.path.insert(0, str(ROOT))
 from appv2 import PROBE_CLASS  # noqa: E402
@@ -88,6 +89,7 @@ N = {
     'gitea_cred': 'Gitea (App Patch v2)',
     'commit_jt': 'App Patch v2 - Commit to Gitea',
     'test_jt': 'App Patch v2 - Test in a Pod',
+    'seed_jt': 'App Patch v2 - Seed App Repos',
     'ocp_type': 'OpenShift API (App Patch v2)',
     'ocp_cred': 'OpenShift Pipelines (App Patch v2)',
     'run_jt': 'App Patch v2 - Sync and Run',
@@ -101,6 +103,8 @@ def main():
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--delete', action='store_true')
     ap.add_argument('--deploy-sample', action='store_true', help='launch the sample-app deploy and wait for it')
+    ap.add_argument('--seed-repos', action='store_true',
+                    help="commit each BOM app's Maven source (app_source.py) to its Gitea repository")
     args = ap.parse_args()
     load_env(ROOT / '.env')
     env = os.environ.get
@@ -163,7 +167,7 @@ def main():
         say(f'{label} successful')
 
     if args.delete:
-        for endpoint, key in (('/job_templates/', 'sample_jt'), ('/job_templates/', 'run_jt'), ('/job_templates/', 'commit_jt'),
+        for endpoint, key in (('/job_templates/', 'seed_jt'), ('/job_templates/', 'sample_jt'), ('/job_templates/', 'run_jt'), ('/job_templates/', 'commit_jt'),
                               ('/job_templates/', 'test_jt'), ('/credentials/', 'ocp_cred'), ('/credential_types/', 'ocp_type'),
                               ('/credentials/', 'gitea_cred'), ('/credential_types/', 'gitea_type'),
                               ('/projects/', 'gitea_project'), ('/projects/', 'setup_project')):
@@ -211,7 +215,7 @@ def main():
     if not args.dry_run:
         sync(setup_id, N['setup_project'])
         listed = api.call('GET', f'/projects/{setup_id}/playbooks/')
-        missing = [p for p in (COMMIT_PB, SAMPLE_PB, TEST_PB) if p not in listed]
+        missing = [p for p in (COMMIT_PB, SAMPLE_PB, TEST_PB, SEED_PB) if p not in listed]
         if missing:
             sys.exit(f'{N["setup_project"]} does not list {", ".join(missing)}: push them to {branch} and run this again')
 
@@ -271,6 +275,10 @@ def main():
         attach(test_id, gitea_cred_id, 'the Gitea credential (for the SBOM)')
     else:
         say(f'no APPV2_PIPELINE_TOKEN: skipping {N["test_jt"]} (run pipelines-setup/deploy.sh first)')
+    seed_id = upsert('/job_templates/', N['seed_jt'], {
+        **common, 'name': N['seed_jt'], 'inventory': build_inv['id'], 'project': setup_id or 0, 'playbook': SEED_PB,
+        'description': "Commit each demo app's Maven source to its Gitea repository (Rebuild from source)"})
+    attach(seed_id, gitea_cred_id, 'the Gitea credential')
     sample_id = upsert('/job_templates/', N['sample_jt'], {
         **common, 'name': N['sample_jt'], 'inventory': target_inv['id'], 'project': setup_id or 0, 'playbook': SAMPLE_PB,
         'description': 'Deploy the Applications v2 sample app on log4j 2.24.3'})
@@ -287,6 +295,16 @@ def main():
         'description': 'Sync the generated playbooks and run the approved one (checked by sha256)'})
     run_row = api.find('/job_templates/', N['run_jt'])
     attach(run_row['id'] if run_row else None, machine['id'], machine['name'])
+
+    if args.seed_repos and not args.dry_run:
+        import base64
+        import app_source
+        print('App source repositories (from app-data/bom)')
+        repos = [{'name': bom['repo'].split('/', 1)[-1], 'description': f"{bom['app']} · {bom.get('domain', '')} · Applications v2 demo app",
+                  'files': [{'path': path, 'content_b64': base64.b64encode(text.encode()).decode()}
+                            for path, text in app_source.render(bom, PROBE_CLASS).items()]}
+                 for bom in app_source.repo_apps()]
+        launch(seed_id, {'repos': repos}, f"{N['seed_jt']}: {', '.join(r['name'] for r in repos)}")
 
     if args.deploy_sample and not args.dry_run:
         print('Sample apps (from app-data/bom)')

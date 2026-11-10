@@ -2041,6 +2041,7 @@
   .v2-prio.medium { background: #b08920; } .v2-prio.low { background: #8a8d90; }
   .v2-estbar { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
   .v2-clbar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 10px; }
+  .v2-mode { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; padding: 8px 12px; border: 1px solid #e0e0e0; border-radius: 10px; background: #fafafa; }
   .v2-clgroup { border: 1px solid #e0e0e0; border-radius: 10px; padding: 8px 12px 4px; margin-bottom: 10px; background: #fff; }
   .v2-clgroup.idle { opacity: .55; }
   .v2-clhead { display: flex; gap: 10px; align-items: baseline; margin-bottom: 4px; }
@@ -3989,6 +3990,9 @@ function v2Run(s, readOnly) {
         <div class="v2-changes">${Object.entries(jars).map(([k, v]) => `<span class="mono">${esc(k)}: <b>${esc(v)}</b></span>`).join('') || '<span class="muted-sm">no answer</span>'}</div>
         <div class="muted-sm">osv.dev on the final jar set: <b>${esc(String(t.osv_open))}</b> advisory(ies) listed${Object.keys(left).length ? ' (' + Object.entries(left).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(', ') + ')' : ''}. Lightwell builds are looked up by their upstream version, so their own fixes still count here.
           ${t.sbom_url ? ` · <a href="${esc(t.sbom_url)}" target="_blank" rel="noopener">SBOM of the tested jars ↗</a>` : ''}</div>
+        ${t.mode === 'source' ? `<div class="muted-sm" style="margin-top:4px"><b>Rebuilt from source.</b>
+          ${t.bundle_url ? `Bundle for the sites: <a href="${esc(t.bundle_url)}" target="_blank" rel="noopener" class="mono">${esc(t.bundle_url.split('/').pop())}</a>` : ''}
+          ${t.branch_url ? ` · <a href="${esc(t.branch_url)}" target="_blank" rel="noopener">Branch ${esc(t.branch_url.split('/src/branch/').pop())} ↗</a>` : ''}</div>` : ''}
         ${t.reason && !t.passed ? `<div class="v2-detail">${esc(t.reason)}</div>` : ''}</div>`; }).join('')}
 </div>`);
   }
@@ -4034,7 +4038,7 @@ const CL_CHIP = o => o.source === 'upstream' ? 'up' : (o.version_change ? 'vc' :
 
 function v2ClState(s) {
   if (!v2.cl || v2.cl.run !== s.run_id) {
-    v2.cl = { run: s.run_id, src: new Set(['lightwell', 'another', 'osv']), major: false };
+    v2.cl = { run: s.run_id, src: new Set(['lightwell', 'another', 'osv']), major: false, mode: 'swap' };
     v2.extraSel = new Set(); v2.extraOpt = {};
   }
   return v2.cl;
@@ -4134,8 +4138,19 @@ function v2ChangeList(s, readOnly) {
     ${groups}${note}
     <div class="muted-sm" style="margin-top:6px">Advisories from ${esc(x.source || 'osv.dev')}, minus what a Lightwell build fixes. Each app gets one playbook: every jar in its group, one restart, one rollback.
       Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM', llm: 'the LLM', rules: 'worked out from the advisories' }[x.reasoning_source] || '—'}.</div>
+    ${(() => {
+      // How the change is built and tested, and what the sites get. Rebuild needs every selected app to have a repo.
+      const noRepo = n.apps.filter(a => !((imp.targets || []).find(t => t.app === a) || {}).repo);
+      const mode = s.test_mode || c.mode;
+      const lock = !pick;
+      return `<div class="v2-mode"><span class="muted-sm">Build and test</span>
+        <label class="v2-check"><input type="radio" name="v2-mode" value="swap" data-v2-mode ${mode === 'swap' ? 'checked' : ''} ${lock ? 'disabled' : ''}>
+          <b>Swap libraries</b> <span class="muted-sm">the jars go into the image for the test; sites get a jar swap</span></label>
+        <label class="v2-check" title="${noRepo.length ? esc('No source repository for ' + noRepo.join(', ')) : ''}"><input type="radio" name="v2-mode" value="source" data-v2-mode ${mode === 'source' ? 'checked' : ''} ${lock || noRepo.length ? 'disabled' : ''}>
+          <b>Rebuild from source</b> <span class="muted-sm">${noRepo.length ? `no Gitea repository for ${esc(noRepo.join(', '))}`
+            : 'clone the Gitea repo, update pom.xml, mvn package; sites get the built app; branch fix/' + esc(s.run_id) + ' pushed'}</span></label></div>`; })()}
     <div class="v2-planact">
-      <span class="muted-sm">${n.sites} site${n.sites === 1 ? '' : 's'} · ${n.jars} jar swap${n.jars === 1 ? '' : 's'}</span>
+      <span class="muted-sm">${n.sites} site${n.sites === 1 ? '' : 's'} · ${n.jars} change${n.jars === 1 ? '' : 's'}</span>
       <button class="pill" data-v2-cldl ${n.apps.length ? '' : 'disabled'}>Download plan (.md)</button>
       ${pick ? `<button class="go-patch" data-v2-clprep ${n.sites ? '' : 'disabled'}>Prepare remediation (${n.sites} site${n.sites === 1 ? '' : 's'} · ${n.jars} jar${n.jars === 1 ? '' : 's'})</button>` : ''}
     </div></div>`;
@@ -4214,6 +4229,7 @@ document.getElementById('v2-body').addEventListener('click', async ev => {
 document.getElementById('v2-body').addEventListener('change', async ev => {
   const t = ev.target;
   if ('v2Clmajor' in t.dataset) { v2.cl.major = t.checked; v2Render(); return; }
+  if ('v2Mode' in t.dataset) { v2.cl.mode = t.value; v2Render(); return; }
   if (t.id === 'v2-cat-mine') { v2.catScope = t.checked ? 'mine' : 'all'; v2.catPage = 1; await v2LoadCatalog(); v2Render(); return; }
   if (t.id === 'v2-sel-all') {
     const st = v2.state, prep = st.selected ? new Set(st.selected) : null;
@@ -4251,6 +4267,7 @@ document.getElementById('v2-go').addEventListener('click', ev => {
   if (btn.dataset.act === 'generate') {
     body.extra = v2ClPicked(v2.state).map(p => `${p.row.id}::${p.idx}`);
     body.allow_major = !!(v2.cl && v2.cl.major);
+    body.test_mode = (v2.cl && v2.cl.mode) || 'swap';
   }
   // Re-enabled only if the run is not now busy: while it prepares, the render keeps it greyed out.
   v2Act(`/api/v2/${btn.dataset.act}`, body).finally(() => {

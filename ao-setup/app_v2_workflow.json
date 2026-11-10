@@ -97,6 +97,26 @@
               "type": "string",
               "default": "{}",
               "description": "{library: new jar} the test expects /health to report (JSON)"
+            },
+            "test_mode": {
+              "type": "string",
+              "default": "swap",
+              "description": "swap: the jars into the image; source: rebuild from the Gitea repo"
+            },
+            "repo": {
+              "type": "string",
+              "default": "",
+              "description": "owner/name of the app's Gitea repository (source mode)"
+            },
+            "changes_json": {
+              "type": "string",
+              "default": "[]",
+              "description": "[{name, from, to}] applied to pom.xml (source mode)"
+            },
+            "nexus_url": {
+              "type": "string",
+              "default": "",
+              "description": "The Nexus the source build resolves through"
             }
           }
         }
@@ -164,7 +184,11 @@
           "sha256s_json": "${commit_to_gitea.artifacts.jar_sha256s_json}",
           "probes": "${trigger.probes}",
           "port": "${trigger.port}",
-          "expect_json": "${trigger.expect_json}"
+          "expect_json": "${trigger.expect_json}",
+          "test_mode": "${trigger.test_mode}",
+          "repo": "${trigger.repo}",
+          "changes_json": "${trigger.changes_json}",
+          "nexus_url": "${trigger.nexus_url}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -210,7 +234,7 @@
           "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
           "playbook_sha256": "${trigger.playbook_sha256}",
           "target_hosts": "${trigger.host}",
-          "verified_sha256s": "${commit_to_gitea.artifacts.jar_sha256s_json}"
+          "verified_sha256s": "${test_in_pod.artifacts.sha256s_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -242,7 +266,7 @@
           "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
           "playbook_sha256": "${trigger.playbook_sha256}",
           "target_hosts": "${trigger.host}",
-          "verified_sha256s": "${commit_to_gitea.artifacts.jar_sha256s_json}"
+          "verified_sha256s": "${test_in_pod.artifacts.sha256s_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",

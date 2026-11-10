@@ -1,0 +1,86 @@
+---
+# Applications v2: give each demo app a source repository in the lab Gitea, for the "Rebuild from source" test.
+# Job template "App Patch v2 - Seed App Repos", launched by aap-setup/create-app-v2-objects.py --seed-repos, which
+# renders the files from app-data/bom (app_source.py) and passes them here. Runs on localhost.
+#
+# Variables: repos: [{name: app-<app>, description, files: [{path, content_b64}]}]
+# Environment: GITEA_URL, GITEA_TOKEN from the lab's "Gitea API" credential (attached, not edited). The token is never
+# printed. Repositories are created public in the lab Gitea, so the pipeline clones them without a secret, under the
+# token's own user. Files are committed through the contents API; a file that is already identical is left alone.
+- name: App Patch v2 - seed the app source repositories
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    gitea_url: "{{ lookup('ansible.builtin.env', 'GITEA_URL') | default('', true) }}"
+    gitea_token: "{{ lookup('ansible.builtin.env', 'GITEA_TOKEN') | default(lookup('ansible.builtin.env', 'GITEA_PASSWORD'), true) }}"
+  tasks:
+    - name: Check the Gitea credential and the inputs
+      ansible.builtin.assert:
+        that:
+          - gitea_url | length > 0
+          - gitea_token | length > 0
+          - repos | default([]) | length > 0
+        fail_msg: Needs the Gitea API credential (GITEA_URL, GITEA_TOKEN) and repos from create-app-v2-objects.py.
+
+    - name: Who the token belongs to
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/user"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        validate_certs: false
+      register: me
+      no_log: true
+
+    - name: Create each repository (already there is fine)
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/user/repos"
+        method: POST
+        headers: { Authorization: "token {{ gitea_token }}" }
+        body_format: json
+        body: { name: "{{ item.name }}", description: "{{ item.description | default('') }}", private: false,
+                auto_init: true, default_branch: main }
+        status_code: [201, 409]
+        validate_certs: false
+      loop: "{{ repos }}"
+      loop_control: { label: "{{ me.json.login }}/{{ item.name }}" }
+      no_log: true
+
+    - name: The files to commit
+      ansible.builtin.set_fact:
+        files: "{{ files | default([]) + [{'repo': item.0.name, 'path': item.1.path, 'content_b64': item.1.content_b64}] }}"
+      loop: "{{ repos | subelements('files') }}"
+      loop_control: { label: "{{ item.0.name }}/{{ item.1.path }}" }
+
+    - name: Read what each repository holds now
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ me.json.login }}/{{ item.repo }}/contents/{{ item.path }}?ref=main"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        status_code: [200, 404]
+        validate_certs: false
+      loop: "{{ files }}"
+      loop_control: { label: "{{ item.repo }}/{{ item.path }}" }
+      register: current
+      no_log: true
+
+    - name: Commit each file that is new or changed
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ me.json.login }}/{{ item.item.repo }}/contents/{{ item.item.path }}"
+        method: "{{ 'PUT' if item.status == 200 else 'POST' }}"
+        headers: { Authorization: "token {{ gitea_token }}" }
+        body_format: json
+        body: >-
+          {{ {'content': item.item.content_b64, 'branch': 'main',
+              'message': 'Applications v2 demo app: ' ~ item.item.path}
+             | combine({'sha': item.json.sha} if item.status == 200 else {}) }}
+        status_code: [200, 201]
+        validate_certs: false
+      loop: "{{ current.results }}"
+      loop_control: { label: "{{ item.item.repo }}/{{ item.item.path }}" }
+      when: item.status == 404 or (item.json.content | default('') | replace('\n', '')) != item.item.content_b64
+      no_log: true
+
+    - name: Report the repositories
+      ansible.builtin.set_stats:
+        data:
+          repos: "{{ repos | map(attribute='name') | map('regex_replace', '^', me.json.login ~ '/') | list }}"
+          clone_urls: "{{ repos | map(attribute='name') | map('regex_replace', '^(.*)$', gitea_url ~ '/' ~ me.json.login ~ '/\\1.git') | list }}"
