@@ -1856,6 +1856,14 @@
 
   /* The pitch, and the close. Two sentences that have to survive being
      remembered rather than read. */
+.g-tabs { display: inline-flex; gap: 6px; margin-left: auto; margin-right: 4px; }
+  .drawer-head #popout-guide { margin-left: 0; }
+  /* The guide in its own window: the drawer is the page. */
+  body.guide-window { overflow: auto; }
+  body.guide-window .drawer-scrim { position: static; background: none; backdrop-filter: none;
+    -webkit-backdrop-filter: none; animation: none; height: 100vh; }
+  body.guide-window .drawer { width: 100%; border-left: 0; box-shadow: none; animation: none; }
+  body.guide-window #popout-guide, body.guide-window #close-guide { display: none; }
   .g-pitch {
     padding: 15px 17px; border-radius: var(--r-sm); background: var(--surface);
     border: 1px solid var(--border); border-left: 3px solid var(--text);
@@ -2335,10 +2343,15 @@
   <aside class="drawer wide" role="dialog" aria-modal="true" aria-labelledby="guide-title">
     <div class="drawer-head">
       <h2 id="guide-title">Presenter's guide</h2>
+      <span class="g-tabs" role="tablist" aria-label="Which script">
+        <button class="pill active" data-guide-tab="main" role="tab">Infrastructure · Applications</button>
+        <button class="pill" data-guide-tab="v2" role="tab">Applications v2 · live</button>
+      </span>
+      <button class="icon-btn" id="popout-guide" title="Open in its own window, for a second screen" aria-label="Open in its own window">⧉</button>
       <button class="icon-btn" id="close-guide" title="Close" aria-label="Close">✕</button>
     </div>
     <div class="drawer-body">
-      <div class="guide">
+      <div class="guide" id="guide-main">
 
         <section>
           <h3>Before you open the door</h3>
@@ -2718,6 +2731,196 @@
           exists.</p>
         </section>
 
+      </div>
+      <div class="guide" id="guide-v2" hidden>
+
+        <section>
+          <h3>Before you open the door</h3>
+          <p class="muted-sm">This act runs live on the lab: real Automation Orchestrator, AAP, OpenShift Pipelines
+            and node1–3. Budget ten minutes; the pod test alone takes four to eight. Do this list half an hour before.</p>
+          <ul>
+            <li><strong>Lab up, console local.</strong> Start it from the repo:
+              <code>SSL_CERT_FILE=/etc/ssl/cert.pem MODE=live NEXUS_EVENTS=poller APPV2_OSV=true ./agentic-patching.py serve</code>.
+              Its log must say <code>rag store infra: healthy</code> and <code>rag store app: healthy</code> (or
+              <code>rebuilt</code>: a lab restart breaks the stores and the console rebuilds them).</li>
+            <li><strong>Deliver the story's build.</strong>
+              <code>./nexus-setup/send-event.py org.apache.mina mina-core 2.2.5.rhlw-00002</code>. The poller takes
+              the newest build (-00009), which no advisory names; -00002 is the one CVE-2026-41635 names.</li>
+            <li><strong>Sites on their original jars.</strong> If a rehearsal patched node1, reset it (see
+              <em>Between demos</em>). workflow-engine's <code>/health</code> on node1 should name
+              <code>mina-core-2.2.5.jar</code>.</li>
+            <li><strong>Disk headroom on the cluster.</strong>
+              <code>oc get node -o jsonpath='{.items[0].status.conditions[?(@.type=="DiskPressure")].status}'</code>
+              must say <code>False</code>. The node is one machine with little room; a build at the threshold evicts
+              AAP. Delete finished pods in <code>agentic-patching</code> first.</li>
+            <li><strong>Warm the estate.</strong> Open <strong>Telco estate</strong> once: the reasoning is then on
+              disk and the tab opens instantly in front of people.</li>
+            <li>Leave the console on <strong>Incoming fixes</strong>, nothing assessed.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>The sentence it all hangs off</h3>
+          <p class="g-pitch">A fix lands for a library deep in the network's control plane. Applying it is the
+            easy part. The hard part is knowing everywhere it runs, what breaking it would cost at each site, and
+            proving it is safe before it touches anything live, and that is what the agents do.</p>
+        </section>
+
+        <section>
+          <h3>Run of show</h3>
+
+          <div class="g-beat">
+            <div class="g-n">1</div>
+            <div>
+              <h4>Where Lightwell fits in the estate <span class="t">1½ min</span></h4>
+              <div class="g-do"><b>Do</b><span>Open <strong>Telco estate</strong>. The Network frame first:
+                workflow-engine (NFVO / MANO) on top, CRITICAL.</span></div>
+              <div class="g-say"><b>Say</b><span>“This is the estate by telco domain, most severe first. For each
+                app: what it is written in, which Lightwell fixes exist for the exact versions it runs, and the
+                agent's view of why it matters. The orchestrator drives NETCONF to hundreds of network elements, so
+                a hole in it reaches every element it configures.”</span></div>
+              <div class="g-do"><b>Do</b><span>Point at analytics-agent and customer-portal: “not covered yet”,
+                “npm not available”.</span></div>
+              <div class="g-say"><b>Say</b><span>“And it is honest about the gaps: Lightwell is Java-led today, so
+                the Python and JavaScript apps say so rather than pretend.”</span></div>
+              <div class="g-why">Start wide so the fix in beat 2 lands on a map people already have. The
+                reasoning column comes from the app history store and the LLM; if it is still writing, the dots say
+                so.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">2</div>
+            <div>
+              <h4>A NETCONF fix arrives <span class="t">1½ min</span></h4>
+              <div class="g-do"><b>Do</b><span><strong>Incoming fixes</strong>: mina-core
+                <code>2.2.5.rhlw-00002</code>, CVE-2026-41635. Press <strong>Assess</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“Lightwell rebuilt the exact version we run, with the fix, and it
+                landed in our Nexus. Same version, so no upgrade, no API change. Now: where does it run?”</span></div>
+              <div class="g-do"><b>Do</b><span><strong>1 · Sites</strong> appears at once: workflow-engine on lab,
+                edge-site-1, core-dc-1. Read core-dc-1's reasoning aloud. Point at inventory-service, offered as a
+                <em>version change</em> and left unticked.</span></div>
+              <div class="g-say"><b>Say</b><span>“Every site with its own reasoning from our change history: 340
+                network elements here, drain sessions first, the 00:00 to 04:00 window. And inventory-service runs an
+                older mina-core: the agent offers the build as a version change but leaves it off, because last time
+                a 2.2 jump broke its SFTP export.”</span></div>
+              <div class="g-why">That last line is the moment the room sees the history being used, not
+                decoration. It is real data from the synthetic history records, so say “our change history”, not
+                “production”.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">3</div>
+            <div>
+              <h4>One change window, every fix <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span><strong>2 · Change list</strong>, workflow-engine: the fix is locked
+                in. Below it, what else osv.dev reports open; tick zookeeper (Lightwell build, same restart). Point at
+                the source chips and <strong>Download plan (.md)</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“While we are restarting the orchestrator anyway, what else is
+                open on it? osv.dev answers, minus what Lightwell already fixes. Zookeeper has a Lightwell build too,
+                so it rides the same restart. Where Lightwell has nothing, it offers the upstream fix, or a Lightwell
+                build of a newer version, and never a major upgrade unless you tick it. This plan is the document for
+                the change board.”</span></div>
+              <div class="g-do"><b>Do</b><span>In <strong>1 · Sites</strong> untick core-dc-1 (its window is
+                tonight). Keep <strong>Swap libraries</strong>. Press <strong>Prepare remediation</strong>; the
+                button greys out, “Preparing remediation…”.</span></div>
+              <div class="g-say"><b>Say</b><span>“The LLM writes the playbook, and the system checks it: allowed
+                modules only, every path and checksum exactly as set, a health check, a rollback. A draft that fails
+                any of it is replaced by the checked template, and the page says which check failed.”</span></div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">4</div>
+            <div>
+              <h4>Test before any site <span class="t">3 min, mostly waiting</span></h4>
+              <div class="g-do"><b>Do</b><span>Press <strong>Run on 2 of 2</strong>. Watch Commit go green, then
+                <strong>Test in a pod</strong>: fetch · build · health, live, with the last log line.</span></div>
+              <div class="g-say"><b>Say</b><span>“Automation Orchestrator runs one workflow per site. First every
+                jar is checked: Red Hat's provenance signature for the Lightwell builds, Maven Central's checksum for
+                anything upstream. Then OpenShift Pipelines builds the app with the whole change, starts it in a pod
+                and asks it which jars it actually loaded. Nothing touches a site until that passes.”</span></div>
+              <div class="g-say"><b>Say</b><span>(while it builds) “Four checks between an LLM-written playbook and
+                a network element: the playbook checks, provenance, this pod, and the runner that refuses any
+                playbook whose checksum is not the approved one. And if anything looks wrong, Cancel run stops all of
+                it and tells you, site by site, whether anything was left half done.”</span></div>
+              <div class="g-why">This is the slow beat. The live task strip is there so you never stand in front of
+                a spinner; the “Open in OpenShift console” link shows the same run in the platform's own UI if
+                someone asks.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
+            <div class="g-n">5</div>
+            <div>
+              <h4>The gate, and the proof <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span>The lab site patches without a gate: Sync, Remediate, Verify go
+                green, “healthy on mina-core-2.2.5.rhlw-00002.jar”. edge-site-1 waits: point at
+                <strong>Approve</strong> and the test evidence.</span></div>
+              <div class="g-say"><b>Say</b><span>“The lab went first, automatically. A live site waits for a
+                person, who sees the exact commit and what the pod test proved. The health check on the server names
+                the jar it loaded: that is evidence of the patch, not just of a restart.”</span></div>
+              <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes);
+                otherwise reject it and say why. Then the <strong>Report</strong> and <strong>Feedback</strong>
+                cards.</span></div>
+              <div class="g-say"><b>Say</b><span>“A PDF for the change board, and the outcome goes back into the
+                history the next run's reasoning reads. Patch it once and the system knows more the next
+                time.”</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h3>If they ask</h3>
+          <div class="g-qa"><b>“How does it know what runs where?”</b>
+            <span>From each app's BOM (<code>app-data/bom/</code>): its sites and the library versions it declares.
+            It does not scan the servers; the BOM is the inventory, and the SBOM buttons in the Lightwell catalog
+            export it as CycloneDX for Lightwell Lens.</span></div>
+          <div class="g-qa"><b>“What if Lightwell has no build for a library?”</b>
+            <span>The Change list offers the lowest upstream release that clears every advisory, or a Lightwell
+            build of a newer version on the same major line, as an explicit choice. Major upgrades only if you
+            tick them: those are code changes.</span></div>
+          <div class="g-qa"><b>“Does the pod test prove it compiles?”</b>
+            <span>Swap libraries proves it starts and loads the new jars together. <strong>Rebuild from
+            source</strong> goes further: it clones the app's Gitea repo, updates pom.xml and runs mvn package, so
+            an API break fails the build, and pushes a <code>fix/</code> branch.</span></div>
+          <div class="g-qa"><b>“What if a site fails halfway?”</b>
+            <span>The playbook rolls that site back on its own (backup, restore, restart) and the run says so. Cancel
+            run stops everything else and checks each site the playbook reached.</span></div>
+          <div class="g-qa"><b>“Why trust an LLM to write a playbook?”</b>
+            <span>You do not have to: four checks stand between its draft and a host, and a draft that fails the
+            first one is replaced by a checked template.</span></div>
+        </section>
+
+        <section class="g-never">
+          <h3>Do not say</h3>
+          <ul>
+            <li><strong>Do not say it scans the servers.</strong> It reads the BOMs; the servers' <code>/health</code>
+              is used only to prove a patch landed.</li>
+            <li><strong>Do not call the history real incidents.</strong> The records are synthetic, marked so, plus
+              whatever the console's own runs added.</li>
+            <li><strong>Do not claim Python or npm patching.</strong> The estate lists them as not covered, and that
+              is the honest answer.</li>
+            <li><strong>Do not present Rebuild from source as proven live</strong> until you have rehearsed it on
+              this lab; it is newer than the swap path.</li>
+            <li><strong>Do not imply per-site tracking.</strong> The BOM is per app: once every selected site is
+              patched, the app is recorded as patched.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Between demos</h3>
+          <ul>
+            <li><strong>Reset node1</strong> if the act patched it: through AAP, stop the app and empty
+              <code>/opt/apps/&lt;app&gt;/lib</code> and <code>backup</code> on node1–3, run
+              <code>./aap-setup/create-app-v2-objects.py --deploy-sample</code>, write <code>{}</code> to
+              <code>runs/appv2-bom-updates.json</code>, and restart the console.</li>
+            <li>A lab restart breaks the history stores; restarting the console heals them (watch for
+              <code>rebuilt</code> in its log).</li>
+            <li>Re-run <code>send-event.py</code> if the inbox was reset.</li>
+          </ul>
+        </section>
       </div>
     </div>
   </aside>
@@ -7825,9 +8028,56 @@ document.getElementById('settings-scrim').addEventListener('click', e => {
 // Nothing to fill in: the guide is static, and deliberately says nothing about
 // what this console is pointed at. The run of show does not change with it,
 // and the names the beats use are in the list either way.
+function guideTab(tab, doc = document) {
+  doc.getElementById('guide-main').hidden = tab !== 'main';
+  doc.getElementById('guide-v2').hidden = tab !== 'v2';
+  doc.querySelectorAll('[data-guide-tab]').forEach(b => b.classList.toggle('active', b.dataset.guideTab === tab));
+}
+
+// The guide in its own window, to drag onto a second screen while the console runs on the first. Built from here:
+// the page's styles and the guide's markup, no copy of the console's scripts (nothing polls twice). It follows the
+// console: switch sides and it switches script.
+let guideWin = null;
+
+function guideFollow() {
+  if (!guideWin || guideWin.closed) return;
+  const tab = paneSide === 'appv2' ? 'v2' : 'main';
+  if (guideWin.document.getElementById('guide-v2').hidden === (tab === 'v2')) {
+    guideTab(tab, guideWin.document);
+    guideWin.document.querySelector('.drawer-body').scrollTop = 0;
+  }
+}
+
+function popOutGuide() {
+  if (guideWin && !guideWin.closed) { guideWin.focus(); closeGuide(); return; }
+  guideWin = window.open('', 'agentic-patching-guide', 'popup,width=820,height=1000');
+  if (!guideWin) { toast?.('The browser blocked the window: allow pop-ups for this page.'); return; }
+  const d = guideWin.document;
+  const styles = [...document.querySelectorAll('style, link[rel="stylesheet"]')].map(e => e.outerHTML).join('\n');
+  const attrs = [...document.documentElement.attributes].map(a => `${a.name}="${a.value.replace(/"/g, '&quot;')}"`).join(' ');
+  const body = document.getElementById('guide-scrim').cloneNode(true);
+  body.hidden = false;
+  d.open();
+  d.write(`<!doctype html><html ${attrs}><head><meta charset="utf-8"><title>Presenter's guide</title>${styles}</head>`
+          + `<body class="guide-window">${body.outerHTML}</body></html>`);
+  d.close();
+  d.querySelectorAll('[data-guide-tab]').forEach(b => b.addEventListener('click', () => {
+    guideTab(b.dataset.guideTab, d);
+    d.querySelector('.drawer-body').scrollTop = 0;
+  }));
+  guideTab(paneSide === 'appv2' ? 'v2' : 'main', d);
+  closeGuide();
+}
+
 function openGuide() {
+  guideTab(paneSide === 'appv2' ? 'v2' : 'main');     // the script for the side you are on
   document.getElementById('guide-scrim').hidden = false;
 }
+
+document.querySelectorAll('[data-guide-tab]').forEach(b => b.addEventListener('click', () => {
+  guideTab(b.dataset.guideTab);
+  document.querySelector('#guide-scrim .drawer-body').scrollTop = 0;
+}));
 
 function closeGuide() {
   document.getElementById('guide-scrim').hidden = true;
@@ -7835,6 +8085,7 @@ function closeGuide() {
 
 document.getElementById('open-guide').addEventListener('click', openGuide);
 document.getElementById('close-guide').addEventListener('click', closeGuide);
+document.getElementById('popout-guide').addEventListener('click', popOutGuide);
 document.getElementById('guide-scrim').addEventListener('click', e => {
   if (e.target.id === 'guide-scrim') closeGuide();         // click-outside only
 });
@@ -8576,6 +8827,7 @@ renderStages({});
     // reading as a side even while the report is up — it is still true that
     // the console is on Infrastructure, you are just looking at the numbers.
     if (!onRoi) paneSide = where;
+    if (!onRoi) guideFollow();
 
     if (app && !scanner.src) scanner.src = seg.dataset.src;
     scanner.hidden = !app;
