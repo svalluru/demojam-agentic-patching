@@ -197,6 +197,11 @@ DEMO_EXTRA_REASONING = {
     'workflow-engine|org.springframework.security:spring-security-web':
         'Lightwell has 5.7.11.rhlw-00006 for two critical CVEs: same version, Red Hat provenance. Two moderate '
         'ones stay open until a 6.x upgrade, which is the app team\'s change.',
+    'workflow-engine|org.apache.zookeeper:zookeeper':
+        'Lightwell has 3.5.9.rhlw-00001 for the SASL authorization bypass; same version, and the orchestrator is '
+        'restarting anyway, so take it in this window instead of booking a second one.',
+    'inventory-service|org.apache.zookeeper:zookeeper':
+        'Lightwell has 3.5.9.rhlw-00001; the last zookeeper change here was clean (2026-11-03). Same restart, no API risk.',
     'inventory-service|org.postgresql:postgresql':
         'Lightwell has 42.3.3.rhlw-00006 for all four CVEs, including SQL injection; same version, so no API risk.',
 }
@@ -551,7 +556,8 @@ def _lesson(excerpt: str) -> str:
 # listed but not offered: that is a code change, not a jar swap.
 
 def osv_enabled() -> bool:
-    return env('APPV2_OSV', 'false').lower() in ('1', 'true', 'yes', 'on')
+    # Demo answers from saved osv.dev data (no network), so it is on unless set off; live is opt-in.
+    return env('APPV2_OSV', 'true' if H.demo_mode() else 'false').lower() in ('1', 'true', 'yes', 'on')
 
 
 def _vkey(v: str) -> tuple:
@@ -1691,9 +1697,15 @@ def _simulate() -> None:
     _trace('aap', 'pipelines', f"{len({h['app'] for h in active})} PipelineRun(s): build the app with the change, start it, check /health")
     # The task strip, staged: fetch -> build -> health, each running then done, with the kind of log line each prints.
     apps = sorted({h['app'] for h in active})
-    lines = {'fetch': ['zookeeper-3.5.9.rhlw-00001.jar: 1052417 bytes, sha256 (verified by the commit job)'],
+    # The log lines name this run's own change, as the real tasks would.
+    pb_changes = [c for p in st.get('playbooks') or [] if p.get('app') in apps for c in p.get('changes') or []] \
+        or [change_for_event(st['event'], active[0])] if active else []
+    first = pb_changes[0] if pb_changes else {'new_jar': 'the new jar', 'group': '', 'artifact': '', 'from': '', 'to': ''}
+    lines = {'fetch': [f"{first['new_jar']}: sha256 (verified by the commit job)"]
+                      + [f"{c['new_jar']}: sha256 (verified by the commit job)" for c in pb_changes[1:2]],
              'clone': ['Cloning into /workspace/source/repo ... done'],
-             'update-pom': ['pom.xml (version): org.apache.zookeeper:zookeeper 3.5.9 -> 3.5.9.rhlw-00001'],
+             'update-pom': [f"pom.xml (version): {c['group']}:{c['artifact']} {c['from']} -> {c['to']}" for c in pb_changes[:2]]
+                           or ['pom.xml updated'],
              'package': ['[INFO] BUILD SUCCESS', 'bundle uploaded to Nexus maven-releases'],
              'build': ['STEP 3/5: COPY lib/ /deployments/lib/', 'Pushing image to the internal registry'],
              'health': ["health: {'status': 'UP', ...}"]}
@@ -1707,7 +1719,7 @@ def _simulate() -> None:
                                            'tasks': [{'task': t, 'state': 'pending'} for t in order]})
                 cur['tasks'][i] = {'task': task, 'state': 'running', 'started': now_iso(), 'step': task, 'log': lines[task]}
         _persist()
-        H.demo_pause(0.6)
+        H.demo_pause(6)                     # about 2 s a task at the default DEMO_LATENCY: long enough to point at
         with _LOCK:
             for app in apps:
                 cur = _RUN['pipe_sim'][app]
@@ -2491,7 +2503,10 @@ _DEMO_RUNS: list[dict] = []
 
 def _summary_of(hosts: list[dict]) -> dict:
     outcomes = [h.get('outcome') for h in hosts]
-    return {k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped')}
+    out = {k: outcomes.count(k) for k in ('patched', 'rolled_back', 'rejected', 'failed', 'skipped')}
+    if 'cancelled' in outcomes:
+        out['cancelled'] = outcomes.count('cancelled')
+    return out
 
 
 def _record(st: dict) -> None:
@@ -2549,7 +2564,9 @@ def runs() -> list[dict]:
     """Newest first, without the snapshots; the run in progress (if any) on top."""
     out = [{k: v for k, v in r.items() if k != 'snapshot'} | {'current': False} for r in reversed(_history())]
     st = state()
-    if st.get('status') not in (None, 'idle', 'complete') and st.get('event'):
+    # The run on screen, unless it has already been recorded (a finished or cancelled run is in the history).
+    recorded = {r.get('run_id') for r in out}
+    if st.get('status') not in (None, 'idle', 'complete') and st.get('event') and st.get('run_id') not in recorded:
         out.insert(0, {'run_id': st.get('run_id'), 'event': st['event'], 'started_at': st.get('started_at'),
                        'finished_at': None, 'simulated': bool(st.get('simulated')), 'status': st.get('status'),
                        'summary': _summary_of(st.get('hosts') or []), 'hosts': st.get('hosts') or [],

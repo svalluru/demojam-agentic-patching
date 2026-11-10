@@ -760,8 +760,15 @@ class Extras(unittest.TestCase):
         appv2.start_assess(event_id)
         return {r['id']: r for r in wait_for({'assessed'})['impact']['extra']['rows']}
 
-    def test_off_by_default(self):
+    def test_on_in_demo_off_in_live_by_default(self):
         demo()
+        self.assertTrue(appv2.osv_enabled())                                  # demo: saved answers, no network
+        appv2.configure(demo_mode=lambda: False)
+        self.assertFalse(appv2.osv_enabled())                                 # live: opt-in
+        appv2.configure(demo_mode=lambda: True)
+
+    def test_set_off_is_off(self):
+        demo(APPV2_OSV='false')
         appv2.start_assess('evt-zookeeper')
         self.assertNotIn('extra', wait_for({'assessed'})['impact'])
 
@@ -1101,6 +1108,10 @@ class CancelRun(unittest.TestCase):
         gated = [h for h in st['hosts'] if h['env'] != 'qa' and h['outcome'] != 'skipped']
         self.assertTrue(gated and all(h['outcome'] == 'cancelled' for h in gated))
         self.assertEqual(appv2.cancel_run()[0], 409)                  # nothing left to cancel
+        # Listed once (recorded, not also "in progress"), with its cancelled sites counted.
+        mine = [r for r in appv2.runs() if r['run_id'] == st['run_id']]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]['summary']['cancelled'], len(gated))
 
     def test_live_cancel_reports_a_half_changed_site(self):
         demo()
