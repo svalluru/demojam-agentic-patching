@@ -65,6 +65,29 @@ class RoiV2(unittest.TestCase):
         self.assertEqual(rep['sides'], {'infra': False, 'app': False, 'appv2': True})
         self.assertEqual(rep['combined']['minutes'], rep['appv2']['saved']['minutes'])
 
+    def test_pdf_report_carries_roi(self):
+        import tempfile, appv2
+        st = dict(run([('workflow-engine', 'qa', 'patched')]), run_id='r1', simulated=True)
+        st['event'].update(group='org.apache.mina')
+        st['playbooks'][0]['changes'] = [{'artifact': 'mina-core', 'from': '2.2.5', 'to': '2.2.5.rhlw-00002',
+                                          'source': 'lightwell', 'cves': ['CVE-2026-41635']},
+                                         {'artifact': 'zookeeper', 'from': '3.5.9', 'to': '3.5.9.rhlw-00001',
+                                          'source': 'lightwell', 'cves': ['CVE-2023-44981']}]
+        saved = (appv2.H.roi, appv2.H.env)
+        out = tempfile.mkdtemp()
+        appv2.configure(roi=console.appv2_roi, env=lambda k, d='': out if k == 'REPORTS_DIR' else d)
+        try:
+            rep = appv2.write_report(st)
+        finally:
+            appv2.configure(roi=saved[0], env=saved[1])
+        import zlib, re
+        raw = (Path(out) / rep['file']).read_bytes()
+        text = b''.join(zlib.decompress(m) if m[:1] == b'x' else m
+                        for m in re.findall(rb'stream\r?\n(.*?)\r?\nendstream', raw, re.S))
+        self.assertIn(b'Return on investment', text)
+        self.assertIn(b'CVE-2023-44981', text)                       # the extra change's CVE is listed too
+        self.assertIn(b'2.2.5 -> 2.2.5.rhlw-00002', text)             # the arrow prints
+
     def test_report_with_nothing_still_refuses(self):
         with self.assertRaises(console.BackendUnavailable):
             console.roi_report({}, None, [], None, {})

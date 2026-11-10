@@ -79,6 +79,7 @@ class _Hooks:
     k8s_patch: Callable[[str, dict], Any] | None = None         # (api path, merge patch) -> body; cancels a PipelineRun
     aap_call: Callable[..., Any] | None = None                  # (path, method='GET', body=None) -> AAP controller API
     lab_ping: Callable[[], None] | None = None                  # raises fast when the lab (llamastack) does not answer
+    roi: Callable[[dict], dict | None] | None = None            # run state -> the Calculate ROI figures for it
 
 
 H = _Hooks()
@@ -2073,7 +2074,10 @@ def write_report(st: dict) -> dict:
     doc.banner(f"{m['patched']} patched · {m['rolled_back']} rolled back · {m['rejected']} rejected · "
                f"{m['skipped']} not selected", ev.get('note', ''), '#eef3ee' if not m['rolled_back'] else '#fdecec')
     doc.text('Fixes', size=11, bold=True)
-    doc.text(', '.join(ev.get('cves') or []) or 'Not itemised by Lightwell.', size=9)
+    # The event's CVEs and every other change the run carried (a zookeeper fix riding the same restart, say).
+    fixed = list(dict.fromkeys(list(ev.get('cves') or [])
+                               + [x for p in st.get('playbooks') or [] for c in p.get('changes') or [] for x in c.get('cves') or []]))
+    doc.text(', '.join(fixed) or 'Not itemised by Lightwell.', size=9)
     doc.gap(8)
     changes = [(p['app'], c) for p in st.get('playbooks') or [] for c in p.get('changes') or []]
     if changes:
@@ -2100,6 +2104,7 @@ def write_report(st: dict) -> dict:
                 h.get('outcome', '').replace('_', ' '), h.get('detail', '')] for h in hosts] or [['—'] * 6],
               [70, 90, 80, 32, 60, 167])
     doc.gap(10)
+    _report_roi(doc, st)
     commit = next((h for h in hosts if h.get('commit_sha')), {})
     doc.text('Change record', size=11, bold=True)
     doc.gap(2)
@@ -2118,6 +2123,49 @@ def write_report(st: dict) -> dict:
     name = re.sub(r'[^A-Za-z0-9._-]', '_', f"{ev['artifact']}-{ev['version']}-{st.get('run_id', '')}") + '.pdf'
     path = doc.save(out / name)
     return {'file': path.name, 'bytes': path.stat().st_size, 'created_at': now_iso()}
+
+
+def _fmt_min(m: float) -> str:
+    if (m or 0) < 1:
+        return 'under 1m'
+    m = round(m)
+    return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m}m"
+
+
+def _report_roi(doc, st: dict) -> None:
+    """The run's Calculate ROI figures (agentic-patching.py roi_appv2), with the settings' assumptions as they are
+    now. Left out when nothing was dispatched or the console gave no hook."""
+    try:
+        r = H.roi(st) if H.roi else None
+    except Exception:
+        r = None
+    if not r:
+        return
+    cur, sv, m = r.get('currency', '$'), r['saved'], r['measured']
+    money = lambda v: f"{cur}{v:,.0f}"
+    doc.text('Return on investment (estimate)', size=11, bold=True)
+    doc.gap(2)
+    effort = f" · {sv['effort_x']}x less effort" if sv.get('effort_x') else ''
+    doc.banner(f"{money(sv['cost'])} labour saved · {_fmt_min(sv['minutes'])} of engineer time{effort}",
+               f"{m['patched']} of {m['sites']} site(s) patched, {m['gated']} live. Range {money(sv['cost_low'])} to "
+               f"{money(sv['cost_high'])} at +/-{r.get('band_pct', 0):g}% on the manual baseline.", '#eef3ee')
+    rows = [[k, 'By hand', _fmt_min(v), money(v / 60 * r.get('rate', 0))]
+            for k, v in r['manual']['breakdown'].items() if v > 0]
+    rows += [[k, 'With the console', _fmt_min(v), money(v / 60 * r.get('rate', 0))]
+             for k, v in r['auto']['breakdown'].items() if v > 0]
+    rows += [[k + ' (sites not patched)', 'With the console', _fmt_min(v), money(v / 60 * r.get('rate', 0))]
+             for k, v in r['left']['breakdown'].items() if v > 0]
+    rows += [['Total by hand', '', _fmt_min(r['manual']['minutes']), money(r['manual']['cost'])],
+             ['Total with the console', '', _fmt_min(r['total_auto_minutes']), money(r['total_auto_cost'])]]
+    doc.table(['Work', 'Who', 'Time', 'Cost'], rows, [230, 110, 70, 89])
+    doc.gap(2)
+    lead = r['auto'].get('lead_hours')
+    doc.text((f"Fix arrival to run finished: {_fmt_min(lead * 60)}, against {r['manual']['lead_hours']:g} h assumed by "
+              f"hand. " if lead is not None else '')
+             + f"Rate {money(r.get('rate', 0))}/h. The manual side is the console's ROI assumptions (gear panel), "
+               "not a measurement; sites the run did not patch are charged back at the manual rate.",
+             size=8, color='#6a6e73')
+    doc.gap(10)
 
 
 def feed_history(st: dict) -> dict:

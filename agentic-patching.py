@@ -3398,6 +3398,16 @@ def roi_appv2(st: dict, b: dict) -> dict | None:
     }
 
 
+def appv2_roi(st: dict) -> dict | None:
+    """The ROI figures for one v2 run, for its PDF report: the same numbers Calculate ROI shows, at the settings'
+    baseline (not a reader's sliders)."""
+    b = roi_baseline()
+    r = roi_appv2(st, b)
+    if r:
+        r.update(currency=b['currency'], rate=b['rate'], band_pct=b['band_pct'])
+    return r
+
+
 def roi_infra(state: dict, results: list[dict], b: dict) -> dict:
     """Compare the dispatched run in `state` against the manual baseline.
 
@@ -4461,7 +4471,7 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
-                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping)
+                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()

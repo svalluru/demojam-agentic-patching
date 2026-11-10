@@ -76,7 +76,8 @@ def wrap(s: str, width: float, size: float, bold: bool = False) -> list[str]:
 # curly quotes this project's copy is full of. Encoding as latin-1 silently
 # turned every one of them into '?'.
 _FALLBACK = {0x2011: '-', 0x2012: '-', 0x2015: '-', 0x2212: '-',
-             0x00a0: ' ', 0x2009: ' ', 0x202f: ' ', 0x2713: 'v', 0x2717: 'x'}
+             0x00a0: ' ', 0x2009: ' ', 0x202f: ' ', 0x2713: 'v', 0x2717: 'x',
+             0x2192: '->', 0x2190: '<-', 0x2264: '<=', 0x2265: '>=', 0x2248: '~'}
 
 
 def esc(s: str) -> str:
