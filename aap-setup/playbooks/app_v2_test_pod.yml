@@ -26,7 +26,8 @@
 # "App Patch v2 OpenShift" credential) and GITEA_URL, GITEA_TOKEN (the lab's Gitea API credential). Neither token is
 # printed.
 #
-# Reports with set_stats: test_passed, test_image, test_health, osv_open, osv_detail, pipelinerun, sbom_url,
+# Reports with set_stats: test_outcome (passed|failed: the workflow routes on it; the job itself does not fail on a
+# failed test), test_passed, test_image, test_health, osv_open, osv_detail, pipelinerun, sbom_url,
 # sha256s_json (what the run step pins: the commit job's jar checksums, or the built bundle's), bundle_url, branch_url.
 - name: App Patch v2 - test the change in a pod
   hosts: localhost
@@ -227,6 +228,8 @@
       ansible.builtin.set_stats:
         data:
           test_passed: "{{ cond.status == 'True' and results.passed | default('false') == 'true' }}"
+          # What the workflow's test_switch routes on: passed -> the sites, failed -> the Mattermost card, no site.
+          test_outcome: "{{ 'passed' if (cond.status == 'True' and results.passed | default('false') == 'true') else 'failed' }}"
           test_image: "{{ results.image | default('') }}"
           test_health: "{{ results.health | default('') }}"
           osv_open: "{{ results.osv_open | default('unknown') }}"
@@ -243,11 +246,13 @@
             {{ (gitea_url ~ '/' ~ gitea_repo ~ '/src/branch/main/' ~ (playbook_filename | regex_replace('\.yml$', '.sbom.json')))
                if (sbom_commit.status | default(0)) in [201, 422] else '' }}
 
-    - name: Stop here unless the app came up on the new jars
-      ansible.builtin.assert:
-        that:
-          - cond.status == 'True'
-          - results.passed | default('false') == 'true'
-        fail_msg: >-
-          The test in a pod did not pass ({{ run_name }}): {{ cond.message | default('') | truncate(200) }}
-          {{ results.health | default('') | truncate(300) }}
+    # A failed test is an outcome, not an error: the job finishes and reports test_outcome: failed, and the App Patch
+    # v2 workflow's test_switch sends it to the "test failed" notification instead of the sites. Errors reaching the
+    # cluster or Gitea still fail the job above.
+    - name: Say how the test went
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Passed: the app came up on the new jars (' ~ run_name ~ ')'
+             if cond.status == 'True' and results.passed | default('false') == 'true'
+             else 'FAILED (' ~ run_name ~ '): ' ~ (cond.message | default('') | truncate(200)) ~ ' '
+                  ~ (results.health | default('') | truncate(300)) ~ ' - no site will be touched' }}

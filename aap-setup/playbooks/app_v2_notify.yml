@@ -1,0 +1,91 @@
+---
+# Applications v2: post the outcome of one site's run to Mattermost. Job template "App Patch v2 - Notify Mattermost"
+# (aap-setup/create-app-v2-objects.py), the last node of each route in the App Patch v2 workflow. Same channel as the
+# RHEL CVE workflow's cards: mattermost_url and api_chat_token come from the lab's "Mattermost" credential, attached
+# to the template and not edited. Neither is printed.
+#
+# report_type picks the card:
+#   patched      green  the site runs the fix; /health named the new jars
+#   rolled_back  red    the patch failed and the rollback route put the original jars back
+#   test_failed  amber  the test in a pod failed, so no site was touched
+# Variables (from the AO workflow; an empty one shows as a dash): report_type, app, site, target_host, group, run_id,
+# change_summary, cves, playbook_filename, job_id, job_url, approved_by, pipelinerun, reason, failed_step,
+# failed_reason, restored.
+- name: App Patch v2 - notify Mattermost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _type: "{{ report_type | default('patched', true) }}"
+    _app: "{{ app | default('unknown', true) }}"
+    _site: "{{ site | default(target_host | default('unknown', true), true) }}"
+    _host: "{{ target_host | default('', true) }}"
+    _env: "{{ 'LIVE' if group | default('') == 'prod_review' else 'LAB' }}"
+    _change: "{{ change_summary | default('-', true) }}"
+    _cves: "{{ cves | default('-', true) }}"
+    _approver: "{{ approved_by | default('', true) }}"
+    _job: "{{ ('[#' ~ job_id ~ '](' ~ job_url ~ ')') if job_url | default('', true) else '-' }}"
+    # test_failed passes reason; rolled_back passes the failed run's failed_step and failed_reason.
+    _reason: >-
+      {{ (reason | default('', true) | string
+          or ((failed_step | default('', true)) ~ (': ' ~ failed_reason if failed_reason | default('', true) else '')))
+         | truncate(400) }}
+    _cards:
+      patched:
+        text: ":white_check_mark: **App patched: {{ _app }} on {{ _site }}**"
+        color: "#2eb886"
+        title: "{{ _change }}"
+        fields:
+          - { title: "Site", value: "{{ _site }} ({{ _host }}), {{ _env }}", short: true }
+          - { title: "Approval", value: "{{ ('Approved by ' ~ _approver) if _approver else 'Not required: lab site' }}", short: true }
+          - { title: "Fixes", value: "{{ _cves }}", short: false }
+          - { title: "Patch job", value: "{{ _job }}", short: true }
+          - { title: "Playbook", value: "{{ playbook_filename | default('-', true) }}", short: true }
+        footer: "Agentic patching console, Applications v2: tested in a pod, checked by provenance, health verified on the new jars"
+      rolled_back:
+        text: ":rewind: **Patch rolled back: {{ _app }} on {{ _site }}**"
+        color: "#c9190b"
+        title: "{{ _change }} did not hold, the original jars are back"
+        fields:
+          - { title: "Site", value: "{{ _site }} ({{ _host }}), {{ _env }}", short: true }
+          - { title: "Restored", value: "{{ restored | default('-', true) }}", short: true }
+          - { title: "What failed", value: "{{ _reason or '-' }}", short: false }
+          - { title: "Rollback job", value: "{{ _job }}", short: true }
+        footer: "The workflow's rollback route (AAP: App Patch v2 - Rollback) restored the backup and checked /health"
+      test_failed:
+        text: ":warning: **Test in a pod failed: {{ _app }}, no site touched**"
+        color: "#f0ab00"
+        title: "{{ _change }}"
+        fields:
+          - { title: "PipelineRun", value: "{{ pipelinerun | default('-', true) }}", short: true }
+          - { title: "Site", value: "{{ _site }}, {{ _env }} (not patched)", short: true }
+          - { title: "Why", value: "{{ _reason or '-' }}", short: false }
+        footer: "OpenShift Pipelines built the app with the change and it did not come up on the new jars"
+  tasks:
+    - name: Check the Mattermost credential is attached
+      ansible.builtin.assert:
+        that:
+          - mattermost_url | default('') | length > 0
+          - api_chat_token | default('') | length > 0
+          - _type in _cards
+        fail_msg: Attach the lab's "Mattermost" credential to this template; report_type is patched, rolled_back or test_failed.
+
+    - name: Post the card
+      ansible.builtin.uri:
+        url: "{{ mattermost_url }}/hooks/{{ api_chat_token }}"
+        method: POST
+        body_format: json
+        body:
+          text: "{{ _cards[_type].text }}"
+          attachments:
+            - color: "{{ _cards[_type].color }}"
+              title: "{{ _cards[_type].title }}"
+              fields: "{{ _cards[_type].fields }}"
+              footer: "{{ _cards[_type].footer }}"
+        status_code: [200, 201]
+      no_log: true
+
+    - name: Report it
+      ansible.builtin.set_stats:
+        data:
+          notified: "{{ _type }}"

@@ -1234,3 +1234,147 @@ class SourceMode(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RollbackRoute(unittest.TestCase):
+    """The rollback route and the Mattermost cards: the playbook hands a failure to AO, AO's switches pick the route."""
+
+    def target(self):
+        return {'key': 'workflow-engine|node1', 'app': 'workflow-engine', 'host': 'node1', 'site': 'lab', 'env': 'qa',
+                'installed': '2.2.5', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
+                'health_url': 'http://localhost:8090/health', 'domain': 'NFVO / MANO'}
+
+    def follow(self, acts):
+        """One live site followed through a fake AO whose activities are `acts` (id -> (status, artifacts))."""
+        demo()
+        appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
+
+        def ao(path, method='GET', body=None):
+            if path == '/api/v1/workflows':
+                return {'resources': [{'id': 'wf1', 'name': 'App Patch v2'}]}
+            if path == '/api/v1/executions' and method == 'POST':
+                ao.inputs = body['input_data']
+                return {'id': 'ex1'}
+            if path == '/api/v1/executions/ex1':
+                return {'status': 'completed'}
+            if path == '/api/v1/executions/ex1/activities':
+                return {'resources': [{'temporal_activity_id': k, 'status': s, 'started_at': 't',
+                                       'output_data': {'artifacts': a}} for k, (s, a) in acts.items()]}
+            raise AssertionError(path)
+        appv2.configure(demo_mode=lambda: False, ao_call=ao)
+        appv2.EVENTS = appv2.EventStore(None)
+        ev, t = dict(appv2.DEMO_EVENTS[0]), self.target()
+        with appv2._LOCK:
+            appv2._RUN.clear()
+            appv2._RUN.update(status='generated', run_id='r1', event=ev, events=[], stages={k: 'pending' for k in appv2.STAGES},
+                              impact={'targets': [t], 'apps': ['workflow-engine'], 'other': []},
+                              playbooks=[{'app': 'workflow-engine', 'filename': 'app-v2/n.yml', 'text': 'x', 'sha256': '0' * 64,
+                                          'ok': True, 'changes': [appv2.change_for_event(ev, t)]}])
+        try:
+            appv2.start_dispatch()
+            for _ in range(300):
+                if appv2.state().get('status') == 'complete':
+                    break
+                time.sleep(0.01)
+            return appv2.state()['hosts'][0], ao.inputs
+        finally:
+            appv2.time = time
+
+    def test_template_rescue_hands_over_and_passes(self):
+        ev, t = appv2.DEMO_EVENTS[0], self.target()
+        for text in (appv2.render_playbook(ev, t), appv2.render_bundle_playbook(ev, t, [appv2.change_for_event(ev, t)], 'r1')):
+            self.assertEqual([c['id'] for c in appv2.check_playbook(text, text) if not c['ok']], [])
+            rescue = text.split('rescue:', 1)[1]
+            self.assertIn('outcome: failed', rescue)
+            self.assertIn('rollback_json', rescue)
+            self.assertNotIn('systemd_service', rescue)               # nothing restarted or restored in the playbook
+
+    def test_a_self_restoring_rescue_fails_the_check(self):
+        ev, t = appv2.DEMO_EVENTS[0], self.target()
+        text = appv2.render_playbook(ev, t)
+        old = text.replace("        - name: Hand the failure to the rollback route\n",
+                           "        - name: Restart on the old jars\n          ansible.builtin.systemd_service:\n"
+                           "            name: \"{{ service }}\"\n            state: restarted\n\n"
+                           "        - name: Hand the failure to the rollback route\n")
+        rb = next(c for c in appv2.check_playbook(old, text) if c['id'] == 'rollback')
+        self.assertFalse(rb['ok'])
+        self.assertIn('rollback route does that', rb['detail'])
+
+    def test_workflow_routes(self):
+        w = json.loads((Path(__file__).resolve().parents[1] / 'ao-setup' / 'app_v2_workflow.json').read_text())
+        nodes = {n['id']: n for n in w['nodes']}
+        edges = {(e['from'], e.get('from_port', ''), e['to']) for e in w['edges']}
+        self.assertIn(('test_in_pod', '', 'test_switch'), edges)
+        self.assertIn(('test_switch', 'case_1', 'notify_test_failed'), edges)
+        for run, sw, rb, ok, bad in (('run_app_patch', 'outcome_switch', 'rollback', 'notify_patched', 'notify_rolled_back'),
+                                     ('run_app_patch_prod', 'outcome_switch_prod', 'rollback_prod', 'notify_patched_prod',
+                                      'notify_rolled_back_prod')):
+            self.assertIn((run, '', sw), edges)
+            self.assertIn((sw, 'case_0', ok), edges)
+            self.assertIn((sw, 'case_1', rb), edges)
+            self.assertIn((rb, '', bad), edges)
+            self.assertEqual(nodes[rb]['parameters']['job_template_name'], 'App Patch v2 - Rollback')
+            self.assertEqual(nodes[rb]['parameters']['extra_vars']['rollback_json'], f'${{{run}.artifacts.rollback_json}}')
+            self.assertIn(f'${{{run}.artifacts.outcome}}', nodes[sw]['parameters']['cases'][0]['condition'])
+        self.assertTrue(all(nodes[n]['parameters']['job_template_name'] == 'App Patch v2 - Notify Mattermost'
+                            for n in appv2.NODES_NOTIFY))
+        ids = set(nodes) | {'trigger_manual'}
+        self.assertTrue(all(e['from'] in ids and e['to'] in ids for e in w['edges']))
+        self.assertTrue(set(appv2.NODES_ROLLBACK) | set(appv2.NODES_NOTIFY) <= set(nodes))
+
+    def test_failed_run_takes_the_rollback_route(self):
+        h, inputs = self.follow({
+            'commit_to_gitea': ('completed', {'commit_sha': 'abc', 'provenance_verified': True}),
+            'test_in_pod': ('completed', {'pipelinerun': 'p', 'test_passed': 'True', 'test_outcome': 'passed'}),
+            'run_app_patch': ('completed', {'outcome': 'failed', 'patched': False, 'failed_step': 'Verify the service is healthy',
+                                            'failed_reason': 'Status code was 503', 'rollback_json': '{}'}),
+            'rollback': ('completed', {'rolled_back': True, 'restored': 'mina-core-2.2.5.jar'}),
+            'notify_rolled_back': ('completed', {'notified': 'rolled_back'})})
+        self.assertEqual(h['outcome'], 'rolled_back')
+        self.assertEqual((h['steps']['verify'], h['steps']['rollback'], h['steps']['notify']), ('failed', 'done', 'done'))
+        self.assertIn('Verify the service is healthy: Status code was 503', h['detail'])
+        self.assertIn('mina-core-2.2.5.jar back', h['detail'])
+        # The cards' inputs went with the trigger.
+        self.assertEqual((inputs['site'], inputs['cves']), ('lab', 'CVE-2026-41635'))
+        self.assertIn('mina-core 2.2.5 -> 2.2.5.rhlw-00002', inputs['change_summary'])
+
+    def test_a_rollback_that_does_not_finish_is_a_failure(self):
+        h, _ = self.follow({
+            'commit_to_gitea': ('completed', {'commit_sha': 'abc'}),
+            'test_in_pod': ('completed', {'test_outcome': 'passed'}),
+            'run_app_patch': ('completed', {'outcome': 'failed', 'patched': False, 'failed_step': 'Restart the service'}),
+            'rollback': ('failed', {})})
+        self.assertEqual(h['outcome'], 'failed')
+        self.assertIn('restore its backup by hand', h['detail'])
+
+    def test_failed_pod_test_routes_to_its_card(self):
+        h, _ = self.follow({
+            'commit_to_gitea': ('completed', {'commit_sha': 'abc'}),
+            'test_in_pod': ('completed', {'pipelinerun': 'p', 'test_passed': 'False', 'test_outcome': 'failed',
+                                          'test_reason': 'mina-core missing'}),
+            'notify_test_failed': ('completed', {'notified': 'test_failed'})})
+        self.assertEqual(h['outcome'], 'failed')
+        self.assertEqual((h['steps']['test'], h['steps']['notify']), ('failed', 'done'))
+        self.assertIn('no site was touched', h['detail'])
+
+    def test_patched_site_gets_its_card(self):
+        h, _ = self.follow({
+            'commit_to_gitea': ('completed', {'commit_sha': 'abc'}),
+            'test_in_pod': ('completed', {'test_outcome': 'passed'}),
+            'run_app_patch': ('completed', {'outcome': 'patched', 'patched': True, 'version': 'mina-core-2.2.5.rhlw-00002.jar'}),
+            'notify_patched': ('completed', {'notified': 'patched'})})
+        self.assertEqual((h['outcome'], h['steps']['notify']), ('patched', 'done'))
+        self.assertNotIn('rollback', h['steps'])
+
+    def test_demo_run_shows_rollback_and_notify(self):
+        demo()
+        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_generate(); wait_for({'generated'})
+        appv2.start_dispatch(); st = wait_for({'awaiting_approval'})
+        for h in [x for x in st['hosts'] if x['outcome'] == 'awaiting_approval']:
+            appv2.decide(h['key'], 'approved')
+        st = wait_for({'complete'})
+        by = {h['key']: h for h in st['hosts']}
+        self.assertEqual((by[appv2.DEMO_FAILING_KEY]['steps']['rollback'], by[appv2.DEMO_FAILING_KEY]['steps']['notify']), ('done', 'done'))
+        self.assertEqual(by['workflow-engine|lab']['steps']['notify'], 'done')
+        self.assertTrue(any(e['dst'] == 'mattermost' for e in st['events']))

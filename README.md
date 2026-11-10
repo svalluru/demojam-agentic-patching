@@ -490,7 +490,9 @@ v2 tab with the numbered diagram; this is the same thing in text.
    draft can be used: a play for `{{ target_hosts }}` with `become`, every
    path, jar name and checksum variable exactly as the system set them,
    allowed modules only (no shell, command or raw), a pinned sha256 download,
-   a health check, a rollback in `rescue`. A draft that fails any of these is
+   a health check, and a `rescue` that changes nothing on the server but hands
+   the failure to the workflow's rollback route (`outcome: failed` and
+   `rollback_json`). A draft that fails any of these is
    replaced by the checked template, and the page says which check failed.
 4. **Commit** (AO, job `App Patch v2 - Commit to Gitea`). Every jar in the
    change is downloaded through Nexus and checked: Lightwell builds with cosign
@@ -498,8 +500,9 @@ v2 tab with the numbered diagram; this is the same thing in text.
    Only then is the playbook committed to Gitea, through Gitea's contents API.
    **Test in a pod** (AO, job `App Patch v2 - Test in a Pod`) follows: OpenShift
    Pipelines builds the app with the whole change and checks `/health` (see
-   *Build and test* below). A failed test stops the run before any site, and
-   the checksums it verified are what Sync & Run pins to.
+   *Build and test* below). A failed test is reported, not raised: the
+   workflow's test switch sends it to a Mattermost card and no site is touched.
+   The checksums it verified are what Sync & Run pins to.
 5. **Approval** (Prod only). The run stops at the AO gate, and the console shows
    the exact commit being approved. QA goes straight through.
 6. **Sync & Run** (AO, job `App Patch v2 - Sync and Run`). AAP syncs the Gitea
@@ -508,8 +511,16 @@ v2 tab with the numbered diagram; this is the same thing in text.
    jars from Nexus pinned to the verified checksums and swaps them; with
    **Rebuild from source** it downloads the bundle the pipeline built (Nexus
    `maven-releases`, pinned) and replaces the lib folder. Either way it backs
-   up, restarts the service once, checks health and rolls back on failure.
-7. **Report** (agent 4). A PDF per run for the change board: the fix and its
+   up, restarts the service once and checks health. On a failure it leaves the
+   backup in place and reports `outcome: failed`.
+   **Rollback route.** AO has no "on failure" edge, so an outcome switch after
+   the run reads that report: a failed site goes to `App Patch v2 - Rollback`,
+   which restores the backup (each old jar, or the whole lib folder), restarts
+   and checks `/health` on the original jars.
+7. **Notify** (AO and agent 4). Every route ends in a Mattermost card through
+   `App Patch v2 - Notify Mattermost` (patched, rolled back, or pod test
+   failed), on the lab's channel with the lab's `Mattermost` credential. And a
+   PDF per run for the change board: the fix and its
    CVEs, each site's outcome, the commit and provenance. Linked from the
    Report card under the table; files in `REPORTS_DIR` (default `reports/`).
 8. **Results** (agent 5). An app's BOM moves to the new version only when
@@ -566,7 +577,7 @@ Applications v1's remediation plan, `/api/v2/plan/preview`).
 | Still open | the fix being applied leaves advisories open on its own library | no: information |
 
 Each row has a Reasoning line from the app history store and the LLM. Ticked rows (before **Prepare remediation**)
-join that app's change: one playbook per app, one backup, one restart, one health check and one rollback. The
+join that app's change: one playbook per app, one backup, one restart, one health check and one rollback route. The
 commit job checks each jar (cosign for Lightwell builds, sha1 for upstream ones).
 
 #### Build and test: Swap libraries or Rebuild from source

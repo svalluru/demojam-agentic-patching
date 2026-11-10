@@ -1,6 +1,6 @@
 {
   "name": "App Patch v2",
-  "description": "Applications v2: check every jar in the change (cosign for Lightwell builds, Maven Central sha1 for upstream) and commit the generated playbook to Gitea, test the change in a pod on OpenShift Pipelines, hold LIVE sites at an approval gate, then have AAP sync the playbooks project and run that exact playbook (checked by sha256, pinned to the checksums the pod test verified). Triggered by the console once per site; the lab goes straight through.",
+  "description": "Applications v2: check every jar in the change (cosign for Lightwell builds, Maven Central sha1 for upstream) and commit the generated playbook to Gitea, test the change in a pod on OpenShift Pipelines (a failed test notifies Mattermost and stops before any site), hold LIVE sites at an approval gate, then have AAP sync the playbooks project and run that exact playbook (checked by sha256, pinned to the checksums the pod test verified). A site that fails takes the rollback route (AAP: App Patch v2 - Rollback restores the backup and checks /health); every outcome posts a Mattermost card. Triggered by the console once per site; the lab goes straight through.",
   "schema_version": "2.0.0",
   "triggers": [
     {
@@ -117,6 +117,26 @@
               "type": "string",
               "default": "",
               "description": "The Nexus the source build resolves through"
+            },
+            "site": {
+              "type": "string",
+              "default": "",
+              "description": "The site name (lab, edge-site-1, core-dc-1), for the notifications"
+            },
+            "domain": {
+              "type": "string",
+              "default": "",
+              "description": "The telco domain of the app, for the notifications"
+            },
+            "change_summary": {
+              "type": "string",
+              "default": "",
+              "description": "One line: every library change in this run, for the notifications"
+            },
+            "cves": {
+              "type": "string",
+              "default": "",
+              "description": "The CVEs this run fixes, comma separated, for the notifications"
             }
           }
         }
@@ -129,7 +149,7 @@
       "name": "Verify Build & Commit to Gitea",
       "type": "aap_job_template",
       "position": {
-        "x": 360,
+        "x": 240,
         "y": 300
       },
       "settings": {
@@ -163,7 +183,7 @@
       "name": "Test in a Pod (OpenShift Pipelines)",
       "type": "aap_job_template",
       "position": {
-        "x": 560,
+        "x": 520,
         "y": 300
       },
       "settings": {
@@ -201,7 +221,7 @@
       "name": "Route by environment",
       "type": "switch",
       "position": {
-        "x": 920,
+        "x": 1080,
         "y": 300
       },
       "parameters": {
@@ -225,7 +245,7 @@
       "name": "Sync & Run (QA)",
       "type": "aap_job_template",
       "position": {
-        "x": 1280,
+        "x": 1360,
         "y": 120
       },
       "parameters": {
@@ -247,8 +267,8 @@
       "name": "Approve Production Patch",
       "type": "approval",
       "position": {
-        "x": 1280,
-        "y": 460
+        "x": 1360,
+        "y": 480
       },
       "parameters": {}
     },
@@ -258,7 +278,7 @@
       "type": "aap_job_template",
       "position": {
         "x": 1640,
-        "y": 460
+        "y": 480
       },
       "parameters": {
         "diff_mode": false,
@@ -273,6 +293,268 @@
         "job_template_name": "App Patch v2 - Sync and Run",
         "organization_name": "Default"
       }
+    },
+    {
+      "id": "test_switch",
+      "name": "Pod test passed?",
+      "type": "switch",
+      "position": {
+        "x": 800,
+        "y": 300
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Passed: to the sites",
+            "condition": "${test_in_pod.artifacts.test_outcome} == 'passed'"
+          },
+          {
+            "port": "case_1",
+            "label": "Failed: no site",
+            "condition": "${test_in_pod.artifacts.test_outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "notify_test_failed",
+      "name": "Notify Mattermost - Test Failed",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1080,
+        "y": 620
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "site": "${trigger.site}",
+          "target_host": "${trigger.host}",
+          "group": "${trigger.group}",
+          "run_id": "${trigger.run_id}",
+          "change_summary": "${trigger.change_summary}",
+          "cves": "${trigger.cves}",
+          "report_type": "test_failed",
+          "pipelinerun": "${test_in_pod.artifacts.pipelinerun}",
+          "reason": "${test_in_pod.artifacts.test_reason}"
+        }
+      }
+    },
+    {
+      "id": "outcome_switch",
+      "name": "Patched or failed? (QA)",
+      "type": "switch",
+      "position": {
+        "x": 1640,
+        "y": 120
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Patched",
+            "condition": "${run_app_patch.artifacts.outcome} == 'patched'"
+          },
+          {
+            "port": "case_1",
+            "label": "Failed: roll back",
+            "condition": "${run_app_patch.artifacts.outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "notify_patched",
+      "name": "Notify Mattermost - Patched",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1920,
+        "y": 40
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "site": "${trigger.site}",
+          "target_host": "${trigger.host}",
+          "group": "${trigger.group}",
+          "run_id": "${trigger.run_id}",
+          "change_summary": "${trigger.change_summary}",
+          "cves": "${trigger.cves}",
+          "report_type": "patched",
+          "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
+          "job_id": "${run_app_patch.job_id}",
+          "job_url": "${run_app_patch.job_url}"
+        }
+      }
+    },
+    {
+      "id": "rollback",
+      "name": "Roll back (QA)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1920,
+        "y": 200
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Rollback",
+        "extra_vars": {
+          "target_hosts": "${trigger.host}",
+          "rollback_json": "${run_app_patch.artifacts.rollback_json}"
+        }
+      }
+    },
+    {
+      "id": "notify_rolled_back",
+      "name": "Notify Mattermost - Rolled back",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2200,
+        "y": 200
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "site": "${trigger.site}",
+          "target_host": "${trigger.host}",
+          "group": "${trigger.group}",
+          "run_id": "${trigger.run_id}",
+          "change_summary": "${trigger.change_summary}",
+          "cves": "${trigger.cves}",
+          "report_type": "rolled_back",
+          "failed_step": "${run_app_patch.artifacts.failed_step}",
+          "failed_reason": "${run_app_patch.artifacts.failed_reason}",
+          "restored": "${rollback.artifacts.restored}",
+          "job_id": "${rollback.job_id}",
+          "job_url": "${rollback.job_url}"
+        }
+      }
+    },
+    {
+      "id": "outcome_switch_prod",
+      "name": "Patched or failed? (Prod)",
+      "type": "switch",
+      "position": {
+        "x": 1920,
+        "y": 480
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Patched",
+            "condition": "${run_app_patch_prod.artifacts.outcome} == 'patched'"
+          },
+          {
+            "port": "case_1",
+            "label": "Failed: roll back",
+            "condition": "${run_app_patch_prod.artifacts.outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "notify_patched_prod",
+      "name": "Notify Mattermost - Patched (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2200,
+        "y": 400
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "site": "${trigger.site}",
+          "target_host": "${trigger.host}",
+          "group": "${trigger.group}",
+          "run_id": "${trigger.run_id}",
+          "change_summary": "${trigger.change_summary}",
+          "cves": "${trigger.cves}",
+          "report_type": "patched",
+          "playbook_filename": "${commit_to_gitea.artifacts.playbook_filename}",
+          "job_id": "${run_app_patch_prod.job_id}",
+          "job_url": "${run_app_patch_prod.job_url}",
+          "approved_by": "${approval_prod.decided_by}"
+        }
+      }
+    },
+    {
+      "id": "rollback_prod",
+      "name": "Roll back (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2200,
+        "y": 560
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Rollback",
+        "extra_vars": {
+          "target_hosts": "${trigger.host}",
+          "rollback_json": "${run_app_patch_prod.artifacts.rollback_json}"
+        }
+      }
+    },
+    {
+      "id": "notify_rolled_back_prod",
+      "name": "Notify Mattermost - Rolled back (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2480,
+        "y": 560
+      },
+      "parameters": {
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "site": "${trigger.site}",
+          "target_host": "${trigger.host}",
+          "group": "${trigger.group}",
+          "run_id": "${trigger.run_id}",
+          "change_summary": "${trigger.change_summary}",
+          "cves": "${trigger.cves}",
+          "report_type": "rolled_back",
+          "failed_step": "${run_app_patch_prod.artifacts.failed_step}",
+          "failed_reason": "${run_app_patch_prod.artifacts.failed_reason}",
+          "restored": "${rollback_prod.artifacts.restored}",
+          "job_id": "${rollback_prod.job_id}",
+          "job_url": "${rollback_prod.job_url}",
+          "approved_by": "${approval_prod.decided_by}"
+        }
+      }
     }
   ],
   "edges": [
@@ -286,7 +568,17 @@
     },
     {
       "from": "test_in_pod",
-      "to": "route_switch"
+      "to": "test_switch"
+    },
+    {
+      "from": "test_switch",
+      "to": "route_switch",
+      "from_port": "case_0"
+    },
+    {
+      "from": "test_switch",
+      "to": "notify_test_failed",
+      "from_port": "case_1"
     },
     {
       "from": "route_switch",
@@ -302,6 +594,42 @@
       "from": "approval_prod",
       "to": "run_app_patch_prod",
       "from_port": "approved"
+    },
+    {
+      "from": "run_app_patch",
+      "to": "outcome_switch"
+    },
+    {
+      "from": "outcome_switch",
+      "to": "notify_patched",
+      "from_port": "case_0"
+    },
+    {
+      "from": "outcome_switch",
+      "to": "rollback",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback",
+      "to": "notify_rolled_back"
+    },
+    {
+      "from": "run_app_patch_prod",
+      "to": "outcome_switch_prod"
+    },
+    {
+      "from": "outcome_switch_prod",
+      "to": "notify_patched_prod",
+      "from_port": "case_0"
+    },
+    {
+      "from": "outcome_switch_prod",
+      "to": "rollback_prod",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback_prod",
+      "to": "notify_rolled_back_prod"
     }
   ]
 }

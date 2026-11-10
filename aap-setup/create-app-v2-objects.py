@@ -60,6 +60,8 @@ SAMPLE_PB = 'aap-setup/playbooks/app_v2_deploy_sample.yml'
 RUN_PB = 'app_v2_run.yml'
 TEST_PB = 'aap-setup/playbooks/app_v2_test_pod.yml'
 SEED_PB = 'aap-setup/playbooks/app_v2_seed_repos.yml'
+ROLLBACK_PB = 'aap-setup/playbooks/app_v2_rollback.yml'
+NOTIFY_PB = 'aap-setup/playbooks/app_v2_notify.yml'
 # The class /health probes for each library: one copy, in appv2.py, which the test in a pod uses too.
 sys.path.insert(0, str(ROOT))
 from appv2 import PROBE_CLASS  # noqa: E402
@@ -96,7 +98,12 @@ N = {
     'ocp_cred': 'OpenShift Pipelines (App Patch v2)',
     'run_jt': 'App Patch v2 - Sync and Run',
     'sample_jt': 'App Patch v2 - Deploy Sample App',
+    'rollback_jt': 'App Patch v2 - Rollback',
+    'notify_jt': 'App Patch v2 - Notify Mattermost',
 }
+# The lab's Mattermost credential (mattermost_url, api_chat_token), the one the RHEL CVE workflow's notify template
+# uses. Attached to App Patch v2 - Notify Mattermost, never edited.
+LAB_MATTERMOST_CRED = 'Mattermost'
 LAB_FETCH_JT = 'CVE - Fetch and Commit'
 
 
@@ -169,7 +176,7 @@ def main():
         say(f'{label} successful')
 
     if args.delete:
-        for endpoint, key in (('/job_templates/', 'seed_jt'), ('/job_templates/', 'sample_jt'), ('/job_templates/', 'run_jt'), ('/job_templates/', 'commit_jt'),
+        for endpoint, key in (('/job_templates/', 'rollback_jt'), ('/job_templates/', 'notify_jt'), ('/job_templates/', 'seed_jt'), ('/job_templates/', 'sample_jt'), ('/job_templates/', 'run_jt'), ('/job_templates/', 'commit_jt'),
                               ('/job_templates/', 'test_jt'), ('/credentials/', 'ocp_cred'), ('/credential_types/', 'ocp_type'),
                               ('/credentials/', 'gitea_cred'), ('/credential_types/', 'gitea_type'),
                               ('/projects/', 'gitea_project'), ('/projects/', 'setup_project')):
@@ -285,6 +292,22 @@ def main():
         **common, 'name': N['sample_jt'], 'inventory': target_inv['id'], 'project': setup_id or 0, 'playbook': SAMPLE_PB,
         'description': 'Deploy the Applications v2 apps from app-data/bom'})
     attach(sample_id, machine['id'], machine['name'])
+
+    # The workflow's rollback route: puts a failed site back on its original jars (rollback_json from the failed run).
+    rollback_id = upsert('/job_templates/', N['rollback_jt'], {
+        **common, 'name': N['rollback_jt'], 'inventory': target_inv['id'], 'project': setup_id or 0,
+        'playbook': ROLLBACK_PB, 'description': 'Roll a site back to its original jars after a failed App Patch v2 run'})
+    attach(rollback_id, machine['id'], machine['name'])
+    # Every route ends in a Mattermost card, on the lab's channel, through the lab's credential.
+    mm = api.find('/credentials/', env('MATTERMOST_CREDENTIAL', LAB_MATTERMOST_CRED))
+    if mm:
+        notify_id = upsert('/job_templates/', N['notify_jt'], {
+            **common, 'name': N['notify_jt'], 'inventory': build_inv['id'], 'project': setup_id or 0,
+            'playbook': NOTIFY_PB, 'description': 'Post an App Patch v2 outcome (patched, rolled back, test failed) to Mattermost'})
+        attach(notify_id, mm['id'], f"the lab's {mm['name']} credential (reused, not edited)")
+    else:
+        say(f'no {LAB_MATTERMOST_CRED!r} credential in AAP: skipping {N["notify_jt"]}; the workflow\'s notify nodes will '
+            'fail until it exists (set MATTERMOST_CREDENTIAL to use another)')
 
     if not args.dry_run:
         listed = api.call('GET', f'/projects/{gitea_id}/playbooks/')

@@ -97,6 +97,13 @@ read.
 | App Patch v2 - Sync and Run | `app_v2_run.yml` (in the Gitea playbooks repo) | run the approved playbook, checked by sha256 |
 | App Patch v2 - Deploy Sample App | `playbooks/app_v2_deploy_sample.yml` | deploy each app in `app-data/bom` to its servers (`--deploy-sample`) |
 | App Patch v2 - Seed App Repos | `playbooks/app_v2_seed_repos.yml` | commit each app's Maven source to the lab Gitea (`--seed-repos`) |
+| App Patch v2 - Rollback | `playbooks/app_v2_rollback.yml` | the workflow's rollback route: restore a failed site's backup (`rollback_json` from its run), restart, check `/health` on the original jars |
+| App Patch v2 - Notify Mattermost | `playbooks/app_v2_notify.yml` | post the outcome card (patched, rolled back, test failed); uses the lab's `Mattermost` credential, attached and not edited (`MATTERMOST_CREDENTIAL` to use another) |
+
+The workflow routes on what the jobs report, because AO has no "on failure" edge: the test job reports
+`test_outcome` (passed / failed) and the generated playbook reports `outcome` (patched / failed) with
+`rollback_json`; switch nodes after each pick the next job. A tampered playbook (sha256 mismatch in
+`app_v2_run.yml`) still fails the job and stops the workflow: that is not a rollback case.
 
 The Test in a Pod template carries an "OpenShift API (App Patch v2)" credential holding `APPV2_PIPELINE_TOKEN`
 (from `pipelines-setup/deploy.sh`); the commit, test and seed templates reuse the lab's Gitea API credential.

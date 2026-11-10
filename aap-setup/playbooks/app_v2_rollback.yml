@@ -1,0 +1,119 @@
+---
+# Applications v2: put a site back the way it was after its patch failed. Job template "App Patch v2 - Rollback"
+# (aap-setup/create-app-v2-objects.py), the App Patch v2 workflow's rollback route: when a site's run reports
+# outcome: failed, the workflow's outcome switch sends it here instead of to the "patched" notification.
+#
+# The generated playbook changes nothing in its rescue: it keeps the backup it took and reports what this job needs,
+# rollback_json:
+#   {mode: swap,   lib_dir, backup_dir, service, health_url, restore: [{old_jar, new_jar, ...}]}
+#   {mode: source, lib_dir, backup_dir, service, health_url}      backup_dir is the whole lib folder, backed up
+# Swap: each old jar is copied back from the backup and the new jar removed. Source: the backed-up folder replaces
+# lib. Then one restart and a health check. Fails only if the original state cannot be brought back, which is the
+# case a person must hear about.
+#
+# Variables (from the AO workflow): target_hosts, rollback_json (JSON text, or already a mapping).
+# Reports with set_stats: rolled_back, rollback_health, restored.
+- name: App Patch v2 - roll the site back to its original state
+  hosts: "{{ target_hosts }}"
+  become: true
+  gather_facts: false
+  vars:
+    rb: "{{ rollback_json if rollback_json is mapping else (rollback_json | from_json) }}"
+    restore: "{{ rb.restore | default([]) }}"
+  tasks:
+    - name: Check what the failed run handed over
+      ansible.builtin.assert:
+        that:
+          - rb.lib_dir | default('') | length > 0
+          - rb.backup_dir | default('') | length > 0
+          - rb.service | default('') | length > 0
+          - rb.mode | default('swap') in ['swap', 'source']
+        fail_msg: rollback_json from the failed run is missing lib_dir, backup_dir or service.
+
+    # ---- Swap libraries: jar by jar
+    - name: Find each backed-up jar
+      ansible.builtin.stat:
+        path: "{{ rb.backup_dir }}/{{ item.old_jar }}"
+      loop: "{{ restore }}"
+      loop_control: { label: "{{ item.old_jar }}" }
+      register: backups
+      when: rb.mode | default('swap') == 'swap'
+
+    - name: Put each old jar back
+      ansible.builtin.copy:
+        src: "{{ rb.backup_dir }}/{{ item.item.old_jar }}"
+        dest: "{{ rb.lib_dir }}/{{ item.item.old_jar }}"
+        remote_src: true
+        mode: "0644"
+      loop: "{{ backups.results | default([]) }}"
+      loop_control: { label: "{{ item.item.old_jar | default('') }}" }
+      when: rb.mode | default('swap') == 'swap' and item.stat.exists | default(false)
+
+    - name: Remove each new jar
+      ansible.builtin.file:
+        path: "{{ rb.lib_dir }}/{{ item.new_jar }}"
+        state: absent
+      loop: "{{ restore }}"
+      loop_control: { label: "{{ item.new_jar }}" }
+      when: rb.mode | default('swap') == 'swap' and item.new_jar != item.old_jar
+
+    # ---- Rebuild from source: the whole lib folder
+    - name: Find the backed-up lib folder
+      ansible.builtin.stat:
+        path: "{{ rb.backup_dir }}"
+      register: backup_folder
+      when: rb.mode == 'source'
+
+    - name: Replace lib with the backed-up folder
+      when: rb.mode == 'source' and backup_folder.stat.exists | default(false)
+      block:
+        - name: Remove the half-deployed lib folder
+          ansible.builtin.file:
+            path: "{{ rb.lib_dir }}"
+            state: absent
+
+        - name: Copy the backed-up folder back
+          ansible.builtin.copy:
+            src: "{{ rb.backup_dir }}/"
+            dest: "{{ rb.lib_dir }}/"
+            remote_src: true
+            mode: preserve
+
+    # ---- Both: one restart, and proof it is back
+    - name: Restart the service on the original libraries
+      ansible.builtin.systemd_service:
+        name: "{{ rb.service }}"
+        state: restarted
+
+    - name: Check it is healthy again
+      ansible.builtin.uri:
+        url: "{{ rb.health_url }}"
+        status_code: 200
+        return_content: true
+      register: health
+      until: health.status == 200
+      retries: 12
+      delay: 5
+
+    - name: Check the original jars are the ones on disk
+      ansible.builtin.stat:
+        path: "{{ rb.lib_dir }}/{{ item.old_jar }}"
+      loop: "{{ restore }}"
+      loop_control: { label: "{{ item.old_jar }}" }
+      register: originals
+      when: rb.mode | default('swap') == 'swap'
+
+    - name: Every original jar is back
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "{{ item.item.old_jar }} is not back in {{ rb.lib_dir }}: restore it by hand"
+      loop: "{{ originals.results | default([]) }}"
+      loop_control: { label: "{{ item.item.old_jar | default('') }}" }
+      when: rb.mode | default('swap') == 'swap'
+
+    - name: Report the rollback
+      ansible.builtin.set_stats:
+        data:
+          rolled_back: true
+          restored: "{{ (restore | map(attribute='old_jar') | list | join(', ')) if rb.mode | default('swap') == 'swap' else 'the previous lib folder' }}"
+          rollback_health: "{{ (health.json | default(health.content | default(''))) | to_json | truncate(500) }}"

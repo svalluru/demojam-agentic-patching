@@ -2866,11 +2866,14 @@
                 person, who sees the exact commit and what the pod test proved. The health check on the server names
                 the jar it loaded: that is evidence of the patch, not just of a restart.”</span></div>
               <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes);
-                otherwise reject it and say why. Then the <strong>Report</strong> and <strong>Feedback</strong>
-                cards.</span></div>
-              <div class="g-say"><b>Say</b><span>“A PDF for the change board, and the outcome goes back into the
-                history the next run's reasoning reads. Patch it once and the system knows more the next
-                time.”</span></div>
+                otherwise reject it and say why. Point at <strong>Notify ✓</strong> on each site, then the
+                Mattermost channel, then the <strong>Report</strong> and <strong>Feedback</strong> cards.</span></div>
+              <div class="g-say"><b>Say</b><span>“Every site ends in a card on the team's channel, the same one the
+                RHEL workflow posts to, and a PDF for the change board. The outcome goes back into the history the
+                next run's reasoning reads. Patch it once and the system knows more the next time.”</span></div>
+              <div class="g-why">If a site fails its health check, its row reads Verify ✗, Roll back ✓, Notify ✓:
+                the revert is its own route in the AO workflow, an AAP job you can open, not something hidden
+                inside the playbook. (In demo mode edge-site-1 is staged to do exactly that.)</div>
             </div>
           </div>
         </section>
@@ -2890,8 +2893,10 @@
             source</strong> goes further: it clones the app's Gitea repo, updates pom.xml and runs mvn package, so
             an API break fails the build, and pushes a <code>fix/</code> branch.</span></div>
           <div class="g-qa"><b>“What if a site fails halfway?”</b>
-            <span>The playbook rolls that site back on its own (backup, restore, restart) and the run says so. Cancel
-            run stops everything else and checks each site the playbook reached.</span></div>
+            <span>The playbook keeps its backup and reports the failure, and the AO workflow takes its rollback
+            route: an AAP job restores the backup, restarts and checks <code>/health</code> on the original jars,
+            then a red card goes to Mattermost. AO has no “on failure” edge, so the route is a switch on what the
+            run reported. Cancel run stops everything else and checks each site the playbook reached.</span></div>
           <div class="g-qa"><b>“Why trust an LLM to write a playbook?”</b>
             <span>You do not have to: four checks stand between its draft and a host, and a draft that fails the
             first one is replaced by a checked template.</span></div>
@@ -3777,9 +3782,9 @@ const APPV2_STAGES = [
   { key: 'remediate', label: 'Remediate', icon: ICON.patch,
     tip: 'AAP runs the playbook: fetch the jars (or the built bundle) from Nexus, pinned to the verified checksums, install them, restart the service once.' },
   { key: 'verify',    label: 'Verify',    icon: ICON.shield,
-    tip: 'Health check and the new jars on each site. A failure rolls that site back to the old ones.' },
-  { key: 'report',    label: 'Report',    icon: ICON.doc,
-    tip: 'The Report agent writes the PDF status report for the change board once every selected site has settled.' },
+    tip: 'Health check and the new jars on each site. A failure takes the workflow\'s rollback route: AAP (App Patch v2 - Rollback) restores the backup and checks /health.' },
+  { key: 'report',    label: 'Notify',    icon: ICON.doc,
+    tip: 'Two ways out: every site\'s route in AO ends in a Mattermost card (patched, rolled back, or pod test failed, through AAP: App Patch v2 - Notify Mattermost), and the Report agent writes the PDF status report for the change board once every selected site has settled.' },
   { key: 'learn',     label: 'Learn',     icon: ICON.pulse,
     tip: 'Apps whose servers are all patched get the new version in their BOM, so the next event sees it.' },
 ];
@@ -3922,16 +3927,20 @@ function v2Badge(h) {
 // A site's run as labelled chips: done, running, waiting (the approval gate) or failed. Steps that do not apply to
 // the site (approval on a lab site) or never ran (after a rollback or a rejection) are left out; pending ones show
 // plain so the road ahead is visible.
-const STEP_LABEL = { commit: 'Commit', test: 'Test', approval: 'Approve', sync: 'Sync', remediate: 'Patch', verify: 'Verify' };
+const STEP_LABEL = { commit: 'Commit', test: 'Test', approval: 'Approve', sync: 'Sync', remediate: 'Patch', verify: 'Verify',
+                     rollback: 'Roll back', notify: 'Notify' };
 const STEP_HELP = {
   commit: 'Every jar checked (cosign / Maven Central) and the playbook committed to Gitea',
   test: 'Test in a pod: OpenShift Pipelines builds the app with the change and checks /health',
   approval: 'The approval gate for a LIVE site', sync: 'AAP syncs the playbooks project',
-  remediate: 'AAP runs the approved playbook on the server', verify: 'The health check names the new jar' };
+  remediate: 'AAP runs the approved playbook on the server', verify: 'The health check names the new jar',
+  rollback: 'The workflow\'s rollback route: AAP (App Patch v2 - Rollback) restores the backup and checks /health',
+  notify: 'The Mattermost card that ends this site\'s route (patched, rolled back or test failed)' };
 function v2StepChips(h, keys) {
   if (h.outcome === 'skipped') return '';                       // the Status column says so
   const st = h.steps || {};
-  return `<span class="v2-steps">${keys.filter(k => st[k] !== 'skipped').map(k => {
+  // Roll back only appears when the route took it.
+  return `<span class="v2-steps">${keys.filter(k => st[k] !== 'skipped' && (k !== 'rollback' || st[k])).map(k => {
     const v = st[k] || 'pending';
     return `<span class="${esc(v)}" title="${esc(STEP_HELP[k])}: ${esc(v)}">${esc(STEP_LABEL[k])}</span>`;
   }).join('')}</span>`;
@@ -4162,7 +4171,7 @@ function v2Run(s, readOnly) {
     const canPick = x => pick && (!prepared || prepared.has(x.key));
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
     const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
-    const STEP_KEYS = ['commit', 'test', 'approval', 'sync', 'remediate', 'verify'];
+    const STEP_KEYS = ['commit', 'test', 'approval', 'sync', 'remediate', 'verify', 'rollback', 'notify'];
     out.push(`<div class="v2-sec"><h3>1 · Sites</h3>`
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
@@ -4910,6 +4919,7 @@ const V2_NODES = [
   { id: 'aap',       x: 52,  y: 310, w: 164, h: 38, ext: 1, t: 'RED HAT AAP', s: 'sync & run the playbook' },
   { id: 'servers',   x: 229, y: 312, w: 98,  h: 20, ext: 1, mid: 1, t: 'TELCO SITES' },
   { id: 'pipelines', x: 229, y: 336, w: 98,  h: 20, ext: 1, mid: 1, t: 'OCP PIPELINES' },
+  { id: 'mattermost', x: 229, y: 362, w: 98, h: 20, ext: 1, mid: 1, t: 'MATTERMOST' },
   { id: 'report',    x: 52,  y: 366, w: 164, h: 36, t: '4 · REPORT AGENT', s: 'PDF status report per run' },
   { id: 'results',   x: 52,  y: 414, w: 164, h: 36, t: '5 · RESULTS AGENT', s: 'BOM write-back · history → RAG' },
 ];
@@ -4934,6 +4944,7 @@ const V2_EDGES = [
   { id: 'aap>ao',  d: 'M150,310 L150,305' },
   { id: 'aap>srv', d: 'M216,322 L226,322' },
   { id: 'aap>pip', d: 'M216,340 L222,340 L222,346 L226,346' },
+  { id: 'aap>mm',  d: 'M200,348 L200,358 L224,358 L224,372 L226,372' },
   { id: 'ao>con',  d: 'M216,290 L356,290 L356,26 L333,26' },
   { id: 'aap>rep', d: 'M134,348 L134,361' },
   { id: 'rep>res', d: 'M134,402 L134,409' },
@@ -4948,6 +4959,7 @@ const V2_EDGE_FOR = {
   'console>ao': 'con>ao', 'ao>gitea': 'ao>git', 'ao>aap': 'ao>aap', 'aap>ao': 'aap>ao',
   'aap>servers': 'aap>srv', 'inventory>console': 'ao>con',
   'inventory>osv': 'inv>osv', 'osv>inventory': 'inv>osv', 'aap>pipelines': 'aap>pip', 'pipelines>aap': 'aap>pip',
+  'aap>mattermost': 'aap>mm',
   'aap>report': 'aap>rep', 'report>results': 'rep>res', 'results>inventory': 'res>inv', 'report>console': 'rep>con',
 };
 const V2_ARCH = {
@@ -8526,8 +8538,8 @@ const FLOW_APPV2 = {
     { c: 4, t: '4 · COMMIT + TEST', k: 'AO WORKFLOW', k2: 'AAP JOBS', cls: 'rh', ext: 1 },
     { c: 5, t: '5 · APPROVAL', k: 'YOU', k2: 'PROD ONLY', cls: 'gate' },
     { c: 6, t: '6 · SYNC & RUN', k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh', ext: 1 },
-    { c: 7, t: 'VERIFY',       k: 'THE PLAYBOOK', k2: 'ITSELF', cls: 'rh', ext: 1 },
-    { c: 8, t: 'REPORT · LEARN', k: 'AGENTS', k2: 'PDF · BOM · HISTORY', cls: 'ag' },
+    { c: 7, t: 'VERIFY · ROLL BACK', k: 'AO SWITCH', k2: 'AAP JOB', cls: 'rh', ext: 1 },
+    { c: 8, t: 'NOTIFY · LEARN', k: 'AGENTS · AAP', k2: 'PDF · MATTERMOST', cls: 'ag' },
 
     { c: 0, lane: 1, cls: 'svc', t: 'NEXUS', s: 'proxy of Lightwell' },
     { c: 1, lane: 1, cls: 'svc rh', t: 'LIGHTWELL API', s: 'advisories · package_versions' },
@@ -8538,6 +8550,7 @@ const FLOW_APPV2 = {
     { c: 6, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
       s: 'Ansible Automation Platform' },
     { c: 7, lane: 1, cls: 'svc rh', t: 'RHEL', s: 'the app servers' },
+    { c: 8, lane: 1, cls: 'svc', t: 'MATTERMOST', s: 'a card per site' },
   ],
   groups: [],
   edges: [
@@ -8579,16 +8592,20 @@ const FLOW_APPV2 = {
       'The jars (or the built bundle) come from Nexus, pinned to the checksums the test verified; the old ones are '
       + 'backed up, the service restarted once.'),
     down(7, '15', 'RHEL', 'Verify',
-      'Health URL and the new jars on the server. A failure restores the old ones and fails the run.'),
-    hop(7, 8, '16', 'Verify', 'Report · Learn',
+      'Health URL and the new jars. A failure keeps the backup; AO switches to its rollback route, an AAP job '
+      + 'that restores it.'),
+    hop(7, 8, '16', 'Verify', 'Notify · Learn',
       'A PDF report per run; an app’s BOM moves to the new versions once every selected site is patched, and each '
       + 'outcome goes into the app history.'),
+    up(8, '17', 'Notify', 'Mattermost',
+      'Every route in the workflow ends in a card through AAP: patched, rolled back, or pod test failed (and then no '
+      + 'site was touched).'),
   ],
   caps: [
     '<strong>The event comes to the console, not the other way round.</strong> A '
     + 'Lightwell build arriving in Nexus starts the run, and three agents decide '
     + 'what it means: which CVEs it fixes, which sites run the version it '
-    + 'replaces, and what to do on them. Everything from step 9 to 15 is an '
+    + 'replaces, and what to do on them. Everything from step 9 to 15, and the card at 17, is an '
     + 'Automation Orchestrator workflow driving AAP — the console never touches '
     + 'git or a server.',
     'Four checks stand between an LLM-written playbook and a host: the checks at '

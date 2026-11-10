@@ -43,6 +43,10 @@ STAGES = ('intake', 'impact', 'generate', 'commit', 'test', 'approval', 'sync', 
 # verify result: the playbook checks health and checksum itself and rolls back on failure.
 NODE_COMMIT, NODE_APPROVAL, NODE_TEST = 'commit_to_gitea', 'approval_prod', 'test_in_pod'
 NODES_RUN = ('run_app_patch', 'run_app_patch_prod')
+# The rollback route (a site whose run reported outcome: failed) and the Mattermost card that ends every route.
+NODES_ROLLBACK = ('rollback', 'rollback_prod')
+NODES_NOTIFY = ('notify_patched', 'notify_patched_prod', 'notify_rolled_back', 'notify_rolled_back_prod',
+                'notify_test_failed')
 
 RHLW = re.compile(r'^(?P<upstream>.+?)\.rhlw-(?P<build>\d+)(?:-n\d+)?$')
 
@@ -865,7 +869,8 @@ def change_for_extra(row: dict, option: int | None = None) -> dict:
 def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -> str:
     """The template. Also what the LLM is shown as the shape to follow, and the fallback when its
     draft does not pass check_playbook(). One play per app swaps every jar in its change list together: one
-    backup, one restart, one health check, and a rollback of all of them if anything fails."""
+    backup, one restart, one health check. If anything fails, the rescue keeps the backup and reports what the
+    rollback route needs (rollback_json); the App Patch v2 workflow then runs "App Patch v2 - Rollback"."""
     changes = changes or [change_for_event(event, app)]
     swaps = '\n'.join(f'      - {{old_jar: {c["old_jar"]}, new_jar: {c["new_jar"]}, url: "{c["url"]}"}}' for c in changes)
     what = '; '.join(f"{c['artifact']} {c['from']} -> {c['to']} ({'Lightwell' if c['source'] == 'lightwell' else 'upstream'})"
@@ -949,40 +954,23 @@ def render_playbook(event: dict, app: dict, changes: list[dict] | None = None) -
         - name: Report patched
           ansible.builtin.set_stats:
             data:
+              outcome: patched
               patched: true
               rolled_back: false
               version: "{{{{ swaps | map(attribute='new_jar') | join(', ') }}}}"
+      # Nothing is restored here: the backup stays where it is and the App Patch v2 workflow takes its rollback
+      # route (AAP job "App Patch v2 - Rollback") with what this reports.
       rescue:
-        - name: Roll back to the old jars
-          ansible.builtin.copy:
-            src: "{{{{ backup_dir }}}}/{{{{ item.item.old_jar }}}}"
-            dest: "{{{{ lib_dir }}}}/{{{{ item.item.old_jar }}}}"
-            remote_src: true
-            mode: "0644"
-          loop: "{{{{ old_stats.results | default([]) }}}}"
-          when: item.stat.exists | default(false)
-
-        - name: Remove the new jars
-          ansible.builtin.file:
-            path: "{{{{ lib_dir }}}}/{{{{ item.new_jar }}}}"
-            state: absent
-          loop: "{{{{ swaps }}}}"
-
-        - name: Restart the service on the old jars
-          ansible.builtin.systemd_service:
-            name: "{{{{ service }}}}"
-            state: restarted
-
-        - name: Report rolled back
+        - name: Hand the failure to the rollback route
           ansible.builtin.set_stats:
             data:
+              outcome: failed
               patched: false
-              rolled_back: true
-              version: "{{{{ swaps | map(attribute='old_jar') | join(', ') }}}}"
-
-        - name: Fail the run so the workflow records it
-          ansible.builtin.fail:
-            msg: "Health check failed after the swap; the old jars were restored."
+              rolled_back: false
+              failed_step: "{{{{ ansible_failed_task.name | default('unknown') }}}}"
+              failed_reason: "{{{{ ansible_failed_result.msg | default('') | string | truncate(200) }}}}"
+              rollback_json: "{{{{ {{'mode': 'swap', 'lib_dir': lib_dir, 'backup_dir': backup_dir, 'service': service,
+                                  'health_url': health_url, 'restore': swaps}} | to_json }}}}"
 """
 
 
@@ -999,8 +987,8 @@ def bundle_url(app_name: str, run_id: str) -> str:
 def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: str) -> str:
     """Rebuild from source: deploy the app as Maven built it. The bundle (every resolved jar plus the app's own) is
     downloaded pinned to the checksum the pipeline reported, the current lib folder is backed up whole and replaced,
-    the service restarts once, and the changed libraries' jars must be in the new folder. Rescue puts the old folder
-    back."""
+    the service restarts once, and the changed libraries' jars must be in the new folder. On failure the rescue keeps
+    the backed-up folder and hands over to the workflow's rollback route."""
     what = '; '.join(f"{c['artifact']} {c['from']} -> {c['to']}" for c in changes)
     expect = '\n'.join(f'      - {c["new_jar"]}' for c in changes)
     name = bundle_name(app['app'], run_id)
@@ -1092,37 +1080,23 @@ def render_bundle_playbook(event: dict, app: dict, changes: list[dict], run_id: 
         - name: Report patched
           ansible.builtin.set_stats:
             data:
+              outcome: patched
               patched: true
               rolled_back: false
               version: "{{{{ expect_jars | join(', ') }}}}"
+      # Nothing is restored here: the backed-up lib folder stays where it is and the App Patch v2 workflow takes
+      # its rollback route (AAP job "App Patch v2 - Rollback") with what this reports.
       rescue:
-        - name: Remove the half-deployed libraries
-          ansible.builtin.file:
-            path: "{{{{ lib_dir }}}}"
-            state: absent
-
-        - name: Roll back to the backed-up libraries
-          ansible.builtin.copy:
-            src: "{{{{ backup_dir }}}}/"
-            dest: "{{{{ lib_dir }}}}/"
-            remote_src: true
-            mode: preserve
-
-        - name: Restart the service on the old libraries
-          ansible.builtin.systemd_service:
-            name: "{{{{ service }}}}"
-            state: restarted
-
-        - name: Report rolled back
+        - name: Hand the failure to the rollback route
           ansible.builtin.set_stats:
             data:
+              outcome: failed
               patched: false
-              rolled_back: true
-              version: previous libraries
-
-        - name: Fail the run so the workflow records it
-          ansible.builtin.fail:
-            msg: "Health check failed after deploying the rebuilt app; the previous libraries were restored."
+              rolled_back: false
+              failed_step: "{{{{ ansible_failed_task.name | default('unknown') }}}}"
+              failed_reason: "{{{{ ansible_failed_result.msg | default('') | string | truncate(200) }}}}"
+              rollback_json: "{{{{ {{'mode': 'source', 'lib_dir': lib_dir, 'backup_dir': backup_dir, 'service': service,
+                                  'health_url': health_url, 'restore': []}} | to_json }}}}"
 """
 
 
@@ -1184,6 +1158,7 @@ def check_playbook(text: str, template: str | None = None) -> list[dict]:
     low = text.lower()
     missing = [v for v in (pinned_vars(template) if template else []) if v not in [l.strip() for l in text.splitlines()]]
     shape_ok, shape_why = structure_ok(text)
+    rescue_ok, rescue_why = rescue_hands_over(text)
     checks = [
         {'id': 'structure', 'label': 'Block and rescue nested correctly', 'ok': shape_ok, 'detail': shape_why},
         {'id': 'play', 'label': 'A play for the target hosts',
@@ -1200,12 +1175,32 @@ def check_playbook(text: str, template: str | None = None) -> list[dict]:
          'ok': 'ansible.builtin.get_url' in modules and 'checksum: "sha256:' in text, 'detail': ''},
         {'id': 'verify', 'label': 'Health check and checksum verified',
          'ok': 'ansible.builtin.uri' in modules and 'ansible.builtin.assert' in modules, 'detail': ''},
-        {'id': 'rollback', 'label': 'Rolls back on failure',
-         'ok': re.search(r'^\s+rescue:\s*$', text, re.M) is not None and 'backup' in low, 'detail': ''},
-        {'id': 'report', 'label': 'Reports patched / rolled_back',
-         'ok': 'ansible.builtin.set_stats' in modules and 'patched:' in text and 'rolled_back:' in text, 'detail': ''},
+        {'id': 'rollback', 'label': 'Hands failure to the rollback route',
+         'ok': rescue_ok, 'detail': rescue_why},
+        {'id': 'report', 'label': 'Reports the outcome (patched / failed)',
+         'ok': 'ansible.builtin.set_stats' in modules and 'outcome: patched' in text and 'patched:' in text, 'detail': ''},
     ]
     return checks
+
+
+def rescue_hands_over(text: str) -> tuple[bool, str]:
+    """The rescue must leave the server for the workflow's rollback route: keep the backup, change nothing, and report
+    outcome: failed with the rollback_json the Rollback job reads. A rescue that restores or restarts on its own would
+    race the rollback job, so it fails this check."""
+    m = re.search(r'^(\s+)rescue:\s*$', text, re.M)
+    if not m:
+        return False, 'no rescue: block'
+    rescue = text[m.end():]
+    nxt = re.search(r'^\s{0,%d}\S' % len(m.group(1)), rescue, re.M)        # the end of the rescue list
+    rescue = rescue[:nxt.start()] if nxt else rescue
+    acting = [mod for mod in ('ansible.builtin.copy', 'ansible.builtin.file', 'ansible.builtin.systemd_service',
+                              'ansible.builtin.get_url', 'ansible.builtin.unarchive') if mod in rescue]
+    if acting:
+        return False, 'the rescue changes the server itself (' + ', '.join(m_.split('.')[-1] for m_ in acting) + \
+            '); the rollback route does that'
+    if 'outcome: failed' not in rescue or 'rollback_json' not in rescue:
+        return False, 'the rescue must report outcome: failed and rollback_json'
+    return True, ''
 
 
 def _split_play(template: str) -> tuple[str, str]:
@@ -1245,8 +1240,10 @@ def draft_playbook(event: dict, app: dict, changes: list[dict] | None = None) ->
               'and no vars, which are supplied. Return a YAML list of tasks starting with "- name:". They must do '
               'what these example tasks do, using the same variables: for every entry in swaps (loop over it), '
               'download the new jar with its pinned sha256 from jar_sha256s, back up and remove the old jar; restart '
-              'the service once; verify health and every checksum; report patched / rolled_back with set_stats; and '
-              'roll back every jar in a rescue block. Use only these modules: '
+              'the service once; verify health and every checksum; report outcome: patched with set_stats; and in a '
+              'rescue block change NOTHING on the server: only report outcome: failed and rollback_json with '
+              'set_stats exactly as the example does (the workflow\'s rollback job restores the backup). Use only '
+              'these modules: '
               + ', '.join(sorted(ALLOWED_MODULES)) + '. Keep the example\'s shape exactly: ONE task with a '
               '"block:" list and a "rescue:" list, both keys indented the same, under the same "- name:", and the '
               'tasks inside each indented two spaces further. Two-space indentation throughout.'
@@ -1605,7 +1602,7 @@ PROBE_CLASS = {
     'avro': 'org.apache.avro.Schema',
 }
 
-HOST_STEPS = ('commit', 'test', 'approval', 'sync', 'remediate', 'verify')
+HOST_STEPS = ('commit', 'test', 'approval', 'sync', 'remediate', 'verify', 'rollback', 'notify')
 SKIPPED_STEPS = {k: 'skipped' for k in HOST_STEPS}
 
 
@@ -1767,16 +1764,34 @@ def _run_host_sim(h: dict, delay: float = 1.0) -> None:
         _roll_stages()
         H.demo_pause(delay)
         if step == 'verify' and h['key'] == DEMO_FAILING_KEY:
-            _host(key, steps={'verify': 'failed'}, outcome='rolled_back',
-                  detail='Health check failed after the swap (HTTP 503 for 60s); the old jar was restored and the service restarted.')
-            _trace('aap', 'ao', f'{_label(h)}: health check failed, rolled back')
+            # The playbook keeps the backup and reports outcome: failed; the workflow takes its rollback route.
+            _host(key, steps={'verify': 'failed', 'rollback': 'active'})
+            _trace('aap', 'ao', f'{_label(h)}: health check failed (outcome: failed)')
+            _trace('ao', 'aap', f'{_label(h)}: rollback route: restore the backup')
             _roll_stages()
+            H.demo_pause(delay)
+            pb = next((p for p in state().get('playbooks') or [] if p['app'] == h['app']), {})
+            olds = [c['old_jar'] for c in pb.get('changes') or []] or ['the original jar']
+            _host(key, steps={'rollback': 'done'}, outcome='rolled_back',
+                  detail=(f"Health check failed after the swap (HTTP 503 for 60s). Rolled back by the workflow "
+                          f"(AAP: App Patch v2 - Rollback): {', '.join(olds)} back, healthy."))
+            _notify_sim(h, 'rolled back')
             return
         _host(key, steps={step: 'done'})
     pb = next((p for p in state().get('playbooks') or [] if p['app'] == h['app']), {})
     jars = [c['new_jar'] for c in pb.get('changes') or []] or [jar_name(state()['event']['artifact'], state()['event']['version'])]
     _host(key, outcome='patched', detail=f"{h['service']} healthy on {', '.join(jars)}")
     _trace('aap', 'ao', f'{_label(h)}: patched and healthy')
+    _notify_sim(h, 'patched')
+
+
+def _notify_sim(h: dict, what: str) -> None:
+    """Demo: the Mattermost card that ends the site's route."""
+    _host(h['key'], steps={'notify': 'active'})
+    _roll_stages()
+    H.demo_pause(0.5)
+    _trace('aap', 'mattermost', f'{_label(h)}: {what} card posted')
+    _host(h['key'], steps={'notify': 'done'})
     _roll_stages()
 
 
@@ -2938,7 +2953,12 @@ def _dispatch_live() -> None:
                   'test_mode': st.get('test_mode', 'swap'),
                   'repo': next((b.get('repo', '') for b in load_bom() if b['app'] == h['app']), ''),
                   'changes_json': json.dumps(source_changes(h['app'], pb.get('changes') or [change_for_event(ev, h)])),
-                  'nexus_url': env('NEXUS_URL', '')}
+                  'nexus_url': env('NEXUS_URL', ''),
+                  # For the Mattermost cards.
+                  'site': h.get('site') or h['host'], 'domain': h.get('domain', ''),
+                  'change_summary': '; '.join(f"{c['artifact']} {c['from']} -> {c['to']}"
+                                              for c in pb.get('changes') or [change_for_event(ev, h)]),
+                  'cves': ', '.join(sorted({x for c in pb.get('changes') or [change_for_event(ev, h)] for x in c.get('cves') or []}))}
         try:
             created = H.ao_call('/api/v1/executions', 'POST', {
                 'workflow_id': wf, 'trigger_node_id': env('AO_APP_V2_TRIGGER_NODE', 'trigger_manual'),
@@ -3002,6 +3022,15 @@ def _follow_live(h: dict) -> None:
                 steps[step] = s
         if h['env'] == 'qa':
             steps['approval'] = 'skipped'
+        # The test job finishes either way; its test_outcome says how the test went (failed -> the test_failed card).
+        if _out(acts.get(NODE_TEST)).get('test_outcome') == 'failed':
+            steps['test'] = 'failed'
+        rb_node = next((acts[n] for n in NODES_ROLLBACK if n in acts and acts[n].get('started_at')), None)
+        if rb_node:
+            steps['rollback'] = AO_STATE.get(str(rb_node.get('status', '')).lower(), 'active')
+        nt = [acts[n] for n in NODES_NOTIFY if n in acts and acts[n].get('started_at')]
+        if nt:
+            steps['notify'] = AO_STATE.get(str(nt[0].get('status', '')).lower(), 'active')
         run_node = next((acts[n] for n in NODES_RUN if n in acts and acts[n].get('started_at')), None)
         verify = _out(run_node)
         run_state = steps.get('sync')
@@ -3020,6 +3049,10 @@ def _follow_live(h: dict) -> None:
         if steps.get('sync') in ('active', 'done'):
             hop('sync', 'ao', 'aap', f'{_label(h)}: sync and run')
             hop('servers', 'aap', 'servers', f'{_label(h)}: swap the jar, restart {h.get("service", "")}')
+        if steps.get('rollback') in ('active', 'done', 'failed'):
+            hop('rollback', 'ao', 'aap', f'{_label(h)}: rollback route: restore the backup')
+        if steps.get('notify') in ('active', 'done'):
+            hop('notify', 'aap', 'mattermost', f'{_label(h)}: Mattermost card')
         commit = _out(acts.get(NODE_COMMIT))
         test = _out(acts.get(NODE_TEST))
         extra = {}
@@ -3046,7 +3079,16 @@ def _follow_live(h: dict) -> None:
         if status in ('completed', 'succeeded', 'failed', 'cancelled'):
             if verify.get('patched') in (True, 'true', 'True'):
                 outcome, detail = 'patched', f"healthy on {verify.get('version', '')}"
-            elif verify.get('rolled_back') in (True, 'true', 'True'):
+            elif rb_node:
+                rb = _out(rb_node)
+                why = f"{verify.get('failed_step') or 'the run failed'}: {verify.get('failed_reason') or ''}".strip(': ')
+                if steps.get('rollback') == 'done' and rb.get('rolled_back') in (True, 'true', 'True'):
+                    outcome, detail = 'rolled_back', (f"{why}. Rolled back by the workflow (AAP: App Patch v2 - Rollback): "
+                                                      f"{rb.get('restored') or 'the original jars'} back, healthy.")
+                else:
+                    outcome, detail = 'failed', (f"{why}. The rollback route did not finish: check the site and "
+                                                 f"restore its backup by hand. {str(ex.get('error_details') or '')[:200]}")
+            elif verify.get('rolled_back') in (True, 'true', 'True'):     # a playbook from before the rollback route
                 outcome, detail = 'rolled_back', 'health check failed after the swap; the old jars were restored'
             elif steps.get('test') == 'failed':
                 t = extra.get('test') or {}
