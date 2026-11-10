@@ -8005,6 +8005,15 @@ async function postSettings(payload) {
   // show the wrong estate entirely.
   cacheClear();
   loadCves(0);
+  // Applications v2 holds its own copy of the inbox, run, estate and catalog. The server dropped its side on a mode
+  // switch (appv2.reset), so drop the page's too and load the other mode's, or the old list stays on screen.
+  if ((d.changed || []).includes('MODE')) {
+    clearTimeout(v2.timer);
+    Object.assign(v2, { events: [], state: {}, view: 'inbox', sel: null, selRun: '', estate: null,
+                        catalog: null, runs: [], past: null, pipe: null });
+    v2Dispatched = false; roiOffer();
+    if (paneSide === 'appv2') await v2Load();
+  }
   return d.changed || [];
 }
 
