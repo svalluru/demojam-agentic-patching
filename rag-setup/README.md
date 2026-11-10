@@ -108,6 +108,13 @@ to run on every deploy or before a demo:
 **The store id changes when it rebuilds**, so re-read `VECTOR_DB_ID` from the
 output and update whatever consumes it.
 
+**The console does this itself** for both of its stores: the infra history
+(`patch_history`, from `data/`, `VECTOR_DB_ID`) and the Applications v2 app
+history (`app_patch_history`, from `../app-data/history/`, `APP_VECTOR_DB_ID`).
+It checks them at startup and whenever a search comes back empty or "not
+found", rebuilds a broken one with `ensure()`, switches to the new id and
+writes it to `.env`. Run `--ensure` by hand only for other consumers.
+
 The liveness probe is deliberately slack (`periodSeconds: 60`,
 `failureThreshold: 10` — ten minutes unresponsive before a kill) to make
 restarts rare. `/v1/health` shares the event loop with embedding work and can

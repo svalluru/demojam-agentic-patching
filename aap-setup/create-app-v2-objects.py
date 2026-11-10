@@ -6,10 +6,12 @@ templates and credentials are read, never changed.
     ./aap-setup/create-app-v2-objects.py --dry-run          show what would change
     ./aap-setup/create-app-v2-objects.py                    create or update
     ./aap-setup/create-app-v2-objects.py --deploy-sample    also deploy the BOM's apps to their hosts
+    ./aap-setup/create-app-v2-objects.py --seed-repos       also commit each BOM app with a "repo" to the lab Gitea
+                                                            (app_source.py), for Rebuild from source
     ./aap-setup/create-app-v2-objects.py --delete           remove what this script created
 
   project        App Patch v2 - Setup Playbooks     this repository (GITHUB_REPO_URL) on PROJECT_BRANCH_V2, for the
-                                                     commit and sample-app playbooks
+                                                     commit, test-in-a-pod, seed and deploy playbooks
   project        App Patch v2 Playbooks             the Gitea repository GITEA_REPO (default lab-user/app_v2_playbooks),
                                                      with the lab's Gitea source-control credential, synced on launch
   credential     Gitea (App Patch v2)               injects GITEA_URL / GITEA_USERNAME / GITEA_TOKEN for the commit job;
@@ -102,7 +104,7 @@ def main():
     ap = argparse.ArgumentParser(description='Create the AAP objects for Applications v2.')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--delete', action='store_true')
-    ap.add_argument('--deploy-sample', action='store_true', help='launch the sample-app deploy and wait for it')
+    ap.add_argument('--deploy-sample', action='store_true', help="deploy the BOM's apps to their servers and wait")
     ap.add_argument('--seed-repos', action='store_true',
                     help="commit each BOM app's Maven source (app_source.py) to its Gitea repository")
     args = ap.parse_args()
@@ -281,7 +283,7 @@ def main():
     attach(seed_id, gitea_cred_id, 'the Gitea credential')
     sample_id = upsert('/job_templates/', N['sample_jt'], {
         **common, 'name': N['sample_jt'], 'inventory': target_inv['id'], 'project': setup_id or 0, 'playbook': SAMPLE_PB,
-        'description': 'Deploy the Applications v2 sample app on log4j 2.24.3'})
+        'description': 'Deploy the Applications v2 apps from app-data/bom'})
     attach(sample_id, machine['id'], machine['name'])
 
     if not args.dry_run:

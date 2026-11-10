@@ -1,6 +1,6 @@
 {
   "name": "App Patch v2",
-  "description": "Applications v2: verify a Lightwell build's provenance and commit the generated playbook to Gitea, hold Prod at an approval gate, then have AAP sync the playbooks project and run that exact playbook (checked by sha256). Triggered by the console once per server; QA goes straight through.",
+  "description": "Applications v2: check every jar in the change (cosign for Lightwell builds, Maven Central sha1 for upstream) and commit the generated playbook to Gitea, test the change in a pod on OpenShift Pipelines, hold LIVE sites at an approval gate, then have AAP sync the playbooks project and run that exact playbook (checked by sha256, pinned to the checksums the pod test verified). Triggered by the console once per site; the lab goes straight through.",
   "schema_version": "2.0.0",
   "triggers": [
     {

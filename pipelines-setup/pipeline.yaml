@@ -1,4 +1,7 @@
-# Applications v2: "test in a pod". Started by AAP (job template "App Patch v2 - Test in a Pod",
+# Applications v2: two pipelines. app-v2-test (Swap libraries, below) and app-v2-build (Rebuild from source, the
+# second half of this file).
+#
+# app-v2-test, "test in a pod". Started by AAP (job template "App Patch v2 - Test in a Pod",
 # aap-setup/playbooks/app_v2_test_pod.yml) for each app in a run, after the commit job has checked every jar and
 # before the run reaches the approval gate or any site.
 #

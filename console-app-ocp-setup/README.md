@@ -1,5 +1,9 @@
 # Running the console on OpenShift
 
+Optional. The console normally runs on a laptop in live mode (see the main
+README, Applications v2 *Live setup*); deploy it here if you want it in the
+cluster, where it can also take the Nexus webhook directly.
+
 Builds the image and deploys the console as one pod, one container, with
 `.env` as the only source of configuration.
 
@@ -44,7 +48,7 @@ in step. These keys go to a Secret by an explicit allowlist:
 ```
 LIGHTSPEED_CLIENT_SECRET   AO_PASSWORD   AAP_TOKEN   VLLM_API_TOKEN
 LIGHTWELL_CLIENT_SECRET    LIGHTWELL_REGISTRY_TOKEN   NEXUS_WEBHOOK_SECRET
-NEXUS_ADMIN_PASSWORD       GITEA_TOKEN
+NEXUS_ADMIN_PASSWORD       GITEA_TOKEN                APPV2_PIPELINE_TOKEN
 ```
 
 Everything else goes to a ConfigMap. The list is written out rather than

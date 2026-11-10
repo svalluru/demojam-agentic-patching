@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Applications v2 "test in a pod": OpenShift Pipelines, the app-v2-test Pipeline, and the account AAP starts it with.
+# Applications v2 "test in a pod": OpenShift Pipelines, the app-v2-test and app-v2-build Pipelines, and the account
+# AAP starts them with. Run after nexus-setup/deploy.sh (it reads NEXUS_ADMIN_PASSWORD).
 #
 #   ./pipelines-setup/deploy.sh
 #
 # 1. Installs the Red Hat OpenShift Pipelines operator (operator.yaml) if the Tekton CRDs are missing, and waits.
 # 2. In NAMESPACE (from .env, default agentic-patching): the ConfigMap app-v2-healthserver (the sample app's
-#    HealthServer.java), the Tasks and Pipeline in pipeline.yaml, and the ServiceAccount app-v2-runner with edit
+#    HealthServer.java), the ConfigMap app-v2-tools (apply_dependency_changes.py, for Rebuild from source), the
+#    Secret app-v2-nexus (uploads the built bundle), the Tasks and Pipelines in pipeline.yaml, the ServiceAccount app-v2-runner with edit
 #    rights here only, whose token AAP uses to create PipelineRuns.
 # 3. Writes APPV2_PIPELINE_TOKEN (the token) and APPV2_PIPELINE_NAMESPACE to .env, for
 #    aap-setup/create-app-v2-objects.py. The token is never printed.
@@ -72,4 +74,4 @@ open(path, 'w').write(text)
 PY
 say "APPV2_PIPELINE_TOKEN and APPV2_PIPELINE_NAMESPACE written to .env"
 echo
-echo "Next: ./aap-setup/create-app-v2-objects.py   (adds the Test in a Pod job template and its credential)"
+echo "Next: ./aap-setup/create-app-v2-objects.py --seed-repos   (Test in a Pod and Seed App Repos templates, the Gitea app repos)"

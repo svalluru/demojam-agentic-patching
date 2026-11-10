@@ -2250,7 +2250,7 @@
     <button type="button" class="dt-btn" role="radio" data-pane="app" aria-pressed="false" aria-checked="false"
             title="Patch what the applications depend on: scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here.">App<span class="wide-only">lications</span></button>
     <button type="button" class="dt-btn" role="radio" data-pane="appv2" aria-pressed="false" aria-checked="false"
-            title="Patch running applications when a Lightwell build lands in Nexus: find the servers on the old version, generate the playbook, commit it to Gitea and run it through AO and AAP.">App<span class="wide-only">lications</span> v2</button>
+            title="Patch running applications when a Lightwell build lands in Nexus: find the sites on the old version, prepare the change, commit it to Gitea, test it in a pod on OpenShift Pipelines, and run it through AO and AAP.">App<span class="wide-only">lications</span> v2</button>
   </span>
   <div class="head-right">
   <!-- Chrome, not a frame action. It was in the right-hand frame's toolbar,
@@ -3556,21 +3556,21 @@ const APPV2_STAGES = [
   { key: 'intake',    label: 'Intake',    icon: ICON.search,
     tip: 'A Lightwell build landed in Nexus. The webhook names the package; Lightwell names the CVEs it fixes.' },
   { key: 'impact',    label: 'Impact',    icon: ICON.list,
-    tip: 'The app BOMs: which deployed apps and servers run the exact version this build replaces.' },
+    tip: 'The app BOMs: which apps and sites run the exact version this build replaces, plus (opt-in) older versions on the same major line as a version change.' },
   { key: 'generate',  label: 'Playbook',  icon: ICON.doc,
     tip: 'The agent drafts the playbook and checks it: allowed modules only, a pinned checksum, a health check, a rollback.' },
   { key: 'commit',    label: 'Commit',    icon: ICON.branch,
     tip: 'AO workflow, first job: check every jar (cosign provenance for Lightwell builds, Maven Central sha1 for upstream ones) and commit the playbook to Gitea.' },
   { key: 'test',      label: 'Test',      icon: ICON.shield,
-    tip: 'AO workflow, second job: AAP starts an OpenShift Pipelines run that builds the app with the whole change, starts it in a pod, checks /health reports the new jars, and re-scans the final jar set with osv.dev. Nothing reaches a site unless it passes.' },
+    tip: 'AO workflow, second job: AAP starts an OpenShift Pipelines run. Swap libraries puts the jars into the image (fetch, build, health); Rebuild from source clones the Gitea repo, updates pom.xml and runs mvn package (clone, update-pom, package, build, health). /health must report the new jars, and osv.dev re-scans the final set. Nothing reaches a site unless it passes.' },
   { key: 'approval',  label: 'Approval',  icon: ICON.approve,
-    tip: 'Prod servers wait for a person, here. QA goes straight through.' },
+    tip: 'LIVE sites wait for a person, here. The lab goes straight through.' },
   { key: 'sync',      label: 'Sync',      icon: ICON.pulse,
     tip: 'AAP syncs the Gitea project at the committed sha, so it runs exactly what was approved.' },
   { key: 'remediate', label: 'Remediate', icon: ICON.patch,
-    tip: 'AAP runs the playbook: fetch the build from Nexus, swap the jar, restart the service.' },
+    tip: 'AAP runs the playbook: fetch the jars (or the built bundle) from Nexus, pinned to the verified checksums, install them, restart the service once.' },
   { key: 'verify',    label: 'Verify',    icon: ICON.shield,
-    tip: 'Health check and checksum on each server. A failure rolls that server back to the old jar.' },
+    tip: 'Health check and the new jars on each site. A failure rolls that site back to the old ones.' },
   { key: 'report',    label: 'Report',    icon: ICON.doc,
     tip: 'The Report agent writes the PDF status report for the change board once every selected site has settled.' },
   { key: 'learn',     label: 'Learn',     icon: ICON.pulse,
@@ -3940,7 +3940,7 @@ function v2Run(s, readOnly) {
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
           <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th>
-          <th title="Commit, Approval, Sync, Remediate, Verify">Steps</th><th>Status</th><th></th></tr></thead><tbody>
+          <th title="Commit, Test, Approval, Sync, Remediate, Verify">Steps</th><th>Status</th><th></th></tr></thead><tbody>
         ${t.map(x => { const h = run[x.key]; return `<tr>
           <td><input type="checkbox" data-v2-sel="${esc(x.key)}" ${chosen.has(x.key) ? 'checked' : ''} ${canPick(x) ? '' : 'disabled'} ${prepared && !prepared.has(x.key) ? 'title="Not prepared: left out at Prepare remediation"' : ''}></td>
           <td class="mono nowrap" title="${esc(x.host)}">${esc(x.site || String(x.host || '').split('.')[0])}</td>
@@ -4144,7 +4144,7 @@ function v2ChangeList(s, readOnly) {
   return `<div class="v2-sec"><h3>2 · Change list</h3>
     <div class="v2-clbar"><span class="muted-sm">Sources</span>${chips}</div>
     ${groups}${note}
-    <div class="muted-sm" style="margin-top:6px">Advisories from ${esc(x.source || 'osv.dev')}, minus what a Lightwell build fixes. Each app gets one playbook: every jar in its group, one restart, one rollback.
+    <div class="muted-sm" style="margin-top:6px">Advisories from ${esc(x.source || 'osv.dev')}, minus what a Lightwell build fixes. Each app gets one playbook: one swap (or one bundle deploy, in Rebuild from source), one restart, one rollback.
       Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM', llm: 'the LLM', rules: 'worked out from the advisories' }[x.reasoning_source] || '—'}.</div>
     ${(() => {
       // How the change is built and tested, and what the sites get. Rebuild needs every selected app to have a repo.
@@ -4167,7 +4167,7 @@ function v2ChangeList(s, readOnly) {
 async function v2ClDownload() {
   const s = v2.state, e = s.event, n = v2ClCounts(s), c = v2.cl;
   const parts = [`# Remediation plan: ${e.group}:${e.artifact} ${e.version}`, '',
-    `From the fix's run ${s.run_id}: ${n.sites} site(s) on ${n.apps.join(', ')}. ${n.jars} jar swap(s). One section per app follows.`, ''];
+    `From the fix's run ${s.run_id}: ${n.sites} site(s) on ${n.apps.join(', ')}. ${n.jars} change(s), ${(v2.cl && v2.cl.mode) === 'source' ? 'rebuilt from source' : 'as library swaps'}. One section per app follows.`, ''];
   for (const app of n.apps) {
     const t0 = (s.impact.targets || []).find(t => t.app === app) || {};
     const select = [{ id: `${app}|${e.group}:${e.artifact}`, source: t0.version_change ? 'another' : 'lightwell' }]
@@ -8160,78 +8160,80 @@ const FLOW_APPV2 = {
   // on the Application tab: Learn's arrow needs somewhere to land its words.
   cols: 10,
   boxes: [
-    { c: 0, t: 'NEXUS WEBHOOK', k: 'THE TRIGGER', ext: 1 },
+    { c: 0, t: 'NEXUS POLLER', k: 'THE TRIGGER', ext: 1 },
     { c: 1, t: '1 · INTAKE',   k: 'AGENT', k2: 'INTAKE', cls: 'ag' },
     { c: 2, t: '2 · IMPACT',   k: 'AGENT', k2: 'INVENTORY', cls: 'ag' },
     { c: 3, t: '3 · PLAYBOOK', k: 'AGENT', k2: 'PLAYBOOK', cls: 'ag' },
-    { c: 4, t: '4 · COMMIT',   k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh', ext: 1 },
+    { c: 4, t: '4 · COMMIT + TEST', k: 'AO WORKFLOW', k2: 'AAP JOBS', cls: 'rh', ext: 1 },
     { c: 5, t: '5 · APPROVAL', k: 'YOU', k2: 'PROD ONLY', cls: 'gate' },
     { c: 6, t: '6 · SYNC & RUN', k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh', ext: 1 },
     { c: 7, t: 'VERIFY',       k: 'THE PLAYBOOK', k2: 'ITSELF', cls: 'rh', ext: 1 },
-    { c: 8, t: 'LEARN',        k: 'AGENT', k2: 'BOM WRITE-BACK', cls: 'ag' },
+    { c: 8, t: 'REPORT · LEARN', k: 'AGENTS', k2: 'PDF · BOM · HISTORY', cls: 'ag' },
 
     { c: 0, lane: 1, cls: 'svc', t: 'NEXUS', s: 'proxy of Lightwell' },
     { c: 1, lane: 1, cls: 'svc rh', t: 'LIGHTWELL API', s: 'advisories · package_versions' },
     { c: 2, lane: 1, cls: 'svc', t: 'APP BOMs', s: 'apps · servers · jars' },
     { c: 3, lane: 1, cls: 'svc rh', t: 'LLM', s: 'OGX · deepseek' },
     { c: 4, lane: 1, cls: 'svc', t: 'GITEA', s: 'app_v2_playbooks' },
+    { c: 5, lane: 1, cls: 'svc rh', t: 'OCP PIPELINES', s: 'test in a pod' },
     { c: 6, lane: 1, cls: 'svc rh', t: 'RED HAT AAP',
       s: 'Ansible Automation Platform' },
     { c: 7, lane: 1, cls: 'svc rh', t: 'RHEL', s: 'the app servers' },
   ],
   groups: [],
   edges: [
-    down(0, '1', 'Nexus', 'Webhook',
-      'A Lightwell build lands in the <em>lightwell-remediated</em> proxy. Nexus '
-      + 'calls the console, signed with a shared secret.'),
-    hop(0, 1, '2', 'Webhook', 'Intake',
-      'The signature is checked first. Only a newly cached <em>.rhlw-</em> build '
-      + 'becomes an event; retries are the same event.'),
+    down(0, '1', 'Nexus', 'Poller',
+      'The console asks Nexus for new <em>.rhlw-</em> builds of the versions the apps run.'),
+    hop(0, 1, '2', 'Poller', 'Intake',
+      'Each new build becomes one event; asking again is the same event.'),
     up(1, '3', 'Intake', 'Lightwell API',
       'Which CVEs <em>this exact build</em> fixes: <em>GET /advisories</em> for the package and version, '
       + 'kept to the advisories that name this build.'),
     hop(1, 2, '4', 'Intake', 'Impact',
       'The package and the version it replaces go to the inventory agent.'),
     up(2, '5', 'Impact', 'App BOMs',
-      'Exact match on the version in use. An app on another version of the same major line is offered the build '
-      + 'as a version change (off by default); across a major version it is left alone, with the reason.'),
+      'Exact match on the version in use; an older version on the same major line is offered as an opt-in '
+      + 'version change.'),
     hop(2, 3, '6', 'Impact', 'Playbook',
       'Servers by environment, QA first, and a note for the reviewer.'),
     up(3, '7', 'Playbook', 'LLM',
       'The LLM drafts it. A draft that fails the checks (modules, pinned paths, '
       + 'health check, rollback) is replaced by the template.'),
     hop(3, 4, '8', 'Playbook', 'Commit',
-      'You press <strong>Run</strong>: one App Patch v2 workflow run per server.'),
+      'You choose the sites and the Change list, <strong>Prepare remediation</strong>, then <strong>Run</strong>: '
+      + 'one App Patch v2 workflow run per site.'),
     up(4, '9', 'Commit', 'Gitea',
-      'cosign verifies the build’s provenance against Red Hat’s key, then the '
-      + 'playbook is committed. A bad build never is.'),
-    hop(4, 5, '10', 'Commit', 'Approval',
-      'Prod stops for a person, who sees the exact commit. QA goes straight '
-      + 'through.'),
-    hop(5, 6, '11', 'Approval', 'Sync & Run',
+      'Every jar is checked (cosign for Lightwell builds, Maven Central’s sha1 for upstream ones), then the '
+      + 'playbook is committed. A bad jar never is.'),
+    lane(4, 5, '10', 'Gitea', 'OCP Pipelines',
+      'Test in a pod: <em>Swap libraries</em> builds the image from the jars; <em>Rebuild from source</em> clones the '
+      + 'app’s Gitea repo, updates pom.xml and runs mvn package. <em>/health</em> must report the new jars; a failure '
+      + 'stops the run before any site.'),
+    hop(4, 5, '11', 'Commit', 'Approval',
+      'Prod stops for a person, who sees the exact commit and the test evidence. The lab goes straight through.'),
+    hop(5, 6, '12', 'Approval', 'Sync & Run',
       '<strong>Approve</strong> signals the gate in the AO workflow.'),
-    up(6, '12', 'Sync & Run', 'Red Hat AAP',
+    up(6, '13', 'Sync & Run', 'Red Hat AAP',
       'The project syncs at that commit, and the runner refuses a playbook whose '
       + 'sha256 is not the approved one.', -1),
-    lane(6, 7, '13', 'Red Hat AAP', 'RHEL',
-      'The jar comes from Nexus, pinned to the verified checksum; the old one is '
-      + 'backed up, the service restarted.'),
-    down(7, '14', 'RHEL', 'Verify',
-      'Health URL and checksum on the server. A failure restores the old jar '
-      + 'and fails the run.'),
-    hop(7, 8, '15', 'Verify', 'Learn',
-      'An app’s BOM moves to the new version only when every one of its servers '
-      + 'is patched.'),
+    lane(6, 7, '14', 'Red Hat AAP', 'RHEL',
+      'The jars (or the built bundle) come from Nexus, pinned to the checksums the test verified; the old ones are '
+      + 'backed up, the service restarted once.'),
+    down(7, '15', 'RHEL', 'Verify',
+      'Health URL and the new jars on the server. A failure restores the old ones and fails the run.'),
+    hop(7, 8, '16', 'Verify', 'Report · Learn',
+      'A PDF report per run; an app’s BOM moves to the new versions once every selected site is patched, and each '
+      + 'outcome goes into the app history.'),
   ],
   caps: [
     '<strong>The event comes to the console, not the other way round.</strong> A '
     + 'Lightwell build arriving in Nexus starts the run, and three agents decide '
-    + 'what it means: which CVEs it fixes, which servers run the version it '
-    + 'replaces, and what to do on them. Everything from step 9 to 14 is an '
+    + 'what it means: which CVEs it fixes, which sites run the version it '
+    + 'replaces, and what to do on them. Everything from step 9 to 15 is an '
     + 'Automation Orchestrator workflow driving AAP — the console never touches '
     + 'git or a server.',
-    'Three checks stand between an LLM-written playbook and a host: the checks at '
-    + 'step 7, provenance at step 9, and the runner’s sha256 at step 12. The '
+    'Four checks stand between an LLM-written playbook and a host: the checks at '
+    + 'step 7, provenance and sha1 at step 9, the test in a pod at step 10, and the runner’s sha256 at step 13. The '
     + 'amber box is still the only one a person is inside, and only Prod passes '
     + 'through it.',
   ],
@@ -8244,9 +8246,10 @@ const FLOW_DEMO = {
        + 'verification so the retry can be shown. The Supervisor and its agents run for real.',
   app: 'The scanner runs on recorded repositories and OSV.dev answers, and Lightwell coverage comes from a saved '
      + 'sample. The build and push are staged, one build staged to fail on its Java baseline.',
-  appv2: 'Two staged fixed builds stand in for Nexus, the Lightwell answers are saved copies, the app inventory '
-       + 'and its reasoning are staged, and the App Patch v2 workflow is simulated, one Prod server staged to '
-       + 'fail its health check and roll back. The three agents and the playbook checks run for real.',
+  appv2: 'Three staged Lightwell builds stand in for Nexus, the Lightwell and osv.dev answers are saved copies, the '
+       + 'app inventory and its reasoning are staged, and the App Patch v2 workflow and the test in a pod (its '
+       + 'pipeline tasks included) are simulated, one LIVE site (workflow-engine on core-dc-2) staged to fail its '
+       + 'health check and roll back. The agents and the playbook checks run for real.',
 };
 
 // A box's cls is a space-separated token list — 'svc' is a shape, 'rh' and
@@ -8429,10 +8432,10 @@ let flowSide = 'infra';
 const FLOW_LW_APIS = {
   appv2: [
     ['POST sso.redhat.com/…/openid-connect/token', 'The service-account token (client credentials) every API call carries.',
-     'scanner/lightwell.py · LightwellApiCatalog'],
+     'lightwell/scanner/lightwell.py · LightwellApiCatalog'],
     ['GET /api/lightwell/v0.1/advisories?package_name=&package_version=',
-     'The CVEs an exact build fixes (Intake), and the builds the apps need: catalog, Telco estate, osv.dev rows.',
-     'lightwell_fixed_cves · appv2.catalog(\'mine\')'],
+     'The CVEs an exact build fixes (Intake), and the builds the apps need: catalog, Telco estate, Change list rows.',
+     'agentic-patching.py lightwell_fixed_cves · appv2.catalog(\'mine\')'],
     ['GET /api/lightwell/v0.1/package_versions',
      'The whole remediated catalog a page at a time, and every Lightwell build of one package, for a version change.',
      'appv2.catalog(\'all\') · package_facts'],

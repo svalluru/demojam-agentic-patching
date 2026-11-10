@@ -2,7 +2,8 @@
 # Applications v2, second node of the AO workflow "App Patch v2": test the change in a pod before any site.
 # Job template "App Patch v2 - Test in a Pod" (aap-setup/create-app-v2-objects.py). Runs on localhost.
 #
-# Starts the OpenShift Pipelines PipelineRun app-v2-test (pipelines-setup/pipeline.yaml) through the Kubernetes API
+# Starts one PipelineRun per app and run, app-v2-<app>-<run_id>, of pipeline app-v2-test (Swap libraries) or
+# app-v2-build (Rebuild from source; pipelines-setup/pipeline.yaml), through the Kubernetes API
 # (ansible.builtin.uri: no collection needed), waits for it, and fails unless the app came up on the new jars. Every
 # jar the app runs is checked again inside the pipeline: the changed ones against the sha256 the commit job verified,
 # the rest against Maven Central's sha1. The tested jar set is also written as a CycloneDX SBOM and committed to Gitea

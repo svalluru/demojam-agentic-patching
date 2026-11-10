@@ -86,6 +86,21 @@ gives up at about twenty. That is the intermittent fetch failure. The console
 warms the CVE during assessment to spend that time while the plan is being
 read.
 
+## Applications v2
+
+`create-app-v2-objects.py` creates Applications v2's own AAP objects (it reads, never edits, the lab's):
+
+| Job template | Playbook | What it does |
+|---|---|---|
+| App Patch v2 - Commit to Gitea | `playbooks/app_v2_commit.yml` | check every jar (cosign / Maven Central sha1), commit the generated playbook |
+| App Patch v2 - Test in a Pod | `playbooks/app_v2_test_pod.yml` | start the `app-v2-test` or `app-v2-build` PipelineRun, wait, report the evidence; push branch `fix/<run>` in Rebuild from source |
+| App Patch v2 - Sync and Run | `app_v2_run.yml` (in the Gitea playbooks repo) | run the approved playbook, checked by sha256 |
+| App Patch v2 - Deploy Sample App | `playbooks/app_v2_deploy_sample.yml` | deploy each app in `app-data/bom` to its servers (`--deploy-sample`) |
+| App Patch v2 - Seed App Repos | `playbooks/app_v2_seed_repos.yml` | commit each app's Maven source to the lab Gitea (`--seed-repos`) |
+
+The Test in a Pod template carries an "OpenShift API (App Patch v2)" credential holding `APPV2_PIPELINE_TOKEN`
+(from `pipelines-setup/deploy.sh`); the commit, test and seed templates reuse the lab's Gitea API credential.
+
 ## Application patching (dependency scanner)
 
 `playbooks/app_clone_update_build.yml` is the job behind **Approve and run** in the dependency scanner (`lightwell/`) — the press after **Plan a fix**, which only previews the change list and launches nothing. It runs on a host of the job template's inventory: clones a repository at the scanned commit, applies a list of dependency version changes, builds the result (`mvn verify`, or `pip install` for a requirements file), and optionally commits and pushes a branch. The scanner works out the change list; the playbook applies it as written and reports the diff and build result back as the job's artifacts. The editing is done by `playbooks/files/apply_dependency_changes.py`, which also reports any change it could not make and why.

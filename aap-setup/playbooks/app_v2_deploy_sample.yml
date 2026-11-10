@@ -1,7 +1,7 @@
 ---
-# Deploy an Applications v2 sample app to the lab hosts, on the vulnerable log4j 2.24.3 that the Lightwell build
-# 2.24.3.rhlw-00004 replaces. Run by aap-setup/create-app-v2-objects.py --deploy-sample (job template
-# "App Patch v2 - Deploy Sample App"), or by hand:
+# Deploy an Applications v2 app (from app-data/bom) to its servers, on the versions its BOM lists. Run by
+# aap-setup/create-app-v2-objects.py --deploy-sample (job template "App Patch v2 - Deploy Sample App"), once per app
+# with its variables, or by hand (the defaults below are a legacy single sample app):
 #
 #   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e @app.json
 # where app.json gives app_name, app_port, target_hosts, jars (Maven Central paths) and probes. The telco apps:

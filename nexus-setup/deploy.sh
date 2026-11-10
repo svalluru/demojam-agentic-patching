@@ -7,10 +7,10 @@
 #   ./nexus-setup/deploy.sh            deploy (or update) and configure
 #   ./nexus-setup/deploy.sh --delete   remove Nexus, its route and its volume
 #
-# Writes NEXUS_URL, NEXUS_ADMIN_PASSWORD and NEXUS_WEBHOOK_SECRET to .env. The webhook it creates calls the console's
-# Service in the same namespace (http://cve-console:8788/api/v2/webhook), so it needs the console deployed there too
-# (./console-app-ocp-setup/deploy.sh). A console on a laptop cannot be reached; use NEXUS_POLL_SECONDS with
-# NEXUS_EVENTS=poller for that.
+# Writes NEXUS_URL, NEXUS_ADMIN_PASSWORD and NEXUS_WEBHOOK_SECRET to .env. With the console on a laptop (the usual
+# setup) set NEXUS_EVENTS=poller and NEXUS_POLL_SECONDS: the console polls Nexus. The webhook this creates calls the
+# console's Service in the same namespace (http://cve-console:8788/api/v2/webhook) and only reaches a console
+# deployed there (./console-app-ocp-setup/deploy.sh).
 #
 # .env is read with Python, never sourced: LIGHTWELL_REGISTRY_USER contains a '|'.
 set -euo pipefail

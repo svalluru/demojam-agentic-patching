@@ -452,11 +452,12 @@ socket is already open by the time the panel can reach the process.
 The third option on the header toggle. Where **Applications** scans a
 repository and rebuilds it, v2 starts from the other end: a Lightwell build
 lands in Nexus, and the console patches the servers already running the
-version it replaces. **How to run** (the flow icon in the header) has a
+version it replaces. It runs on your laptop in live mode (see *Live setup*) and
+reaches the lab through `.env`. **How to run** (the flow icon in the header) has a
 v2 tab with the numbered diagram; this is the same thing in text.
 
 ```
- Lightwell ──▶ Nexus proxy ──webhook──▶ 1 Intake ──▶ 2 Impact ──▶ 3 Playbook ──▶ you press Run
+ Lightwell ──▶ Nexus proxy ──poller──▶ 1 Intake ──▶ 2 Impact ──▶ 3 Playbook ──▶ you press Run
  (packages.     lightwell-              agent        agent         agent (LLM)
   redhat.com)   remediated              │            │             │
                                         Lightwell    app BOMs      checks, else template
@@ -468,11 +469,12 @@ v2 tab with the numbered diagram; this is the same thing in text.
      + playbook commit      Pipelines)                      (this console)
 ```
 
-1. **Intake.** Nexus calls `POST /api/v2/webhook` when its
-   `lightwell-remediated` proxy caches a new `.rhlw-` build. The signature
-   (`X-Nexus-Webhook-Signature`, HMAC-SHA1 of `NEXUS_WEBHOOK_SECRET`) is
-   checked before anything else, and a redelivery is the same event. The CVEs
-   come from the Lightwell advisories API for that exact build.
+1. **Intake.** The console's poller (`NEXUS_EVENTS=poller`, every
+   `NEXUS_POLL_SECONDS`) asks Nexus for new `.rhlw-` builds of the versions the
+   BOMs run. A console deployed in the cluster can take Nexus's webhook instead
+   (`POST /api/v2/webhook`, signed with `NEXUS_WEBHOOK_SECRET`). The CVEs come
+   from the Lightwell advisories API for that exact build; a build no advisory
+   names is kept out of Incoming fixes.
 2. **Impact.** The app BOMs (`app-data/bom/*.json`) say which apps, on
    which servers, run the upstream version the build replaces. Exact match
    only, plus one opt-in: an app on an older version of the same major line is offered the build as a **version
@@ -490,17 +492,23 @@ v2 tab with the numbered diagram; this is the same thing in text.
    allowed modules only (no shell, command or raw), a pinned sha256 download,
    a health check, a rollback in `rescue`. A draft that fails any of these is
    replaced by the checked template, and the page says which check failed.
-4. **Commit** (AO, job `App Patch v2 - Commit to Gitea`). The jar and its
-   provenance bundle are downloaded through Nexus and verified with cosign
-   against Red Hat's PNC key. Only then is the playbook committed to Gitea,
-   through Gitea's contents API, as the lab's own Fetch and Commit job does.
+4. **Commit** (AO, job `App Patch v2 - Commit to Gitea`). Every jar in the
+   change is downloaded through Nexus and checked: Lightwell builds with cosign
+   against Red Hat's PNC key, upstream releases against Maven Central's sha1.
+   Only then is the playbook committed to Gitea, through Gitea's contents API.
+   **Test in a pod** (AO, job `App Patch v2 - Test in a Pod`) follows: OpenShift
+   Pipelines builds the app with the whole change and checks `/health` (see
+   *Build and test* below). A failed test stops the run before any site, and
+   the checksums it verified are what Sync & Run pins to.
 5. **Approval** (Prod only). The run stops at the AO gate, and the console shows
    the exact commit being approved. QA goes straight through.
 6. **Sync & Run** (AO, job `App Patch v2 - Sync and Run`). AAP syncs the Gitea
    project and runs `app_v2_run.yml`, which refuses any playbook whose sha256
-   is not the approved one. The generated playbook downloads the build from
-   Nexus pinned to the verified checksum, backs up the old jar, restarts the
-   service, checks health and checksum, and rolls back if either fails.
+   is not the approved one. With **Swap libraries** the playbook downloads the
+   jars from Nexus pinned to the verified checksums and swaps them; with
+   **Rebuild from source** it downloads the bundle the pipeline built (Nexus
+   `maven-releases`, pinned) and replaces the lib folder. Either way it backs
+   up, restarts the service once, checks health and rolls back on failure.
 7. **Report** (agent 4). A PDF per run for the change board: the fix and its
    CVEs, each site's outcome, the commit and provenance. Linked from the
    Report card under the table; files in `REPORTS_DIR` (default `reports/`).
@@ -509,12 +517,20 @@ v2 tab with the numbered diagram; this is the same thing in text.
    written as a record into the app history store, so the next run's
    Reasoning column reads it. Shown in the Feedback card.
 
-**Three checks between an LLM-written playbook and a host**: the playbook
-checks (step 3), provenance before commit (step 4), and the runner's sha256
-(step 6). The console never touches git or a server; the AO workflow does.
+**Four checks between an LLM-written playbook and a host**: the playbook
+checks (step 3), provenance and sha1 before commit (step 4), the test in a pod,
+and the runner's sha256 (step 6). The console never touches git or a server;
+the AO workflow does.
+
+**Cancel run** (the header button while a run is going or waiting for
+approval, `POST /api/v2/cancel`) stops the run's AO executions, any App Patch
+v2 job still running in AAP, and its PipelineRuns, then reads each site the
+playbook may have reached (lib, backup, service) and says whether it is
+untouched, fully patched or half changed, with the commands to put it back.
 
 **The four views** in the right frame: **Incoming fixes** (builds that have
-arrived in Nexus), **Telco estate** (below), **Lightwell catalog** (remediated builds Lightwell
+arrived in Nexus and that a Lightwell advisory names; Assess one to open its
+run page, with **1 · Sites** and **2 · Change list**), **Telco estate** (below), **Lightwell catalog** (remediated builds Lightwell
 publishes; "Only builds my apps need" asks Lightwell per library version in
 the BOMs, unticked it pages through the whole catalog; **SBOM · app** exports
 that app's BOM as CycloneDX 1.5, `/api/v2/sbom?app=`, to upload to
@@ -534,30 +550,42 @@ that fails its health check and is rolled back. Code: `appv2.py`; tests:
 
 **Include osv.dev packages** (setting `APPV2_OSV`, off by default). Assess then also asks osv.dev about every
 Maven library the affected apps run (v1's scanner client, `lightwell/scanner/osv.py`; demo mode reads its saved
-answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Lightwell build fixes:
+answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Lightwell build fixes, in the run's
+**2 · Change list**: one group per app, the fix itself locked in, the other libraries tickable. Source chips choose
+where a fix may come from (**Lightwell** = same version, **Another build** = a Lightwell build of a newer version on
+the same major line, **OSV** = the lowest upstream release that clears every advisory) and **Major upgrades** lets an
+upstream fix cross a major version. **Download plan (.md)** saves the run's plan (one section per app, the shape of
+Applications v1's remediation plan, `/api/v2/plan/preview`).
 
 | Row | When | Offered |
 |---|---|---|
 | Lightwell build | Lightwell has a build of the same version | yes: Red Hat provenance, no version change |
 | Lightwell · version change | Lightwell has no build of this version but has one of a newer version on the same major line (`/package_versions`) | yes, as an option beside the upstream fix: the row's selector picks one. Upstream is the default when it is a patch release on the same minor line |
 | Upstream fix | no Lightwell build; the lowest release that clears every advisory is on the same major line | yes: from Nexus's `maven-central` proxy, checked against Maven Central's sha1 |
-| Major upgrade | the fix is only in a new major version | no: a code change for the app team |
+| Major upgrade | the fix is only in a new major version | only with **Major upgrades** ticked (off by default): a code change |
 | Still open | the fix being applied leaves advisories open on its own library | no: information |
 
 Each row has a Reasoning line from the app history store and the LLM. Ticked rows (before **Prepare remediation**)
-join that app's playbook: **one playbook swaps every jar in the change** with one backup, one restart, one health
-check and one rollback. The commit job checks each jar (cosign for Lightwell builds, sha1 for upstream ones).
+join that app's change: one playbook per app, one backup, one restart, one health check and one rollback. The
+commit job checks each jar (cosign for Lightwell builds, sha1 for upstream ones).
 
-**Test in a pod** (OpenShift Pipelines). AO's second node, job template **App Patch v2 - Test in a Pod**, starts
-the `app-v2-test` pipeline (`pipelines-setup/pipeline.yaml`) through the Kubernetes API. The pipeline:
-1. fetches every jar the app runs, with the change applied, and checks each one;
-2. builds the image with buildah;
-3. starts it as a sidecar and checks that `/health` reports each new jar;
-4. re-queries osv.dev for the final jar set.
+#### Build and test: Swap libraries or Rebuild from source
 
-The job commits an SBOM of the tested jars beside the playbook in Gitea. A failed test stops that site's run, so
-no site is touched. The console shows the evidence (image, `/health`, the osv.dev count, the SBOM) on the
-approval screen and in the report.
+The Change list's **Build and test** choice decides how the change is tested and what the sites get. Either way AO's
+second node, job template **App Patch v2 - Test in a Pod**, starts one PipelineRun per app per run,
+`app-v2-<app>-<run>` (`pipelines-setup/pipeline.yaml`), through the Kubernetes API.
+
+| | Swap libraries (default) | Rebuild from source |
+|---|---|---|
+| Pipeline | `app-v2-test`: fetch every jar the app runs with the change applied, checked; buildah the image; start it and check `/health` reports each new jar | `app-v2-build`: clone the app's Gitea repo (BOM `repo`); apply the changes to pom.xml with `apply_dependency_changes.py` (Applications v1's); `mvn package` through the Nexus proxies; upload the bundle to Nexus `maven-releases`; buildah; `/health` |
+| Sites get | the jar swap | the app as Maven built it (the whole resolved lib folder, pinned to the bundle's sha256) |
+| Source | unchanged | branch `fix/<run>` pushed with the pom.xml change (not merged); earlier write-backs are carried into it |
+| Needs | nothing more | `create-app-v2-objects.py --seed-repos` (Gitea repos `app-<app>` from `app_source.py`) |
+
+Both re-query osv.dev for the final jar set, and the job commits an SBOM of the tested jars beside the playbook in
+Gitea. The run page shows the PipelineRun's tasks live (fetch · build · health, or clone · update-pom · package ·
+build · health; `GET /api/v2/pipeline`), with a link to it in the OpenShift console. A failed test stops that site's
+run before anything is changed.
 
 First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus inventory-service's upstream mina-core
 `2.1.13`. The pod test passed, and node1 is healthy on both jars; node3 was untouched.
@@ -582,19 +610,18 @@ the SSH library the NFV orchestrator uses to configure network elements.
 | analytics-agent | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
 | customer-portal | Self-care API gateway | npm only: not covered | none |
 
-Demo mode adds billing-engine and api-gateway and a fourth nfvo site,
+Demo mode adds billing-engine and api-gateway and a fourth workflow-engine site,
 core-dc-2. Lightwell today is Java-led (about 1,000 remediated Maven
 packages, 7 Python, no npm), so impact ignores non-Maven dependencies and the
 estate shows them as not covered.
 
-**Telco estate** is two frames, Network then IT/OSS/BSS, each with an **App severity** column. Per app: domain, the
-Java/Python/JS mix (from the BOM's `languages`), the Lightwell fixes for the
-exact versions it runs (the catalog's "builds my apps need"), and a
-**Reasoning / Impact** column: a priority (CRITICAL, HIGH, MEDIUM, LOW) and a
-note on what is critical, how patching affects the current setup and what
-else to watch. The note comes from the app history store and the LLM
-(`GET /api/v2/estate`), and is kept until the facts change or a run feeds
-the history. With no LLM it falls back to a rule on fixes and CVE count.
+**Telco estate** is two frames, Network then IT/OSS/BSS, always sorted by **App severity** (CRITICAL, HIGH,
+MEDIUM, LOW). Per app (name, then domain): the Java/Python/JS mix (from the BOM's `languages`), the Lightwell fixes
+for the exact versions it runs, the App severity, and a **Reasoning / impact** note on what is critical, how
+patching affects the current setup and what else to watch (`GET /api/v2/estate`). The tab answers at once with
+rule-based notes while the app history and the LLM write the reasoning in the background (animated dots), and keeps
+the answer on disk (`runs/appv2-estate-reasoning.json`) until the facts change. A lab that does not answer is
+reported within seconds.
 
 **How to run** lists the Lightwell APIs the code calls (the SSO token, `/advisories`, `/package_versions`, and the
 Maven repository Nexus proxies), what each is for and where in the code.
@@ -607,9 +634,11 @@ Maven repository Nexus proxies), what each is for and where in the code.
 | Commit and deploy playbooks | this repo, `aap-setup/playbooks/`. AAP project **App Patch v2 - Setup Playbooks** reads them from GitHub (`PROJECT_BRANCH_V2`, default `infra-app-agentic-patching`), so push before running setup |
 | Generated playbooks and the runner | lab Gitea `lab-user/app_v2_playbooks`, AAP project **App Patch v2 Playbooks**. Written by the workflow, never by hand |
 | AO workflow | `ao-setup/app_v2_workflow.json` |
-| Nexus | `nexus-setup/` (`deploy.sh`, `configure.py`) |
+| Nexus | `nexus-setup/` (`deploy.sh`, `configure.py`). Built bundles (Rebuild from source) in `maven-releases/com/lab/appv2/` |
+| Pipelines (test in a pod) | `pipelines-setup/` (`deploy.sh`, `pipeline.yaml`: `app-v2-test`, `app-v2-build`) |
+| App source repos | lab Gitea `lab-user/app-<app>`, rendered from the BOMs by `app_source.py`, seeded by `create-app-v2-objects.py --seed-repos` |
 | App inventory | `app-data/bom/`: the telco apps above. `create-app-v2-objects.py --deploy-sample` deploys each one that has servers, with its jars and `/health` probes taken from the BOM. Not under `rag-setup/data/`, which is ingested into the infra history store |
-| App history (synthetic) | `app-data/history/*.md`, telco records marked SYNTHETIC. Ingested into its own store (`APP_VECTOR_DB_ID`); live runs add their own records |
+| App history (synthetic) | `app-data/history/*.md`, telco records marked SYNTHETIC. Ingested into its own store (`APP_VECTOR_DB_ID`, created by `setup.sh`, rebuilt by the console if a Llama Stack restart breaks it); live runs add their own records |
 | Run reports | `REPORTS_DIR` (default `reports/`), served by `/api/report?file=` |
 
 #### Live setup
@@ -617,18 +646,21 @@ Maven repository Nexus proxies), what each is for and where in the code.
 On a fresh lab, in this order. Each step is idempotent.
 
 ```bash
-./setup.sh --skip-aap --skip-ao --skip-smoke      # RAG + risk model (if not done yet)
+./setup.sh --skip-aap --skip-ao --skip-smoke      # RAG (both history stores) + risk model, if not done yet
 ./ao-setup/create-ao-objects.sh                   # AO credential + integration for AAP
-./console-app-ocp-setup/deploy.sh                 # the console on OpenShift (the webhook calls it there)
-./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy, the webhook
+./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy (writes NEXUS_* to .env)
 git push                                          # AAP reads the v2 setup playbooks from GitHub
-./pipelines-setup/deploy.sh                       # OpenShift Pipelines, the app-v2-test pipeline, the AAP token
-./aap-setup/create-app-v2-objects.py --deploy-sample   # projects, templates (incl. Test in a Pod), runner, the apps
-./rag-setup/ingest.py --route "$LLAMA_STACK_URL" --name app_patch_history_telco --dir app-data/history
-#   then set APP_VECTOR_DB_ID to the vs_... it prints
+./pipelines-setup/deploy.sh                       # OpenShift Pipelines, app-v2-test + app-v2-build, the AAP token
+./aap-setup/create-app-v2-objects.py --deploy-sample --seed-repos
+#   projects, templates (Commit, Test in a Pod, Sync and Run, Seed App Repos), the apps on node1-3, the Gitea repos
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
-./console-app-ocp-setup/deploy.sh --config-only   # the console picks up NEXUS_* from .env
+
+# The console, on your laptop, in live mode:
+SSL_CERT_FILE=/etc/ssl/cert.pem MODE=live NEXUS_EVENTS=poller APPV2_OSV=true ./agentic-patching.py serve
 ```
+
+`console-app-ocp-setup/deploy.sh` can still put the console in the cluster (it then takes the Nexus webhook instead
+of polling); it is optional.
 
 `.env` needs, beyond the infra keys:
 
@@ -641,6 +673,10 @@ DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-
 | `NEXUS_URL`, `NEXUS_ADMIN_PASSWORD`, `NEXUS_WEBHOOK_SECRET` | Written by `nexus-setup/deploy.sh` |
 | `APPV2_PIPELINE_TOKEN`, `APPV2_PIPELINE_NAMESPACE` | Written by `pipelines-setup/deploy.sh`: the `app-v2-runner` service account AAP starts PipelineRuns with |
 | `APPV2_OSV` | `true` to list osv.dev packages at Assess (also in Settings) |
+| `NEXUS_EVENTS=poller`, `NEXUS_POLL_SECONDS` | A console on a laptop cannot receive Nexus's webhook: the poller records events |
+| `NEXUS_CENTRAL_REPOSITORY` | Nexus's Maven Central proxy for upstream jars (default `maven-central`) |
+| `APPV2_PIPELINE_API_URL`, `OCP_CONSOLE_URL` | Optional: the cluster API the console reads PipelineRuns from (default `OCP_API_URL`), and the web console for the PipelineRun link |
+| `SSL_CERT_FILE=/etc/ssl/cert.pem` | macOS with python.org Python, which has no CA bundle |
 
 No Gitea token is needed: the setup reuses the lab's **Gitea API** credential
 (from `CVE - Fetch and Commit`) for the commit job, and the lab's Gitea
@@ -649,15 +685,14 @@ source-control credential for the project. Neither is edited.
 #### Checking it works
 
 ```bash
-# A Lightwell build through Nexus: Nexus caches it and fires the webhook.
-curl -sk -o /dev/null "$NEXUS_URL/repository/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00009/mina-core-2.2.5.rhlw-00009.jar"
-# The event, with its CVEs, in the console's inbox.
-curl -sk https://<console route>/api/v2/events
+# The inbox: the poller's events (within NEXUS_POLL_SECONDS), with their CVEs.
+curl -s http://localhost:8788/api/v2/events
 ```
 
-Then in the console: Applications v2 → the event → Assess → Prepare remediation →
-Run. The lab site (node1) is patched without a gate; edge-site-1 and core-dc-1
-wait for Approve. On a server, `curl localhost:8090/health` (workflow-engine;
+Then in the console: Applications v2 → the event → **Assess** → review **1 · Sites** and **2 · Change list**, pick
+**Swap libraries** or **Rebuild from source** → **Prepare remediation** → **Run on N of M** → the test in a pod runs
+(its tasks shown live) → the lab site (node1) is patched without a gate; edge-site-1 and core-dc-1 wait for
+**Approve**. On a server, `curl localhost:8090/health` (workflow-engine;
 8091 is inventory-service) names the jar each probed library is found in: mina-core
 reads `mina-core-2.2.5.rhlw-…jar` once patched.
 
@@ -673,7 +708,7 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 | Nexus returns 403 for everything, even to admin | The Community Edition EULA is not accepted. Set `NEXUS_ACCEPT_EULA=true` and rerun `nexus-setup/deploy.sh` |
 | A setup script fails reading `.env` | `LIGHTWELL_REGISTRY_USER` is not single-quoted; the shell reads its `\|` as a pipe |
 | Live mode on a Mac: `CERTIFICATE_VERIFY_FAILED` | python.org Python has no CA bundle. Start the console with `SSL_CERT_FILE=/etc/ssl/cert.pem` |
-| Webhook answers 401 | The console's `NEXUS_WEBHOOK_SECRET` differs from Nexus's; run `deploy.sh --config-only` after `nexus-setup/deploy.sh` |
+| Webhook answers 401 (a console in the cluster) | The console's `NEXUS_WEBHOOK_SECRET` differs from Nexus's; run `console-app-ocp-setup/deploy.sh --config-only` after `nexus-setup/deploy.sh` |
 | Webhook answers 503 (live) | `NEXUS_WEBHOOK_SECRET` is not set, so no webhook is trusted |
 | No webhook at all | This Nexus has no capabilities API; `configure.py` prints the manual steps. Or set `NEXUS_POLL_SECONDS=300` and `NEXUS_EVENTS=poller` |
 | The page says "The LLM draft failed: …. Used the template." | Working as intended: the draft broke a check (the live LLM has dropped the play header). The template is the same playbook, checked |
@@ -681,6 +716,9 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 | Sync and Run fails "is not the approved playbook" | The file in Gitea changed after the commit; the runner will not run it |
 | AO rejects the workflow import: approval "missing a connection from the 'Approved' branch" | The edge out of an approval node needs `"from_port": "approved"` |
 | Reasoning says "No history found" once after a lab restart | Llama Stack (0.7.1) does not re-attach its existing vector stores to Milvus when it restarts: they stay listed but search finds nothing. The console heals this itself: it checks both history stores at startup and whenever a search comes back empty or "not found", rebuilds a broken one from `rag-setup/data` or `app-data/history` (`ingest.py`'s `ensure()`), switches to the new id and writes it to `.env`. The next assessment has its history back |
+| Rebuild from source is greyed out: "no Gitea repository for …" | The app's BOM has no `repo`, or `create-app-v2-objects.py --seed-repos` has not run |
+| The test strip says "no cluster access configured (APPV2_PIPELINE_TOKEN)" | Run `pipelines-setup/deploy.sh`, then restart the console |
+| AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. Delete finished pods in `agentic-patching`; prune unused images on the node |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
 ### Demo guide
@@ -722,7 +760,9 @@ MODE=live ./agentic-patching.py serve       # live
 
 ## Configuration
 
-Every row below is also a row in the settings panel.
+Every row below is also a row in the settings panel. Applications v2 has its own group there (`APPV2_OSV`,
+`NEXUS_*`, `APP_VECTOR_DB_ID`, `GITEA_REPO`, `AO_APP_V2_WORKFLOW`); its keys are listed in the Applications v2
+*Live setup* table above.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -1041,22 +1081,34 @@ discover-hosts.py          what AAP can patch, found in Insights — uuids and t
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, and the HTTP server
                            (page, API, /lightwell/ on :8788)
-appv2.py                   Applications v2: Nexus intake, BOM impact, playbook
-                           agent and its checks, the App Patch v2 run
+appv2.py                   Applications v2: Nexus intake, BOM impact, Change list,
+                           playbook agent and its checks, the App Patch v2 run,
+                           test-in-a-pod status, Cancel run, Telco estate
+app_source.py              Applications v2: an app's Maven source, rendered from its BOM
+app-data/
+  bom/                     the apps, their sites and libraries (Applications v2)
+  history/                 synthetic app patch history (the app history store)
 tests/test_appv2.py        python3 -m unittest discover -s tests
 fallbacks.py               every stored default, in one editable file
 communication.py           agent 3 — renders the patch status report
 results.py                 agent 4 — feeds outcomes back to RAG + training data
 pdf.py                     minimal stdlib PDF writer (no reportlab)
 frontend/
-  index.html               two-frame console: assess a CVE · CVE list · patch runs
+  index.html               the console: Infrastructure · Applications · Applications v2
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
   create-ao-workflow.sh    imports the workflow below and publishes it
   demojam_lab_workflow.json  the workflow the console dispatches to
+  app_v2_workflow.json     the App Patch v2 workflow (commit, test in a pod, gate, run)
 aap-setup/
   create-verify-template.sh  CVE - Verify Patch — the one AAP object that is ours
-  playbooks/                 cve_verify_patch.yml
+  create-app-v2-objects.py   Applications v2 projects, templates, apps, Gitea repos
+  playbooks/                 cve_verify_patch.yml; app_v2_*.yml (commit, test in a pod,
+                             seed repos, deploy the apps); files/ (runner, HealthServer,
+                             apply_dependency_changes.py)
+nexus-setup/               Nexus with the lightwell-remediated and maven-central proxies
+pipelines-setup/           OpenShift Pipelines: app-v2-test, app-v2-build, the AAP token
+lightwell/                 Applications v1's dependency scanner (osv.dev, Lightwell API)
 rag-setup/
   deploy.sh                Milvus + Llama Stack as plain Pods (no RHOAI)
   ingest.py                load/verify the RAG vector store
@@ -1065,7 +1117,7 @@ risk_score/
   training/ serving/       XGBoost model
   openshift/               Deployment + Service + Route, deploy script
 console-app-ocp-setup/
-  deploy.sh                run the console itself on OpenShift, from .env
+  deploy.sh                optional: run the console itself on OpenShift, from .env
   Containerfile            UBI9 + the source; no dependencies to install
   manifests/               Deployment, Service, Route, PVC
 multi-agent/
