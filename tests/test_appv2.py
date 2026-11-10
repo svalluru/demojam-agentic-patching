@@ -1156,6 +1156,14 @@ class SourceMode(unittest.TestCase):
         self.assertIn('ansible.builtin.unarchive', text)
         self.assertIn('checksum: "sha256:{{ jar_sha256s[bundle_name] }}"', text)
 
+    def test_source_changes_carry_earlier_write_backs(self):
+        demo()
+        appv2._BOM_UPDATES['inventory-service|org.apache.zookeeper:zookeeper'] = '3.5.9.rhlw-00001'
+        out = appv2.source_changes('inventory-service', [{'group': 'org.postgresql', 'artifact': 'postgresql',
+                                                          'from': '42.3.3', 'to': '42.3.3.rhlw-00006'}])
+        self.assertIn({'name': 'org.apache.zookeeper:zookeeper', 'from': '3.5.9', 'to': '3.5.9.rhlw-00001'}, out)
+        self.assertEqual(out[0]['to'], '42.3.3.rhlw-00006')
+
     def test_no_repo_refuses_source_mode(self):
         demo()
         appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})

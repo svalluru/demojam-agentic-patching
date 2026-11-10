@@ -2683,6 +2683,30 @@ def _wf_id() -> str:
     return _workflow_id[name]
 
 
+def source_changes(app_name: str, changes: list[dict]) -> list[dict]:
+    """The pom.xml edits for Rebuild from source: this run's changes, plus every version already written back to the
+    app's BOM by earlier runs. The repository's pom.xml starts from the BOM file as it was seeded; without the
+    write-backs, a source build would put back versions the sites have already moved past."""
+    out = [{'name': f"{c['group']}:{c['artifact']}", 'from': c['from'], 'to': c['to']} for c in changes]
+    done = {x['name'] for x in out}
+    try:
+        base = json.loads((bom_dir() / f'{app_name}.json').read_text())
+    except (OSError, ValueError):
+        base = next((a for a in DEMO_BOM if a['app'] == app_name), {})
+    for d in base.get('dependencies', []):
+        if d.get('ecosystem', 'maven') != 'maven':
+            continue
+        name = f"{d['group']}:{d['artifact']}"
+        cur = _BOM_UPDATES.get(f'{app_name}|{name}')
+        if cur and cur != d['version'] and name not in done:
+            out.append({'name': name, 'from': d['version'], 'to': cur})
+        elif name in done:                   # this run's change starts from the seeded version too
+            for x in out:
+                if x['name'] == name and x['from'] != d['version']:
+                    x['from'] = d['version']
+    return out
+
+
 def test_inputs(app_name: str, changes: list[dict]) -> dict:
     """What the test in a pod needs for one app: every jar it runs once the change is in (the changed ones from the
     change list, the rest from Nexus's Maven Central proxy, or Lightwell's for a build already written back), the
@@ -2825,8 +2849,7 @@ def _dispatch_live() -> None:
                   **test_inputs(h['app'], pb.get('changes') or [change_for_event(ev, h)]),
                   'test_mode': st.get('test_mode', 'swap'),
                   'repo': next((b.get('repo', '') for b in load_bom() if b['app'] == h['app']), ''),
-                  'changes_json': json.dumps([{'name': f"{c['group']}:{c['artifact']}", 'from': c['from'], 'to': c['to']}
-                                              for c in pb.get('changes') or [change_for_event(ev, h)]]),
+                  'changes_json': json.dumps(source_changes(h['app'], pb.get('changes') or [change_for_event(ev, h)])),
                   'nexus_url': env('NEXUS_URL', '')}
         try:
             created = H.ao_call('/api/v1/executions', 'POST', {
