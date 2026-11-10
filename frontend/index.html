@@ -1995,14 +1995,18 @@
   .v2-checks .ok::before { content: '\2713  '; color: var(--text); font-weight: 800; }
   .v2-checks .no { color: var(--red); }
   .v2-checks .no::before { content: '\2717  '; font-weight: 800; }
-  .v2-steps { display: inline-flex; gap: 3px; }
-  .v2-steps i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--border);
-                display: inline-block; }
-  .v2-steps i.done { background: var(--red); border-color: var(--red); }
-  .v2-steps i.active, .v2-steps i.waiting { border-color: var(--red);
-                                            animation: breathe 1.7s var(--ease) infinite; }
-  .v2-steps i.failed { border-color: var(--red); background: var(--tint-r); }
-  .v2-steps i.skipped { opacity: .35; }
+  /* One labelled chip per step of a site's run, so the column reads without a legend. */
+  .v2-steps { display: inline-grid; grid-template-columns: repeat(3, auto); gap: 3px; justify-content: start; }
+  .v2-steps span { text-align: left; font-size: calc(10.5px * var(--ts)); font-weight: 700; line-height: 1; white-space: nowrap;
+                   padding: 3px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .v2-steps span.done { color: var(--text); border-color: var(--border); background: var(--panel-2, #f4f4f4); }
+  .v2-steps span.done::before { content: '\2713  '; color: #3e8635; }
+  .v2-steps span.active { color: var(--red); border-color: var(--red); animation: breathe 1.7s var(--ease) infinite; }
+  .v2-steps span.active::before { content: '\25CF  '; }
+  .v2-steps span.waiting { color: #8a6100; border-color: #f0ab00; background: #fdf7e7; }
+  .v2-steps span.waiting::before { content: '\25CF  '; }
+  .v2-steps span.failed { color: var(--red); border-color: var(--red); background: var(--tint-r); }
+  .v2-steps span.failed::before { content: '\2717  '; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -3915,6 +3919,24 @@ function v2Badge(h) {
   return `<span class="badge ${m[0]}">${m[1]}</span>`;
 }
 
+// A site's run as labelled chips: done, running, waiting (the approval gate) or failed. Steps that do not apply to
+// the site (approval on a lab site) or never ran (after a rollback or a rejection) are left out; pending ones show
+// plain so the road ahead is visible.
+const STEP_LABEL = { commit: 'Commit', test: 'Test', approval: 'Approve', sync: 'Sync', remediate: 'Patch', verify: 'Verify' };
+const STEP_HELP = {
+  commit: 'Every jar checked (cosign / Maven Central) and the playbook committed to Gitea',
+  test: 'Test in a pod: OpenShift Pipelines builds the app with the change and checks /health',
+  approval: 'The approval gate for a LIVE site', sync: 'AAP syncs the playbooks project',
+  remediate: 'AAP runs the approved playbook on the server', verify: 'The health check names the new jar' };
+function v2StepChips(h, keys) {
+  if (h.outcome === 'skipped') return '';                       // the Status column says so
+  const st = h.steps || {};
+  return `<span class="v2-steps">${keys.filter(k => st[k] !== 'skipped').map(k => {
+    const v = st[k] || 'pending';
+    return `<span class="${esc(v)}" title="${esc(STEP_HELP[k])}: ${esc(v)}">${esc(STEP_LABEL[k])}</span>`;
+  }).join('')}</span>`;
+}
+
 function v2Render() {
   const live = v2.view === 'past' ? (v2.past || {}) : (v2.state || {});
   const ran = ((v2.state || {}).hosts || []).some(h => h.outcome && h.outcome !== 'skipped');
@@ -4145,7 +4167,7 @@ function v2Run(s, readOnly) {
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
           <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th>
-          <th title="Commit, Test, Approval, Sync, Remediate, Verify">Steps</th><th>Status</th><th></th></tr></thead><tbody>
+          <th>Steps</th><th>Status</th><th></th></tr></thead><tbody>
         ${t.map(x => { const h = run[x.key]; return `<tr>
           <td><input type="checkbox" data-v2-sel="${esc(x.key)}" ${chosen.has(x.key) ? 'checked' : ''} ${canPick(x) ? '' : 'disabled'} ${prepared && !prepared.has(x.key) ? 'title="Not prepared: left out at Prepare remediation"' : ''}></td>
           <td class="mono nowrap" title="${esc(x.host)}">${esc(x.site || String(x.host || '').split('.')[0])}</td>
@@ -4153,8 +4175,7 @@ function v2Run(s, readOnly) {
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
           <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')}</td>
-          <td>${h ? `<span class="v2-steps">${STEP_KEYS.map(k =>
-            `<i class="${esc((h.steps || {})[k] || '')}" title="${k}: ${esc((h.steps || {})[k] || 'pending')}"></i>`).join('')}</span>` : ''}</td>
+          <td>${h ? v2StepChips(h, STEP_KEYS) : ''}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
           <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
             ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>
