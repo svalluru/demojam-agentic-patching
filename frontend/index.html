@@ -4423,7 +4423,7 @@ function v2Estate(c) {
       ${c.pending ? '<span class="muted-sm"><span class="spinner sm"></span> Writing the reasoning from the app history and the LLM; rule-based notes for now.</span>' : ''}
       ${c.lab_error ? `<span class="v2-labdown">Lab unreachable: ${esc(c.lab_error)}. Showing rule-based reasoning.</span>` : ''}</div>`;
   return `${bar}<div class="v2-k">Network estate</div>${table(rows.filter(r => r.group === 'network'))}${foot}
-    <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">billing, inventory, customer channels</span></div>
+    <div class="v2-subframe"><div class="v2-subhead"><b>IT / OSS / BSS estate</b><span class="muted-sm">inventory, customer channels</span></div>
     ${table(rows.filter(r => r.group !== 'network'))}${foot}</div>`;
 }
 
