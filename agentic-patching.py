@@ -1753,7 +1753,7 @@ def ao_login() -> str:
 
 
 def ao_call(path: str, method: str = 'GET', body: Any = None,
-            timeout: int | None = None) -> Any:
+            timeout: int | None = None, _retried: bool = False) -> Any:
     try:
         return http_json(f'{AO_URL}{path}', method=method, body=body, verify=False,
                          headers={'Authorization': f'Bearer {ao_login()}'},
@@ -1766,6 +1766,11 @@ def ao_call(path: str, method: str = 'GET', body: Any = None,
             detail = json.loads(exc.read().decode()).get('detail', '')
         except Exception:
             pass
+        # AO keeps one session per user: a login elsewhere (a setup script, another console) makes the cached token
+        # "outdated" well before its expiry. Log in again and retry once, rather than fail the launch.
+        if not _retried and (exc.code == 401 or 'outdated' in str(detail).lower() or 'expired' in str(detail).lower()):
+            _ao_token.clear()
+            return ao_call(path, method, body, timeout, _retried=True)
         raise BackendUnavailable('Automation Orchestrator', detail or exc,
                                  f'{method} {path} was rejected') from exc
     except Exception as exc:

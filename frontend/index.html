@@ -1965,6 +1965,9 @@
      of its own widths. */
   .domain-toggle.three .dt-thumb { width: calc((100% - 4px) / 3); }
   .domain-toggle.three[data-pane="appv2"] .dt-thumb { transform: translateX(200%); }
+  /* Two columns since the first Applications side is hidden: Infrastructure | Applications (v2). */
+  .domain-toggle:not(.three)[data-pane="appv2"] .dt-thumb { transform: translateX(100%); }
+  .domain-toggle .dt-btn[hidden] { display: none; }
 
   /* ---- Applications v2 ---- */
   #appv2-pane[hidden] { display: none; }
@@ -2265,14 +2268,14 @@
        (a Lightwell build lands in Nexus and the agent patches the servers
        running the old version), beside the repository scanner it does not
        replace. -->
-  <span class="domain-toggle three" id="patch-toggle" role="radiogroup" aria-label="Patching domain" data-pane="infra" data-src="/lightwell/">
+  <span class="domain-toggle" id="patch-toggle" role="radiogroup" aria-label="Patching domain" data-pane="infra" data-src="/lightwell/">
     <span class="dt-thumb" aria-hidden="true"></span>
     <button type="button" class="dt-btn" role="radio" data-pane="infra" aria-pressed="true" aria-checked="true"
             title="Patch the hosts: CVE triage, risk assessment and supervised remediation.">Infra<span class="wide-only">structure</span></button>
-    <button type="button" class="dt-btn" role="radio" data-pane="app" aria-pressed="false" aria-checked="false"
+    <button type="button" class="dt-btn" role="radio" data-pane="app" aria-pressed="false" aria-checked="false" hidden
             title="Patch what the applications depend on: scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here.">App<span class="wide-only">lications</span></button>
     <button type="button" class="dt-btn" role="radio" data-pane="appv2" aria-pressed="false" aria-checked="false"
-            title="Patch running applications when a Lightwell build lands in Nexus: find the sites on the old version, prepare the change, commit it to Gitea, test it in a pod on OpenShift Pipelines, and run it through AO and AAP.">App<span class="wide-only">lications</span> v2</button>
+            title="Patch running applications when a Lightwell build lands in Nexus: find the sites on the old version, prepare the change, commit it to Gitea, test it in a pod on OpenShift Pipelines, and run it through AO and AAP.">App<span class="wide-only">lications</span></button>
   </span>
   <div class="head-right">
   <!-- Chrome, not a frame action. It was in the right-hand frame's toolbar,
@@ -2337,7 +2340,7 @@
        host. Filled by renderStages() and renderAppStages(). -->
   <nav class="stages" id="stages" aria-label="Run progress"></nav>
   <nav class="stages" id="app-stages" aria-label="Scan progress" hidden></nav>
-  <nav class="stages" id="appv2-stages" aria-label="Applications v2 progress" hidden></nav>
+  <nav class="stages" id="appv2-stages" aria-label="Applications progress" hidden></nav>
 </header>
 
 <!-- Shown only while a run is in flight; see body.busy. -->
@@ -2358,8 +2361,8 @@
     <div class="drawer-head">
       <h2 id="guide-title">Presenter's guide</h2>
       <span class="g-tabs" role="tablist" aria-label="Which script">
-        <button class="pill active" data-guide-tab="main" role="tab">Infrastructure · Applications</button>
-        <button class="pill" data-guide-tab="v2" role="tab">Applications v2 · live</button>
+        <button class="pill active" data-guide-tab="main" role="tab">Infrastructure</button>
+        <button class="pill" data-guide-tab="v2" role="tab">Applications · live</button>
       </span>
       <button class="icon-btn" id="popout-guide" title="Open in its own window, for a second screen" aria-label="Open in its own window">⧉</button>
       <button class="icon-btn" id="close-guide" title="Close" aria-label="Close">✕</button>
@@ -2963,15 +2966,15 @@
            same choice, and a second control for it that looked different
            would read as a different choice. -->
       <div class="fd-tabs">
-        <span class="domain-toggle three" id="flow-toggle" role="group"
+        <span class="domain-toggle" id="flow-toggle" role="group"
               aria-label="Which side of the demo" data-pane="infra">
           <span class="dt-thumb" aria-hidden="true"></span>
           <button type="button" class="dt-btn" data-pane="infra" aria-pressed="true"
                   >Infra<span class="wide-only">structure</span></button>
-          <button type="button" class="dt-btn" data-pane="app" aria-pressed="false"
+          <button type="button" class="dt-btn" data-pane="app" aria-pressed="false" hidden
                   >App<span class="wide-only">lications</span></button>
           <button type="button" class="dt-btn" data-pane="appv2" aria-pressed="false"
-                  >App<span class="wide-only">lications</span> v2</button>
+                  >App<span class="wide-only">lications</span></button>
         </span>
       </div>
       <div id="flow-body"></div>
@@ -3057,7 +3060,7 @@
 <div class="frames" id="appv2-pane" hidden>
   <section class="frame" id="v2-side">
     <div class="frame-head">
-      <h2>Applications v2</h2>
+      <h2>Applications</h2>
       <span class="run-state" id="v2-run-state" hidden></span>
     </div>
     <div class="frame-body">
@@ -3845,7 +3848,7 @@ async function v2Load() {
     }
   } catch (e) {
     document.getElementById('v2-body').innerHTML =
-      `<div class="empty"><strong>Could not load Applications v2</strong><span>${esc(e.message)}</span></div>`;
+      `<div class="empty"><strong>Could not load Applications</strong><span>${esc(e.message)}</span></div>`;
     return;
   }
   v2Render();
@@ -7004,7 +7007,7 @@ function roiV2Body(roi) {
   const exp = s.auto.lead_hours != null ? `<div class="roi-be">From the fix arriving to the run finishing:
       <b>${esc(fmtMin(s.auto.lead_hours * 60))}</b>, against ${esc(s.manual.lead_hours)} h assumed by hand
       (${s.sla.auto_within ? 'inside' : 'outside'} the ${esc(s.sla.hours)} h deadline).</div>` : '';
-  return `<h2 class="roi-sec">Applications v2
+  return `<h2 class="roi-sec">Applications
       <span>${esc(fix)} &middot; ${esc(m.apps)} app(s) &middot; ${esc(m.sites)} site(s), ${esc(m.gated)} live
         &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
 
@@ -7267,12 +7270,11 @@ function roiBody(roi) {
   // infrastructure-only page should know the other half exists and is empty
   // because nothing ran there, not conclude the console does not do it.
   const missing = (sides.infra && sides.app) || sides.appv2 ? '' : `<div class="roi-card">
-      <h3>${sides.infra ? 'Application' : 'Infrastructure'}</h3>
+      <h3>${sides.infra ? 'Applications' : 'Infrastructure'}</h3>
       <div class="sub">Nothing has run on this side yet, so there is nothing to
         compare. ${sides.infra
-          ? `Switch to <b>Application</b>, tick a repository and scan it — the
-             figures above will then include the dependency side against its
-             own baseline.`
+          ? `Switch to <b>Applications</b> and run a Lightwell fix to its sites — the
+             figures above will then include it against its own baseline.`
           : `Switch to <b>Infrastructure</b> and dispatch a patch plan — the
              figures above will then include the host side against its own
              baseline.`} The totals at the top are one side only until
@@ -9024,7 +9026,7 @@ renderStages({});
     const rb = document.getElementById('head-roi');
     rb.textContent = onRoi ? 'Close' : 'Calculate ROI';
     rb.title = onRoi
-      ? `Back to ${{ app: 'Applications', appv2: 'Applications v2' }[paneSide] || 'Infrastructure'}.`
+      ? `Back to ${{ app: 'Applications', appv2: 'Applications' }[paneSide] || 'Infrastructure'}.`
       : 'What both sides saved, against doing the same work by hand.';
     rb.classList.toggle('on', onRoi);
 
@@ -9042,8 +9044,9 @@ renderStages({});
   seg.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    const i = Math.max(0, btns.findIndex(b => b.dataset.pane === paneSide));
-    const next = btns[(i + (e.key === 'ArrowRight' ? 1 : btns.length - 1)) % btns.length];
+    const shown = btns.filter(b => !b.hidden);               // the first Applications side is hidden
+    const i = Math.max(0, shown.findIndex(b => b.dataset.pane === paneSide));
+    const next = shown[(i + (e.key === 'ArrowRight' ? 1 : shown.length - 1)) % shown.length];
     show(next.dataset.pane);
     next.focus();
   });
