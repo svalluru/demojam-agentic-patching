@@ -4133,21 +4133,17 @@ function v2Catalog(c) {
 function v2Runs() {
   if (!v2.runs.length) return '<div class="empty"><strong>No runs yet</strong><span>A run appears here once it starts.</span></div>';
   const count = (m, k, label) => m && m[k] ? `<span>${m[k]} ${label}</span>` : '';
-  return `<table><thead><tr><th>When</th><th>Fixed build</th><th>Apps</th><th>Servers</th><th>Commit</th></tr></thead>
+  return `<table><thead><tr><th>When</th><th>Fixed build</th><th>Apps</th><th>Servers</th></tr></thead>
     <tbody>${v2.runs.map(r => {
       const m = r.summary || {};
       const apps = [...new Set((r.hosts || []).map(h => h.app))];
-      const commit = (r.hosts || []).find(h => h.commit_sha) || {};
       return `<tr class="pick" data-v2-run="${esc(r.run_id)}">
         <td class="muted-sm">${v2When(r.finished_at || r.started_at)}${r.current ? ' <span class="badge work">in progress</span>' : ''}</td>
         <td>${esc(r.event.artifact)} <span class="mono muted-sm">${esc(r.event.version)}</span></td>
         <td>${apps.map(esc).join(', ')}</td>
         <td class="v2-counts">${count(m, 'patched', 'patched')}${count(m, 'rolled_back', 'rolled back')}
-          ${count(m, 'rejected', 'rejected')}${count(m, 'failed', 'failed')}${count(m, 'skipped', 'not selected')}
+          ${count(m, 'rejected', 'rejected')}${count(m, 'failed', 'failed')}${count(m, 'cancelled', 'cancelled')}${count(m, 'skipped', 'not selected')}
           ${r.current ? `<span>${esc(r.status || '')}</span>` : ''}</td>
-        <td>${commit.commit_sha ? (commit.commit_url
-          ? `<a class="mono" href="${esc(commit.commit_url)}" target="_blank" rel="noopener">${esc(commit.commit_sha.slice(0, 8))}</a>`
-          : `<span class="mono">${esc(commit.commit_sha.slice(0, 8))}</span>`) : '<span class="muted-sm">—</span>'}</td>
       </tr>`; }).join('')}</tbody></table>`;
 }
 
