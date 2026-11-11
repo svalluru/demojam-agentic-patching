@@ -483,8 +483,14 @@ v2 tab with the numbered diagram; this is the same thing in text.
    Each app and server gets a **Reasoning** line: the agent searches the app
    history store (`APP_VECTOR_DB_ID`, from `app-data/history/`) for past
    changes to that app on that server, and the LLM writes one line per row. A
-   row with no history says so. The LLM also writes a short note for the
-   reviewer. **Untick rows** to leave them out of the run; they are recorded
+   row with no history says so. An app whose BOM has a `context` block
+   (today workflow-engine: who uses it, what it depends on, what a restart
+   disrupts, each site's network elements and change window) gets three
+   sentences instead: who is affected and how, what to check first, and go now
+   or wait, using the change window as it stands when you press Assess and the
+   other apps on the same server. Its rows carry a **+ context** tag. The
+   history store also holds its service map (`app-data/history/*-NOTE.md`).
+   The LLM also writes a short note for the reviewer. **Untick rows** to leave them out of the run; they are recorded
    as not selected, and Prod still waits for approval.
 3. **Playbook.** The LLM drafts it, and `check_playbook()` decides whether the
    draft can be used: a play for `{{ target_hosts }}` with `become`, every

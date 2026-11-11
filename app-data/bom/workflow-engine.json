@@ -43,5 +43,41 @@
       "artifact": "spring-security-web",
       "version": "5.7.11"
     }
-  ]
+  ],
+  "context": {
+    "_note": "Staged context for the demo: who depends on this app, what it needs, and what a restart disrupts. Read by the Reasoning step (appv2.site_context).",
+    "role": "NFV orchestrator: drives NETCONF configuration to the network elements at each site",
+    "used_by": [
+      "service-order portal (northbound API): new orders queue during a restart, none are lost",
+      "assurance and closed-loop automation: automated corrective actions pause until it is back",
+      "inventory-service: topology sync pauses and catches up afterwards"
+    ],
+    "depends_on": [
+      "zookeeper ensemble (leader election): must have quorum before the restart",
+      "inventory-service (topology feed): must be healthy, or the orchestrator starts on stale topology",
+      "orders database (PostgreSQL)"
+    ],
+    "during_restart": "NETCONF sessions to every managed network element drop and reconnect; northbound orders queue; closed-loop actions pause",
+    "restart_seconds": 30,
+    "sites": {
+      "lab": {
+        "network_elements": 0,
+        "window": "any",
+        "timezone": "America/New_York",
+        "standby": false
+      },
+      "edge-site-1": {
+        "network_elements": 120,
+        "window": "00:00-04:00",
+        "timezone": "America/New_York",
+        "standby": false
+      },
+      "core-dc-1": {
+        "network_elements": 340,
+        "window": "00:00-04:00",
+        "timezone": "America/New_York",
+        "standby": false
+      }
+    }
+  }
 }

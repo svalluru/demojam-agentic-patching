@@ -1995,6 +1995,10 @@
   .v2-checks .ok::before { content: '\2713  '; color: var(--text); font-weight: 800; }
   .v2-checks .no { color: var(--red); }
   .v2-checks .no::before { content: '\2717  '; font-weight: 800; }
+  /* Reasoning that also drew on the app's context (BOM) and facts worked out at Assess time. */
+  .v2-ctx { display: inline-block; font-size: calc(10px * var(--ts)); font-weight: 800; color: var(--red);
+            border: 1px solid var(--red); border-radius: 999px; padding: 1px 6px; margin-left: 4px; cursor: help;
+            white-space: nowrap; vertical-align: 1px; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -4148,7 +4152,8 @@ function v2Run(s, readOnly) {
           <td>${x.domain ? `<span class="v2-dom">${esc(x.domain)}</span>` : ''}</td>
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
-          <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')}</td>
+          <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')
+            + (x.context ? ` <span class="v2-ctx" title="Context used: ${esc(x.context)}">+ context</span>` : '')}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
           <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
             ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>

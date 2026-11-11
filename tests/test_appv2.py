@@ -11,6 +11,7 @@ import tempfile
 import time
 import types
 import unittest
+from datetime import datetime as datetime_cls
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1419,3 +1420,71 @@ class ForcedFailureDemo(unittest.TestCase):
         self.assertTrue(all(h['steps']['rollback'] == 'done' and h['steps']['notify'] == 'done' for h in ran))
         self.assertTrue(all('forced failure' in h['detail'] and 'mina-core-2.2.5.jar back' in h['detail'] for h in ran))
         self.assertEqual(st['summary']['rolled_back'], 2)
+
+
+class SiteContext(unittest.TestCase):
+    """workflow-engine's richer reasoning: its BOM context plus facts worked out at Assess time."""
+
+    def at(self, hh, mm):
+        return lambda tz: datetime_cls(2026, 11, 11, hh, mm, tzinfo=tz)
+
+    def setUp(self):
+        demo()
+        self.saved = appv2._now
+
+    def tearDown(self):
+        appv2._now = self.saved
+
+    def test_window_open_and_closed(self):
+        appv2._now = self.at(1, 30)
+        self.assertIn('open now (closes in 2h 30m)', appv2._window_state('00:00-04:00', 'America/New_York'))
+        appv2._now = self.at(22, 0)
+        self.assertIn('closed now (opens in 2h 0m)', appv2._window_state('00:00-04:00', 'America/New_York'))
+        self.assertEqual(appv2._window_state('any', 'UTC'), 'Lab: any time.')
+
+    def test_only_workflow_engine_has_context(self):
+        imp = appv2.impact(appv2.DEMO_EVENTS[0], appv2.load_bom())
+        by = {t['key']: t for t in imp['targets']}
+        sc = appv2.site_context(by['workflow-engine|core-dc-1'], imp['targets'])
+        facts = ' '.join(sc['facts'])
+        self.assertIn('Network elements on this site: 340', facts)
+        self.assertIn('zookeeper ensemble', facts)
+        self.assertIn('service-order portal', facts)
+        self.assertIn('Also on this server: inventory-service', facts)
+        self.assertIn('Other sites of workflow-engine in this fix: lab, edge-site-1', facts)
+        self.assertEqual(appv2.site_context(by['inventory-service|core-dc-1'], imp['targets']), {})
+
+    def test_demo_reasoning_and_tag(self):
+        appv2._now = self.at(22, 0)
+        appv2.start_assess('evt-mina-core'); st = wait_for({'assessed'})
+        by = {t['key']: t for t in st['impact']['targets']}
+        core = by['workflow-engine|core-dc-1']
+        self.assertIn('zookeeper quorum', core['reasoning'])
+        self.assertIn('closed now', core['reasoning'])
+        self.assertNotIn('{window}', core['reasoning'])
+        self.assertIn('depends on zookeeper ensemble', core['context'])
+        self.assertNotIn('context', by['inventory-service|core-dc-1'])
+
+    def test_live_prompt_carries_context_only_for_workflow_engine(self):
+        prompts = []
+
+        def llm(p):
+            prompts.append(p)
+            return '{}'
+        appv2.configure(demo_mode=lambda: False, llm=llm, rag_search=lambda store, q: [],
+                        env=lambda k, d='': {'APP_VECTOR_DB_ID': 'vs1'}.get(k, d))
+        try:
+            imp = appv2.impact(appv2.DEMO_EVENTS[0], appv2.load_bom())
+            out, source = appv2.reasoning(imp['targets'])
+        finally:
+            appv2.configure(demo_mode=lambda: True, llm=None, rag_search=None)
+        p = prompts[0]
+        self.assertIn('[DETAILED', p)
+        self.assertIn('Depends on: zookeeper ensemble', p)
+        self.assertNotIn('inventory-service on core-dc-1 [DETAILED', p)
+        # No history and an empty answer: the line is built from the context, never "No history found".
+        key = {(t['app'], t['site']): t['key'] for t in imp['targets'] if not t.get('version_change')}
+        line = out[key[('workflow-engine', 'core-dc-1')]]           # live keys use the node: workflow-engine|node3
+        self.assertIn('Check first: zookeeper ensemble', line)
+        inv = next(t['key'] for t in imp['targets'] if t['app'] == 'inventory-service')
+        self.assertEqual(out[inv], 'No history found for this app on this server.')

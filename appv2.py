@@ -29,7 +29,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -159,10 +159,17 @@ DEMO_FAILING_KEY = 'workflow-engine|edge-site-1'
 # What the reasoning step says per app and site in demo mode. Live mode retrieves the same kind of thing from the
 # app history store (APP_VECTOR_DB_ID, app-data/history/) and has the LLM write one line per row.
 DEMO_REASONING = {
-    'workflow-engine|lab': 'No live network elements; restarts in 15s. Goes first.',
-    'workflow-engine|edge-site-1': '120 NEs over NETCONF; drain sessions before restart.',
-    'workflow-engine|core-dc-1': '340 NEs; only in the 00:00–04:00 network change window. Last change rolled back on '
-                                   'a 30s health window.',
+    # workflow-engine has a context block in its BOM, so its lines are 2-3 sentences; {window} is filled from the clock.
+    'workflow-engine|lab': 'No live network elements, and the lab restarts in 15 s: it goes first and proves the jar. '
+                           'Portal orders and closed-loop actions pointed at the lab only pause for seconds. {window}',
+    'workflow-engine|edge-site-1': '120 NEs reconnect over NETCONF during the ~30 s restart; the service-order portal '
+                                   'queues orders and assurance pauses closed-loop actions. inventory-service shares '
+                                   'this server: check it is healthy and not mid-change first (stale topology last time). '
+                                   'Drain sessions first. {window}',
+    'workflow-engine|core-dc-1': '340 NEs reconnect over NETCONF; portal orders queue (214 last time, none lost) and '
+                                 'closed-loop actions pause about 3 minutes. Confirm zookeeper quorum and '
+                                 'inventory-service health first; use a 60 s health window (the last mina-core change '
+                                 'here rolled back on 30 s). {window}',
     'inventory-service|lab': 'Lab copy with synthetic topology; safe at any time.',
     'inventory-service|core-dc-1': 'Feeds topology to the orchestrator; patch after the NFVO change has settled.',
 }
@@ -508,43 +515,146 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
     the server, then one LLM call that writes a line per row. A row with no records says so; nothing is
     invented for it."""
     if H.demo_mode():
-        return ({t['key']: (DEMO_VERSION_CHANGE.get(t['app'], 'A version change: verify the app against the new API first.')
-                            if t.get('version_change') else
-                            DEMO_REASONING.get(t['key'], 'No earlier changes recorded for this app on this server.'))
-                 for t in targets}, 'staged')
+        def staged(t):
+            if t.get('version_change'):
+                return DEMO_VERSION_CHANGE.get(t['app'], 'A version change: verify the app against the new API first.')
+            line = DEMO_REASONING.get(t['key'], 'No earlier changes recorded for this app on this server.')
+            return line.replace('{window}', (site_context(t, targets).get('window') or '')).strip()
+        return ({t['key']: staged(t) for t in targets}, 'staged')
     store = env('APP_VECTOR_DB_ID')
     if not store or not H.rag_search:
         return {t['key']: 'No app history store configured (APP_VECTOR_DB_ID).' for t in targets}, 'none'
     excerpts: dict[str, str] = {}
-    found = _search_all(store, {t['key']: f"patch history of {t['app']} on {t['host'].split('.')[0]}" for t in targets})
+    queries = {t['key']: f"patch history of {t['app']} on {t['host'].split('.')[0]}" for t in targets}
+    # Apps with a context block also get their service map from the store (who depends on them, what they need):
+    # a NOTE record that the per-site change records outrank in the first search.
+    queries.update({f"{t['key']}#map": f"{t['app']} dependencies and consumers service map"
+                    for t in targets if app_context(t['app']) and not t.get('version_change')})
+    found = _search_all(store, queries)
     for t in targets:
         short = t['host'].split('.')[0]
-        hits = found.get(t['key']) or []
+        hits = list(dict.fromkeys((found.get(t['key']) or []) + (found.get(f"{t['key']}#map") or [])))
         mine = [h for h in hits if t['app'] in h and re.search(rf'\b{re.escape(short)}\b', h)]
         if mine:
-            excerpts[t['key']] = '\n---\n'.join(mine)[:2500]
-    out = {t['key']: 'No history found for this app on this server.' for t in targets if t['key'] not in excerpts}
-    if not excerpts:
+            excerpts[t['key']] = '\n---\n'.join(mine)[:3500]
+    # Apps with a context block (who uses them, what they need): their rows go to the LLM with that context and the
+    # facts worked out now, and are answered in 2-3 sentences, history or not.
+    ctxs = {t['key']: site_context(t, targets) for t in targets if not t.get('version_change')}
+    ctxs = {k: v for k, v in ctxs.items() if v}
+    out = {t['key']: 'No history found for this app on this server.' for t in targets
+           if t['key'] not in excerpts and t['key'] not in ctxs}
+    if not excerpts and not ctxs:
         return out, 'rag'
-    keys = list(excerpts)
+    keys = list(dict.fromkeys(list(excerpts) + list(ctxs)))
+    by_key = {t['key']: t for t in targets}
     # A version change is a different risk from a patched copy of the same version: say so, so the line can weigh
     # the API change against the history.
     vc = {t['key']: f" (VERSION CHANGE {t['installed']} -> {t.get('to_version', '')}: the app moves to another version)"
           for t in targets if t.get('version_change')}
-    prompt = ('For each numbered app and server below, write ONE short sentence (at most 25 words) a reviewer needs '
-              'before a library jar is swapped and the service restarted: timing, past failures, traffic windows. Use only the '
-              'records given. Answer as JSON, {"1": "...", "2": "..."}, and nothing else.\n\n'
-              + '\n\n'.join(f"{i + 1}. {k.replace('|', ' on ')}{vc.get(k, '')}\n{excerpts[k]}" for i, k in enumerate(keys)))
+    def item(i: int, k: str) -> str:
+        head = f"{i + 1}. {k.replace('|', ' on ')}{vc.get(k, '')}"
+        if k in ctxs:
+            head += ' [DETAILED: 3 sentences, at most 70 words]\nContext now:\n- ' + '\n- '.join(ctxs[k]['facts'])
+        return head + '\nHistory:\n' + (excerpts.get(k) or 'No records for this app on this server.')
+    prompt = ('For each numbered app and server below, write what a reviewer needs before a library jar is swapped and '
+              'the service restarted: timing, past failures, traffic windows. Normally ONE short sentence (at most 25 '
+              'words). Items marked DETAILED get exactly 3 sentences (at most 70 words): (1) who is affected during '
+              'the restart and how, naming them (the apps and teams under "Used by" and the network elements); (2) '
+              'which dependencies to check first; (3) go now or wait, quoting the window state exactly as given '
+              '(open now / closed now), plus the most useful lesson from the history. Use only the facts and records '
+              'given; do not invent numbers. Answer as JSON, '
+              '{"1": "...", "2": "..."}, and nothing else.\n\n'
+              + '\n\n'.join(item(i, k) for i, k in enumerate(keys)))
     try:
         answer = H.llm(prompt) if H.llm else ''
         parsed = json.loads(re.search(r'\{.*\}', answer, re.S).group(0))
         for i, k in enumerate(keys):
-            out[k] = str(parsed.get(str(i + 1)) or '').strip() or _lesson(excerpts[k])
+            out[k] = str(parsed.get(str(i + 1)) or '').strip() or (
+                _context_line(by_key[k], ctxs[k], excerpts.get(k, '')) if k in ctxs else _lesson(excerpts[k]))
         return out, 'rag+llm'
     except Exception:
-        for k in keys:
-            out[k] = _lesson(excerpts[k])     # the record's own words when the LLM cannot be used
+        for k in keys:                        # the records' own words, and the context, when the LLM cannot be used
+            out[k] = _context_line(by_key[k], ctxs[k], excerpts.get(k, '')) if k in ctxs else _lesson(excerpts[k])
         return out, 'rag'
+
+
+def _now(tz) -> datetime:
+    return datetime.now(tz)
+
+
+def _window_state(window: str, tz_name: str) -> str:
+    """'Window 00:00-04:00 is open now (closes in 1h 20m)' / 'is closed now (opens in 5h 40m)' / 'Any time'."""
+    if not window or window == 'any':
+        return 'Lab: any time.'
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name or 'UTC')
+    except Exception:
+        tz = timezone.utc
+    start_s, end_s = window.split('-')
+    now = _now(tz)
+    start = now.replace(hour=int(start_s[:2]), minute=int(start_s[3:5]), second=0, microsecond=0)
+    end = now.replace(hour=int(end_s[:2]), minute=int(end_s[3:5]), second=0, microsecond=0)
+    if end <= start:
+        end += timedelta(days=1)
+    if start <= now < end:
+        left = end - now
+        return f"Window {window} is open now (closes in {left.seconds // 3600}h {left.seconds % 3600 // 60}m)."
+    nxt = start if now < start else start + timedelta(days=1)
+    wait = nxt - now
+    return f"Window {window} is closed now (opens in {wait.seconds // 3600}h {wait.seconds % 3600 // 60}m)."
+
+
+def app_context(app_name: str) -> dict:
+    """The app's context block from its BOM (who uses it, what it needs, what a restart disrupts), or {}."""
+    return next((a.get('context') or {} for a in load_bom() if a['app'] == app_name), {})
+
+
+def site_context(t: dict, targets: list[dict] | None = None) -> dict:
+    """What the reviewer should know about restarting this app on this site now: the app's context block plus facts
+    worked out at Assess time (the change window right now, other apps on the same server, the app's other sites in
+    this fix). {'facts': [str], 'summary': str}, or {} for an app without a context block."""
+    ctx = app_context(t['app'])
+    if not ctx:
+        return {}
+    site = (ctx.get('sites') or {}).get(t.get('site') or t['host'], {})
+    facts = []
+    if ctx.get('role'):
+        facts.append(f"Role: {ctx['role']}.")
+    ne = site.get('network_elements')
+    if ne is not None:
+        facts.append(f"Network elements on this site: {ne}.")
+    if ctx.get('during_restart'):
+        facts.append(f"During the ~{ctx.get('restart_seconds', 30)} s restart: {ctx['during_restart']}.")
+    if ctx.get('used_by'):
+        facts.append('Used by: ' + '; '.join(ctx['used_by']) + '.')
+    if ctx.get('depends_on'):
+        facts.append('Depends on: ' + '; '.join(ctx['depends_on']) + '.')
+    window = _window_state(site.get('window', ''), site.get('timezone', 'UTC'))
+    facts.append(window)
+    beside = sorted({a['app'] for a in load_bom() if a['app'] != t['app']
+                     and any(x['host'] == t['host'] for x in a.get('servers', []))})
+    if beside:
+        facts.append(f"Also on this server: {', '.join(beside)}.")
+    others = [x.get('site') or x['host'] for x in (targets or [])
+              if x['app'] == t['app'] and x['key'] != t['key'] and not x.get('version_change')]
+    if others:
+        facts.append(f"Other sites of {t['app']} in this fix: {', '.join(others)}: patch them one at a time.")
+    summary = ' · '.join(p for p in (
+        ('depends on ' + ', '.join(d.split(' (')[0] for d in ctx.get('depends_on', []))) if ctx.get('depends_on') else '',
+        ('used by ' + ', '.join(u.split(' (')[0].split(':')[0] for u in ctx.get('used_by', []))) if ctx.get('used_by') else '',
+        window, (f"same server: {', '.join(beside)}" if beside else '')) if p)
+    return {'facts': facts, 'window': window, 'summary': summary}
+
+
+def _context_line(t: dict, sc: dict, excerpt: str = '') -> str:
+    """Without the LLM: the reviewer's line from the context facts and the history's own lesson."""
+    ctx = app_context(t['app'])
+    impact = ctx.get('during_restart', '')
+    deps = '; '.join(d.split(':')[0] for d in ctx.get('depends_on', []))
+    parts = [f"During the restart: {impact}." if impact else '', f"Check first: {deps}." if deps else '',
+             sc.get('window', ''), _lesson(excerpt) if excerpt else '']
+    return ' '.join(p for p in parts if p)[:420]
 
 
 def _lesson(excerpt: str) -> str:
@@ -1487,7 +1597,10 @@ def _assess(ev: dict) -> None:
             notes, rsource = reasoning(imp['targets'])
             if rsource == 'rag+llm':
                 _trace('reasoning', 'llm', 'one line per app and server')
-            targets = [{**t, 'reasoning': notes.get(t['key'], '')} for t in imp['targets']]
+            targets = [{**t, 'reasoning': notes.get(t['key'], ''),
+                        **({'context': sc['summary']} if (sc := (site_context(t, imp['targets'])
+                                                                 if not t.get('version_change') else {})) else {})}
+                       for t in imp['targets']]
             fill(targets=targets, reasoning_source=rsource, done='reasoning')
 
         def do_extra() -> None:
