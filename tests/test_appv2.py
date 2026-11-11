@@ -1521,3 +1521,16 @@ class ModeAndOutage(unittest.TestCase):
         self.assertIn('HTTP 401', x['warning'])
         mina = next(r for r in x['rows'] if r['app'] == 'inventory-service' and r['artifact'] == 'mina-core')
         self.assertEqual((mina['kind'], mina['to']), ('upstream', '2.1.13'))
+
+
+class PlanPdf(unittest.TestCase):
+    def test_plan_markdown_becomes_a_pdf(self):
+        demo()
+        plan = appv2.app_plan('workflow-engine', ['lightwell', 'another', 'osv'])
+        raw = appv2.plan_pdf(appv2.plan_markdown(plan))
+        self.assertTrue(raw.startswith(b'%PDF'))
+        import zlib
+        text = b''.join(zlib.decompress(m) for m in re.findall(rb'stream\r?\n(.*?)\r?\nendstream', raw, re.S))
+        self.assertIn(b'Remediation plan: workflow-engine', text)
+        self.assertIn(b'Summary', text)
+        self.assertNotIn(b'```', text)

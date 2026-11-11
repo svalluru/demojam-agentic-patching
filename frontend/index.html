@@ -2828,7 +2828,7 @@
                 it for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and the
                 page says so.”</span></div>
               <div class="g-do"><b>Do</b><span>Tick <strong>mina-core 2.2.8</strong>; leave zookeeper and the still-open
-                row. <strong>Download plan (.md)</strong> for the change board. In <strong>1 · Sites</strong> untick
+                row. <strong>Download plan (PDF)</strong> for the change board. In <strong>1 · Sites</strong> untick
                 core-dc-1 (it keeps the act inside ten minutes). <strong>Prepare remediation</strong>.</span></div>
               <div class="g-say"><b>Say</b><span>“The LLM writes the playbook and the system checks it: allowed modules
                 only, every path and checksum as set, a health check, and on failure it hands over to the workflow's
@@ -4394,7 +4394,7 @@ function v2ChangeList(s, readOnly) {
             : 'clone the Gitea repo, update pom.xml, mvn package; sites get the built app; branch fix/' + esc(s.run_id) + ' pushed'}</span></label></div>`; })()}
     <div class="v2-planact">
       <span class="muted-sm">${n.sites} site${n.sites === 1 ? '' : 's'} · ${n.jars} change${n.jars === 1 ? '' : 's'}</span>
-      <button class="pill" data-v2-cldl ${n.apps.length ? '' : 'disabled'}>Download plan (.md)</button>
+      <button class="pill" data-v2-cldl ${n.apps.length ? '' : 'disabled'}>Download plan (PDF)</button>
       ${pick ? `<button class="go-patch" data-v2-clprep ${n.sites ? '' : 'disabled'}>Prepare remediation (${n.sites} site${n.sites === 1 ? '' : 's'} · ${n.jars} jar${n.jars === 1 ? '' : 's'})</button>` : ''}
     </div></div>`;
 }
@@ -4412,8 +4412,12 @@ async function v2ClDownload() {
     // Each app's plan one level down, under the run's heading.
     parts.push(d.markdown.replace(/\n### /g, '\n#### ').replace(/\n## /g, '\n### ').replace(/^# /, '## '), '');
   }
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([parts.join('\n')], { type: 'text/markdown' })),
-    download: `remediation-${e.artifact}-${s.run_id}.md` });
+  // Laid out as a PDF by the console (appv2.plan_pdf), for the change board.
+  const filename = `remediation-${e.artifact}-${s.run_id}.pdf`;
+  const r = await fetch('/api/v2/plan/pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: parts.join('\n'), filename }) });
+  if (!r.ok) throw new Error(`Could not make the plan PDF (HTTP ${r.status})`);
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await r.blob()), download: filename });
   document.body.appendChild(a); a.click(); a.remove();
 }
 

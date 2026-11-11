@@ -5186,6 +5186,24 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/v2/decide':
             code, body = appv2.decide(str(payload.get('key') or payload.get('host', '')),
                                       str(payload.get('decision', '')))
+        elif path == '/api/v2/plan/pdf':
+            # Download plan as a PDF: the markdown the page assembled (one section per app), laid out for the board.
+            md = str(payload.get('markdown') or '')
+            name = re.sub(r'[^A-Za-z0-9._-]', '_', str(payload.get('filename') or 'remediation-plan.pdf'))
+            if not md.strip():
+                self._send(400, {'ok': False, 'error': 'no plan to render'})
+                return
+            body = appv2.plan_pdf(md)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/pdf')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Disposition', f'attachment; filename="{name}"')
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         elif path == '/api/v2/plan/preview':
             # The remediation plan for one app (the Change list's Download plan): the sources allowed, the packages
             # selected, and its markdown.

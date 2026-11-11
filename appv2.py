@@ -2409,6 +2409,53 @@ def _plan_change(group: str, artifact: str, frm: str, to: str, source: str, cves
     return out
 
 
+def plan_pdf(markdown: str) -> bytes:
+    """The remediation plan (the Change list's Download plan) as a PDF for the change board: the plan's markdown laid
+    out with the same writer as the run report (pdf.py). Handles what plan_markdown() and the page produce: #-####
+    headings, - bullets, ``` code blocks and paragraphs; `code` and **bold** spans lose their marks."""
+    import tempfile
+    import pdf
+    doc = pdf.Doc()
+    plain = lambda t: re.sub(r'`([^`]*)`', r'\1', re.sub(r'\*\*([^*]*)\*\*', r'\1', t))
+    in_code, first = False, True
+    for line in markdown.splitlines():
+        if line.strip().startswith('```'):
+            in_code = not in_code
+            doc.gap(2)
+            continue
+        if in_code:
+            # Mono lines (a jar URL) have no spaces to wrap at: cut them to the page width.
+            per = max(20, int(doc.content_w / (8.5 * 0.6)))
+            for i in range(0, max(len(line), 1), per):
+                doc.text(line[i:i + per], size=8.5, mono=True, color='#333333')
+            continue
+        m = re.match(r'^(#{1,4})\s+(.*)$', line)
+        if m:
+            level, title = len(m.group(1)), plain(m.group(2))
+            if level == 1:
+                doc.text(title, size=19 if first else 16, bold=True)
+                if first:
+                    doc.text(f"Generated {now_iso()[:16].replace('T', ' ')} UTC by the agentic patching console",
+                             size=9, color='#6a6e73')
+                    doc.rule()
+                first = False
+            else:
+                doc.gap(8 if level == 2 else 5)
+                doc.text(title, size={2: 13.5, 3: 11.5, 4: 10.5}[level], bold=True,
+                         color='#151515' if level < 4 else '#333333')
+            doc.gap(2)
+            continue
+        if re.match(r'^\s*[-*]\s+', line):
+            doc.text('\u2022  ' + plain(re.sub(r'^\s*[-*]\s+', '', line)), size=9.5, x=doc.margin + 8)
+            continue
+        if not line.strip():
+            doc.gap(5)
+            continue
+        doc.text(plain(line), size=9.5)
+    with tempfile.TemporaryDirectory() as tmp:
+        return doc.save(Path(tmp) / 'plan.pdf').read_bytes()
+
+
 def app_plan(app_name: str, sources: list[str] | None = None, allow_major: bool = False,
              select: list[dict] | None = None) -> dict | None:
     """The remediation plan for one app. sources: which of PLAN_SOURCES may be used (default: lightwell only, as v1).
@@ -2543,7 +2590,8 @@ def plan_markdown(plan: dict) -> str:
     if ch:
         out += ['## Rollout', '',
                 f"One playbook swaps all {len(ch)} jar{'s' if len(ch) != 1 else ''} together on each site: one backup, one restart, "
-                'one health check, and every jar rolled back if anything fails. Before any site, the change is built and '
+                'one health check. If a site fails, the workflow\'s rollback route (AAP: App Patch v2 - Rollback) puts '
+                'the original jars back and checks /health. Before any site, the change is built and '
                 'started in a pod (OpenShift Pipelines) and its /health checked. LAB sites go first, automatically; LIVE '
                 'sites wait for approval.', '',
                 '## Repository setup', '',

@@ -574,7 +574,7 @@ answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Light
 **2 · Change list**: one group per app, the fix itself locked in, the other libraries tickable. Source chips choose
 where a fix may come from (**Lightwell** = same version, **Another build** = a Lightwell build of a newer version on
 the same major line, **OSV** = the lowest upstream release that clears every advisory) and **Major upgrades** lets an
-upstream fix cross a major version. **Download plan (.md)** saves the run's plan (one section per app, the shape of
+upstream fix cross a major version. **Download plan (PDF)** saves the run's plan, laid out as a PDF for the change board (one section per app, the shape of
 Applications v1's remediation plan, `/api/v2/plan/preview`).
 
 | Row | When | Offered |
