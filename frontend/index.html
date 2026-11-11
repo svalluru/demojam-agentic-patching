@@ -4381,7 +4381,8 @@ function v2ChangeList(s, readOnly) {
   }).join('');
   const note = pending ? '<div class="empty"><div class="spinner"></div><span>Asking osv.dev and Lightwell what else is open…</span></div>'
     : !imp.extra ? '<div class="muted-sm">Only this fix. Turn on <b>Include osv.dev packages</b> in Settings to see what else is open on these apps.</div>'
-    : x.error ? `<div class="muted-sm">osv.dev did not answer: ${esc(x.error)}</div>` : '';
+    : x.error ? `<div class="muted-sm">osv.dev did not answer: ${esc(x.error)}</div>`
+    : x.warning ? `<div class="muted-sm">${esc(x.warning)}</div>` : '';
   return `<div class="v2-sec"><h3>2 · Change list</h3>
     <div class="v2-clbar"><span class="muted-sm">Sources</span>${chips}</div>
     ${groups}${note}

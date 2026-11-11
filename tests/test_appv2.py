@@ -1490,3 +1490,34 @@ class SiteContext(unittest.TestCase):
         self.assertIn('Check first: zookeeper ensemble', line)
         inv = next(t['key'] for t in imp['targets'] if t['app'] == 'inventory-service')
         self.assertEqual(out[inv], 'No history found for this app on this server.')
+
+
+class ModeAndOutage(unittest.TestCase):
+    def test_demo_write_back_does_not_leak_into_live(self):
+        d = tempfile.mkdtemp(prefix='appv2-test-')
+        Path(d, 'appv2-bom-updates.json').write_text(json.dumps({'workflow-engine|org.apache.mina:mina-core': 'live'}))
+        demo(APPV2_STATE_DIR=d)
+        appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'] = '42.3.3.rhlw-00006'   # a demo run's
+        appv2.configure(demo_mode=lambda: False)
+        try:
+            appv2.reset()                                                # what a mode switch calls
+            self.assertEqual(appv2._BOM_UPDATES, {'workflow-engine|org.apache.mina:mina-core': 'live'})
+        finally:
+            appv2.configure(demo_mode=lambda: True)
+        appv2.reset()
+        self.assertEqual(appv2._BOM_UPDATES, {})                       # and demo starts clean
+
+    def test_lightwell_outage_keeps_the_osv_rows(self):
+        with_osv()
+        saved = appv2._lightwell_builds
+        appv2._lightwell_builds = lambda: (_ for _ in ()).throw(RuntimeError('HTTP 401'))
+        try:
+            ev = appv2.DEMO_EVENTS[2]                                  # zookeeper
+            imp = appv2.impact(ev, appv2.load_bom())
+            x = appv2.extras(ev, imp, appv2.load_bom())
+        finally:
+            appv2._lightwell_builds = saved
+        self.assertEqual(x['error'], '')
+        self.assertIn('HTTP 401', x['warning'])
+        mina = next(r for r in x['rows'] if r['app'] == 'inventory-service' and r['artifact'] == 'mina-core')
+        self.assertEqual((mina['kind'], mina['to']), ('upstream', '2.1.13'))

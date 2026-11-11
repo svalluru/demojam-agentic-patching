@@ -782,9 +782,14 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
                 wanted.append((name, dep))
     try:
         answers = H.osv_lookup([('maven', f"{d['group']}:{d['artifact']}", upstream(d['version'])) for _, d in wanted])
-        lw = _lightwell_builds()
     except Exception as exc:
         return {'rows': [], 'source': 'osv.dev', 'error': str(exc)}
+    # Lightwell not answering must not hide what osv.dev found: the rows still come, with upstream options only.
+    lw_error = ''
+    try:
+        lw = _lightwell_builds()
+    except Exception as exc:
+        lw, lw_error = {}, f'Lightwell builds unavailable, upstream options only: {exc}'
     rows = []
     for name, dep in wanted:
         coord = f"{dep['group']}:{dep['artifact']}"
@@ -870,7 +875,7 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
     for r in rows:
         r['reasoning'] = notes.get(r['id'], r['why'])
     return {'rows': rows, 'source': 'saved osv.dev answers' if H.demo_mode() else 'osv.dev',
-            'reasoning_source': rsource, 'error': ''}
+            'reasoning_source': rsource, 'error': '', 'warning': lw_error}
 
 
 def _two_sentences(text: str) -> str:
@@ -1491,6 +1496,13 @@ def reset() -> None:
         _DEMO_RUNS.clear()          # demo history is memory only; it goes with the demo
     for cache in ('_MINE_CACHE', '_LW_BUILDS', '_ESTATE_CACHE'):   # demo and live answers never mix
         globals()[cache].clear()
+    # BOM write-backs too: a demo run's must not be saved into live (and live's come back from the volume).
+    _BOM_UPDATES.clear()
+    if not H.demo_mode():
+        try:
+            _BOM_UPDATES.update(json.loads((state_dir() / 'appv2-bom-updates.json').read_text()))
+        except (OSError, ValueError):
+            pass
     EVENTS = None
     _persist()
 
