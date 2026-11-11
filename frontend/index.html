@@ -2009,6 +2009,14 @@
   .v2-more dd { margin: 0; font-size: calc(12px * var(--ts)); line-height: 1.4; }
   .v2-more dd ul { margin: 0; padding-left: 14px; }
   .v2-more dd li + li { margin-top: 2px; }
+  .v2-more .v2-mg { margin: 8px 0 -2px; font-size: calc(10.5px * var(--ts)); font-weight: 800; letter-spacing: .6px;
+                    text-transform: uppercase; color: var(--text); }
+  .v2-more .v2-what { color: var(--muted); margin-top: 1px; }
+  .v2-res { display: inline-block; font-size: calc(9.5px * var(--ts)); font-weight: 800; border-radius: 999px;
+            padding: 0 6px; margin-left: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap; }
+  .v2-res.ok { color: #3e8635; border-color: #3e8635; }
+  .v2-res.bad { color: var(--red); border-color: var(--red); background: var(--tint-r); }
+  .v2-res.warn { color: #8a6100; border-color: #f0ab00; background: #fdf7e7; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -2809,8 +2817,8 @@
                 One of these CVEs is an authorization bypass. Lightwell rebuilt the exact version we run with the fix:
                 same version, no upgrade, no code change. Where does it run?”</span></div>
               <div class="g-do"><b>Do</b><span><strong>1 · Sites</strong>: workflow-engine on lab, edge-site-1 and
-                core-dc-1, nothing else runs it. Read edge-site-1's reasoning aloud, then open <strong>Show
-                more</strong> on core-dc-1.</span></div>
+                core-dc-1, nothing else runs it. Read edge-site-1's <strong>Impact &amp; history</strong> aloud, then open
+                <strong>Show more</strong> on core-dc-1: the impact, the site's patch history and the issues faced.</span></div>
               <div class="g-say"><b>Say</b><span>“Each site gets its own reasoning: who is affected during the restart
                 (the service-order portal queues orders, assurance pauses its closed-loop actions, inventory-service
                 pauses its sync), what to check first (zookeeper quorum, inventory-service health), and whether to go
@@ -3931,8 +3939,11 @@ function v2CtxMore(x) {
   // "name (what): detail" reads as a bold name and its detail.
   const item = v => { const i = String(v).indexOf(':'); return i > 0
     ? `<b>${esc(v.slice(0, i))}</b>: ${esc(v.slice(i + 1).trim())}` : esc(v); };
-  const c = x.context, li = a => `<ul>${a.map(v => `<li>${item(v)}</li>`).join('')}</ul>`;
-  const rows = [
+  const c = (x.context && typeof x.context === 'object') ? x.context : null, hist = x.history || [];
+  const li = a => `<ul>${a.map(v => `<li>${item(v)}</li>`).join('')}</ul>`;
+  const group = (title, rows) => rows.length
+    ? `<div class="v2-mg">${title}</div><dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '';
+  const impact = c ? [
     ['Used by', (c.used_by || []).length && li(c.used_by)],
     ['Depends on', (c.depends_on || []).length && li(c.depends_on)],
     ['During restart', c.during_restart && `About ${esc(c.restart_seconds)} s: ${esc(c.during_restart)}`
@@ -3940,9 +3951,16 @@ function v2CtxMore(x) {
     ['Window', c.window && esc(c.window)],
     ['Same server', (c.same_server || []).length && esc(c.same_server.join(', '))],
     ['Other sites', (c.other_sites || []).length && `${esc(c.other_sites.join(', '))}: patch them one at a time`],
-  ].filter(([, v]) => v);
+  ].filter(([, v]) => v) : [];
+  const badge = r => { const u = (r.result || '').toUpperCase();
+    const cls = /ROLLED|FAIL/.test(u) ? 'bad' : /DEGRADED|SKIP|REJECT/.test(u) ? 'warn' : 'ok';
+    return `<span class="v2-res ${cls}">${esc(r.result.toLowerCase())}</span>`; };
+  // First sentence of what happened: enough to recall the change; the record itself is in the history store.
+  const first = t => { const m = String(t || '').match(/^.{20,180}?[.;](\s|$)/); return m ? m[0].trim() : String(t || '').slice(0, 180); };
+  const past = hist.map(r => [esc(r.date), `${esc(r.change)} ${badge(r)}${r.what ? `<div class="v2-what">${esc(first(r.what))}</div>` : ''}`]);
+  const issues = hist.filter(r => r.issue && r.lessons).map(r => [esc(r.date), `${esc(r.lessons)} ${badge(r)}`]);
   return `<details class="v2-more" data-ctx="${esc(x.key)}" ${(v2.ctxOpen || new Set()).has(x.key) ? 'open' : ''}>
-    <summary></summary><dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>`;
+    <summary></summary>${group('Impact', impact)}${group('Patch history on this site', past)}${group('Issues faced', issues)}</details>`;
 }
 document.getElementById('v2-body')?.addEventListener('toggle', e => {
   const d = e.target.closest && e.target.closest('details[data-ctx]');
@@ -4181,7 +4199,7 @@ function v2Run(s, readOnly) {
     out.push(`<div class="v2-sec"><h3>1 · Sites</h3>`
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
-          <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th>
+          <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th title="Who a restart affects, what to check first, and this site's past patches and issues">Impact &amp; history</th>
           <th>Status</th><th></th></tr></thead><tbody>
         ${t.map(x => { const h = run[x.key]; return `<tr>
           <td><input type="checkbox" data-v2-sel="${esc(x.key)}" ${chosen.has(x.key) ? 'checked' : ''} ${canPick(x) ? '' : 'disabled'} ${prepared && !prepared.has(x.key) ? 'title="Not prepared: left out at Prepare remediation"' : ''}></td>
@@ -4190,13 +4208,13 @@ function v2Run(s, readOnly) {
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
           <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')
-            + (x.context && typeof x.context === 'object' ? v2CtxMore(x) : '')}</td>
+            + ((x.context && typeof x.context === 'object') || (x.history || []).length ? v2CtxMore(x) : '')}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
           <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
             ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>
         </tr>`; }).join('')}
         </tbody></table>
-        <div class="muted-sm" style="margin-top:6px">Reasoning: ${{ staged: 'staged for the demo', 'rag+llm': 'app history store, summarised by the LLM',
+        <div class="muted-sm" style="margin-top:6px">Impact &amp; history: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the app\'s service map, summarised by the LLM',
           rag: 'app history store', none: 'no app history store configured' }[s.impact.reasoning_source] || '—'}.
           ${pick ? 'Untick a row to leave it out of this run; LIVE sites still wait for approval.' : ''}</div>` : '')
       + ((s.impact.other || []).length ? `<div class="muted-sm" style="margin-top:8px">Left alone: ${s.impact.other.map(o =>

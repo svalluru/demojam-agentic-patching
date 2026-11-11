@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import appv2  # noqa: E402
+ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
 def demo(**extra):
@@ -1563,3 +1564,37 @@ class NexusCheck(unittest.TestCase):
         self.assertTrue(self.check(lambda url: (200, ''))['ok'])
         demo()
         self.assertTrue(appv2.nexus_check(appv2.DEMO_EVENTS[0]).get('skipped'))
+
+
+class SiteHistory(unittest.TestCase):
+    """Impact & history: each site's past patches and issues, parsed from the history records."""
+
+    def test_parse_record_shapes(self):
+        txt = (ROOT_DIR / 'app-data' / 'history' / '2026-08-21-workflow-engine-core-dc-1-mina-core-ROLLED_BACK.md').read_text()
+        r = appv2.parse_record(txt)
+        self.assertEqual((r['app'], r['site'], r['host'], r['date']), ('workflow-engine', 'core-dc-1', 'node3', '2026-08-21'))
+        self.assertEqual((r['change'], r['result'], r['issue']), ('mina-core 2.2.4 -> 2.2.5', 'ROLLED BACK', True))
+        self.assertIn('60 second health window', r['lessons'])
+        # What the console writes after a run (feed_history) parses too.
+        own = ("# App patch record — workflow-engine on lab (node1) — 2026-11-11\n\nApp: workflow-engine   Site: lab\n"
+               "Change: spring-security-web 5.7.11 -> 5.7.11.rhlw-00006 (run ab12)\nResult: PATCHED\n\nWhat happened:\nhealthy\n")
+        r2 = appv2.parse_record(own)
+        self.assertEqual((r2['change'], r2['result'], r2['issue']), ('spring-security-web 5.7.11 -> 5.7.11.rhlw-00006', 'PATCHED', False))
+        note = (ROOT_DIR / 'app-data' / 'history' / '2026-10-20-workflow-engine-dependencies-NOTE.md').read_text()
+        self.assertIsNone(appv2.parse_record(note))
+
+    def test_site_history_filters_and_flags(self):
+        demo()
+        core = appv2.site_history({'app': 'workflow-engine', 'site': 'core-dc-1', 'host': 'core-dc-1'})
+        self.assertEqual([r['date'] for r in core], ['2026-08-21', '2026-07-14'])               # newest first
+        edge = appv2.site_history({'app': 'workflow-engine', 'site': 'edge-site-1', 'host': 'node2'})
+        self.assertTrue(edge[0]['issue'])                                                     # degraded is an issue
+        inv = appv2.site_history({'app': 'inventory-service', 'site': 'lab', 'host': 'lab'})
+        self.assertEqual((inv[0]['result'], inv[0]['issue']), ('SKIPPED', True))
+
+    def test_demo_rows_carry_history(self):
+        demo()
+        appv2.start_assess('evt-mina-core'); st = wait_for({'assessed'})
+        by = {t['key']: t for t in st['impact']['targets']}
+        self.assertEqual(by['workflow-engine|core-dc-1']['history'][0]['result'], 'ROLLED BACK')
+        self.assertEqual(by['inventory-service|lab']['history'][0]['result'], 'SKIPPED')           # version-change rows too

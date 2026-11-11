@@ -536,6 +536,7 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
         short = t['host'].split('.')[0]
         hits = list(dict.fromkeys((found.get(t['key']) or []) + (found.get(f"{t['key']}#map") or [])))
         mine = [h for h in hits if t['app'] in h and re.search(rf'\b{re.escape(short)}\b', h)]
+        _LAST_HITS[t['key']] = mine
         if mine:
             excerpts[t['key']] = '\n---\n'.join(mine)[:3500]
     # Apps with a context block (who uses them, what they need): their rows go to the LLM with that context and the
@@ -562,7 +563,9 @@ def reasoning(targets: list[dict]) -> tuple[dict[str, str], str]:
               'words). Items marked DETAILED get exactly 3 sentences (at most 70 words): (1) who is affected during '
               'the restart and how, naming them (the apps and teams under "Used by" and the network elements); (2) '
               'which dependencies to check first; (3) go now or wait, quoting the window state exactly as given '
-              '(open now / closed now), plus the most useful lesson from the history. Use only the facts and records '
+              '(open now / closed now), plus the most useful lesson from the history. Whatever the length, mention the '
+              'most relevant past issue at this site (a rollback, a skip, a degraded change) if the records show one. '
+              'Use only the facts and records '
               'given; do not invent numbers. Answer as JSON, '
               '{"1": "...", "2": "..."}, and nothing else.\n\n'
               + '\n\n'.join(item(i, k) for i, k in enumerate(keys)))
@@ -650,6 +653,57 @@ def site_context(t: dict, targets: list[dict] | None = None) -> dict:
               'during_restart': ctx.get('during_restart', ''), 'restart_seconds': ctx.get('restart_seconds', 30),
               'network_elements': ne, 'window': window, 'same_server': beside, 'other_sites': others}
     return {'facts': facts, 'window': window, 'summary': summary, 'detail': detail}
+
+
+_RECORD_HEAD = re.compile(r'#\s*App patch record\s*[—-]+\s*(?P<app>[\w.-]+)\s+on\s+(?P<site>[\w.-]+)\s*\((?P<host>[^)]*)\)\s*[—-]+\s*(?P<date>\d{4}-\d{2}-\d{2})')
+OK_RESULTS = ('SUCCESS', 'PATCHED')
+
+
+def parse_record(text: str) -> dict | None:
+    """One app history record as data: {app, site, host, date, change, result, what, lessons, issue}. Reads the shape
+    every record shares (app-data/history and what feed_history() writes after a run). Notes (the service map) and
+    anything else that is not a patch record give None."""
+    m = _RECORD_HEAD.search(text or '')
+    if not m:
+        return None
+    def field(name):
+        f = re.search(rf'^{name}:\s*(.+)$', text, re.M)
+        return f.group(1).strip() if f else ''
+    def block(name):
+        b = re.search(rf'^{name}:\s*\n(.+?)(?:\n\s*\n|\Z)', text, re.M | re.S)
+        return ' '.join(b.group(1).split()) if b else ''
+    result = field('Result').upper()
+    change = re.sub(r'\s*\((library swap|JDBC driver swap|run [^)]*)[^)]*\)\s*$', '', field('Change'))
+    return {'app': m.group('app'), 'site': m.group('site'), 'host': m.group('host').strip(), 'date': m.group('date'),
+            'change': change, 'result': result, 'what': block('What happened'), 'lessons': block('Lessons'),
+            'issue': bool(result) and not any(result.startswith(ok) and 'DEGRADED' not in result for ok in OK_RESULTS)}
+
+
+def site_history(t: dict, hits: list[str] | None = None) -> list[dict]:
+    """This app's past patches on this site, newest first, at most 5. Live: from the history-store hits the reasoning
+    already fetched. Demo: from app-data/history."""
+    if hits is None:
+        hits = []
+        for f in sorted((ROOT / 'app-data' / 'history').glob('*.md')):
+            try:
+                hits.append(f.read_text())
+            except OSError:
+                pass
+    site, short = (t.get('site') or t['host']), t['host'].split('.')[0]
+    seen, out = set(), []
+    for h in hits:
+        r = parse_record(h)
+        if not r or r['app'] != t['app'] or (r['site'] != site and r['host'].split('.')[0] != short):
+            continue
+        key = (r['date'], r['change'], r['result'])
+        if key not in seen:
+            seen.add(key)
+            out.append({k: r[k] for k in ('date', 'change', 'result', 'what', 'lessons', 'issue')})
+    return sorted(out, key=lambda r: r['date'], reverse=True)[:5]
+
+
+# The history-store hits reasoning() fetched per target, so the rows can carry their records without a second search.
+_LAST_HITS: dict[str, list[str]] = {}
 
 
 def _context_line(t: dict, sc: dict, excerpt: str = '') -> str:
@@ -1646,7 +1700,10 @@ def _assess(ev: dict) -> None:
             notes, rsource = reasoning(imp['targets'])
             if rsource == 'rag+llm':
                 _trace('reasoning', 'llm', 'one line per app and server')
+            hist = {t['key']: (site_history(t) if H.demo_mode() else site_history(t, _LAST_HITS.get(t['key']) or []))
+                    for t in imp['targets']}
             targets = [{**t, 'reasoning': notes.get(t['key'], ''),
+                        **({'history': hist[t['key']]} if hist.get(t['key']) else {}),
                         **({'context': sc['detail']} if (sc := (site_context(t, imp['targets'])
                                                                  if not t.get('version_change') else {})) else {})}
                        for t in imp['targets']]

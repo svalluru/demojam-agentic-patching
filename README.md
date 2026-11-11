@@ -488,7 +488,7 @@ v2 tab with the numbered diagram; this is the same thing in text.
    disrupts, each site's network elements and change window) gets three
    sentences instead: who is affected and how, what to check first, and go now
    or wait, using the change window as it stands when you press Assess and the
-   other apps on the same server. Its rows have a **Show more** link that lays out that context. The
+   other apps on the same server. The column is **Impact & history**: every row with context or history has a **Show more** link with three groups: Impact (the service map), Patch history on this site (each past change with a result badge) and Issues faced (the lessons from rollbacks, skips and degraded changes). The
    history store also holds its service map (`app-data/history/*-NOTE.md`).
    The LLM also writes a short note for the reviewer. **Untick rows** to leave them out of the run; they are recorded
    as not selected, and Prod still waits for approval.
