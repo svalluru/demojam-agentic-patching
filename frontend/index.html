@@ -2742,34 +2742,38 @@
 
         <section>
           <h3>Before you open the door</h3>
-          <p class="muted-sm">This act runs live on the lab: real Automation Orchestrator, AAP, OpenShift Pipelines
-            and node1–3. Budget ten minutes; the pod test alone takes four to eight. Do this list half an hour before.</p>
+          <p class="muted-sm">This act runs live on the lab: real Automation Orchestrator, AAP, OpenShift Pipelines,
+            Mattermost and node1–3. The fix is <strong>spring-security-web 5.7.11.rhlw-00006</strong> on workflow-engine.
+            Budget ten minutes; the pod test alone takes four to eight. Do this list half an hour before.</p>
           <ul>
             <li><strong>Lab up, console local.</strong> Start it from the repo:
               <code>SSL_CERT_FILE=/etc/ssl/cert.pem MODE=live NEXUS_EVENTS=poller APPV2_OSV=true ./agentic-patching.py serve</code>.
-              Its log must say <code>rag store infra: healthy</code> and <code>rag store app: healthy</code> (or
-              <code>rebuilt</code>: a lab restart breaks the stores and the console rebuilds them).</li>
-            <li><strong>Deliver the story's build.</strong>
-              <code>./nexus-setup/send-event.py org.apache.mina mina-core 2.2.5.rhlw-00002</code>. The poller takes
-              the newest build (-00009), which no advisory names; -00002 is the one CVE-2026-41635 names.</li>
-            <li><strong>Sites on their original jars.</strong> If a rehearsal patched node1, reset it (see
-              <em>Between demos</em>). workflow-engine's <code>/health</code> on node1 should name
-              <code>mina-core-2.2.5.jar</code>.</li>
+              Its log must say <code>rag store app: healthy</code> (or <code>rebuilt</code>: a lab restart breaks the
+              stores and the console rebuilds them).</li>
+            <li><strong>The fix in the inbox.</strong> <strong>Incoming fixes</strong> must list spring-security-web
+              <code>5.7.11.rhlw-00006</code> with CVE-2024-38821 and CVE-2026-22732. If it is missing:
+              <code>./nexus-setup/send-event.py org.springframework.security spring-security-web 5.7.11.rhlw-00006</code>.</li>
+            <li><strong>Sites on their original jars.</strong> workflow-engine's <code>/health</code> on node1–3 should
+              name <code>spring-security-web-5.7.11.jar</code> and <code>mina-core-2.2.5.jar</code>. If a rehearsal
+              patched one, reset it (<em>Between demos</em>).</li>
+            <li><strong>Settings (gear).</strong> <em>Include osv.dev packages</em> on; <em>Force a failure</em> off.</li>
+            <li><strong>Lightwell API.</strong> If it answers, the extra rows in the Change list offer Lightwell builds of
+              the same versions. If it does not, the page says <em>Lightwell builds unavailable, upstream options
+              only</em> and the act still works: the fix itself already came through Nexus. Know which one you will
+              get before you start.</li>
             <li><strong>Disk headroom on the cluster.</strong>
               <code>oc get node -o jsonpath='{.items[0].status.conditions[?(@.type=="DiskPressure")].status}'</code>
-              must say <code>False</code>. The node is one machine with little room; a build at the threshold evicts
-              AAP. Delete finished pods in <code>agentic-patching</code> first.</li>
-            <li><strong>Warm the estate.</strong> Open <strong>Telco estate</strong> once: the reasoning is then on
-              disk and the tab opens instantly in front of people.</li>
-            <li>Leave the console on <strong>Incoming fixes</strong>, nothing assessed.</li>
+              must say <code>False</code>; delete finished pods in <code>agentic-patching</code> first.</li>
+            <li><strong>Open the Mattermost channel</strong> in a browser tab, and the <strong>Telco estate</strong> once
+              so it opens instantly. Leave the console on <strong>Incoming fixes</strong>, nothing assessed.</li>
           </ul>
         </section>
 
         <section>
           <h3>The sentence it all hangs off</h3>
-          <p class="g-pitch">A fix lands for a library deep in the network's control plane. Applying it is the
-            easy part. The hard part is knowing everywhere it runs, what breaking it would cost at each site, and
-            proving it is safe before it touches anything live, and that is what the agents do.</p>
+          <p class="g-pitch">A fix lands for the library that guards the orchestrator's front door. Applying it is the
+            easy part. The hard part is knowing everywhere it runs, who depends on it, and proving it is safe before
+            it touches a live network, and that is what the agents do.</p>
         </section>
 
         <section>
@@ -2778,41 +2782,37 @@
           <div class="g-beat">
             <div class="g-n">1</div>
             <div>
-              <h4>Where Lightwell fits in the estate <span class="t">1½ min</span></h4>
-              <div class="g-do"><b>Do</b><span>Open <strong>Telco estate</strong>. The Network frame first:
-                workflow-engine (NFVO / MANO) on top, CRITICAL.</span></div>
-              <div class="g-say"><b>Say</b><span>“This is the estate by telco domain, most severe first. For each
-                app: what it is written in, which Lightwell fixes exist for the exact versions it runs, and the
-                agent's view of why it matters. The orchestrator drives NETCONF to hundreds of network elements, so
-                a hole in it reaches every element it configures.”</span></div>
-              <div class="g-do"><b>Do</b><span>Point at analytics-agent and customer-portal: “not covered yet”,
-                “npm not available”.</span></div>
-              <div class="g-say"><b>Say</b><span>“And it is honest about the gaps: Lightwell is Java-led today, so
-                the Python and JavaScript apps say so rather than pretend.”</span></div>
-              <div class="g-why">Start wide so the fix in beat 2 lands on a map people already have. The
-                reasoning column comes from the app history store and the LLM; if it is still writing, the dots say
-                so.</div>
+              <h4>Where Lightwell fits in the estate <span class="t">1 min</span></h4>
+              <div class="g-do"><b>Do</b><span>Open <strong>Telco estate</strong>: workflow-engine (NFVO / MANO) on top,
+                CRITICAL, with its Lightwell fixes listed.</span></div>
+              <div class="g-say"><b>Say</b><span>“The estate by telco domain, most severe first: what each app is
+                written in, which Lightwell fixes exist for the exact versions it runs, and why it matters. The
+                orchestrator drives configuration to hundreds of network elements, and its northbound API is what the
+                service-order portal calls.”</span></div>
+              <div class="g-why">Point at the Python and npm apps marked not covered: honest about the gaps before you
+                show the strength.</div>
             </div>
           </div>
 
           <div class="g-beat">
             <div class="g-n">2</div>
             <div>
-              <h4>A NETCONF fix arrives <span class="t">1½ min</span></h4>
-              <div class="g-do"><b>Do</b><span><strong>Incoming fixes</strong>: mina-core
-                <code>2.2.5.rhlw-00002</code>, CVE-2026-41635. Press <strong>Assess</strong>.</span></div>
-              <div class="g-say"><b>Say</b><span>“Lightwell rebuilt the exact version we run, with the fix, and it
-                landed in our Nexus. Same version, so no upgrade, no API change. Now: where does it run?”</span></div>
-              <div class="g-do"><b>Do</b><span><strong>1 · Sites</strong> appears at once: workflow-engine on lab,
-                edge-site-1, core-dc-1. Read core-dc-1's reasoning aloud. Point at inventory-service, offered as a
-                <em>version change</em> and left unticked.</span></div>
-              <div class="g-say"><b>Say</b><span>“Every site with its own reasoning from our change history: 340
-                network elements here, drain sessions first, the 00:00 to 04:00 window. And inventory-service runs an
-                older mina-core: the agent offers the build as a version change but leaves it off, because last time
-                a 2.2 jump broke its SFTP export.”</span></div>
-              <div class="g-why">That last line is the moment the room sees the history being used, not
-                decoration. It is real data from the synthetic history records, so say “our change history”, not
-                “production”.</div>
+              <h4>The fix, and who it touches <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span><strong>Incoming fixes</strong>: spring-security-web
+                <code>5.7.11.rhlw-00006</code>, two CVEs. Press <strong>Assess</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“Spring Security is what decides who may call the orchestrator's API.
+                One of these CVEs is an authorization bypass. Lightwell rebuilt the exact version we run with the fix:
+                same version, no upgrade, no code change. Where does it run?”</span></div>
+              <div class="g-do"><b>Do</b><span><strong>1 · Sites</strong>: workflow-engine on lab, edge-site-1 and
+                core-dc-1, nothing else runs it. Read edge-site-1's reasoning aloud, then open <strong>Show
+                more</strong> on core-dc-1.</span></div>
+              <div class="g-say"><b>Say</b><span>“Each site gets its own reasoning: who is affected during the restart
+                (the service-order portal queues orders, assurance pauses its closed-loop actions, inventory-service
+                pauses its sync), what to check first (zookeeper quorum, inventory-service health), and whether to go
+                now: the change window is closed, it opens in so many hours. That is the app history plus the
+                service map, worked out at the moment we pressed Assess.”</span></div>
+              <div class="g-why">The window line is computed live, so it will say open or closed for real. The history
+                records are synthetic; say “our change history”, not “production”.</div>
             </div>
           </div>
 
@@ -2820,20 +2820,21 @@
             <div class="g-n">3</div>
             <div>
               <h4>One change window, every fix <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span><strong>2 · Change list</strong>, workflow-engine: the fix is locked
-                in. Below it, what else osv.dev reports open; tick zookeeper (Lightwell build, same restart). Point at
-                the source chips and <strong>Download plan (.md)</strong>.</span></div>
-              <div class="g-say"><b>Say</b><span>“While we are restarting the orchestrator anyway, what else is
-                open on it? osv.dev answers, minus what Lightwell already fixes. Zookeeper has a Lightwell build too,
-                so it rides the same restart. Where Lightwell has nothing, it offers the upstream fix, or a Lightwell
-                build of a newer version, and never a major upgrade unless you tick it. This plan is the document for
-                the change board.”</span></div>
-              <div class="g-do"><b>Do</b><span>In <strong>1 · Sites</strong> untick core-dc-1 (its window is
-                tonight). Keep <strong>Swap libraries</strong>. Press <strong>Prepare remediation</strong>; the
-                button greys out, “Preparing remediation…”.</span></div>
-              <div class="g-say"><b>Say</b><span>“The LLM writes the playbook, and the system checks it: allowed
-                modules only, every path and checksum exactly as set, a health check, a rollback. A draft that fails
-                any of it is replaced by the checked template, and the page says which check failed.”</span></div>
+              <div class="g-do"><b>Do</b><span><strong>2 · Change list</strong>, workflow-engine: the fix is locked in
+                (Lightwell, 2 CVEs). Below it, what osv.dev reports open on the same app.</span></div>
+              <div class="g-say"><b>Say</b><span>“While the orchestrator restarts anyway, what else is open on it?
+                mina-core, the NETCONF library, has five CVEs, and 2.2.8 fixes them on the same 2.2 line: we take it in
+                the same restart. Zookeeper's fix means 3.5 to 3.7, a bigger jump on the coordination layer, so we leave
+                it for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and the
+                page says so.”</span></div>
+              <div class="g-do"><b>Do</b><span>Tick <strong>mina-core 2.2.8</strong>; leave zookeeper and the still-open
+                row. <strong>Download plan (.md)</strong> for the change board. In <strong>1 · Sites</strong> untick
+                core-dc-1 (it keeps the act inside ten minutes). <strong>Prepare remediation</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“The LLM writes the playbook and the system checks it: allowed modules
+                only, every path and checksum as set, a health check, and on failure it hands over to the workflow's
+                rollback route instead of improvising one.”</span></div>
+              <div class="g-why">If Lightwell answers, the mina-core and zookeeper rows offer Lightwell builds of the
+                versions already running; prefer those (same version, Red Hat provenance) and say so.</div>
             </div>
           </div>
 
@@ -2841,80 +2842,71 @@
             <div class="g-n">4</div>
             <div>
               <h4>Test before any site <span class="t">3 min, mostly waiting</span></h4>
-              <div class="g-do"><b>Do</b><span>Press <strong>Run on 2 of 2</strong>. Watch Commit go green, then
-                <strong>Test in a pod</strong>: fetch · build · health, live, with the last log line.</span></div>
-              <div class="g-say"><b>Say</b><span>“Automation Orchestrator runs one workflow per site. First every
-                jar is checked: Red Hat's provenance signature for the Lightwell builds, Maven Central's checksum for
-                anything upstream. Then OpenShift Pipelines builds the app with the whole change, starts it in a pod
-                and asks it which jars it actually loaded. Nothing touches a site until that passes.”</span></div>
-              <div class="g-say"><b>Say</b><span>(while it builds) “Four checks between an LLM-written playbook and
-                a network element: the playbook checks, provenance, this pod, and the runner that refuses any
-                playbook whose checksum is not the approved one. And if anything looks wrong, Cancel run stops all of
-                it and tells you, site by site, whether anything was left half done.”</span></div>
-              <div class="g-why">This is the slow beat. The live task strip is there so you never stand in front of
-                a spinner; the “Open in OpenShift console” link shows the same run in the platform's own UI if
-                someone asks.</div>
+              <div class="g-do"><b>Do</b><span>Press <strong>Run on 2 of 2</strong>. Commit goes green, then <strong>Test
+                in a pod</strong>: fetch · build · health, live, with the last log line.</span></div>
+              <div class="g-say"><b>Say</b><span>“Automation Orchestrator runs one workflow per site. Every jar is checked
+                first: Red Hat's provenance signature for the Lightwell build, Maven Central's checksum for the upstream
+                mina-core. Then OpenShift Pipelines builds the app with both changes, starts it in a pod and asks which
+                jars it loaded. Nothing touches a site until that passes.”</span></div>
+              <div class="g-say"><b>Say</b><span>(while it builds) “If this test fails, the workflow posts a card to the
+                team's channel and stops; no site is touched. If a site fails after the swap, the workflow takes its
+                rollback route: an AAP job puts the original jars back. And Cancel run stops all of it and says, site
+                by site, whether anything was left half done.”</span></div>
             </div>
           </div>
 
           <div class="g-beat">
             <div class="g-n">5</div>
             <div>
-              <h4>The gate, and the proof <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>The lab site patches without a gate: the stages along the top go
-                green and its Status reads “healthy on mina-core-2.2.5.rhlw-00002.jar”. edge-site-1 waits: point at
-                <strong>Approve</strong> and the test evidence.</span></div>
-              <div class="g-say"><b>Say</b><span>“The lab went first, automatically. A live site waits for a
-                person, who sees the exact commit and what the pod test proved. The health check on the server names
-                the jar it loaded: that is evidence of the patch, not just of a restart.”</span></div>
-              <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes);
-                otherwise reject it and say why. Point at <strong>Notify</strong> in the stages along the top, then
-                the Mattermost channel, then the <strong>Report</strong> and <strong>Feedback</strong> cards.</span></div>
-              <div class="g-say"><b>Say</b><span>“Every site ends in a card on the team's channel, the same one the
-                RHEL workflow posts to, and a PDF for the change board. The outcome goes back into the history the
-                next run's reasoning reads. Patch it once and the system knows more the next time.”</span></div>
-              <div class="g-why">If a site fails its health check, its Status reads <strong>Rolled back</strong>, by
-                the workflow (AAP: App Patch v2 - Rollback), and a red card posts: the revert is its own route in the AO workflow, an AAP job you can open, not something hidden
-                inside the playbook. (In demo mode edge-site-1 is staged to do exactly that.)</div>
+              <h4>The gate, the proof, the card <span class="t">2 min</span></h4>
+              <div class="g-do"><b>Do</b><span>The lab patches without a gate: its Status reads healthy on
+                <code>spring-security-web-5.7.11.rhlw-00006.jar</code> and <code>mina-core-2.2.8.jar</code>. Switch to the
+                Mattermost tab: the green card. edge-site-1 waits: point at <strong>Approve</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“The lab went first, automatically, and the health check names the jars
+                it loaded: evidence of the patch, not just a restart. The team heard about it where they already work.
+                A live site waits for a person, who sees the exact commit and what the pod test proved.”</span></div>
+              <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes), otherwise
+                reject it and say why. Then the <strong>Report</strong> (its last section is the ROI estimate) and
+                <strong>Calculate ROI</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“A PDF for the change board, a card per site, and the outcome goes back
+                into the history the next run's reasoning reads.”</span></div>
+              <div class="g-why">To show the rollback route, rehearse it, do not improvise it: turn on <em>Force a
+                failure</em> before Prepare remediation and the site rolls back through AAP with a red card.</div>
             </div>
           </div>
         </section>
 
         <section>
           <h3>If they ask</h3>
-          <div class="g-qa"><b>“How does it know what runs where?”</b>
-            <span>From each app's BOM (<code>app-data/bom/</code>): its sites and the library versions it declares.
-            It does not scan the servers; the BOM is the inventory, and the SBOM buttons in the Lightwell catalog
-            export it as CycloneDX for Lightwell Lens.</span></div>
-          <div class="g-qa"><b>“What if Lightwell has no build for a library?”</b>
-            <span>The Change list offers the lowest upstream release that clears every advisory, or a Lightwell
-            build of a newer version on the same major line, as an explicit choice. Major upgrades only if you
-            tick them: those are code changes.</span></div>
-          <div class="g-qa"><b>“Does the pod test prove it compiles?”</b>
-            <span>Swap libraries proves it starts and loads the new jars together. <strong>Rebuild from
-            source</strong> goes further: it clones the app's Gitea repo, updates pom.xml and runs mvn package, so
-            an API break fails the build, and pushes a <code>fix/</code> branch.</span></div>
+          <div class="g-qa"><b>“What does this fix actually close?”</b>
+            <span>Two Spring Security advisories; CVE-2024-38821 is an authorization bypass, which on an orchestrator
+            means the API that changes the network. Lightwell's build is the same 5.7.11 with the fixes backported, so
+            nothing about the app changes but the jar.</span></div>
+          <div class="g-qa"><b>“Why take mina-core upstream and not zookeeper?”</b>
+            <span>mina-core 2.2.8 stays on the 2.2 line the app runs: low risk, same restart. Zookeeper's fix is 3.7, a
+            minor-version jump in the coordination layer every orchestrator node depends on: that deserves its own test
+            and window. Major upgrades are never offered unless you tick them.</span></div>
+          <div class="g-qa"><b>“How does it know who depends on the orchestrator?”</b>
+            <span>The app's service map (who uses it, what it needs) is in its BOM and in the app history store; the
+            window and the apps sharing each server are worked out when you press Assess. Show more lists exactly what
+            the reasoning used.</span></div>
           <div class="g-qa"><b>“What if a site fails halfway?”</b>
-            <span>The playbook keeps its backup and reports the failure, and the AO workflow takes its rollback
-            route: an AAP job restores the backup, restarts and checks <code>/health</code> on the original jars,
-            then a red card goes to Mattermost. AO has no “on failure” edge, so the route is a switch on what the
-            run reported. Cancel run stops everything else and checks each site the playbook reached.</span></div>
+            <span>The playbook keeps its backup and reports the failure; the AO workflow switches to its rollback route,
+            an AAP job restores the original jars and checks /health, and a red card goes to Mattermost.</span></div>
           <div class="g-qa"><b>“Why trust an LLM to write a playbook?”</b>
-            <span>You do not have to: four checks stand between its draft and a host, and a draft that fails the
-            first one is replaced by a checked template.</span></div>
+            <span>Four checks stand between its draft and a host: the playbook checks, provenance, the pod test, and a
+            runner that refuses any playbook whose checksum is not the approved one.</span></div>
         </section>
 
         <section class="g-never">
           <h3>Do not say</h3>
           <ul>
-            <li><strong>Do not say it scans the servers.</strong> It reads the BOMs; the servers' <code>/health</code>
-              is used only to prove a patch landed.</li>
-            <li><strong>Do not call the history real incidents.</strong> The records are synthetic, marked so, plus
-              whatever the console's own runs added.</li>
-            <li><strong>Do not claim Python or npm patching.</strong> The estate lists them as not covered, and that
-              is the honest answer.</li>
-            <li><strong>Do not present Rebuild from source as proven live</strong> until you have rehearsed it on
-              this lab; it is newer than the swap path.</li>
+            <li><strong>Do not say it scans the servers.</strong> It reads the BOMs; <code>/health</code> only proves a
+              patch landed.</li>
+            <li><strong>Do not call the history or the service map real.</strong> Both are synthetic, marked so.</li>
+            <li><strong>Do not claim a Lightwell build for mina-core or zookeeper</strong> unless the rows say Lightwell:
+              with the API unavailable they are upstream releases.</li>
+            <li><strong>Do not claim Python or npm patching</strong>, or that the pod test is full regression.</li>
             <li><strong>Do not imply per-site tracking.</strong> The BOM is per app: once every selected site is
               patched, the app is recorded as patched.</li>
           </ul>
@@ -2923,12 +2915,13 @@
         <section>
           <h3>Between demos</h3>
           <ul>
-            <li><strong>Reset node1</strong> if the act patched it: through AAP, stop the app and empty
-              <code>/opt/apps/&lt;app&gt;/lib</code> and <code>backup</code> on node1–3, run
-              <code>./aap-setup/create-app-v2-objects.py --deploy-sample</code>, write <code>{}</code> to
-              <code>runs/appv2-bom-updates.json</code>, and restart the console.</li>
+            <li><strong>Put the sites back.</strong> For each patched site, the AAP job <em>App Patch v2 - Rollback</em>
+              restores the backup; or empty <code>/opt/apps/workflow-engine/lib</code> and <code>backup</code> on node1–3
+              and run <code>./aap-setup/create-app-v2-objects.py --deploy-sample</code>.</li>
+            <li><strong>Clear the recorded versions:</strong> write <code>{}</code> to
+              <code>runs/appv2-bom-updates.json</code> and restart the console.</li>
             <li>A lab restart breaks the history stores; restarting the console heals them (watch for
-              <code>rebuilt</code> in its log).</li>
+              <code>rebuilt</code>).</li>
             <li>Re-run <code>send-event.py</code> if the inbox was reset.</li>
           </ul>
         </section>
