@@ -84,6 +84,7 @@ class _Hooks:
     aap_call: Callable[..., Any] | None = None                  # (path, method='GET', body=None) -> AAP controller API
     lab_ping: Callable[[], None] | None = None                  # raises fast when the lab (llamastack) does not answer
     roi: Callable[[dict], dict | None] | None = None            # run state -> the Calculate ROI figures for it
+    http_head: Callable[[str], tuple[int, str]] | None = None   # url -> (status, start of body); live Nexus check
 
 
 H = _Hooks()
@@ -948,6 +949,33 @@ def jar_url(event: dict) -> str:
     return maven_url(event['group'], event['artifact'], event['version'], env('NEXUS_REPOSITORY', 'lightwell-remediated'))
 
 
+def nexus_check(event: dict) -> dict:
+    """Live: can the sites, and the commit job, get this fix's jar through Nexus? Asked at Assess, so a Nexus that is
+    not serving the Lightwell proxy is reported before Run rather than as a failed AAP job. {'ok', 'status', 'url',
+    'detail'}; {'ok': True, 'skipped': True} in demo mode or without the hook."""
+    if H.demo_mode() or not H.http_head or not env('NEXUS_URL'):
+        return {'ok': True, 'skipped': True}
+    url = jar_url(event)
+    repo = env('NEXUS_REPOSITORY', 'lightwell-remediated')
+    try:
+        status, body = H.http_head(url)
+    except Exception as exc:
+        return {'ok': False, 'status': 0, 'url': url,
+                'detail': f'Nexus did not answer ({str(exc)[:160]}). Check the Nexus route and pod before Run.'}
+    if status == 200:
+        return {'ok': True, 'status': 200, 'url': url}
+    if status == 404 and 'Repository not found' in (body or ''):
+        detail = (f'Nexus is not serving the {repo} proxy ("Repository not found"): it most likely restarted while '
+                  'packages.redhat.com did not resolve and skipped loading it. Restart Nexus '
+                  '(oc -n agentic-patching rollout restart deploy/nexus), then Assess again.')
+    elif status == 404:
+        detail = (f'{event["artifact"]} {event["version"]} is not in Nexus {repo}. Check the build exists in Lightwell '
+                  'and that the proxy can reach packages.redhat.com.')
+    else:
+        detail = f'Nexus answered HTTP {status} for the jar. The commit job will fail the same way; fix Nexus before Run.'
+    return {'ok': False, 'status': status, 'url': url, 'detail': detail}
+
+
 def maven_url(group: str, artifact: str, version: str, repo: str) -> str:
     """A jar in one of the Nexus repositories: lightwell-remediated for Lightwell builds, maven-central (the proxy
     Nexus ships with) for upstream ones. Without Nexus, upstream jars come from Maven Central itself."""
@@ -1593,6 +1621,11 @@ def _assess(ev: dict) -> None:
         H.demo_pause(1.2)
         imp = impact(ev, load_bom())
         _trace('inventory', 'intake', f"{len(imp['targets'])} server(s) in {len(imp['apps'])} app(s)")
+        # Can the jar actually be fetched through Nexus? Said now, not as a failed commit job after Run.
+        nc = nexus_check(ev)
+        if not nc.get('skipped'):
+            _set(nexus_check=nc)
+            _trace('intake', 'nexus', 'the jar is in Nexus' if nc['ok'] else f"NOT servable through Nexus (HTTP {nc['status']})")
         # The sites are known now: show them at once. The three slow parts (the reasoning per site, the osv.dev
         # packages, the agent's note) are independent, so they run side by side and each fills in when it is done.
         imp['pending'] = [k for k, on in (('reasoning', bool(imp['targets'])),

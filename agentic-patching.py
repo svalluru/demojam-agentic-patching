@@ -3422,6 +3422,21 @@ def roi_appv2(st: dict, b: dict) -> dict | None:
     }
 
 
+def nexus_head(url: str) -> tuple[int, str]:
+    """(status, start of body) for one Nexus URL, for the Assess-time check that the fix's jar is servable. A GET of
+    the first byte rather than a HEAD: Nexus puts the reason ("Repository not found") in the body."""
+    req = urllib.request.Request(url, headers={'Range': 'bytes=0-0'})
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ssl._create_unverified_context()) as r:
+            return (200 if r.status in (200, 206) else r.status), ''
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read(400).decode('utf-8', 'replace')
+        except Exception:
+            body = ''
+        return exc.code, f'{exc.reason} {body}'
+
+
 def appv2_roi(st: dict) -> dict | None:
     """The ROI figures for one v2 run, for its PDF report: the same numbers Calculate ROI shows, at the settings'
     baseline (not a reader's sliders)."""
@@ -4499,7 +4514,8 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 llm=llm_answer, ao_call=ao_call, fixed_cves=lightwell_fixed_cves,
                 rag_search=app_history_search, lightwell_get=lightwell_get,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
-                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi)
+                k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi,
+                http_head=nexus_head)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()

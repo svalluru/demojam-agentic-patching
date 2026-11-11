@@ -2753,6 +2753,11 @@
             <li><strong>The fix in the inbox.</strong> <strong>Incoming fixes</strong> must list spring-security-web
               <code>5.7.11.rhlw-00006</code> with CVE-2024-38821 and CVE-2026-22732. If it is missing:
               <code>./nexus-setup/send-event.py org.springframework.security spring-security-web 5.7.11.rhlw-00006</code>.</li>
+            <li><strong>Nexus serves the fix.</strong>
+              <code>curl -s -o /dev/null -w '%{http_code}\n' $NEXUS_URL/repository/lightwell-remediated/org/springframework/security/spring-security-web/5.7.11.rhlw-00006/spring-security-web-5.7.11.rhlw-00006.jar</code>
+              must print <code>200</code>. A 404 "Repository not found" means Nexus restarted without loading the
+              Lightwell proxy: <code>oc -n agentic-patching rollout restart deploy/nexus</code>, wait two minutes, check
+              again. (Assess now warns about this too, above the Sites table.)</li>
             <li><strong>Sites on their original jars.</strong> workflow-engine's <code>/health</code> on node1–3 should
               name <code>spring-security-web-5.7.11.jar</code> and <code>mina-core-2.2.5.jar</code>. If a rehearsal
               patched one, reset it (<em>Between demos</em>).</li>
@@ -4143,6 +4148,8 @@ function v2Run(s, readOnly) {
     ${v2Pkg(e)} <span class="mono">${esc((s.impact && (s.impact.targets[0] || {}).installed) || '')}</span>
     → <span class="mono"><b>${esc(e.version)}</b></span> &nbsp;${v2Cves(e.cves)}
     <div class="muted-sm" style="margin-top:6px">${e.note ? `${esc(e.note)} ` : ''}Same version, Red Hat-patched; fixed CVEs from the Lightwell advisories API.</div>
+    ${s.nexus_check && !s.nexus_check.ok ? `<div class="degraded" style="margin-top:10px"><b>Nexus cannot serve this fix,
+      so Run would fail at the commit step.</b> ${esc(s.nexus_check.detail || '')}</div>` : ''}
   </div>`);
 
   if (s.cancel) {

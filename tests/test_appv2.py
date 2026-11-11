@@ -1534,3 +1534,32 @@ class PlanPdf(unittest.TestCase):
         self.assertIn(b'Remediation plan: workflow-engine', text)
         self.assertIn(b'Summary', text)
         self.assertNotIn(b'```', text)
+
+
+class NexusCheck(unittest.TestCase):
+    """Assess asks Nexus for the fix's jar, so a proxy Nexus did not load is reported before Run."""
+
+    def check(self, answer):
+        demo(NEXUS_URL='https://nexus.example')
+        appv2.configure(demo_mode=lambda: False, http_head=answer)
+        try:
+            return appv2.nexus_check(appv2.DEMO_EVENTS[0])
+        finally:
+            appv2.configure(demo_mode=lambda: True, http_head=None)
+
+    def test_repository_not_found_says_restart_nexus(self):
+        r = self.check(lambda url: (404, 'Not Found Repository not found'))
+        self.assertFalse(r['ok'])
+        self.assertIn('rollout restart deploy/nexus', r['detail'])
+        self.assertIn('/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00002/', r['url'])
+
+    def test_missing_build_and_unreachable(self):
+        self.assertIn('is not in Nexus', self.check(lambda url: (404, 'Not Found'))['detail'])
+        def boom(url):
+            raise OSError('timed out')
+        self.assertIn('did not answer', self.check(boom)['detail'])
+
+    def test_ok_and_demo_skip(self):
+        self.assertTrue(self.check(lambda url: (200, ''))['ok'])
+        demo()
+        self.assertTrue(appv2.nexus_check(appv2.DEMO_EVENTS[0]).get('skipped'))
