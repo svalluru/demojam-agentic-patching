@@ -1995,18 +1995,6 @@
   .v2-checks .ok::before { content: '\2713  '; color: var(--text); font-weight: 800; }
   .v2-checks .no { color: var(--red); }
   .v2-checks .no::before { content: '\2717  '; font-weight: 800; }
-  /* One labelled chip per step of a site's run, so the column reads without a legend. */
-  .v2-steps { display: inline-grid; grid-template-columns: repeat(3, auto); gap: 3px; justify-content: start; }
-  .v2-steps span { text-align: left; font-size: calc(10.5px * var(--ts)); font-weight: 700; line-height: 1; white-space: nowrap;
-                   padding: 3px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
-  .v2-steps span.done { color: var(--text); border-color: var(--border); background: var(--panel-2, #f4f4f4); }
-  .v2-steps span.done::before { content: '\2713  '; color: #3e8635; }
-  .v2-steps span.active { color: var(--red); border-color: var(--red); animation: breathe 1.7s var(--ease) infinite; }
-  .v2-steps span.active::before { content: '\25CF  '; }
-  .v2-steps span.waiting { color: #8a6100; border-color: #f0ab00; background: #fdf7e7; }
-  .v2-steps span.waiting::before { content: '\25CF  '; }
-  .v2-steps span.failed { color: var(--red); border-color: var(--red); background: var(--tint-r); }
-  .v2-steps span.failed::before { content: '\2717  '; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -2859,20 +2847,20 @@
             <div class="g-n">5</div>
             <div>
               <h4>The gate, and the proof <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>The lab site patches without a gate: Sync, Remediate, Verify go
-                green, “healthy on mina-core-2.2.5.rhlw-00002.jar”. edge-site-1 waits: point at
+              <div class="g-do"><b>Do</b><span>The lab site patches without a gate: the stages along the top go
+                green and its Status reads “healthy on mina-core-2.2.5.rhlw-00002.jar”. edge-site-1 waits: point at
                 <strong>Approve</strong> and the test evidence.</span></div>
               <div class="g-say"><b>Say</b><span>“The lab went first, automatically. A live site waits for a
                 person, who sees the exact commit and what the pod test proved. The health check on the server names
                 the jar it loaded: that is evidence of the patch, not just of a restart.”</span></div>
               <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes);
-                otherwise reject it and say why. Point at <strong>Notify ✓</strong> on each site, then the
-                Mattermost channel, then the <strong>Report</strong> and <strong>Feedback</strong> cards.</span></div>
+                otherwise reject it and say why. Point at <strong>Notify</strong> in the stages along the top, then
+                the Mattermost channel, then the <strong>Report</strong> and <strong>Feedback</strong> cards.</span></div>
               <div class="g-say"><b>Say</b><span>“Every site ends in a card on the team's channel, the same one the
                 RHEL workflow posts to, and a PDF for the change board. The outcome goes back into the history the
                 next run's reasoning reads. Patch it once and the system knows more the next time.”</span></div>
-              <div class="g-why">If a site fails its health check, its row reads Verify ✗, Roll back ✓, Notify ✓:
-                the revert is its own route in the AO workflow, an AAP job you can open, not something hidden
+              <div class="g-why">If a site fails its health check, its Status reads <strong>Rolled back</strong>, by
+                the workflow (AAP: App Patch v2 - Rollback), and a red card posts: the revert is its own route in the AO workflow, an AAP job you can open, not something hidden
                 inside the playbook. (In demo mode edge-site-1 is staged to do exactly that.)</div>
             </div>
           </div>
@@ -3924,28 +3912,6 @@ function v2Badge(h) {
   return `<span class="badge ${m[0]}">${m[1]}</span>`;
 }
 
-// A site's run as labelled chips: done, running, waiting (the approval gate) or failed. Steps that do not apply to
-// the site (approval on a lab site) or never ran (after a rollback or a rejection) are left out; pending ones show
-// plain so the road ahead is visible.
-const STEP_LABEL = { commit: 'Commit', test: 'Test', approval: 'Approve', sync: 'Sync', remediate: 'Patch', verify: 'Verify',
-                     rollback: 'Roll back', notify: 'Notify' };
-const STEP_HELP = {
-  commit: 'Every jar checked (cosign / Maven Central) and the playbook committed to Gitea',
-  test: 'Test in a pod: OpenShift Pipelines builds the app with the change and checks /health',
-  approval: 'The approval gate for a LIVE site', sync: 'AAP syncs the playbooks project',
-  remediate: 'AAP runs the approved playbook on the server', verify: 'The health check names the new jar',
-  rollback: 'The workflow\'s rollback route: AAP (App Patch v2 - Rollback) restores the backup and checks /health',
-  notify: 'The Mattermost card that ends this site\'s route (patched, rolled back or test failed)' };
-function v2StepChips(h, keys) {
-  if (h.outcome === 'skipped') return '';                       // the Status column says so
-  const st = h.steps || {};
-  // Roll back only appears when the route took it.
-  return `<span class="v2-steps">${keys.filter(k => st[k] !== 'skipped' && (k !== 'rollback' || st[k])).map(k => {
-    const v = st[k] || 'pending';
-    return `<span class="${esc(v)}" title="${esc(STEP_HELP[k])}: ${esc(v)}">${esc(STEP_LABEL[k])}</span>`;
-  }).join('')}</span>`;
-}
-
 function v2Render() {
   const live = v2.view === 'past' ? (v2.past || {}) : (v2.state || {});
   const ran = ((v2.state || {}).hosts || []).some(h => h.outcome && h.outcome !== 'skipped');
@@ -4171,12 +4137,11 @@ function v2Run(s, readOnly) {
     const canPick = x => pick && (!prepared || prepared.has(x.key));
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
     const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
-    const STEP_KEYS = ['commit', 'test', 'approval', 'sync', 'remediate', 'verify', 'rollback', 'notify'];
     out.push(`<div class="v2-sec"><h3>1 · Sites</h3>`
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
           <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th>Reasoning</th>
-          <th>Steps</th><th>Status</th><th></th></tr></thead><tbody>
+          <th>Status</th><th></th></tr></thead><tbody>
         ${t.map(x => { const h = run[x.key]; return `<tr>
           <td><input type="checkbox" data-v2-sel="${esc(x.key)}" ${chosen.has(x.key) ? 'checked' : ''} ${canPick(x) ? '' : 'disabled'} ${prepared && !prepared.has(x.key) ? 'title="Not prepared: left out at Prepare remediation"' : ''}></td>
           <td class="mono nowrap" title="${esc(x.host)}">${esc(x.site || String(x.host || '').split('.')[0])}</td>
@@ -4184,7 +4149,6 @@ function v2Run(s, readOnly) {
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
           <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')}</td>
-          <td>${h ? v2StepChips(h, STEP_KEYS) : ''}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
           <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
             ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>
