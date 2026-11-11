@@ -1809,6 +1809,7 @@ class PatchingAgent:
     # Node id -> the name the workflow gives it. Class-level because it
     # describes the workflow, not any one agent instance.
     _labels: dict[str, str] = {}
+    _trigger_props: set = set()
 
     def node_labels(self) -> dict[str, str]:
         """What each workflow node is called, for anything a person reads.
@@ -1837,7 +1838,16 @@ class PatchingAgent:
                for n in list(wd.get('nodes') or []) + list(wd.get('triggers') or [])
                if n.get('id') and n.get('name')}
         PatchingAgent._labels = out
+        PatchingAgent._trigger_props = set(((((wd.get('triggers') or [{}])[0].get('parameters') or {})
+                                            .get('input_schema') or {}).get('properties') or {}))
         return out
+
+    def trigger_accepts(self, name: str) -> bool:
+        """Whether the workflow's trigger declares this input. Optional inputs (the Mattermost card's) are sent only
+        then: a workflow whose schema rejects unknown properties would otherwise fail the launch."""
+        if not self._trigger_props:
+            self.node_labels()
+        return name in self._trigger_props
 
     def relabel(self, text: str | None) -> str | None:
         """Swap node ids for their names inside a message meant for a person.
@@ -1859,7 +1869,7 @@ class PatchingAgent:
         return text
 
     def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '',
-                   params: dict | None = None) -> dict:
+                   params: dict | None = None, cvss: float | None = None) -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
         # lab_tag is optional in the trigger schema but fetch_and_commit_prod
@@ -1870,6 +1880,13 @@ class PatchingAgent:
         target = ao_host_name(host['host'])
         inputs = {'host': target, 'group': group, 'cve_id': cve_id,
                   'lab_tag': LAB_TAG}
+        # What the workflow's Mattermost card shows, when its trigger takes them (ours does; the lab's does not).
+        card = {'cvss_score': '' if cvss is None else f'{float(cvss):.1f}',
+                'cve_severity': ('' if cvss is None else 'Critical' if cvss >= 9 else 'High' if cvss >= 7
+                                 else 'Medium' if cvss >= 4 else 'Low'),
+                'risk_score': f"{float(host.get('risk_score') or 0):.2f}",
+                'triage_reasoning': str(host.get('reason') or '')[:400]}
+        inputs.update({k: v for k, v in card.items() if self.trigger_accepts(k)})
         if scheduler_date_time:
             inputs['scheduler_date_time'] = scheduler_date_time
         # Remediation parameters, sent only when the operator set one. The
@@ -2560,7 +2577,8 @@ class Supervisor:
         results, failures = [], 0
         for h in hosts:
             try:
-                r = self.patching.patch_host(cve_id, h, params=params)
+                r = self.patching.patch_host(cve_id, h, params=params,
+                                             cvss=(assessment.get('plan') or {}).get('cvss'))
             except BackendUnavailable as exc:
                 # One host failing to launch must not abandon the rest.
                 #

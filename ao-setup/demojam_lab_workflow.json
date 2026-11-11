@@ -43,6 +43,14 @@
     {
       "to": "verify_patch_prod",
       "from": "run_cve_remediation_prod"
+    },
+    {
+      "from": "verify_patch",
+      "to": "notify_remediated"
+    },
+    {
+      "from": "verify_patch_prod",
+      "to": "notify_remediated_prod"
     }
   ],
   "nodes": [
@@ -257,6 +265,63 @@
         "job_template_name": "CVE - Verify Patch",
         "organization_name": "Default"
       }
+    },
+    {
+      "id": "notify_remediated",
+      "name": "Notify Mattermost - CVE Remediated",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2389.4915254237285,
+        "y": -70.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Notify Mattermost Investigation",
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "report_type": "remediated",
+          "host_env": "Dev (auto-patch)",
+          "cvss_score": "${trigger.cvss_score}",
+          "cve_severity": "${trigger.cve_severity}",
+          "triage_reasoning": "${trigger.triage_reasoning}",
+          "job_id": "${run_cve_remediation.job_id}",
+          "job_url": "${run_cve_remediation.job_url}",
+          "playbook_filename": "${fetch_and_commit.artifacts.playbook_filename}"
+        }
+      }
+    },
+    {
+      "id": "notify_remediated_prod",
+      "name": "Notify Mattermost - CVE Remediated (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2389.4915254237285,
+        "y": 312.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Notify Mattermost Investigation",
+        "extra_vars": {
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "report_type": "remediated",
+          "host_env": "Production (approved)",
+          "cvss_score": "${trigger.cvss_score}",
+          "cve_severity": "${trigger.cve_severity}",
+          "triage_reasoning": "${trigger.triage_reasoning}",
+          "job_id": "${run_cve_remediation_prod.job_id}",
+          "job_url": "${run_cve_remediation_prod.job_url}",
+          "playbook_filename": "${fetch_and_commit_prod.artifacts.playbook_filename}",
+          "approved_by": "${approval_prod.decided_by}"
+        }
+      }
     }
   ],
   "triggers": [
@@ -290,6 +355,26 @@
               "type": "string",
               "default": "group=xfd48",
               "description": "Insights group tag (e.g. group=xfd48)"
+            },
+            "cvss_score": {
+              "type": "string",
+              "default": "",
+              "description": "The CVE's CVSS score, for the Mattermost card"
+            },
+            "cve_severity": {
+              "type": "string",
+              "default": "",
+              "description": "Critical / High / Medium / Low from the CVSS, for the card"
+            },
+            "risk_score": {
+              "type": "string",
+              "default": "",
+              "description": "The risk model's score for this host, for the card"
+            },
+            "triage_reasoning": {
+              "type": "string",
+              "default": "",
+              "description": "Why the console routed this host as it did, for the card"
             }
           }
         }
