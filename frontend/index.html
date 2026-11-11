@@ -1995,10 +1995,20 @@
   .v2-checks .ok::before { content: '\2713  '; color: var(--text); font-weight: 800; }
   .v2-checks .no { color: var(--red); }
   .v2-checks .no::before { content: '\2717  '; font-weight: 800; }
-  /* Reasoning that also drew on the app's context (BOM) and facts worked out at Assess time. */
-  .v2-ctx { display: inline-block; font-size: calc(10px * var(--ts)); font-weight: 800; color: var(--red);
-            border: 1px solid var(--red); border-radius: 999px; padding: 1px 6px; margin-left: 4px; cursor: help;
-            white-space: nowrap; vertical-align: 1px; }
+  /* Show more under the reasoning: the context it drew on, as a labelled list. */
+  .v2-more { margin-top: 4px; }
+  .v2-more summary { cursor: pointer; color: var(--red); font-weight: 700; font-size: calc(11.5px * var(--ts));
+                     list-style: none; display: inline-block; }
+  .v2-more summary::-webkit-details-marker { display: none; }
+  .v2-more summary::after { content: 'Show more \25BE'; }
+  .v2-more[open] summary::after { content: 'Show less \25B4'; }
+  .v2-more dl { display: grid; grid-template-columns: 92px 1fr; gap: 5px 10px; margin-top: 6px;
+                padding: 8px 10px; background: var(--panel-2, #f6f6f6); border-radius: 8px; color: var(--text); }
+  .v2-more dt { font-weight: 800; font-size: calc(9.5px * var(--ts)); color: var(--muted); text-transform: uppercase;
+                letter-spacing: .5px; padding-top: 2px; line-height: 1.3; }
+  .v2-more dd { margin: 0; font-size: calc(12px * var(--ts)); line-height: 1.4; }
+  .v2-more dd ul { margin: 0; padding-left: 14px; }
+  .v2-more dd li + li { margin-top: 2px; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -3916,6 +3926,33 @@ function v2Badge(h) {
   return `<span class="badge ${m[0]}">${m[1]}</span>`;
 }
 
+// The context behind a row's reasoning (agentic-patching appv2.site_context), laid out to read: who uses the app, what
+// it needs, what a restart disrupts, the window as it stood at Assess, and what else is on the server. Stays open
+// across the page's refreshes while a run is going.
+function v2CtxMore(x) {
+  // "name (what): detail" reads as a bold name and its detail.
+  const item = v => { const i = String(v).indexOf(':'); return i > 0
+    ? `<b>${esc(v.slice(0, i))}</b>: ${esc(v.slice(i + 1).trim())}` : esc(v); };
+  const c = x.context, li = a => `<ul>${a.map(v => `<li>${item(v)}</li>`).join('')}</ul>`;
+  const rows = [
+    ['Used by', (c.used_by || []).length && li(c.used_by)],
+    ['Depends on', (c.depends_on || []).length && li(c.depends_on)],
+    ['During restart', c.during_restart && `About ${esc(c.restart_seconds)} s: ${esc(c.during_restart)}`
+      + (c.network_elements ? ` (<b>${esc(c.network_elements)}</b> network elements here)` : '')],
+    ['Window', c.window && esc(c.window)],
+    ['Same server', (c.same_server || []).length && esc(c.same_server.join(', '))],
+    ['Other sites', (c.other_sites || []).length && `${esc(c.other_sites.join(', '))}: patch them one at a time`],
+  ].filter(([, v]) => v);
+  return `<details class="v2-more" data-ctx="${esc(x.key)}" ${(v2.ctxOpen || new Set()).has(x.key) ? 'open' : ''}>
+    <summary></summary><dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>`;
+}
+document.getElementById('v2-body')?.addEventListener('toggle', e => {
+  const d = e.target.closest && e.target.closest('details[data-ctx]');
+  if (!d) return;
+  v2.ctxOpen = v2.ctxOpen || new Set();
+  d.open ? v2.ctxOpen.add(d.dataset.ctx) : v2.ctxOpen.delete(d.dataset.ctx);
+}, true);
+
 function v2Render() {
   const live = v2.view === 'past' ? (v2.past || {}) : (v2.state || {});
   const ran = ((v2.state || {}).hosts || []).some(h => h.outcome && h.outcome !== 'skipped');
@@ -4153,7 +4190,7 @@ function v2Run(s, readOnly) {
           <td>${esc(x.app)}</td><td>${v2Env(x.env)}</td>
           <td class="mono">${esc(x.installed)}${x.version_change ? ` → ${esc(x.to_version)}<div><span class="v2-src vc" title="Moves the app to another version of the library, not a patched copy of its own. Off by default.">Version change</span></div>` : ''}</td>
           <td class="v2-reason">${(s.impact.pending || []).includes('reasoning') ? '<span class="muted-sm">Reading the app history…</span>' : esc(x.reasoning || '')
-            + (x.context ? ` <span class="v2-ctx" title="Context used: ${esc(x.context)}">+ context</span>` : '')}</td>
+            + (x.context && typeof x.context === 'object' ? v2CtxMore(x) : '')}</td>
           <td>${h ? v2Badge(h) + (h.detail && h.outcome !== 'skipped' ? `<div class="v2-detail">${esc(h.detail)}</div>` : '') : ''}</td>
           <td class="act">${h && !readOnly && h.outcome === 'awaiting_approval'
             ? `<button class="btn-approve" data-v2-decide="approved" data-key="${esc(h.key)}">Approve</button><button class="btn-reject" data-v2-decide="rejected" data-key="${esc(h.key)}">Reject</button>` : ''}</td>

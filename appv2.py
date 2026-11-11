@@ -644,7 +644,11 @@ def site_context(t: dict, targets: list[dict] | None = None) -> dict:
         ('depends on ' + ', '.join(d.split(' (')[0] for d in ctx.get('depends_on', []))) if ctx.get('depends_on') else '',
         ('used by ' + ', '.join(u.split(' (')[0].split(':')[0] for u in ctx.get('used_by', []))) if ctx.get('used_by') else '',
         window, (f"same server: {', '.join(beside)}" if beside else '')) if p)
-    return {'facts': facts, 'window': window, 'summary': summary}
+    detail = {'role': ctx.get('role', ''), 'used_by': list(ctx.get('used_by') or []),
+              'depends_on': list(ctx.get('depends_on') or []),
+              'during_restart': ctx.get('during_restart', ''), 'restart_seconds': ctx.get('restart_seconds', 30),
+              'network_elements': ne, 'window': window, 'same_server': beside, 'other_sites': others}
+    return {'facts': facts, 'window': window, 'summary': summary, 'detail': detail}
 
 
 def _context_line(t: dict, sc: dict, excerpt: str = '') -> str:
@@ -1598,7 +1602,7 @@ def _assess(ev: dict) -> None:
             if rsource == 'rag+llm':
                 _trace('reasoning', 'llm', 'one line per app and server')
             targets = [{**t, 'reasoning': notes.get(t['key'], ''),
-                        **({'context': sc['summary']} if (sc := (site_context(t, imp['targets'])
+                        **({'context': sc['detail']} if (sc := (site_context(t, imp['targets'])
                                                                  if not t.get('version_change') else {})) else {})}
                        for t in imp['targets']]
             fill(targets=targets, reasoning_source=rsource, done='reasoning')

@@ -1462,7 +1462,9 @@ class SiteContext(unittest.TestCase):
         self.assertIn('zookeeper quorum', core['reasoning'])
         self.assertIn('closed now', core['reasoning'])
         self.assertNotIn('{window}', core['reasoning'])
-        self.assertIn('depends on zookeeper ensemble', core['context'])
+        self.assertIn('zookeeper ensemble (leader election): must have quorum before the restart', core['context']['depends_on'])
+        self.assertEqual((core['context']['network_elements'], core['context']['same_server']), (340, ['inventory-service']))
+        self.assertIn('closed now', core['context']['window'])
         self.assertNotIn('context', by['inventory-service|core-dc-1'])
 
     def test_live_prompt_carries_context_only_for_workflow_engine(self):
