@@ -216,7 +216,9 @@ def main():
     setup_id = upsert('/projects/', N['setup_project'], {
         'name': N['setup_project'], 'description': 'Applications v2 setup playbooks (commit to Gitea, sample app)',
         'organization': org, 'scm_type': 'git', 'scm_url': repo_url, 'scm_branch': branch,
-        'scm_update_on_launch': True, 'scm_clean': True})
+        # Synced at most every 5 minutes: these playbooks change with a push, not per run, and a sync on every
+        # launch added to each job's start (the Gitea project below must still sync every time: each run commits).
+        'scm_update_on_launch': True, 'scm_update_cache_timeout': 300, 'scm_clean': True})
     gitea_id = upsert('/projects/', N['gitea_project'], {
         'name': N['gitea_project'], 'description': 'Generated Applications v2 playbooks, committed by the workflow',
         'organization': org, 'scm_type': 'git', 'scm_url': f'{gitea_url}/{gitea_repo}.git', 'scm_branch': '',
