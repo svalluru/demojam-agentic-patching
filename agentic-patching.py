@@ -54,6 +54,30 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+
+def _ca_bundle() -> str:
+    """The CA bundle every HTTPS call verifies against. Python from python.org on macOS does not read the system
+    store, so without SSL_CERT_FILE every call to Red Hat SSO, the Lightwell API or the lab fails with
+    CERTIFICATE_VERIFY_FAILED. An explicit SSL_CERT_FILE wins; otherwise the first bundle that exists is used and set
+    for the whole process (the scanner's client included)."""
+    if os.environ.get('SSL_CERT_FILE'):
+        return os.environ['SSL_CERT_FILE']
+    candidates = []
+    try:
+        import certifi                                            # optional
+        candidates.append(certifi.where())
+    except Exception:
+        pass
+    candidates += ['/etc/ssl/cert.pem', '/etc/pki/tls/certs/ca-bundle.crt', '/etc/ssl/certs/ca-certificates.crt']
+    for path in candidates:
+        if path and os.path.isfile(path):
+            os.environ['SSL_CERT_FILE'] = path
+            return path
+    return ''
+
+
+CA_BUNDLE = _ca_bundle()
+
 # --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
@@ -5188,6 +5212,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host: str, port: int) -> None:
+    print(f'  ca bundle  : {CA_BUNDLE or "(none found: set SSL_CERT_FILE)"}')
     print(f'  risk model : {RISK_URL or "(unset)"}')
     print(f'  llama stack: {LLAMA_URL or "(unset)"}')
     print(f'  vector db  : {VECTOR_DB_ID or "(unset)"}')
