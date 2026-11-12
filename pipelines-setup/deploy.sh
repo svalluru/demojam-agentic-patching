@@ -31,10 +31,13 @@ until oc get tasks.tekton.dev buildah -n openshift-pipelines >/dev/null 2>&1; do
 done
 
 echo "Pipeline in $NS"
-# Prune this namespace's PipelineRuns often: each holds a workspace volume and pods, and the lab is one node with
-# little disk to spare (a pod test was evicted for ephemeral storage). Keeps the last 2, every 15 minutes.
-oc annotate ns "$NS" --overwrite operator.tekton.dev/prune.keep=2 \
-  operator.tekton.dev/prune.schedule='*/15 * * * *' operator.tekton.dev/prune.resources=pipelinerun >/dev/null
+# Never prune this namespace's PipelineRuns: they are shown in the demo (each run's tasks, logs and results). The
+# Pipelines operator prunes every namespace by default, so skip this one explicitly, and drop the keep-2 schedule an
+# earlier version of this script set. Each run keeps its pods and workspace volume: on a lab short of node disk,
+# delete old runs by hand (oc -n agentic-patching delete pipelinerun <name>) rather than turning pruning back on.
+oc annotate ns "$NS" --overwrite operator.tekton.dev/prune.skip=true >/dev/null
+oc annotate ns "$NS" operator.tekton.dev/prune.keep- operator.tekton.dev/prune.schedule- \
+  operator.tekton.dev/prune.resources- >/dev/null 2>&1 || true
 
 oc create configmap app-v2-healthserver -n "$NS" \
   --from-file=HealthServer.java="$ROOT/aap-setup/playbooks/files/HealthServer.java" \

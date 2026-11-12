@@ -750,7 +750,7 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 | Reasoning says "No history found" once after a lab restart | Llama Stack (0.7.1) does not re-attach its existing vector stores to Milvus when it restarts: they stay listed but search finds nothing. The console heals this itself: it checks both history stores at startup and whenever a search comes back empty or "not found", rebuilds a broken one from `rag-setup/data` or `app-data/history` (`ingest.py`'s `ensure()`), switches to the new id and writes it to `.env`. The next assessment has its history back |
 | Rebuild from source is greyed out: "no Gitea repository for …" | The app's BOM has no `repo`, or `create-app-v2-objects.py --seed-repos` has not run |
 | The test strip says "no cluster access configured (APPV2_PIPELINE_TOKEN)" | Run `pipelines-setup/deploy.sh`, then restart the console |
-| AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. Delete finished pods in `agentic-patching`; prune unused images on the node |
+| AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. PipelineRuns are never pruned (they are shown in the demo; `pipelines-setup/deploy.sh` sets `operator.tekton.dev/prune.skip`), so delete old ones by hand when you no longer need them; prune unused images on the node |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
 ### Demo guide
