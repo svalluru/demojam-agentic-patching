@@ -2430,9 +2430,9 @@
               <div class="g-do"><b>Do</b><span>Point at the left panel. Nothing has run yet,
                 so every box is grey.</span></div>
               <div class="g-say"><b>Say</b><span>“That is the whole system — a supervisor, the
-                agents it drives, and the services behind them. Two of the agents are not built,
-                which is why they are dashed, and they will still be dashed at the end. Everything
-                else lights up as it gets called.”</span></div>
+                agents it drives, and the services behind them. Every box lights up as it gets
+                called: the patching agent and AO when we dispatch, then the communication agent
+                writing the report and the results agent feeding the outcome back.”</span></div>
               <div class="g-why">Lead with this because it is the one claim nobody else can make
                 from a slide: the diagram is drawn from the agents' own event log, not from a
                 drawing of what the flow is supposed to be. Say that out loud — it is the
@@ -2657,8 +2657,9 @@
                 and exist nowhere else, so pointing it at a customer's own Automation Orchestrator
                 fails part way through an approved run. Check what is there before you offer
                 it.</li>
-            <li><strong>Do not present agents 3 and 4 as coming soon with a date.</strong> They
-                are not started. The diagram already shows them dashed; let it.</li>
+            <li><strong>Do not claim ServiceNow or Slack tickets.</strong> The communication agent
+                writes the PDF and the workflow posts a card to Mattermost; ITSM integration is not
+                built, and the diagram says so (<em>Slack/SNOW pending</em>).</li>
             <li><strong>Do not divide this run's exposure window by 43 days and quote the
                 multiple.</strong> It is a five-figure number that rests entirely on the assumed
                 side of the comparison. The page prints the two durations and no ratio on
