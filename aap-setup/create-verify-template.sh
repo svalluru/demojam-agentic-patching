@@ -72,6 +72,10 @@ $JT_NAMES"
 [[ -f "$ENV_FILE" ]] || fail "env file not found: $ENV_FILE"
 # shellcheck disable=SC1090
 set -a; source "$ENV_FILE"; set +a
+# Again, now that .env is loaded: the defaults above were taken before it, so a lab whose inventory and machine
+# credential are named in .env (Workshop Inventory / Workshop Credential) was still looked up as lab-inventory.
+INVENTORY="${TARGET_INVENTORY:-$INVENTORY}"
+CREDENTIAL="${MACHINE_CREDENTIAL:-$CREDENTIAL}"
 for v in AAP_BASE_URL AAP_TOKEN; do
   [[ -n "${!v:-}" ]] || fail "$v is empty in $ENV_FILE"
 done

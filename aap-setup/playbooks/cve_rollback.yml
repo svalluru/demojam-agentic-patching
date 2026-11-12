@@ -24,31 +24,37 @@
     cp: "{{ checkpoint_json if checkpoint_json is mapping else (checkpoint_json | default('{}', true) | from_json) }}"
     txn: "{{ cp.dnf_txn | default(0) | int }}"
   tasks:
+    # dnf_txn 0 is a real checkpoint: a host with no dnf history yet (a fresh image) reports no transaction at all.
     - name: Check what the checkpoint handed over
       ansible.builtin.assert:
         that:
-          - txn | int > 0
+          - cp.dnf_txn is defined
           - cp.services is defined
         fail_msg: >-
           checkpoint_json is missing its dnf transaction or service list, so there is nothing to roll back to.
           Check the "CVE - Pre-patch Checkpoint" job of this run.
 
-    - name: Read the newest dnf transaction
+    - name: Read the dnf history
       ansible.builtin.command:
         cmd: dnf -q history list
       register: before
       changed_when: false
 
-    - name: Work out whether anything changed after the checkpoint
+    # Every transaction after the checkpoint, newest first. Undone one at a time rather than with
+    # `dnf history rollback <id>`, which needs an existing transaction to roll back to and so cannot go back to
+    # "before the first transaction" on a host whose history started with the patch.
+    - name: Work out what changed after the checkpoint
       ansible.builtin.set_fact:
-        latest: "{{ (before.stdout_lines | map('trim') | select('match', '^[0-9]+\\s')
-                     | map('regex_replace', '^([0-9]+).*$', '\\1') | first | default('0')) | int }}"
+        after: >-
+          {{ before.stdout_lines | map('trim') | select('match', '^[0-9]+\s')
+             | map('regex_replace', '^([0-9]+).*$', '\1') | map('int')
+             | select('gt', txn | int) | sort(reverse=true) | list }}
 
-    - name: Undo every package change since the checkpoint
+    - name: Undo each package change since the checkpoint, newest first
       ansible.builtin.command:
-        cmd: "dnf -y history rollback {{ txn }}"
+        cmd: "dnf -y history undo {{ item }}"
+      loop: "{{ after }}"
       register: undo
-      when: latest | int > txn | int
 
     - name: Read what the rollback transaction did
       ansible.builtin.command:
@@ -113,7 +119,7 @@
           restored: "{{ restored_lines | join('; ') | truncate(800) if restored_lines else ('nothing to undo: no package changed after transaction ' ~ txn) }}"
           rollback_host: "{{ inventory_hostname }}"
           rollback_notes: >-
-            {{ ('Packages back to dnf transaction ' ~ txn ~ '. ') if undo is changed else 'No package changed after the checkpoint. ' }}{{
+            {{ ('Undid dnf transaction(s) ' ~ (after | join(', ')) ~ ', back to the pre-patch state (transaction ' ~ txn ~ '). ') if undo is changed else 'No package changed after the checkpoint. ' }}{{
                ('Rebooted into ' ~ cp.running_kernel ~ '. ') if rebooted is changed else '' }}{{
                ('Still not running: ' ~ (down | join(', ')) ~ '.') if down else 'Every service from the checkpoint is running.' }}
 
