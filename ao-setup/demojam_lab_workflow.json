@@ -97,11 +97,7 @@
         "diff_mode": false,
         "extra_vars": {
           "cve_id": "${trigger.cve_id}",
-          "lab_tag": "${trigger.lab_tag}",
-          "gitea_repo": "lab-user/lightspeed_playbooks",
-          "target_host": "${trigger.host}",
-          "mcp_server_host": "bastion",
-          "mcp_server_port": "8001"
+          "target_host": "${trigger.host}"
         },
         "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
         "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
@@ -160,11 +156,7 @@
         "diff_mode": false,
         "extra_vars": {
           "cve_id": "${trigger.cve_id}",
-          "lab_tag": "${trigger.lab_tag}",
-          "gitea_repo": "lab-user/lightspeed_playbooks",
-          "target_host": "${trigger.host}",
-          "mcp_server_host": "bastion",
-          "mcp_server_port": "8001"
+          "target_host": "${trigger.host}"
         },
         "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
         "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
@@ -319,7 +311,7 @@
           "job_id": "${run_cve_remediation_prod.job_id}",
           "job_url": "${run_cve_remediation_prod.job_url}",
           "playbook_filename": "${fetch_and_commit_prod.artifacts.playbook_filename}",
-          "approved_by": "${approval_prod.decided_by}"
+          "approved_by": "the agentic patching console (LIVE-site gate)"
         }
       }
     }
