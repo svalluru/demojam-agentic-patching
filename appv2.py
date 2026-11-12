@@ -2359,8 +2359,10 @@ def write_report(st: dict) -> dict:
         doc.text('Test in a pod (OpenShift Pipelines)', size=11, bold=True)
         doc.gap(2)
         doc.table(['App', 'Result', 'osv.dev open after', 'PipelineRun'],
-                  [[a, 'passed' if t.get('passed') else 'failed', str(t.get('osv_open', '')), t.get('pipelinerun', '')]
-                   for a, t in tests.items()], [100, 60, 100, 239])
+                  [[a, ('passed' if t.get('passed') else 'failed') + (' (simulated: image build and health check not run on this lab)'
+                                                                      if '"simulated": true' in str(t.get('health', '')) else ''),
+                    str(t.get('osv_open', '')), t.get('pipelinerun', '')]
+                   for a, t in tests.items()], [100, 140, 70, 189])
         doc.gap(8)
     doc.text('Per-site outcome', size=11, bold=True)
     doc.gap(2)
@@ -3206,6 +3208,15 @@ def pipeline_status(app_name: str) -> dict:
             except Exception:
                 row['log'] = []
         out['tasks'].append(row)
+    # Tasks the Pipeline has commented out on this lab (annotation app-v2/skipped-tasks, copied onto the
+    # PipelineRun): shown after the ones that ran, as skipped, with the reason.
+    ann = (pr.get('metadata') or {}).get('annotations') or {}
+    reason = ann.get('app-v2/skipped-reason', 'disabled on this lab')
+    for task in [t.strip() for t in ann.get('app-v2/skipped-tasks', '').split(',') if t.strip()]:
+        if task not in tasks_order:
+            out['tasks'].append({'task': task, 'state': 'skipped', 'message': reason})
+    if ann.get('app-v2/skipped-tasks'):
+        out['skipped_reason'] = reason
     return out
 
 

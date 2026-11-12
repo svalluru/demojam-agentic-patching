@@ -1598,3 +1598,30 @@ class SiteHistory(unittest.TestCase):
         by = {t['key']: t for t in st['impact']['targets']}
         self.assertEqual(by['workflow-engine|core-dc-1']['history'][0]['result'], 'ROLLED BACK')
         self.assertEqual(by['inventory-service|lab']['history'][0]['result'], 'SKIPPED')           # version-change rows too
+
+
+class SkippedPipelineTasks(unittest.TestCase):
+    def test_strip_lists_commented_out_tasks_as_skipped(self):
+        demo()
+        pr = {'metadata': {'annotations': {'app-v2/skipped-tasks': 'build,health',
+                                           'app-v2/skipped-reason': 'disabled on this lab: node ephemeral storage'}},
+              'spec': {'pipelineRef': {'name': 'app-v2-test'}},
+              'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}], 'pipelineSpec': {'tasks': [{'name': 'fetch'}]}}}
+
+        def k8s(path, text=False):
+            if '/pipelineruns/' in path:
+                return pr
+            if 'taskruns' in path:
+                return {'items': [{'metadata': {'labels': {'tekton.dev/pipelineTask': 'fetch'}},
+                                   'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}], 'steps': []}}]}
+            return {}
+        appv2.configure(demo_mode=lambda: False, k8s_get=k8s)
+        try:
+            with appv2._LOCK:
+                appv2._RUN.update(run_id='r1', test_mode='swap')
+            out = appv2.pipeline_status('workflow-engine')
+        finally:
+            appv2.configure(demo_mode=lambda: True, k8s_get=None)
+        self.assertEqual([(t['task'], t['state']) for t in out['tasks']],
+                         [('fetch', 'succeeded'), ('build', 'skipped'), ('health', 'skipped')])
+        self.assertIn('ephemeral storage', out['skipped_reason'])

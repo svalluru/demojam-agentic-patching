@@ -2020,6 +2020,7 @@
   .v2-res.ok { color: #3e8635; border-color: #3e8635; }
   .v2-res.bad { color: var(--red); border-color: var(--red); background: var(--tint-r); }
   .v2-res.warn { color: #8a6100; border-color: #f0ab00; background: #fdf7e7; }
+  .v2-pipetask.skipped { opacity: .55; }
   #appv2-pane tbody tr { cursor: default; }
   #appv2-pane td.nowrap { white-space: nowrap; }
   .v2-dom { font-size: calc(12.5px * var(--ts)); white-space: nowrap; }
@@ -2843,7 +2844,10 @@
                 the same restart. Zookeeper's fix means 3.5 to 3.7, a bigger jump on the coordination layer, so we leave
                 it for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and the
                 page says so.”</span></div>
-              <div class="g-do"><b>Do</b><span>Tick <strong>mina-core 2.2.8</strong>; leave zookeeper and the still-open
+              <div class="g-do"><b>Do</b><span>Choose the route to show. <strong>Happy path</strong>: leave the
+                upstream rows unticked (Lightwell builds only), and the pod test passes. <strong>Safety net</strong>: tick
+                <strong>mina-core 2.2.8</strong> (upstream), and the pod test fails, the amber card posts and no site is
+                touched (on this lab that outcome is a stated, simulated rule). Leave zookeeper and the still-open
                 row. <strong>Download plan (PDF)</strong> for the change board. In <strong>1 · Sites</strong> untick
                 core-dc-1 (it keeps the act inside ten minutes). <strong>Prepare remediation</strong>.</span></div>
               <div class="g-say"><b>Say</b><span>“The LLM writes the playbook and the system checks it: allowed modules
@@ -2864,7 +2868,12 @@
                 first: Red Hat's provenance signature for the Lightwell build, Maven Central's checksum for the upstream
                 mina-core. Then OpenShift Pipelines builds the app with both changes, starts it in a pod and asks which
                 jars it loaded. Nothing touches a site until that passes.”</span></div>
-              <div class="g-say"><b>Say</b><span>(while it builds) “If this test fails, the workflow posts a card to the
+              <div class="g-say"><b>Say</b><span>“On this lab the image build and the health check are switched off:
+                the node is short of disk. Here they are in the pipeline, commented out (open the Pipeline in the
+                OpenShift console). On a real cluster they run, and nothing touches a site until the app has come up
+                on the new jars. Here the jars are still downloaded and verified, and the outcome follows a stated
+                rule.”</span></div>
+              <div class="g-say"><b>Say</b><span>(while it runs) “If this test fails, the workflow posts a card to the
                 team's channel and stops; no site is touched. If a site fails after the swap, the workflow takes its
                 rollback route: an AAP job puts the original jars back. And Cancel run stops all of it and says, site
                 by site, whether anything was left half done.”</span></div>
@@ -3891,7 +3900,7 @@ async function v2PipePoll() {
   }));
 }
 
-const PIPE_ICON = { pending: '○', running: '●', succeeded: '✓', failed: '✗', unknown: '?' };
+const PIPE_ICON = { pending: '○', running: '●', succeeded: '✓', failed: '✗', unknown: '?', skipped: '⊘' };
 function v2Dur(a, b) {
   if (!a) return '';
   const sec = Math.max(0, Math.round(((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000));
@@ -3909,6 +3918,8 @@ function v2PipeStrip(app) {
     <div class="v2-pipetasks">${tasks.map(t => `<span class="v2-pipetask ${esc(t.state)}" title="${esc(t.message || t.state)}">
         <i>${PIPE_ICON[t.state] || '○'}</i> ${esc(t.task)} <span class="muted-sm">${esc(v2Dur(t.started, t.finished))}${t.state === 'running' && t.step && t.step !== t.task ? ` · ${esc(t.step)}` : ''}</span></span>`).join('<span class="v2-pipearrow">──</span>')}</div>
     ${live && (live.log || []).length ? `<pre class="v2-pipelog">${esc(live.task)}: ${(live.log || []).map(esc).join('\n')}</pre>` : ''}
+    ${p.skipped_reason ? `<div class="muted-sm" style="margin-top:4px">Image build and health check ${esc(p.skipped_reason)}: the jars
+      were verified, and the result follows this lab's simulated rule (Lightwell builds only pass; an upstream jar fails).</div>` : ''}
   </div>`;
 }
 
