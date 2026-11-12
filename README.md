@@ -447,14 +447,15 @@ write-only: the panel never reads them back, and leaving one blank keeps the
 current value. `CONSOLE_HOST` / `CONSOLE_PORT` are shown but not editable; the
 socket is already open by the time the panel can reach the process.
 
-### Applications v2
+### Applications
 
-The third option on the header toggle. Where **Applications** scans a
-repository and rebuilds it, v2 starts from the other end: a Lightwell build
-lands in Nexus, and the console patches the servers already running the
-version it replaces. It runs on your laptop in live mode (see *Live setup*) and
-reaches the lab through `.env`. **How to run** (the flow icon in the header) has a
-v2 tab with the numbered diagram; this is the same thing in text.
+The second option on the header toggle, **Infrastructure | Applications**. (An earlier Applications side, a
+dependency scanner that clones a repository and rebuilds it, is hidden from the UI; its code is still in `lightwell/`
+and `appv2.py` is the side shown. Code and API paths keep the name *v2*: `appv2.py`, `/api/v2/…`, the AO workflow
+"App Patch v2".) It starts from the other end: a Lightwell build lands in Nexus, and the console patches the
+servers already running the version it replaces. It runs on your laptop in live mode (see *Live setup*) and reaches
+the lab through `.env`. **How to run** (the flow icon in the header) has an Applications tab with the numbered
+diagram; this is the same thing in text.
 
 ```
  Lightwell ──▶ Nexus proxy ──poller──▶ 1 Intake ──▶ 2 Impact ──▶ 3 Playbook ──▶ you press Run
@@ -535,7 +536,7 @@ v2 tab with the numbered diagram; this is the same thing in text.
 8. **Results** (agent 5). An app's BOM moves to the new version only when
    every one of its selected sites was patched, and each site's outcome is
    written as a record into the app history store, so the next run's
-   Reasoning column reads it. Shown in the Feedback card.
+   Impact & history column reads it. Shown in the Feedback card.
 
 **Four checks between an LLM-written playbook and a host**: the playbook
 checks (step 3), provenance and sha1 before commit (step 4), the test in a pod,
@@ -606,6 +607,16 @@ Both re-query osv.dev for the final jar set, and the job commits an SBOM of the 
 Gitea. The run page shows the PipelineRun's tasks live (fetch · build · health, or clone · update-pom · package ·
 build · health; `GET /api/v2/pipeline`), with a link to it in the OpenShift console. A failed test stops that site's
 run before anything is changed.
+
+**On the current lab the image build and the health check are switched off.** The lab is a single node short of
+ephemeral storage, and the buildah and sidecar pods were evicted. In `pipelines-setup/pipeline.yaml` both tasks stay
+in the file, commented out under a *DISABLED ON THIS LAB* banner, and the Pipelines carry an
+`app-v2/skipped-tasks: build,health` annotation; the task strip shows them as skipped (⊘). `fetch` (or `package`)
+still verifies every jar for real, and then reports the outcome by a stated, **simulated** rule so both routes can be
+shown: a change of Lightwell builds only passes; a change that includes an upstream jar is reported as failing to
+start (the test-failed card, no site touched). The result says *simulated* in the task log, the test card, the
+site's status and the report. To turn the real test back on: uncomment the two tasks and their results, drop the
+annotation, and run `pipelines-setup/deploy.sh`.
 
 First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus inventory-service's upstream mina-core
 `2.1.13`. The pod test passed, and node1 is healthy on both jars; node3 was untouched.
@@ -709,7 +720,7 @@ source-control credential for the project. Neither is edited.
 curl -s http://localhost:8788/api/v2/events
 ```
 
-Then in the console: Applications v2 → the event → **Assess** → review **1 · Sites** and **2 · Change list**, pick
+Then in the console: Applications → the event → **Assess** → review **1 · Sites** and **2 · Change list**, pick
 **Swap libraries** or **Rebuild from source** → **Prepare remediation** → **Run on N of M** → the test in a pod runs
 (its tasks shown live) → the lab site (node1) is patched without a gate; edge-site-1 and core-dc-1 wait for
 **Approve**. On a server, `curl localhost:8090/health` (workflow-engine;
@@ -744,10 +755,11 @@ Lightwell build, Prod held at the gate, provenance verified, commit
 
 ### Demo guide
 
-The book icon beside the gear opens the run of show: a seven-beat script with
-the thing to click and the line to say kept apart, the questions that actually
-get asked with answers to them, and a **Do not say** list of the claims this
-repo cannot back.
+The book icon beside the gear opens the presenter's guide, with a tab per side: **Infrastructure** (seven beats) and
+**Applications · live** (a ten-minute act on the spring-security-web fix). Each keeps the thing to click and the line
+to say apart, the questions that actually get asked with answers, and a **Do not say** list of the claims this repo
+cannot back. The guide opens on the side the console is on, and the ⧉ button moves it into its own window for a
+second screen.
 
 It is static markup rather than a fetch, so it is still readable when every
 backend is down. The one live part is the note at the top, which names the mode
@@ -781,8 +793,8 @@ MODE=live ./agentic-patching.py serve       # live
 
 ## Configuration
 
-Every row below is also a row in the settings panel. Applications v2 has its own group there (`APPV2_OSV`,
-`NEXUS_*`, `APP_VECTOR_DB_ID`, `GITEA_REPO`, `AO_APP_V2_WORKFLOW`); its keys are listed in the Applications v2
+Every row below is also a row in the settings panel. Applications has its own group there (`APPV2_OSV`,
+`NEXUS_*`, `APP_VECTOR_DB_ID`, `GITEA_REPO`, `AO_APP_V2_WORKFLOW`); its keys are listed in the Applications
 *Live setup* table above.
 
 | Variable | Default | Effect |
@@ -827,9 +839,10 @@ container-second do not convert.
 
 ### Both sides, one report
 
-The report has an **Infrastructure** section and an **Application** section,
-each against its own baseline, plus a shared record below them. Either may be
-absent and the page says so; only the empty case is an error.
+The report has an **Infrastructure** section and an **Applications** section (the Lightwell fix taken to its
+sites, priced from both sets of sliders; see `roi_appv2()`), each against its own baseline, plus a shared record
+below them. Either may be absent and the page says so; only the empty case is an error. The hidden dependency
+scanner's own **Application** section, described below, still appears if a scan has run.
 
 The two are kept apart to the last line. They are added **in hours and in
 money, which add, and never in counts, which do not** — a host and a
@@ -1115,7 +1128,7 @@ communication.py           agent 3 — renders the patch status report
 results.py                 agent 4 — feeds outcomes back to RAG + training data
 pdf.py                     minimal stdlib PDF writer (no reportlab)
 frontend/
-  index.html               the console: Infrastructure · Applications · Applications v2
+  index.html               the console: Infrastructure · Applications (the earlier scanner side is hidden)
 ao-setup/
   create-ao-objects.sh     creates AO credentials + integrations from .env
   create-ao-workflow.sh    imports the workflow below and publishes it

@@ -4098,37 +4098,37 @@ SETTINGS: tuple[Setting, ...] = (
 
     # --- applications v2 ---------------------------------------------------
     # Read per call by appv2.py, so nothing to rebind.
-    Setting('NEXUS_URL', 'Applications v2', 'Nexus URL', 'str', '',
+    Setting('NEXUS_URL', 'Applications', 'Nexus URL', 'str', '',
             'The Nexus that proxies Lightwell. Written by nexus-setup/deploy.sh. '
             'Hosts download the build from here, never from packages.redhat.com.'),
-    Setting('NEXUS_REPOSITORY', 'Applications v2', 'Nexus repository', 'str',
+    Setting('NEXUS_REPOSITORY', 'Applications', 'Nexus repository', 'str',
             'lightwell-remediated', 'The Maven2 proxy of the Lightwell remediated tier.'),
-    Setting('NEXUS_WEBHOOK_SECRET', 'Applications v2', 'Webhook secret', 'str', '',
+    Setting('NEXUS_WEBHOOK_SECRET', 'Applications', 'Webhook secret', 'str', '',
             'Nexus signs each webhook with it (X-Nexus-Webhook-Signature). In live '
             'mode a webhook is refused while this is unset.', secret=True),
-    Setting('NEXUS_POLL_SECONDS', 'Applications v2', 'Poll Nexus every', 'int', '0',
+    Setting('NEXUS_POLL_SECONDS', 'Applications', 'Poll Nexus every', 'int', '0',
             'Seconds between asking Nexus for new Lightwell builds of what the '
             'apps run. 0 relies on the webhook alone. Read at startup.'),
-    Setting('NEXUS_EVENTS', 'Applications v2', 'Events from', 'choice', 'webhook',
+    Setting('NEXUS_EVENTS', 'Applications', 'Events from', 'choice', 'webhook',
             'webhook: the Nexus webhook records events. poller: the poller records '
             'them itself, for a Nexus without webhooks.', choices=('webhook', 'poller')),
-    Setting('APP_VECTOR_DB_ID', 'Applications v2', 'App history store', 'str', '',
+    Setting('APP_VECTOR_DB_ID', 'Applications', 'App history store', 'str', '',
             'The vector store of past app changes (app-data/history/), searched for '
             'the Reasoning column. Written by setup.sh.'),
-    Setting('GITEA_REPO', 'Applications v2', 'Playbooks repository', 'str',
+    Setting('GITEA_REPO', 'Applications', 'Playbooks repository', 'str',
             'lab-user/app_v2_playbooks', 'owner/name in the lab Gitea. The AO '
             'workflow commits the generated playbooks here.'),
-    Setting('AO_APP_V2_WORKFLOW', 'Applications v2', 'AO workflow', 'str',
+    Setting('AO_APP_V2_WORKFLOW', 'Applications', 'AO workflow', 'str',
             'App Patch v2', 'Imported from ao-setup/app_v2_workflow.json.'),
-    Setting('APPV2_FORCE_FAIL', 'Applications v2', 'Force a failure (test the rollback route)', 'bool', 'false',
+    Setting('APPV2_FORCE_FAIL', 'Applications', 'Force a failure (test the rollback route)', 'bool', 'false',
             'Test only. Playbooks prepared while this is on point their verify step at a path the app does '
             'not serve, so every site in the run fails after the swap and the App Patch v2 workflow takes its '
             'rollback route (AAP restores the backup) and posts the rolled-back card. Turn it off afterwards.'),
-    Setting('APPV2_OSV', 'Applications v2', 'Include osv.dev packages', 'bool', 'false',
+    Setting('APPV2_OSV', 'Applications', 'Include osv.dev packages', 'bool', 'false',
             'Assess also lists what else osv.dev reports open on the affected apps: a '
             'Lightwell build of the same version when there is one, else the upstream '
             'fix on the same major line. Selected ones are swapped in the same change.'),
-    Setting('NEXUS_CENTRAL_REPOSITORY', 'Applications v2', 'Nexus Maven Central proxy', 'str',
+    Setting('NEXUS_CENTRAL_REPOSITORY', 'Applications', 'Nexus Maven Central proxy', 'str',
             'maven-central', 'Where upstream jars (osv.dev fixes) are fetched from, '
             'checked against Maven Central\'s published sha1.'),
 

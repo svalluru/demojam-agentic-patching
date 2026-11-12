@@ -1,7 +1,7 @@
 # Running the console on OpenShift
 
 Optional. The console normally runs on a laptop in live mode (see the main
-README, Applications v2 *Live setup*); deploy it here if you want it in the
+README, Applications *Live setup*); deploy it here if you want it in the
 cluster, where it can also take the Nexus webhook directly.
 
 Builds the image and deploys the console as one pod, one container, with

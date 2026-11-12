@@ -29,20 +29,17 @@ cd demojam-agentic-patching
 ./demo.sh
 ```
 
-Then open <http://127.0.0.1:8788>. The **Infrastructure / Application** toggle in
-the header switches between patching the hosts and patching what the
-applications depend on. Application is the library scanner (Lightwell), served
-from the same address at `/lightwell/`. It is part of the console's own server,
-so it needs no port of its own.
+Then open <http://127.0.0.1:8788>. The **Infrastructure | Applications** toggle in
+the header switches between patching the hosts and patching running applications
+when a Lightwell build lands in Nexus: the sites that run the old version, a
+Change list, a test in a pod, then Automation Orchestrator and AAP. (An earlier
+Applications side, a dependency scanner, is hidden from the toggle; the console
+still serves it at `/lightwell/`.)
 
 The bar under the toggle is where the run has got to, and it belongs to the
 side you are on: on Infrastructure, the five stages of a patch run; on
-Application, the four steps of a dependency scan and then the four of
-remediating one of the repositories it found — Fetch, Manifests, OSV.dev,
-Lightwell, Plan, Approval, Build, Push. The scan half is the whole scan,
-so a step is done when every ticked repository is past it. The remediation
-half follows whichever repository you pressed **Plan a fix** on, and sits
-pending until you press it somewhere.
+Applications, Intake, Impact, Playbook, Commit, Test, Approval, Sync,
+Remediate, Verify, Notify (the PDF and the Mattermost card) and Learn.
 
 **Push branch** does not build again. The build that went green is the one
 it pushes, so that press is quick — it clones, re-applies the same change
@@ -108,10 +105,9 @@ and the console itself. A stage box takes the colour of whoever *runs* it
 rather than of what it calls, which is why Score stays blue while the two
 boxes it reaches are red. On Infrastructure that reads as one story at a
 glance: the blue spine is ours, the red is Red Hat underneath it, and there
-is a single amber box between them. Application has no blue, because there
-are no agents on that side, but its spine is red end to end — Lightwell runs
-stages 1 to 5 and an AAP job template runs 7 and 8, and the only grey left is
-the code hosts and OSV.dev. The colours are decoration on top of the labels,
+is a single amber box between them. Applications reads the same way: its
+agents (intake, impact, playbook, report, results) are blue, Lightwell,
+OpenShift and AAP are red, and the approval gate is the one amber box. The colours are decoration on top of the labels,
 never instead of them:
 every box is named and every step is written out, so the drawing still works
 printed in black and white.
@@ -179,10 +175,10 @@ took — and costs the same work out by hand.
 The button is in the header rather than in the frame because the report covers
 **both** halves of the console. It appears as soon as either side has run
 something, so you can press it after the first walkthrough; if you have also
-scanned a repository on the Application side, the report gains a second
-section costing that against its own baseline. The two are added in hours and
-in money and in nothing else — there is no total of hosts and repositories on
-the page, because they are different units of work.
+run a fix on the Applications side, the report gains a second section costing
+that against its own baseline. The two are added in hours and in money and in
+nothing else — there is no total of hosts and sites on the page, because they
+are different units of work.
 
 It opens full width. **Close** in the header, or `Esc`, goes back to whichever
 side you came from; nothing stops running while it is up.
@@ -207,11 +203,11 @@ over everything in the run store rather than this one CVE, so it grows as you
 work through both walkthroughs — and the payback card.
 
 On both sides, *Where the effort goes* has a segment worth pointing at:
-**Still left by hand**. The manual bar costs the whole job — every repository
-scanned, every host the CVE affects — so anything the run did not actually
+**Still left by hand**. The manual bar costs the whole job — every site the
+fix reaches, every host the CVE affects — so anything the run did not actually
 finish is priced at the manual rate and charged back against the console. A
-scan that finds thirty problems and fixes six should not claim the saving on
-thirty, and neither should a CVE that affects five hosts and closes two. On
+fix that reaches three sites and patches one should not claim the saving on
+three, and neither should a CVE that affects five hosts and closes two. On
 the Infrastructure side a host counts as finished only when it reports
 *Patched*: one you never ticked, one that failed and one somebody rejected all
 leave the machine exactly as exposed as it was, and all three are charged. The

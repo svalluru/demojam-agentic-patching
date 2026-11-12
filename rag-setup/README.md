@@ -109,7 +109,7 @@ to run on every deploy or before a demo:
 output and update whatever consumes it.
 
 **The console does this itself** for both of its stores: the infra history
-(`patch_history`, from `data/`, `VECTOR_DB_ID`) and the Applications v2 app
+(`patch_history`, from `data/`, `VECTOR_DB_ID`) and the Applications app
 history (`app_patch_history`, from `../app-data/history/`, `APP_VECTOR_DB_ID`).
 It checks them at startup and whenever a search comes back empty or "not
 found", rebuilds a broken one with `ensure()`, switches to the new id and

@@ -2401,15 +2401,13 @@
                 while both boxes it reaches are red. Point at the Infrastructure
                 diagram and the story reads itself: everything blue is ours, the red
                 is Red Hat underneath it, and there is exactly one amber box between
-                them. Application has no blue, because there are no agents on that
-                side — say that out loud rather than skipping it — but its spine is
-                red end to end, Lightwell through to AAP.</li>
+                them.</li>
             <li>On a projector, set <strong>Text size</strong> to Large in the gear panel.
                 It is a browser setting — nothing is sent to the server and nobody
                 else's view changes.</li>
-            <li>Budget <strong>12 minutes</strong> for the eight beats below, plus questions.
-                The short version is beats 1, 2, 4 and 7. If you only have time for one side,
-                drop beat 6.</li>
+            <li>Budget <strong>10 minutes</strong> for the seven beats below, plus questions.
+                The short version is beats 1, 2, 4 and 6. The Applications side has its own act
+                (the other tab of this guide).</li>
           </ul>
         </section>
 
@@ -2526,57 +2524,6 @@
           <div class="g-beat">
             <div class="g-n">6</div>
             <div>
-              <h4>The other half: patch what the code depends on <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>Switch the header toggle to
-                <strong>Application</strong>. Tick <strong>JoyChou93/java-sec-code</strong> —
-                any listed repository works — and scan it. The stage bar above changes with
-                you: same two rows, different eight stages.</span></div>
-              <div class="g-say"><b>Say</b><span>“Same console, same gate, different unit of
-                work. A host has a CVE; a repository has a dependency, and the dependency has
-                the CVE. This reads the manifests, asks OSV.dev what is known about every
-                version in them, and then asks Lightwell whether there is a build that fixes it
-                without moving anyone off the version they are on.”</span></div>
-              <div class="g-do"><b>Do</b><span>Open a repository, press <strong>Plan a fix</strong>,
-                read the change list, then <strong>Approve and run</strong>. While it builds,
-                point at the stages.</span></div>
-              <div class="g-say"><b>Say</b><span>“Plan a fix launches nothing — it is a preview,
-                and the exact list of version changes is on screen before anybody approves
-                anything. Approve and run clones it, applies that list and builds it. It stops
-                at built and verified. Nothing has been pushed.”</span></div>
-              <div class="g-do"><b>Do</b><span>It fails. Let the red land, then read the amber
-                line underneath it out loud.</span></div>
-              <div class="g-say"><b>Say</b><span>“The build broke, and the console is not hiding
-                it. A Lightwell rebuild keeps the version number and the API, but it is compiled
-                to a supported Java baseline — and this project still compiles for 8. That next
-                step is read out of Maven's own output, not out of anything we knew in
-                advance.”</span></div>
-              <div class="g-do"><b>Do</b><span>Press <strong>Change the choices and run
-                again</strong>, set <strong>Java for the build</strong> to 11, and approve
-                it.</span></div>
-              <div class="g-say"><b>Say</b><span>“Nothing was pushed, because there was nothing
-                worth pushing — the Push button never appeared. One control, one re-run, and this
-                time it goes green.”</span></div>
-              <div class="g-do"><b>Do</b><span>Now press <strong>Push branch</strong> and let them
-                notice how quick it is.</span></div>
-              <div class="g-say"><b>Say</b><span>“Second approval, and it does not build again —
-                the build that went green is the one it pushes. It re-applies the same change
-                list, checks the tree hashes to the diff that was verified, and only then
-                pushes. If it did not match, it would stop: a branch nobody built is worse than
-                no branch.”</span></div>
-              <div class="g-why">This is the beat that turns a patching demo into a platform
-                one. Say the Lightwell line slowly — “fixed without changing the version you
-                run” is the part that is genuinely hard to do elsewhere, and the diff on screen
-                is the proof. The push being quick is not a detail: it is why a second approval
-                is affordable at all. The failed build is the same move as the not-verified host
-                in beat 4, on the other side of the console: the gate holds, the broken thing
-                never leaves the build host, and the way forward is one named control rather than
-                a ticket.</div>
-            </div>
-          </div>
-
-          <div class="g-beat">
-            <div class="g-n">7</div>
-            <div>
               <h4>What it saved <span class="t">2 min</span></h4>
               <div class="g-do"><b>Do</b><span>Press <strong>Calculate ROI</strong>, top right of
                 the header. Say where the timings came from before you touch a number — the page
@@ -2584,12 +2531,12 @@
               <div class="g-say"><b>Say</b><span>“Both halves of the console on one page, each
                 against its own baseline — same arithmetic, different work, and they are added
                 in hours and money and in nothing else. There is no total of hosts and
-                repositories anywhere on it, because that number would mean nothing.”</span></div>
+                sites anywhere on it, because that number would mean nothing.”</span></div>
               <div class="g-do"><b>Do</b><span>Point at <strong>Still left by hand</strong> in
                 <em>Where the effort goes</em>. It is on whichever side you ran, and it is the
                 segment worth volunteering before anybody finds it.</span></div>
               <div class="g-say"><b>Say</b><span>“The manual column costs the whole job — every
-                repository scanned, every host the CVE affects — so everything the run did not
+                site the fix reaches, every host the CVE affects — so everything the run did not
                 finish is priced at the manual rate and charged back against us. Find thirty,
                 fix six, and the page will not let you claim the saving on thirty. A host counts
                 only when it reports patched: one nobody ticked, one that failed and one somebody
@@ -2634,7 +2581,7 @@
           </div>
 
           <div class="g-beat">
-            <div class="g-n">8</div>
+            <div class="g-n">7</div>
             <div>
               <h4>Close on what was real <span class="t">20s</span></h4>
               <div class="g-do"><b>Do</b><span>Switch back to Infrastructure and point at the
@@ -2659,7 +2606,7 @@
           <div class="g-qa"><b>“Is any of this real?”</b>
             <span>The agents, the control flow, the approval gate, the thresholds and the routing
             rules are, and the trace under the diagram is every call they made — so you can check
-            that rather than take it from me. Which hosts and which repositories it is pointed at
+            that rather than take it from me. Which hosts and which sites it is pointed at
             is configuration, not code.</span></div>
 
           <div class="g-qa"><b>“What happens when one of your backends is down?”</b>
@@ -2688,15 +2635,7 @@
             until something overrides it. In-memory and lost on restart; <code>.env</code> is the
             durable place.</span></div>
 
-          <div class="g-qa"><b>“Why not just upgrade every dependency to the latest version?”</b>
-            <span>Because that is the upgrade nobody has time to test. Lightwell builds the fix
-            back onto the version you already run, so the change list moves patch levels and not
-            majors — and the exact list is on screen before anyone approves it.</span></div>
 
-          <div class="g-qa"><b>“Does it merge the fix?”</b>
-            <span>No. It pushes a branch, and your existing review and CI decide from there.
-            There are two approvals before even that: <strong>Approve and run</strong> to build
-            it, and <strong>Push branch</strong> once the build is green.</span></div>
         </section>
 
         <section class="g-never">
@@ -2713,10 +2652,6 @@
                 does the log behind it. If you are asked whether a number was measured, read the
                 trace rather than the card. Saying so costs twenty seconds; being caught not
                 saying it costs the whole demo and not just that slide.</li>
-            <li><strong>Do not call a green build a guarantee the application still works.</strong>
-                It is the repository's own <code>mvn verify</code>: it compiles and its tests
-                pass. That is why the run stops at a branch and your review and CI take it from
-                there — claim the branch, not the release.</li>
             <li><strong>Do not promise the infrastructure workflow against a controller nobody
                 has set up.</strong> Two of the three job templates it calls belong to the lab
                 and exist nowhere else, so pointing it at a customer's own Automation Orchestrator
