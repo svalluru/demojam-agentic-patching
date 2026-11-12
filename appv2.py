@@ -3401,8 +3401,14 @@ def _follow_live(h: dict) -> None:
                 outcome, detail = 'rolled_back', 'health check failed after the swap; the old jars were restored'
             elif steps.get('test') == 'failed':
                 t = extra.get('test') or {}
-                outcome, detail = 'failed', ('The test in a pod did not pass; no site was touched. '
-                                             + (t.get('reason') or str(ex.get('error_details') or ''))[:300])
+                # With the image build disabled on this lab the outcome is a stated rule: say that, not Tekton's
+                # generic "Tasks Completed" line.
+                try:
+                    hj = json.loads(t.get('health') or '{}')
+                except (TypeError, ValueError):
+                    hj = {}
+                why = hj.get('note') if isinstance(hj, dict) and hj.get('simulated') else (t.get('reason') or str(ex.get('error_details') or ''))
+                outcome, detail = 'failed', ('The test in a pod did not pass; no site was touched. ' + str(why or ''))[:400]
             else:
                 outcome, detail = 'failed', str(ex.get('error_details') or status)
             _host(key, steps=steps, outcome=outcome, detail=detail, **extra)
