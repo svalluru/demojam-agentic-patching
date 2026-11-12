@@ -648,7 +648,7 @@ estate shows them as not covered.
 
 **Telco estate** is two frames, Network then IT/OSS/BSS, always sorted by **App severity** (CRITICAL, HIGH,
 MEDIUM, LOW). Per app (name, then domain): the Java/Python/JS mix (from the BOM's `languages`), the Lightwell fixes
-for the exact versions it runs, the App severity, and a **Reasoning / impact** note on what is critical, how
+for the exact versions it runs, the App severity, and an **Impact** note on what is critical, how
 patching affects the current setup and what else to watch (`GET /api/v2/estate`). The tab answers at once with
 rule-based notes while the app history and the LLM write the reasoning in the background (animated dots), and keeps
 the answer on disk (`runs/appv2-estate-reasoning.json`) until the facts change. A lab that does not answer is

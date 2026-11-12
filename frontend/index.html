@@ -2507,6 +2507,29 @@
           </div>
 
           <div class="g-beat">
+            <div class="g-n">4b</div>
+            <div>
+              <h4>Optional: the patch that breaks the host <span class="t">90s</span></h4>
+              <div class="g-do"><b>Do</b><span>Before you send the hosts, turn on <strong>Force a
+                health failure</strong> in the gear panel (Automation Orchestrator). Approve as
+                before. One approved host comes back <strong>Rolled back</strong>; press
+                <strong>What happened</strong> on its row.</span></div>
+              <div class="g-say"><b>Say</b><span>“Not verified was a patch that did not take.
+                This is the other case: the patch took and broke something. Before it touched
+                the host the workflow wrote down the dnf transaction, the kernel and every running
+                service. After the patch the health check found a service that did not come back,
+                so the workflow ran <code>dnf history rollback</code> to that checkpoint and
+                checked again. Nobody was paged to undo it. The host is healthy, and the CVE is
+                open on it again, which is the honest result of a rollback.”</span></div>
+              <div class="g-why">This is how operations teams already back a patch out by
+                hand: a checkpoint, a health check, a backout plan. The workflow does all three
+                every time instead of only when someone remembers. Turn the setting off
+                afterwards. Retries are never forced, so <strong>Patch again</strong> in the
+                rolled-back host's panel goes through cleanly.</div>
+            </div>
+          </div>
+
+          <div class="g-beat">
             <div class="g-n">5</div>
             <div>
               <h4>The other path: no gate at all <span class="t">60s</span></h4>
@@ -4417,14 +4440,14 @@ function v2Estate(c) {
     ? `<span class="v2-fit">${r.fixes.length} · ${r.fixes.map(f => esc(f.artifact)).join(', ')}</span>`
     : `<span class="v2-fit no">${r.covered ? 'no fix for these versions' : (r.other || []).includes('npm') ? 'npm not available' : 'not covered yet'}</span>`;
   const table = rows => `<table class="v2-est"><thead><tr><th style="width:190px">App · domain</th><th>Java</th><th>Python</th><th>JS</th>
-      <th style="width:260px">Lightwell fixes available</th><th style="width:110px">App severity</th><th>Reasoning / impact</th></tr></thead><tbody>
+      <th style="width:260px">Lightwell fixes available</th><th style="width:110px">App severity</th><th>Impact</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td><b>${esc(r.app)}</b><div class="muted-sm">${esc(r.domain)}</div>
 </td>
       ${cell(r.languages.java)}${cell(r.languages.python)}${cell(r.languages.js)}
       <td>${fix(r)}</td>
       <td><span class="v2-prio ${esc((r.priority || 'low').toLowerCase())}">${esc(r.priority || '')}</span></td>
       <td class="v2-reason">${esc(r.note || '')}${c.pending ? '<span class="v2-dots" title="The LLM is writing the reasoning"><i>.</i><i>.</i><i>.</i></span>' : ''}</td></tr>`).join('')}</tbody></table>`;
-  const foot = `<div class="muted-sm" style="margin-top:10px">Reasoning / impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
+  const foot = `<div class="muted-sm" style="margin-top:10px">Impact: ${{ staged: 'staged for the demo', 'rag+llm': 'the app history store and the Lightwell advisories, summarised by the LLM', llm: 'the Lightwell advisories, summarised by the LLM', rules: 'worked out from the fixes (no LLM answer)' }[c.source] || '—'}.
     App severity weighs what the app touches, whether a Lightwell fix exists, and how hard the restart is.</div>`;
   const RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
   // Always by App severity, most severe first.
@@ -5377,6 +5400,18 @@ function renderHostTable(s) {
         ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
           + `<button class="btn-retry" onclick="toggleRetry('${esc(h.system_uuid)}')">`
           + `${retryOpen.has(h.system_uuid) ? 'Cancel' : 'Fix &amp; retry'}</button>`
+      // The rollback route ran: what the health check found and what was put
+      // back are one click away, under the row.
+      : ['rolled_back', 'rollback_failed'].includes(r.outcome)
+        ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
+          + `<button class="btn-retry" onclick="toggleRetry('${esc(h.system_uuid)}')">`
+          + `${retryOpen.has(h.system_uuid) ? 'Hide' : 'What happened'}</button>`
+      // The remediation job failed, so the workflow stopped before its own
+      // rollback route. The checkpoint it took first is still there to go
+      // back to (a simulated run has none, and simulates the rollback).
+      : ['failed', 'timeout'].includes(r.outcome) && (r.checkpoint || r.simulated)
+        ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
+          + `<button class="btn-retry" onclick="rollbackHost('${esc(r.execution_id)}', this)">Roll back this host</button>`
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
     const prog = r ? stepProgress(r) : null;
     return `<tr class="${fresh ? 'in' : ''}" style="--i:${Math.min(i, 12)}"${r ? ` data-exec="${esc(r.execution_id)}"` : ''}>
@@ -5392,7 +5427,9 @@ function renderHostTable(s) {
       ${dispatched ? `<td class="desc" title="${esc(h.history || h.reason)}"><span class="clip">${
         esc(h.history || h.reason)}</span><span class="more"></span></td>` : ''}
     </tr>` + (retryOpen.has(h.system_uuid) && r && r.outcome === 'not_verified'
-      ? retryRow(h, r, cols) : '');
+      ? retryRow(h, r, cols)
+      : retryOpen.has(h.system_uuid) && r && ['rolled_back', 'rollback_failed'].includes(r.outcome)
+      ? rollbackRow(h, r, cols) : '');
   }).join('');
 
   if (!(s.hosts || []).length) { el.innerHTML = ''; return; }
@@ -5564,6 +5601,71 @@ function toggleRetry(uuid) {
   if (patchState) renderHostTable(patchState);
 }
 
+// The panel under a host the rollback route ran on. In the order a person
+// needs it: why it was rolled back (the health check), what was put back
+// (the dnf transaction), and whether the host is healthy again. A rolled-back
+// host is vulnerable again, by design: the rollback undid the fix along with
+// whatever it broke, and the panel says so rather than leaving it implied.
+function rollbackRow(h, r, cols) {
+  const hv = r.health || {};
+  const rb = r.rollback || {};
+  const ok = r.outcome === 'rolled_back';
+  const job = rb.job_url
+    ? `<a href="${esc(rb.job_url)}" target="_blank" rel="noopener">rollback job${rb.job_id ? ' #' + esc(rb.job_id) : ''}</a>`
+    : '';
+  const restored = (rb.restored || '').split(';').map(x => x.trim()).filter(Boolean);
+  // data-retry so retryHost() finds this row: "Patch again" re-dispatches the
+  // one host, never forced, through the same gate.
+  return `<tr class="retry-row" data-retry="${esc(h.system_uuid)}"><td colspan="${cols}">
+      <div class="retry-why"><b>${hv.healthy === false || !r.health
+          ? 'The post-patch health check failed' : 'Rolled back by hand after the remediation failed'}${
+          (hv.failed_services || []).length ? ': ' + esc(hv.failed_services.join(', ')) + ' not running' : ''}.</b>
+        ${esc(hv.notes || '')}${hv.forced ? ' <i>(forced failure: test of the rollback route)</i>' : ''}</div>
+      <div class="retry-why" style="margin-top:6px"><b>${ok ? 'Rolled back' : 'The rollback did not bring the host back'}${
+          rb.txn ? ' to dnf transaction ' + esc(rb.txn) : ''}${rb.reboot ? ', rebooted into the previous kernel' : ''}.</b>
+        ${esc(rb.notes || '')} ${job}</div>
+      ${restored.length ? `<div class="muted-sm" style="margin-top:6px">Packages put back: ${
+          restored.map(esc).join(' · ')}</div>` : ''}
+      <div class="muted-sm" style="margin-top:6px">${ok
+        ? 'The host is healthy and the CVE is open on it again. Fix the cause (the service config, or the package) before patching it again.'
+        : 'A person must restore this host: the automation has done what it can.'}</div>
+      ${ok ? `<div class="retry-foot"><span class="retry-hint">Once the cause is fixed: the same playbook, a new
+        checkpoint, the same gate.</span><button class="btn-approve" onclick="retryHost('${esc(h.system_uuid)}')">
+        Patch again</button></div>` : ''}
+    </td></tr>`;
+}
+
+// "Roll back this host": a failed remediation stopped the workflow before its
+// own rollback route, so the console launches CVE - Rollback Patch itself
+// with the checkpoint the run took first. Returns at once; the row settles
+// through the normal state poll.
+async function rollbackHost(execId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Rolling back…'; }
+  try {
+    const res = await fetch('/api/rollback', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ execution_id: execId }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error + (j.fix ? ' — ' + j.fix : ''));
+    const deadline = Date.now() + 1200000;
+    while (Date.now() < deadline) {
+      await new Promise(x => setTimeout(x, STEP_TICK));
+      let st;
+      try { st = await (await fetch('/api/state')).json(); } catch { continue; }
+      const row = ((st && st.patch && st.patch.results) || []).find(x => x.execution_id === execId);
+      if (row && ['rolled_back', 'rollback_failed'].includes(row.outcome)) { renderPatch(st); return; }
+    }
+  } catch (e) {
+    if (btn) {
+      btn.disabled = false; btn.textContent = 'Roll back this host';
+      const d = document.createElement('div');
+      d.className = 'err-sm'; d.textContent = String(e.message || e);
+      btn.after(d);
+    }
+  }
+}
+
 // The panel under a host the patch did not take on. Three things, in the
 // order a person needs them: what the verify step found, what this host's
 // own history says to do about it, and the fields to do it with.
@@ -5686,6 +5788,12 @@ const OUTCOME = {
   // goes looking for a stack trace that does not exist. What it needs is a
   // retry with different parameters, which is a different action entirely.
   not_verified:      { cls: 'fail',   label: 'Not verified' },
+  // The rollback route. Rolled back: unhealthy after the patch, packages put
+  // back, healthy again — and vulnerable again. Rollback failed: put back and
+  // still unhealthy, the one state where the automation has nothing left and
+  // a person must act, so it gets the loud badge.
+  rolled_back:       { cls: 'fail',   label: 'Rolled back' },
+  rollback_failed:   { cls: 'review', label: 'Rollback failed' },
 };
 
 // Set by renderMode() before the first render.
@@ -5747,6 +5855,8 @@ const STEP_LABELS = {
   trigger_manual: 'Started', route_switch: 'Routing', approval_prod: 'Approval',
   fetch_and_commit: 'Fetch Lightspeed playbook', deploy_script: 'Sync & deploy',
   run_cve_remediation: 'Run remediation', verify_patch: 'Verify patch', notify_remediated: 'Notify Mattermost',
+  checkpoint: 'Pre-patch checkpoint', health_check: 'Health check', health_switch: 'Healthy?',
+  rollback: 'Roll back', notify_rolled_back: 'Notify: rolled back',
 };
 function stepLabel(id) {
   const base = String(id || '').replace(/_prod$/, '');
@@ -5955,6 +6065,10 @@ function recountPatch(s) {
     // Its own tile, not folded into failed. Every node went green and the
     // host is still vulnerable, which needs a retry rather than a postmortem.
     not_verified: rs.filter(r => r.outcome === 'not_verified').length,
+    // The rollback route, both ends of it in one tile: the health check
+    // failed and the packages were put back (or could not be).
+    rolled_back: rs.filter(r => ['rolled_back', 'rollback_failed'].includes(r.outcome)).length,
+    rollback_failed: rs.filter(r => r.outcome === 'rollback_failed').length,
     rejected: rs.filter(r => ['rejected', 'cancelled'].includes(r.outcome)).length,
     // Hosts on the plan that no run was dispatched for. Their rows stay in
     // the table with an empty status, but every counter above it was reading
@@ -6025,6 +6139,9 @@ function renderPatch(s) {
       <div class="stat${sum.not_verified ? ' alert' : ''}"
            title="The workflow finished cleanly and the host is still vulnerable — the verify step read the machine and the advisory is still listed. Not a failure: a retry with different parameters."><div
         class="v">${esc(sum.not_verified || 0)}</div><div class="k">Not verified</div></div>
+      <div class="stat${sum.rollback_failed ? ' alert' : ''}"
+           title="Unhealthy after the patch, so the workflow put the packages back to the pre-patch dnf transaction. Healthy again, and vulnerable again. Alert when a rollback did not bring the host back."><div
+        class="v">${esc(sum.rolled_back || 0)}</div><div class="k">Rolled back</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
       <div class="stat${sum.not_sent ? ' alert' : ''}"
            title="Affected hosts left unticked at dispatch. No workflow run exists for them and none will — they are still vulnerable. Assess the CVE again to send them."><div
@@ -6228,6 +6345,8 @@ const RUN_OUTCOME = {
   unavailable:       { cls: 'fail',   label: 'Not dispatched' },
   timeout:           { cls: 'fail',   label: 'Timed out' },
   not_verified:      { cls: 'fail',   label: 'Not verified' },
+  rolled_back:       { cls: 'fail',   label: 'Rolled back' },
+  rollback_failed:   { cls: 'review', label: 'Rollback failed' },
 };
 
 const ago = iso => {
