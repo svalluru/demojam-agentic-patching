@@ -2500,7 +2500,9 @@
                 been lied to by a progress bar, and volunteering that yours is measured buys more
                 credibility than the rest of the demo put together. The not-verified host is worth
                 the same honesty: a demo where everything works is a demo nobody believes, and this
-                is the failure the last workflow step exists to catch.</div>
+                is the failure the last workflow step exists to catch. In live mode the workflow then
+                posts a card to the team's Mattermost channel for each verified host; the offline
+                demo has no Mattermost.</div>
             </div>
           </div>
 
@@ -2653,8 +2655,8 @@
                 trace rather than the card. Saying so costs twenty seconds; being caught not
                 saying it costs the whole demo and not just that slide.</li>
             <li><strong>Do not promise the infrastructure workflow against a controller nobody
-                has set up.</strong> Two of the three job templates it calls belong to the lab
-                and exist nowhere else, so pointing it at a customer's own Automation Orchestrator
+                has set up.</strong> Three of the four job templates it calls (Fetch and Commit, Sync
+                and Deploy, and the Mattermost notify) belong to the lab and exist nowhere else, so pointing it at a customer's own Automation Orchestrator
                 fails part way through an approved run. Check what is there before you offer
                 it.</li>
             <li><strong>Do not claim ServiceNow or Slack tickets.</strong> The communication agent
@@ -2679,9 +2681,7 @@
           <p>Delete the run store and reload — <code>rm -f runs/simulated.json</code> — otherwise
           the ROI page's lifetime card carries your last rehearsal into the next room. Everything
           else is in memory and comes back clean when you restart the console.</p>
-          <p>The one thing a restart does not undo is a branch that was pushed. Delete it before
-          the next run, or the next <strong>Push branch</strong> lands on a branch that already
-          exists.</p>
+          
         </section>
 
       </div>
@@ -2691,7 +2691,8 @@
           <h3>Before you open the door</h3>
           <p class="muted-sm">This act runs live on the lab: real Automation Orchestrator, AAP, OpenShift Pipelines,
             Mattermost and node1–3. The fix is <strong>spring-security-web 5.7.11.rhlw-00006</strong> on workflow-engine.
-            Budget ten minutes; the pod test alone takes four to eight. Do this list half an hour before.</p>
+            Budget ten minutes; with the image build switched off on this lab the pod test takes under a minute.
+            Do this list half an hour before.</p>
           <ul>
             <li><strong>Lab up, console local.</strong> Start it from the repo:
               <code>SSL_CERT_FILE=/etc/ssl/cert.pem MODE=live NEXUS_EVENTS=poller APPV2_OSV=true ./agentic-patching.py serve</code>.
@@ -2775,10 +2776,10 @@
               <div class="g-do"><b>Do</b><span><strong>2 · Change list</strong>, workflow-engine: the fix is locked in
                 (Lightwell, 2 CVEs). Below it, what osv.dev reports open on the same app.</span></div>
               <div class="g-say"><b>Say</b><span>“While the orchestrator restarts anyway, what else is open on it?
-                mina-core, the NETCONF library, has five CVEs, and 2.2.8 fixes them on the same 2.2 line: we take it in
-                the same restart. Zookeeper's fix means 3.5 to 3.7, a bigger jump on the coordination layer, so we leave
-                it for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and the
-                page says so.”</span></div>
+                mina-core, the NETCONF library, has five CVEs, and 2.2.8 fixes them on the same 2.2 line: a candidate
+                for the same restart. Zookeeper's fix means 3.5 to 3.7, a bigger jump on the coordination layer, so it
+                waits for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and
+                the page says so.”</span></div>
               <div class="g-do"><b>Do</b><span>Choose the route to show. <strong>Happy path</strong>: leave the
                 upstream rows unticked (Lightwell builds only), and the pod test passes. <strong>Safety net</strong>: tick
                 <strong>mina-core 2.2.8</strong> (upstream), and the pod test fails, the amber card posts and no site is
@@ -2798,11 +2799,11 @@
             <div>
               <h4>Test before any site <span class="t">3 min, mostly waiting</span></h4>
               <div class="g-do"><b>Do</b><span>Press <strong>Run on 2 of 2</strong>. Commit goes green, then <strong>Test
-                in a pod</strong>: fetch · build · health, live, with the last log line.</span></div>
+                in a pod</strong>: fetch ✓, then build ⊘ and health ⊘ (skipped on this lab), with the last log
+                line.</span></div>
               <div class="g-say"><b>Say</b><span>“Automation Orchestrator runs one workflow per site. Every jar is checked
-                first: Red Hat's provenance signature for the Lightwell build, Maven Central's checksum for the upstream
-                mina-core. Then OpenShift Pipelines builds the app with both changes, starts it in a pod and asks which
-                jars it loaded. Nothing touches a site until that passes.”</span></div>
+                first: Red Hat's provenance signature for the Lightwell build, Maven Central's checksum for any upstream
+                jar. Then OpenShift Pipelines fetches every jar the app will run and checks each one again.”</span></div>
               <div class="g-say"><b>Say</b><span>“On this lab the image build and the health check are switched off:
                 the node is short of disk. Here they are in the pipeline, commented out (open the Pipeline in the
                 OpenShift console). On a real cluster they run, and nothing touches a site until the app has come up
@@ -2819,14 +2820,16 @@
             <div class="g-n">5</div>
             <div>
               <h4>The gate, the proof, the card <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span>The lab patches without a gate: its Status reads healthy on
-                <code>spring-security-web-5.7.11.rhlw-00006.jar</code> and <code>mina-core-2.2.8.jar</code>. Switch to the
-                Mattermost tab: the green card. edge-site-1 waits: point at <strong>Approve</strong>.</span></div>
+              <div class="g-do"><b>Do</b><span><strong>Happy path</strong>: the lab patches without a gate; its Status
+                reads healthy on <code>spring-security-web-5.7.11.rhlw-00006.jar</code>. Switch to the Mattermost tab:
+                the green card. edge-site-1 waits: point at <strong>Approve</strong>. <strong>Safety net</strong>
+                (mina-core ticked): the test failed, every site reads <em>failed, no site touched</em> with the
+                simulated note, and the Mattermost tab shows the amber card; go straight to the report.</span></div>
               <div class="g-say"><b>Say</b><span>“The lab went first, automatically, and the health check names the jars
                 it loaded: evidence of the patch, not just a restart. The team heard about it where they already work.
                 A live site waits for a person, who sees the exact commit and what the pod test proved.”</span></div>
-              <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about three more minutes), otherwise
-                reject it and say why. Then the <strong>Report</strong> (its last section is the ROI estimate) and
+              <div class="g-do"><b>Do</b><span>Approve edge-site-1 if there is time (about a minute more), otherwise
+                reject it and say why. Then the <strong>Report</strong> (it includes the ROI estimate) and
                 <strong>Calculate ROI</strong>.</span></div>
               <div class="g-say"><b>Say</b><span>“A PDF for the change board, a card per site, and the outcome goes back
                 into the history the next run's reasoning reads.”</span></div>
@@ -2867,6 +2870,9 @@
             <li><strong>Do not claim a Lightwell build for mina-core or zookeeper</strong> unless the rows say Lightwell:
               with the API unavailable they are upstream releases.</li>
             <li><strong>Do not claim Python or npm patching</strong>, or that the pod test is full regression.</li>
+            <li><strong>Do not present the pod-test result as a real start-up check on this lab.</strong> The image
+              build and health check are switched off; the jars are verified for real, but pass or fail follows the
+              stated rule (Lightwell builds only pass, an upstream jar fails). Say so, as beat 4 does.</li>
             <li><strong>Do not imply per-site tracking.</strong> The BOM is per app: once every selected site is
               patched, the app is recorded as patched.</li>
           </ul>
