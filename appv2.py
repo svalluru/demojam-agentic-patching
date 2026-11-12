@@ -933,15 +933,26 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
             'reasoning_source': rsource, 'error': '', 'warning': lw_error}
 
 
-def _two_sentences(text: str) -> str:
-    """At most two sentences: the model does not always keep to the length it is asked for, and the cell is small."""
-    parts = re.split(r'(?<=[.!?])\s+', ' '.join(text.split()))
-    keep = 3 if parts and re.fullmatch(r'(TAKE|SKIP)[.:]?', parts[0], re.I) else 2   # a bare "SKIP." is a label
-    return ' '.join(parts[:keep]).strip()
+REASONING_WORDS = 100      # per row of the change list's Reasoning column; the cell shows the start, the arrow the rest
+
+
+def _cap_words(text: str, limit: int = REASONING_WORDS) -> str:
+    """Whole sentences up to `limit` words: the model does not always keep to the length it is asked for. A first
+    sentence longer than the limit is cut at the limit, with an ellipsis, rather than dropped."""
+    out, count = [], 0
+    for sentence in re.split(r'(?<=[.!?])\s+', ' '.join(text.split())):
+        words = len(sentence.split())
+        if count + words > limit:
+            if not out:
+                out.append(' '.join(sentence.split()[:limit]) + '…')
+            break
+        out.append(sentence)
+        count += words
+    return ' '.join(out).strip()
 
 
 def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
-    """{row id: one or two sentences}: why take it now or not, from the app history store and the LLM."""
+    """{row id: up to REASONING_WORDS words}: why take it now or not, from the app history store and the LLM."""
     if not rows:
         return {}, 'none'
     if H.demo_mode():
@@ -980,12 +991,12 @@ def extras_reasoning(rows: list[dict]) -> tuple[dict[str, str], str]:
                       for i, r in enumerate(rows))
     prompt = ('You advise a telco operations team patching application libraries in a change window. Each library '
               'below would ride the same restart as a Lightwell fix already being applied. For each numbered library '
-              'write at most 35 words: start with TAKE or SKIP, then whether to take the proposed change in this window and why, how it '
+              f'write at most {REASONING_WORDS} words: start with TAKE or SKIP, then whether to take the proposed change in this window and why, how it '
               'affects the running app (API change or not, what to verify), and anything the history says. Use only '
               'the facts and history given. Answer as JSON, {"1": "...", "2": "..."}, nothing else.\n\n' + facts)
     try:
         parsed = json.loads(re.search(r'\{.*\}', H.llm(prompt), re.S).group(0))
-        return {r['id']: _two_sentences(str(parsed.get(str(i + 1)) or '')) or r['why'] for i, r in enumerate(rows)}, \
+        return {r['id']: _cap_words(str(parsed.get(str(i + 1)) or '')) or r['why'] for i, r in enumerate(rows)}, \
             'rag+llm' if excerpts else 'llm'
     except Exception:
         return {}, 'rules'
