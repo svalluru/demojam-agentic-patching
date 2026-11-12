@@ -95,3 +95,31 @@ class RoiV2(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class InfraDecide(unittest.TestCase):
+    """A rejection that has cleared the gate is final even before AO marks the execution finished."""
+
+    def test_rejected_while_ao_still_running(self):
+        c = load_console()
+        calls = []
+
+        def ao(path, method='GET', body=None, timeout=None):
+            calls.append((method, path))
+            if path.endswith('/signal'):
+                return {}
+            if path.startswith('/api/v1/executions/') and path.endswith('/activities'):
+                return {'resources': [{'temporal_activity_id': 'approval_prod', 'status': 'completed', 'started_at': 't'}]}
+            if path.startswith('/api/v1/executions/'):
+                return {'status': 'running', 'approval_pending': False}       # AO has not caught up yet
+            return {}
+        saved = (c.ao_call, c.time.sleep, c.circuit)
+        c.ao_call, c.time.sleep, c.circuit = ao, (lambda s: None), (lambda *a, **k: None)
+        try:
+            agent = c.PatchingAgent()
+            agent._activities = lambda ex: ([{'name': 'approval_prod', 'status': 'completed'}], '', '')
+            r = agent.decide('11111111-2222-3333-4444-555555555555', 'approval_prod', 'rejected', host='node2')
+        finally:
+            c.ao_call, c.time.sleep, c.circuit = saved
+        self.assertEqual(r['outcome'], 'rejected')
+        self.assertEqual(c.communication.PATCH_TYPE['approved_patch'], 'Approval required')

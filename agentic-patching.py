@@ -2412,7 +2412,9 @@ class PatchingAgent:
         outcome = ('awaiting_approval' if pending
                    else 'cancelled' if status in ('cancelled', 'canceled')
                    else 'failed' if status in ('failed', 'error') or any_failed
-                   else 'rejected' if decision == 'rejected' and terminal
+                   # A rejection that has cleared the gate is final: the run stops there. AO may not have marked
+                   # the execution finished yet, and waiting for that left the host (and the report) at "running".
+                   else 'rejected' if decision == 'rejected' and not pending
                    else 'patched' if status in ('completed', 'succeeded')
                    else 'running')
         self._trace('patching', 'console', f'{execution_id[:8]} -> {outcome}')

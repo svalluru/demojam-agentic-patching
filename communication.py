@@ -30,7 +30,9 @@ GREY = '#eceff3'
 
 # Matches the console: the workflow's branch name is implementation
 # vocabulary, and the report is read by the same operator.
-PATCH_TYPE = {'auto_patch': 'Auto', 'approved_patch': 'Approved'}
+# The workflow branch the host went down, not the decision: "Approved" read as the operator's answer, and sat beside
+# a Rejected outcome.
+PATCH_TYPE = {'auto_patch': 'Auto-patch', 'approved_patch': 'Approval required'}
 
 OUTCOME_LABEL = {
     'patched': 'Patched',
