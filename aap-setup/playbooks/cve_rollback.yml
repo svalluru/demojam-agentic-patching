@@ -34,6 +34,31 @@
           checkpoint_json is missing its dnf transaction or service list, so there is nothing to roll back to.
           Check the "CVE - Pre-patch Checkpoint" job of this run.
 
+    # The kernel first. A kernel CVE's remediation installs a new kernel and usually reboots into it, and dnf will
+    # not remove the kernel it is running on: undoing that transaction fails ("removing protected packages:
+    # kernel-core") until the host is back on the checkpoint's kernel. The old kernel is still installed (kernels are
+    # install-only), so this is the usual backout: make it the default boot entry and reboot into it.
+    - name: Put the checkpoint's kernel back as the default boot entry
+      ansible.builtin.command:
+        cmd: "grubby --set-default {{ cp.default_kernel }}"
+      when: cp.default_kernel | default('') | length > 0
+      changed_when: true
+
+    - name: Read the kernel running now
+      ansible.builtin.command:
+        cmd: uname -r
+      register: now_kernel
+      changed_when: false
+
+    - name: Reboot into the checkpoint's kernel
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+        msg: Rolling back a CVE patch (agentic patching console)
+      when:
+        - cp.running_kernel | default('') | length > 0
+        - now_kernel.stdout | trim != cp.running_kernel
+      register: rebooted
+
     - name: Read the dnf history
       ansible.builtin.command:
         cmd: dnf -q history list
@@ -62,27 +87,6 @@
       register: undo_info
       changed_when: false
       when: undo is changed
-
-    - name: Put the checkpoint's kernel back as the default boot entry
-      ansible.builtin.command:
-        cmd: "grubby --set-default {{ cp.default_kernel }}"
-      when: cp.default_kernel | default('') | length > 0
-      changed_when: true
-
-    - name: Read the kernel running now
-      ansible.builtin.command:
-        cmd: uname -r
-      register: now_kernel
-      changed_when: false
-
-    - name: Reboot into the checkpoint's kernel
-      ansible.builtin.reboot:
-        reboot_timeout: 900
-        msg: Rolling back a CVE patch (agentic patching console)
-      when:
-        - cp.running_kernel | default('') | length > 0
-        - now_kernel.stdout | trim != cp.running_kernel
-      register: rebooted
 
     - name: Start every service that was running at the checkpoint
       ansible.builtin.systemd_service:

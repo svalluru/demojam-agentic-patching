@@ -1819,6 +1819,19 @@ def infra_outcome(outcome: str, health: dict | None, rollback: dict | None) -> s
     return 'rolled_back' if rollback.get('rolled_back') else 'rollback_failed'
 
 
+def settle(outcome: str, steps: list[dict]) -> dict:
+    """The outcome once the run's own reports have had their say, and those reports: verify (a clean run whose host
+    is still vulnerable is not_verified), then the health check and rollback (infra_outcome). One definition, used by
+    every path that settles a row (_await, decide, run_detail), so none of them can report 'patched' over what the
+    workflow found."""
+    verdict = verify_verdict(steps)
+    if outcome == 'patched' and verdict and not verdict['patched']:
+        outcome = 'not_verified'
+    health, rollback = health_verdict(steps), rollback_verdict(steps)
+    return {'outcome': infra_outcome(outcome, health, rollback), 'verify': verdict, 'health': health,
+            'rollback': rollback, 'checkpoint': checkpoint_of(steps)}
+
+
 def with_verdicts(run: dict) -> dict:
     """A simulated run with the health and rollback verdicts read off its steps, the way _await reads a real one,
     so the console renders both kinds through the same fields."""
@@ -2482,20 +2495,14 @@ class PatchingAgent:
                    else ('patched' if ran else 'rejected')
                    if status in ('completed', 'succeeded')
                    else 'running')
-        # The same two readings _await applies, so a row refreshed through here (_absorb_run_detail) does not
-        # go back to 'patched' after verify or the rollback route said otherwise.
-        verdict = verify_verdict(steps)
-        if outcome == 'patched' and verdict and not verdict['patched']:
-            outcome = 'not_verified'
-        health, rollback = health_verdict(steps), rollback_verdict(steps)
-        outcome = infra_outcome(outcome, health, rollback)
+        # The same readings _await and decide apply, so a row refreshed through here (_absorb_run_detail) does
+        # not go back to 'patched' after verify or the rollback route said otherwise.
+        found = settle(outcome, steps)
         return {
             'execution_id': execution_id,
             'cve_id': inp.get('cve_id'), 'host': inp.get('host'),
             'group': inp.get('group'), 'status': status,
-            'outcome': outcome,
-            'verify': verdict, 'health': health, 'rollback': rollback,
-            'checkpoint': checkpoint_of(steps),
+            **found,
             'approval_pending': pending,
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
@@ -2584,10 +2591,12 @@ class PatchingAgent:
                    else 'rejected' if decision == 'rejected' and not pending
                    else 'patched' if status in ('completed', 'succeeded')
                    else 'running')
+        found = settle(outcome, steps)
+        outcome = found['outcome']
         self._trace('patching', 'console', f'{execution_id[:8]} -> {outcome}')
         return {
             'execution_id': execution_id, 'decision': decision,
-            'status': status, 'outcome': outcome,
+            'status': status, **found,
             'approval_pending': bool(state.get('approval_pending')),
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,

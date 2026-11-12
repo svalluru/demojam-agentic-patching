@@ -9,8 +9,8 @@
 #   running_kernel  `uname -r`. If the patch installed a kernel and the host rebooted into it, the
 #                   rollback has to boot the old one again: dnf will not remove the running kernel.
 #   default_kernel  `grubby --default-kernel`, the boot entry to put back.
-#   services        the services running now. After the patch, every one of them should still be running;
-#                   that is the health check (cve_health_check.yml).
+#   services        the enabled services running now. After the patch, every one of them should still be
+#                   running; that is the health check (cve_health_check.yml).
 #   failed_units    units already failed before the patch, so the health check only blames the patch
 #                   for new ones.
 #
@@ -50,6 +50,15 @@
       register: running
       changed_when: false
 
+    # Only enabled services are a promise that they run. Static and D-Bus-activated ones (rhsm, for one) start on
+    # demand and exit when idle, so one that is up now and down after the patch, or after its reboot, says nothing
+    # about the patch: on the first live run that false alarm sent every host down the rollback route.
+    - name: List the enabled services
+      ansible.builtin.command:
+        cmd: systemctl list-unit-files --type=service --state=enabled --no-legend --plain
+      register: enabled
+      changed_when: false
+
     - name: List the units already failed
       ansible.builtin.command:
         cmd: systemctl list-units --state=failed --no-legend --plain
@@ -67,7 +76,9 @@
                         | map('regex_replace', '^([0-9]+).*$', '\\1') | first | default('0')) | int }}"
           running_kernel: "{{ kernels.results[0].stdout | default('') | trim }}"
           default_kernel: "{{ kernels.results[1].stdout | default('') | trim }}"
-          services: "{{ running.stdout_lines | map('split') | map('first') | reject('search', '^(' ~ (transient | map('regex_escape') | join('|')) ~ ')') | list }}"
+          services: "{{ running.stdout_lines | map('split') | map('first')
+                        | select('in', enabled.stdout_lines | map('split') | map('first') | list)
+                        | reject('search', '^(' ~ (transient | map('regex_escape') | join('|')) ~ ')') | list }}"
           failed_units: "{{ failed.stdout_lines | map('split') | map('first') | list }}"
           taken_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
 
