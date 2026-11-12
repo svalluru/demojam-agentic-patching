@@ -109,7 +109,17 @@ def main() -> None:
 
     print('Admin password')
     password = env.get('NEXUS_ADMIN_PASSWORD', '')
-    if env.get('NEXUS_INITIAL_PASSWORD') and not password:
+    initial = env.get('NEXUS_INITIAL_PASSWORD', '')
+    if initial and password and Nexus(base, 'admin', password, verify).call(
+            'GET', '/service/rest/v1/security/users')[0] == 401:
+        # A fresh Nexus on a new lab, with the previous lab's password still in .env: set the new Nexus's admin
+        # password to the one .env already has, from the generated one, rather than failing every call with 401.
+        code, err = Nexus(base, 'admin', initial, verify).call(
+            'PUT', '/service/rest/v1/security/users/admin/change-password', password.encode(), 'text/plain')
+        if code not in (200, 204):
+            sys.exit(f'could not change the admin password: HTTP {code} {err}')
+        print('  fresh Nexus: set its admin password to NEXUS_ADMIN_PASSWORD from .env')
+    elif initial and not password:
         password = secrets.token_urlsafe(18)
         code, err = Nexus(base, 'admin', env['NEXUS_INITIAL_PASSWORD'], verify).call(
             'PUT', '/service/rest/v1/security/users/admin/change-password', password.encode(), 'text/plain')

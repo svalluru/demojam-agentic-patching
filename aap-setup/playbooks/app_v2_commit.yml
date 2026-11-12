@@ -208,6 +208,20 @@
              + ([] if init_only | default(false) | bool else
                 [{'path': playbook_filename, 'content': playbook_b64 | b64decode}]) }}
 
+    # A fresh lab's Gitea has no playbooks repository yet. Create it, as the token's user (the owner in GITEA_REPO,
+    # lab-user), the way the Seed App Repos job creates the app repositories. Already there is fine.
+    - name: Make sure the playbooks repository exists
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/user/repos"
+        method: POST
+        headers: { Authorization: "token {{ gitea_token }}" }
+        body_format: json
+        body: { name: "{{ gitea_repo.split('/')[-1] }}", private: false, auto_init: true, default_branch: main,
+                description: "Applications v2 playbooks, committed by the App Patch v2 workflow" }
+        status_code: [201, 409]
+        validate_certs: false
+      no_log: true
+
     - name: Read what the repository holds now
       ansible.builtin.uri:
         url: "{{ gitea_url }}/api/v1/repos/{{ gitea_repo }}/contents/{{ item.path }}"
