@@ -2083,7 +2083,8 @@
   .v2-cltab tr.v2-clfix td { background: #f6f8f5; }
   .v2-cltab details summary { cursor: pointer; list-style: none; }
   .v2-cltab select.v2-opt { width: auto; max-width: 300px; }
-  .v2-cltab details summary::after { content: ' ▸'; color: #6a6e73; }
+  /* Red and bold, so the "read the rest" arrow stands out from the grey reasoning text it ends. */
+  .v2-cltab details summary::after { content: ' ▸'; color: var(--red); font-weight: 700; font-size: 1.15em; }
   .v2-cltab details[open] summary::after { content: ' ▾'; }
   .v2-planact { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
   .v2-subframe { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
