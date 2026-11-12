@@ -896,8 +896,7 @@
     display: flex; align-items: baseline; gap: 10px; margin-top: 6px;
     font-size: calc(10px * var(--ts)); color: var(--muted);
   }
-  .prog-step { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis;
-               white-space: nowrap; }
+  .prog-step { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .prog-n { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
   .prog-err { margin-top: 5px; font-size: calc(10.5px * var(--ts)); color: var(--red); }
 
@@ -5792,12 +5791,26 @@ function stepProgress(r) {
   return {
     done, total: steps.length,
     pct: Math.round(done / steps.length * 100),
-    label: (bad || at || steps[steps.length - 1]).name || '',
+    label: stepLabel((bad || at || steps[steps.length - 1]).name || ''),
     // The full node list moves into the tooltip. Spelled out in the cell it
     // was five lines of text per row that nobody read; the bar is the summary
     // and this is still there when the detail is what you want.
-    title: steps.map(s => `${s.name}: ${s.status}`).join('\n'),
+    title: steps.map(s => `${stepLabel(s.name)}: ${s.status}`).join('\n'),
   };
+}
+
+// The RHEL CVE workflow's node ids, as a person reads them. The Prod branch runs the same steps after the gate, so
+// its ids share these labels; anything new falls back to the id with its underscores turned into words.
+const STEP_LABELS = {
+  trigger_manual: 'Started', route_switch: 'Routing', approval_prod: 'Approval',
+  fetch_and_commit: 'Fetch Lightspeed playbook', deploy_script: 'Sync & deploy',
+  run_cve_remediation: 'Run remediation', verify_patch: 'Verify patch', notify_remediated: 'Notify Mattermost',
+};
+function stepLabel(id) {
+  const base = String(id || '').replace(/_prod$/, '');
+  if (STEP_LABELS[base]) return STEP_LABELS[base];
+  const words = base.replace(/_/g, ' ').trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : '';
 }
 
 // Same classes the outcome badge uses, so the bar and the badge cannot
