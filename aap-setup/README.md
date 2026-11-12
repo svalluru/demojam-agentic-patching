@@ -1,4 +1,4 @@
-# AAP: the one object that is ours
+# AAP: the objects that are ours
 
 The competition workflow calls three job templates. Two belong to the lab and
 one to us:
@@ -8,8 +8,13 @@ one to us:
 | `CVE - Fetch and Commit` | **lab** | asks Lightspeed MCP for a remediation playbook, commits it to Gitea |
 | `CVE - Sync and Deploy Remediation` | **lab** | syncs `Lightspeed-Playbooks`, creates a per-host template for that playbook |
 | `CVE - Verify Patch` | **us** | checks on the host whether the CVE is actually gone |
+| `CVE - Pre-patch Checkpoint` | **us** | records the dnf transaction, kernel and running services before the patch |
+| `CVE - Post-patch Health Check` | **us** | did the patch break anything? `health: failed` sends the host to the rollback route |
+| `CVE - Rollback Patch` | **us** | `dnf history rollback` to the checkpoint, the old kernel back, services checked again |
 
-This directory creates the third and touches nothing else.
+This directory creates our four and touches nothing else. The rollback route's
+Mattermost card is the `host_rolled_back` card of `App Patch v2 - Notify
+Mattermost` (`playbooks/app_v2_notify.yml`).
 
 ```bash
 ./aap-setup/create-verify-template.sh --dry-run   # show what it would do

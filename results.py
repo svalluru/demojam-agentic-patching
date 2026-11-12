@@ -49,7 +49,9 @@ CSV_FIELDS = [
 # These are starting values, not measurements. Tune them against real runs
 # before anyone retrains on this.
 OBSERVED_RISK = {
-    'failed': 95.0,        # patch failed or rolled back — worst case
+    'failed': 95.0,        # patch failed — worst case
+    'rolled_back': 95.0,   # the patch broke the host and was taken back out: as bad as a failure
+    'rollback_failed': 100.0,   # broke the host and the rollback did not bring it back
     'timeout': 85.0,       # never settled; needs a human either way
     'rejected': 60.0,      # an operator looked and said no
     'unavailable': None,   # never dispatched — tells us nothing, so no row
@@ -99,7 +101,8 @@ class ResultsAgent:
         risk = host_info.get('risk') or host_info.get('risk_score')
 
         verdict = {'patched': 'SUCCESS', 'failed': 'FAILED', 'timeout': 'FAILED',
-                   'rejected': 'NOT ATTEMPTED'}.get(outcome, outcome.upper())
+                   'rejected': 'NOT ATTEMPTED', 'rolled_back': 'ROLLED BACK',
+                   'rollback_failed': 'ROLLBACK FAILED'}.get(outcome, outcome.upper())
 
         lines = [
             f'# Patch record — {host} — {now:%Y-%m-%d}',
@@ -119,7 +122,21 @@ class ResultsAgent:
                 '',
             ]
         lines += ['What happened:']
-        if outcome == 'patched':
+        health, rollback = result.get('health') or {}, result.get('rollback') or {}
+        if outcome in ('rolled_back', 'rollback_failed'):
+            # Written for the next assessment of this host: the history search reads these records, so the reason
+            # a patch had to be taken back out is what the next plan sees.
+            lines += [f'The patch was applied and the host was unhealthy afterwards: '
+                      f'{health.get("notes") or "the post-patch health check failed"}'.rstrip()]
+            lines += [(rollback.get('notes') or f'Rolled back to dnf transaction {rollback.get("txn") or "?"}.')
+                      + (' Rebooted into the previous kernel.' if rollback.get('reboot')
+                         and 'Rebooted' not in (rollback.get('notes') or '') else '')]
+            if rollback.get('restored'):
+                lines += [f'Packages put back: {rollback["restored"][:300]}']
+            lines += ['Lesson: find why the service did not come back before patching this host again.'
+                      if outcome == 'rolled_back' else
+                      'The rollback did not bring the host back; it was restored by hand.']
+        elif outcome == 'patched':
             lines += [f'Workflow completed all {len(done)} steps '
                       f'({", ".join(done)}). Host reported healthy afterwards.']
         elif failed:

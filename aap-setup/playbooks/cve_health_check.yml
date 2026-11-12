@@ -1,0 +1,80 @@
+---
+# Is the host still healthy after the patch? Job template "CVE - Post-patch Health Check", the node after
+# "Verify Patch". Verify answers "is the CVE gone"; this answers "did the patch break anything", and the
+# workflow's health switch sends a failed host to "CVE - Rollback Patch" (cve_rollback.yml).
+#
+# Healthy means:
+#   - every service that was running at the checkpoint is running now
+#   - no unit has failed that had not already failed at the checkpoint
+# A reboot still being needed (needs-restarting -r) is reported, not counted against the host: after a
+# kernel or glibc update that is normal and the change window decides when to reboot.
+#
+# Never fails the job on an unhealthy host. Whether to roll back is the workflow's decision, and it reads
+# `health` from the artifacts to make it.
+#
+# force_fail (test only, the console's "Force a health failure" setting): also require a service that does
+# not exist, so the host reads unhealthy and the workflow takes the rollback route on purpose.
+#
+# Variables: target_host, checkpoint_json (JSON text or mapping), force_fail (bool).
+# Reports with set_stats: health (ok|failed), failed_services, new_failed_units, reboot_needed, health_notes.
+- name: Check the host is healthy after patching
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    cp: "{{ checkpoint_json if checkpoint_json is mapping else (checkpoint_json | default('{}', true) | from_json) }}"
+    canary: cve-health-canary.service
+    forced: "{{ force_fail | default(false) | bool }}"
+    required: "{{ (cp.services | default([])) + ([canary] if forced else []) }}"
+  tasks:
+    - name: Ask systemd about each service that was running before the patch
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ item }}"
+      loop: "{{ required }}"
+      register: active
+      changed_when: false
+      failed_when: false
+
+    - name: List the units failed now
+      ansible.builtin.command:
+        cmd: systemctl list-units --state=failed --no-legend --plain
+      register: failed_now
+      changed_when: false
+
+    - name: Ask whether a reboot is needed
+      ansible.builtin.command:
+        cmd: needs-restarting -r
+      register: reboot
+      changed_when: false
+      failed_when: false
+
+    - name: Decide
+      ansible.builtin.set_fact:
+        down: "{{ active.results | rejectattr('stdout', 'equalto', 'active') | map(attribute='item') | list }}"
+        new_failed: "{{ failed_now.stdout_lines | map('split') | map('first') | reject('in', cp.failed_units | default([])) | list }}"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ 'HEALTHY' if not down and not new_failed else 'UNHEALTHY' }}
+          {{ ('— not running: ' ~ (down | join(', '))) if down else '' }}
+          {{ ('— newly failed: ' ~ (new_failed | join(', '))) if new_failed else '' }}
+          {{ '(forced failure: test of the rollback route)' if forced else '' }}
+
+    - name: Publish the verdict for the orchestrator
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          health: "{{ 'ok' if not down and not new_failed else 'failed' }}"
+          failed_services: "{{ down | join(',') }}"
+          new_failed_units: "{{ new_failed | join(',') }}"
+          reboot_needed: "{{ reboot.rc == 1 }}"
+          health_forced: "{{ forced }}"
+          health_host: "{{ inventory_hostname }}"
+          health_notes: >-
+            {{ ('Forced failure (test only): required ' ~ canary ~ ', which does not exist. ') if forced else '' }}{{
+               ('Not running after the patch: ' ~ (down | reject('equalto', canary) | join(', ')) ~ '. ')
+               if down | reject('equalto', canary) | list else '' }}{{
+               ('Newly failed units: ' ~ (new_failed | join(', ')) ~ '. ') if new_failed else '' }}{{
+               'A reboot is still needed.' if reboot.rc == 1 else '' }}

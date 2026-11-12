@@ -42,6 +42,9 @@ OUTCOME_LABEL = {
     'timeout': 'Timed out',
     'unavailable': 'Not dispatched',
     'running': 'Running',
+    'not_verified': 'Not verified',
+    'rolled_back': 'Rolled back',
+    'rollback_failed': 'Rollback failed',
 }
 
 
@@ -55,6 +58,12 @@ def _phase(summary: dict) -> tuple[str, str, str]:
     failed = summary.get('failed', 0)
     waiting = summary.get('awaiting_approval', 0)
     patched = summary.get('patched', 0)
+    broken = summary.get('rollback_failed', 0)
+    rolled = summary.get('rolled_back', 0)
+    if broken:
+        return ('Action required — rollback did not restore a host',
+                f'{broken} host(s) were unhealthy after the patch and are still unhealthy after the '
+                f'rollback. Restore them by hand.', RED)
     if failed:
         return ('Action required — remediation incomplete',
                 f'{failed} host(s) failed to patch and need investigation '
@@ -63,6 +72,10 @@ def _phase(summary: dict) -> tuple[str, str, str]:
         return ('Awaiting operator approval',
                 f'{waiting} host(s) are paused at the approval gate. No change '
                 f'has been made to them yet.', AMBER)
+    if rolled:
+        return ('Rolled back — CVE open again on some hosts',
+                f'{rolled} host(s) were unhealthy after the patch, so the workflow put their packages back '
+                f'to the pre-patch checkpoint. They are healthy and the CVE is open on them again.', AMBER)
     if patched:
         return ('Remediation complete',
                 f'All {patched} affected host(s) were patched successfully.', GREEN)
@@ -118,10 +131,12 @@ class CommunicationAgent:
         doc.text('Summary', size=11, bold=True)
         doc.gap(2)
         doc.table(
-            ['Patched', 'Awaiting approval', 'Failed', 'Rejected', 'Hosts assessed'],
+            ['Patched', 'Awaiting approval', 'Failed', 'Rolled back', 'Rejected', 'Hosts assessed'],
             [[summary.get('patched', 0), summary.get('awaiting_approval', 0),
-              summary.get('failed', 0), summary.get('rejected', 0), len(hosts)]],
-            [100, 120, 80, 80, 119])
+              summary.get('failed', 0),
+              summary.get('rolled_back', 0) + summary.get('rollback_failed', 0),
+              summary.get('rejected', 0), len(hosts)]],
+            [80, 105, 65, 75, 65, 109])
         doc.gap(10)
 
         doc.text('Per-host outcome', size=11, bold=True)
@@ -158,6 +173,23 @@ class CommunicationAgent:
                      'against the approval step itself — it measures how long the '
                      'operator took, not the automation.', size=8.6, color=MUTED)
         doc.gap(10)
+
+        # The rollback route, per host: why (the health check), what was put back (the dnf transaction), and
+        # whether the host came back. The change board's first question about a rollback is all three.
+        rolled = [r for r in results if r.get('outcome') in ('rolled_back', 'rollback_failed')]
+        if rolled:
+            doc.text('Rollbacks', size=11, bold=True)
+            doc.gap(2)
+            doc.table(['Host', 'Result', 'Why (health check)', 'Put back'],
+                      [[r.get('host', '—'),
+                        OUTCOME_LABEL.get(r.get('outcome'), r.get('outcome')),
+                        ((r.get('health') or {}).get('notes') or 'health check failed')[:160],
+                        (('dnf transaction ' + str((r.get('rollback') or {}).get('txn')) + ': ')
+                         if (r.get('rollback') or {}).get('txn') else '')
+                        + ((r.get('rollback') or {}).get('restored') or '—')[:160]]
+                       for r in rolled],
+                      [100, 70, 165, 164])
+            doc.gap(10)
 
         if dry.get('notes'):
             doc.text('Assessment notes', size=11, bold=True)

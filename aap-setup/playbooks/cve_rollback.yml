@@ -1,0 +1,125 @@
+---
+# Put a host back the way it was before its patch. Job template "CVE - Rollback Patch", the patching workflow's
+# rollback route: when "CVE - Post-patch Health Check" reports health: failed, the health switch sends the host
+# here instead of to the "remediated" notification. The console also launches it directly ("Roll back this
+# host") when the remediation job itself failed, since AO has no on-failure edge.
+#
+# How:
+#   1. `dnf history rollback <checkpoint dnf_txn>` undoes every package change made after the checkpoint.
+#      The old versions must still be in the enabled repos (a Satellite content view keeps them).
+#   2. dnf will not remove the running kernel, so the boot entry is set back to the checkpoint's default
+#      kernel with grubby, and the host reboots only if it is running a different kernel than before.
+#   3. Every service that was running at the checkpoint is started again, then the same health check as
+#      cve_health_check.yml runs (without the forced canary: that one is a test, not the host).
+#
+# Fails only when the host cannot be brought back to health, which is the case a person must hear about.
+#
+# Variables: target_host, checkpoint_json (JSON text or mapping).
+# Reports with set_stats: rolled_back, rollback_health, restored, rollback_txn, rollback_reboot, rollback_notes.
+- name: Roll the host back to its pre-patch state
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    cp: "{{ checkpoint_json if checkpoint_json is mapping else (checkpoint_json | default('{}', true) | from_json) }}"
+    txn: "{{ cp.dnf_txn | default(0) | int }}"
+  tasks:
+    - name: Check what the checkpoint handed over
+      ansible.builtin.assert:
+        that:
+          - txn | int > 0
+          - cp.services is defined
+        fail_msg: >-
+          checkpoint_json is missing its dnf transaction or service list, so there is nothing to roll back to.
+          Check the "CVE - Pre-patch Checkpoint" job of this run.
+
+    - name: Read the newest dnf transaction
+      ansible.builtin.command:
+        cmd: dnf -q history list
+      register: before
+      changed_when: false
+
+    - name: Work out whether anything changed after the checkpoint
+      ansible.builtin.set_fact:
+        latest: "{{ (before.stdout_lines | map('trim') | select('match', '^[0-9]+\\s')
+                     | map('regex_replace', '^([0-9]+).*$', '\\1') | first | default('0')) | int }}"
+
+    - name: Undo every package change since the checkpoint
+      ansible.builtin.command:
+        cmd: "dnf -y history rollback {{ txn }}"
+      register: undo
+      when: latest | int > txn | int
+
+    - name: Read what the rollback transaction did
+      ansible.builtin.command:
+        cmd: dnf -q history info last
+      register: undo_info
+      changed_when: false
+      when: undo is changed
+
+    - name: Put the checkpoint's kernel back as the default boot entry
+      ansible.builtin.command:
+        cmd: "grubby --set-default {{ cp.default_kernel }}"
+      when: cp.default_kernel | default('') | length > 0
+      changed_when: true
+
+    - name: Read the kernel running now
+      ansible.builtin.command:
+        cmd: uname -r
+      register: now_kernel
+      changed_when: false
+
+    - name: Reboot into the checkpoint's kernel
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+        msg: Rolling back a CVE patch (agentic patching console)
+      when:
+        - cp.running_kernel | default('') | length > 0
+        - now_kernel.stdout | trim != cp.running_kernel
+      register: rebooted
+
+    - name: Start every service that was running at the checkpoint
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ cp.services }}"
+      failed_when: false
+      register: started
+
+    - name: Ask systemd about each of them again
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ item }}"
+      loop: "{{ cp.services }}"
+      register: active
+      changed_when: false
+      failed_when: false
+
+    - name: Decide
+      ansible.builtin.set_fact:
+        down: "{{ active.results | rejectattr('stdout', 'equalto', 'active') | map(attribute='item') | list }}"
+        restored_lines: >-
+          {{ (undo_info.stdout_lines | default([]))
+             | select('search', '^\s*(Install|Upgrade|Upgraded|Downgrade|Downgraded|Removed|Erase|Reinstall)')
+             | map('trim') | list }}
+
+    - name: Report the rollback
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          rolled_back: "{{ not down }}"
+          rollback_health: "{{ 'ok' if not down else 'failed' }}"
+          rollback_txn: "{{ txn }}"
+          rollback_reboot: "{{ rebooted is changed }}"
+          restored: "{{ restored_lines | join('; ') | truncate(800) if restored_lines else ('nothing to undo: no package changed after transaction ' ~ txn) }}"
+          rollback_host: "{{ inventory_hostname }}"
+          rollback_notes: >-
+            {{ ('Packages back to dnf transaction ' ~ txn ~ '. ') if undo is changed else 'No package changed after the checkpoint. ' }}{{
+               ('Rebooted into ' ~ cp.running_kernel ~ '. ') if rebooted is changed else '' }}{{
+               ('Still not running: ' ~ (down | join(', ')) ~ '.') if down else 'Every service from the checkpoint is running.' }}
+
+    - name: Fail if the host is not healthy again
+      ansible.builtin.fail:
+        msg: >-
+          Rolled back to dnf transaction {{ txn }}, but these services are still not running:
+          {{ down | join(', ') }}. Restore them by hand.
+      when: down | length > 0

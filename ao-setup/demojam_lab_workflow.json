@@ -25,14 +25,6 @@
       "from": "fetch_and_commit_prod"
     },
     {
-      "to": "run_cve_remediation",
-      "from": "deploy_script"
-    },
-    {
-      "to": "run_cve_remediation_prod",
-      "from": "deploy_script_prod"
-    },
-    {
       "to": "route_switch",
       "from": "trigger_manual"
     },
@@ -45,12 +37,64 @@
       "from": "run_cve_remediation_prod"
     },
     {
+      "from": "deploy_script",
+      "to": "checkpoint"
+    },
+    {
+      "from": "checkpoint",
+      "to": "run_cve_remediation"
+    },
+    {
       "from": "verify_patch",
-      "to": "notify_remediated"
+      "to": "health_check"
+    },
+    {
+      "from": "health_check",
+      "to": "health_switch"
+    },
+    {
+      "from": "health_switch",
+      "to": "notify_remediated",
+      "from_port": "case_0"
+    },
+    {
+      "from": "health_switch",
+      "to": "rollback",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback",
+      "to": "notify_rolled_back"
+    },
+    {
+      "from": "deploy_script_prod",
+      "to": "checkpoint_prod"
+    },
+    {
+      "from": "checkpoint_prod",
+      "to": "run_cve_remediation_prod"
     },
     {
       "from": "verify_patch_prod",
-      "to": "notify_remediated_prod"
+      "to": "health_check_prod"
+    },
+    {
+      "from": "health_check_prod",
+      "to": "health_switch_prod"
+    },
+    {
+      "from": "health_switch_prod",
+      "to": "notify_remediated_prod",
+      "from_port": "case_0"
+    },
+    {
+      "from": "health_switch_prod",
+      "to": "rollback_prod",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback_prod",
+      "to": "notify_rolled_back_prod"
     }
   ],
   "nodes": [
@@ -263,8 +307,8 @@
       "name": "Notify Mattermost - CVE Remediated",
       "type": "aap_job_template",
       "position": {
-        "x": 2389.4915254237285,
-        "y": -70.0
+        "x": 2949.4915254237285,
+        "y": -190.0
       },
       "parameters": {
         "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
@@ -291,8 +335,8 @@
       "name": "Notify Mattermost - CVE Remediated (Prod)",
       "type": "aap_job_template",
       "position": {
-        "x": 2389.4915254237285,
-        "y": 312.0
+        "x": 2949.4915254237285,
+        "y": 192.0
       },
       "parameters": {
         "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
@@ -312,6 +356,230 @@
           "job_url": "${run_cve_remediation_prod.job_url}",
           "playbook_filename": "${fetch_and_commit_prod.artifacts.playbook_filename}",
           "approved_by": "the agentic patching console (LIVE-site gate)"
+        }
+      }
+    },
+    {
+      "id": "checkpoint",
+      "name": "Pre-patch Checkpoint",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1649.4915254237287,
+        "y": 80.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Pre-patch Checkpoint",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "cve_id": "${trigger.cve_id}"
+        }
+      }
+    },
+    {
+      "id": "health_check",
+      "name": "Post-patch Health Check",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2389.4915254237285,
+        "y": -70.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Post-patch Health Check",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "checkpoint_json": "${checkpoint.artifacts.checkpoint_json}",
+          "force_fail": "${trigger.force_fail}"
+        }
+      }
+    },
+    {
+      "id": "health_switch",
+      "name": "Healthy or not? (Dev)",
+      "type": "switch",
+      "position": {
+        "x": 2669.4915254237285,
+        "y": -70.0
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Healthy",
+            "condition": "${health_check.artifacts.health} == 'ok'"
+          },
+          {
+            "port": "case_1",
+            "label": "Unhealthy: roll back",
+            "condition": "${health_check.artifacts.health} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "rollback",
+      "name": "Roll back (Dev)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2949.4915254237285,
+        "y": 80.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Rollback Patch",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "checkpoint_json": "${checkpoint.artifacts.checkpoint_json}"
+        }
+      }
+    },
+    {
+      "id": "notify_rolled_back",
+      "name": "Notify Mattermost - Rolled back (Dev)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 3229.4915254237285,
+        "y": 80.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "report_type": "host_rolled_back",
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "host_env": "Dev (auto-patch)",
+          "reason": "${health_check.artifacts.health_notes}",
+          "restored": "${rollback.artifacts.restored}",
+          "rolled_back": "${rollback.artifacts.rollback_notes}",
+          "job_id": "${rollback.job_id}",
+          "job_url": "${rollback.job_url}"
+        }
+      }
+    },
+    {
+      "id": "checkpoint_prod",
+      "name": "Pre-patch Checkpoint",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1874.915254237288,
+        "y": 462.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Pre-patch Checkpoint",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "cve_id": "${trigger.cve_id}"
+        }
+      }
+    },
+    {
+      "id": "health_check_prod",
+      "name": "Post-patch Health Check",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2389.4915254237285,
+        "y": 312.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Post-patch Health Check",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "checkpoint_json": "${checkpoint_prod.artifacts.checkpoint_json}",
+          "force_fail": "${trigger.force_fail}"
+        }
+      }
+    },
+    {
+      "id": "health_switch_prod",
+      "name": "Healthy or not? (Prod)",
+      "type": "switch",
+      "position": {
+        "x": 2669.4915254237285,
+        "y": 312.0
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Healthy",
+            "condition": "${health_check_prod.artifacts.health} == 'ok'"
+          },
+          {
+            "port": "case_1",
+            "label": "Unhealthy: roll back",
+            "condition": "${health_check_prod.artifacts.health} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "rollback_prod",
+      "name": "Roll back (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2949.4915254237285,
+        "y": 462.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "CVE - Rollback Patch",
+        "extra_vars": {
+          "target_host": "${trigger.host}",
+          "checkpoint_json": "${checkpoint_prod.artifacts.checkpoint_json}"
+        }
+      }
+    },
+    {
+      "id": "notify_rolled_back_prod",
+      "name": "Notify Mattermost - Rolled back (Prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 3229.4915254237285,
+        "y": 462.0
+      },
+      "parameters": {
+        "credential_id": "1a330166-83c2-41f8-b212-e064e98fab6a",
+        "integration_id": "56fd5884-6614-4294-9315-7043e71cb9da",
+        "organization_name": "Default",
+        "diff_mode": false,
+        "job_template_name": "App Patch v2 - Notify Mattermost",
+        "extra_vars": {
+          "report_type": "host_rolled_back",
+          "cve_id": "${trigger.cve_id}",
+          "target_host": "${trigger.host}",
+          "host_env": "Production (approved)",
+          "reason": "${health_check_prod.artifacts.health_notes}",
+          "restored": "${rollback_prod.artifacts.restored}",
+          "rolled_back": "${rollback_prod.artifacts.rollback_notes}",
+          "job_id": "${rollback_prod.job_id}",
+          "job_url": "${rollback_prod.job_url}"
         }
       }
     }
@@ -367,12 +635,17 @@
               "type": "string",
               "default": "",
               "description": "Why the console routed this host as it did, for the card"
+            },
+            "force_fail": {
+              "type": "string",
+              "default": "false",
+              "description": "Test only: \"true\" makes the post-patch health check fail, to exercise the rollback route"
             }
           }
         }
       }
     }
   ],
-  "description": "Lab intelligent-patching workflow with the AI Triage Agent removed (the console supplies the route) and a verification step added. Lab job templates, credentials and Gitea repo are unchanged.",
+  "description": "Lab intelligent-patching workflow with the AI Triage Agent removed (the console supplies the route), a checkpoint before the remediation, and a verification step and health check after it. A host that fails its health check takes the rollback route (AAP: CVE - Rollback Patch, dnf history rollback to the checkpoint). Lab job templates, credentials and Gitea repo are unchanged.",
   "schema_version": "2.0.0"
 }

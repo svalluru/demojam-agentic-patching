@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Create the one AAP object the competition workflow needs from us: the
-# CVE - Verify Patch job template, and the project it runs from.
+# Create the AAP objects the competition workflow needs from us: the project
+# this repo's playbooks run from, and four job templates on it:
+#
+#   CVE - Verify Patch             is the CVE gone from the host?
+#   CVE - Pre-patch Checkpoint     dnf transaction, kernel, running services before the patch
+#   CVE - Post-patch Health Check  did the patch break anything? (decides the rollback route)
+#   CVE - Rollback Patch           dnf history rollback to the checkpoint, old kernel, health again
+#
+# JT_NAME=... PLAYBOOK=... creates just that one template.
 #
 #   ./aap-setup/create-verify-template.sh
 #   ./aap-setup/create-verify-template.sh --dry-run
@@ -16,8 +23,8 @@
 # branch and swapped the lab's fetch template for a different playbook,
 # breaking the workflow it was meant to be setting up.
 #
-# The project tracks the branch you are on, so the controller runs the verify
-# playbook as this checkout has it rather than as some other branch does.
+# The project tracks the branch you are on, so the controller runs the
+# playbooks as this checkout has them rather than as some other branch does.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,8 +34,15 @@ ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 REPO_URL="${REPO_URL:-https://github.com/svalluru/demojam-agentic-patching}"
 BRANCH="${BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo dj-comp)}"
 PROJECT_NAME="${PROJECT_NAME:-DJ - Agentic Patching}"
-JT_NAME="${JT_NAME:-CVE - Verify Patch}"
-PLAYBOOK="aap-setup/playbooks/cve_verify_patch.yml"
+# One template per line: name|playbook|extra_vars keys (comma-separated)|description.
+TEMPLATES='CVE - Verify Patch|aap-setup/playbooks/cve_verify_patch.yml|target_host,cve_id|Confirms a CVE is no longer outstanding on the target. Never fails the run.
+CVE - Pre-patch Checkpoint|aap-setup/playbooks/cve_checkpoint.yml|target_host,cve_id|Records the dnf transaction, kernel and running services before the patch, for the rollback. Changes nothing.
+CVE - Post-patch Health Check|aap-setup/playbooks/cve_health_check.yml|target_host,checkpoint_json,force_fail|Checks every service running before the patch still runs. Never fails the run: the workflow decides.
+CVE - Rollback Patch|aap-setup/playbooks/cve_rollback.yml|target_host,checkpoint_json|dnf history rollback to the checkpoint, the old kernel back, then the health check again.'
+if [[ -n "${JT_NAME:-}" ]]; then
+  TEMPLATES="$JT_NAME|${PLAYBOOK:-aap-setup/playbooks/cve_verify_patch.yml}|target_host,cve_id|Set up by create-verify-template.sh."
+fi
+JT_NAMES="$(printf '%s\n' "$TEMPLATES" | cut -d'|' -f1)"
 INVENTORY="${TARGET_INVENTORY:-lab-inventory}"
 CREDENTIAL="${MACHINE_CREDENTIAL:-lab-credential}"
 
@@ -50,9 +64,10 @@ step() { printf '\n=== %s ===\n' "$*" >&2; }
 info() { printf '  %s\n' "$*" >&2; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-for n in "$PROJECT_NAME" "$JT_NAME"; do
+while IFS= read -r n; do
   [[ "$n" =~ ^($PROTECTED)$ ]] && fail "'$n' is a lab object — refusing to write to it"
-done
+done <<< "$PROJECT_NAME
+$JT_NAMES"
 
 [[ -f "$ENV_FILE" ]] || fail "env file not found: $ENV_FILE"
 # shellcheck disable=SC1090
@@ -79,14 +94,15 @@ for r in d.get('results',[]):
 step "Target"
 info "controller : $BASE"
 info "project    : $PROJECT_NAME  ←  $REPO_URL ($BRANCH)"
-info "template   : $JT_NAME  on $INVENTORY / $CREDENTIAL"
+while IFS= read -r n; do info "template   : $n  on $INVENTORY / $CREDENTIAL"; done <<< "$JT_NAMES"
 $DRY && info "mode       : DRY RUN — nothing will be changed"
-code="$(api_code GET /ping/)"
+code="$(api_code GET /ping/ || true)"   # curl's own failure (DNS, TLS) must reach the message below, not set -e
 [[ "$code" == "200" ]] || fail "controller not reachable at $BASE (HTTP $code — 503 usually means restarting)"
 
 if $DELETE; then
   step "Deleting"
-  for spec in "/job_templates/:$JT_NAME" "/projects/:$PROJECT_NAME"; do
+  specs=(); while IFS= read -r n; do specs+=("/job_templates/:$n"); done <<< "$JT_NAMES"
+  for spec in "${specs[@]}" "/projects/:$PROJECT_NAME"; do
     ep="${spec%%:*}"; name="${spec#*:}"; id="$(find_id "$ep" "$name")"
     if [[ -z "$id" ]]; then info "$name: not present"
     elif $DRY; then info "would delete $name ($id)"
@@ -132,7 +148,7 @@ print(json.dumps({
     'name': os.environ['P_NAME'], 'organization': int(os.environ['P_ORG']),
     'scm_type': 'git', 'scm_url': os.environ['P_URL'],
     'scm_branch': os.environ['P_BRANCH'], 'scm_update_on_launch': True,
-    'description': 'The verify playbook, from this repo. Tracks the branch it was set up from.',
+    'description': 'The verify, checkpoint, health check and rollback playbooks, from this repo. Tracks the branch it was set up from.',
 }))
 PY
 )"
@@ -150,31 +166,38 @@ if ! $DRY; then
   info "synced $BRANCH"
 fi
 
-step "Job template"
-JT_PAYLOAD="$(P_NAME="$JT_NAME" P_INV="$INV_ID" P_PROJ="$PROJ_ID" P_BOOK="$PLAYBOOK" \
-  python3 - <<'PY'
+step "Job templates"
+# Read from fd 3: the python heredoc and curl below would otherwise eat the
+# loop's own stdin and stop it after the first template.
+while IFS='|' read -r JT_NAME PLAYBOOK JT_KEYS JT_DESC <&3; do
+  [[ -n "$JT_NAME" ]] || continue
+  JT_PAYLOAD="$(P_NAME="$JT_NAME" P_INV="$INV_ID" P_PROJ="$PROJ_ID" P_BOOK="$PLAYBOOK" P_KEYS="$JT_KEYS" P_DESC="$JT_DESC" \
+    python3 - <<'PY'
 import json, os
 proj = os.environ['P_PROJ']
+defaults = {'force_fail': 'false'}
+keys = [k for k in os.environ['P_KEYS'].split(',') if k]
 print(json.dumps({
     'name': os.environ['P_NAME'], 'job_type': 'run',
     'inventory': int(os.environ['P_INV']),
     'project': int(proj) if proj.isdigit() else None,
     'playbook': os.environ['P_BOOK'], 'ask_variables_on_launch': True,
-    'extra_vars': 'target_host: ""\ncve_id: ""',
-    'description': 'Confirms a CVE is no longer outstanding on the target. Never fails the run.',
+    'extra_vars': '\n'.join(f'{k}: {defaults.get(k, chr(34) * 2)}' for k in keys),
+    'description': os.environ['P_DESC'],
 }))
 PY
-)"
-JT_ID="$(upsert /job_templates/ "$JT_NAME" "$JT_PAYLOAD")"
+  )"
+  JT_ID="$(upsert /job_templates/ "$JT_NAME" "$JT_PAYLOAD")"
 
-if ! $DRY; then
-  have="$(api GET "/job_templates/$JT_ID/credentials/" | python3 -c "
+  if ! $DRY; then
+    have="$(api GET "/job_templates/$JT_ID/credentials/" | python3 -c "
 import json,sys; print(' '.join(str(c['id']) for c in json.load(sys.stdin).get('results',[])))")"
-  if [[ " $have " != *" $CRED_ID "* ]]; then
-    api_code POST "/job_templates/$JT_ID/credentials/" "{\"id\": $CRED_ID}" >/dev/null
-    info "attached $CREDENTIAL"
+    if [[ " $have " != *" $CRED_ID "* ]]; then
+      api_code POST "/job_templates/$JT_ID/credentials/" "{\"id\": $CRED_ID}" >/dev/null
+      info "attached $CREDENTIAL to $JT_NAME"
+    fi
   fi
-fi
+done 3<<< "$TEMPLATES"
 
 step "Done"
-info "$JT_NAME runs $PLAYBOOK from $BRANCH against $INVENTORY"
+while IFS='|' read -r n b _ _; do info "$n runs $b from $BRANCH against $INVENTORY"; done <<< "$TEMPLATES"

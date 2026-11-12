@@ -8,6 +8,7 @@
 #   patched      green  the site runs the fix; /health named the new jars
 #   rolled_back  red    the patch failed and the rollback route put the original jars back
 #   test_failed  amber  the test in a pod failed, so no site was touched
+#   host_rolled_back  red  RHEL CVE workflow: the host failed its post-patch health check and was rolled back
 # Variables (from the AO workflow; an empty one shows as a dash): report_type, app, site, target_host, group, run_id,
 # change_summary, cves, playbook_filename, job_id, job_url, approved_by, pipelinerun, reason, failed_step,
 # failed_reason, restored.
@@ -61,6 +62,19 @@
           - { title: "Site", value: "{{ _site }}, {{ _env }} (not patched)", short: true }
           - { title: "Why", value: "{{ _reason or '-' }}", short: false }
         footer: "OpenShift Pipelines built the app with the change and it did not come up on the new jars"
+      # The RHEL CVE workflow's rollback route (ao-setup/demojam_lab_workflow.json) uses this card too: a host, not
+      # an app. Variables: cve_id, target_host, host_env, reason (the health check's notes), restored, job_id/url.
+      host_rolled_back:
+        text: ":rewind: **CVE patch rolled back: {{ cve_id | default('-', true) }} on {{ _host or '-' }}**"
+        color: "#c9190b"
+        title: "The host was unhealthy after the patch, so its packages are back at the pre-patch dnf transaction"
+        fields:
+          - { title: "Host", value: "{{ _host or '-' }}, {{ host_env | default('-', true) }}", short: true }
+          - { title: "Rolled back", value: "{{ rolled_back | default('-', true) }}", short: true }
+          - { title: "Health check", value: "{{ _reason or '-' }}", short: false }
+          - { title: "Restored", value: "{{ restored | default('-', true) | truncate(400) }}", short: false }
+          - { title: "Rollback job", value: "{{ _job }}", short: true }
+        footer: "The workflow's rollback route (AAP: CVE - Rollback Patch): dnf history rollback, checkpoint kernel, services checked"
   tasks:
     - name: Check the Mattermost credential is attached
       ansible.builtin.assert:
@@ -68,7 +82,7 @@
           - mattermost_url | default('') | length > 0
           - api_chat_token | default('') | length > 0
           - _type in _cards
-        fail_msg: Attach the lab's "Mattermost" credential to this template; report_type is patched, rolled_back or test_failed.
+        fail_msg: Attach the lab's "Mattermost" credential to this template; report_type is patched, rolled_back, test_failed or host_rolled_back.
 
     - name: Post the card
       ansible.builtin.uri:

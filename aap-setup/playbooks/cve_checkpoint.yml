@@ -1,0 +1,86 @@
+---
+# Write down how the host is before the remediation runs, so a bad patch can be taken back.
+# Job template "CVE - Pre-patch Checkpoint" (aap-setup/create-verify-template.sh), the node before
+# "Run CVE Remediation" in the patching workflow (ao-setup/demojam_lab_workflow.json).
+#
+# What it records, and why each one:
+#   dnf_txn         the last dnf transaction ID. `dnf history rollback <id>` undoes everything after it,
+#                   which is exactly the remediation's package changes, and nothing older.
+#   running_kernel  `uname -r`. If the patch installed a kernel and the host rebooted into it, the
+#                   rollback has to boot the old one again: dnf will not remove the running kernel.
+#   default_kernel  `grubby --default-kernel`, the boot entry to put back.
+#   services        the services running now. After the patch, every one of them should still be running;
+#                   that is the health check (cve_health_check.yml).
+#   failed_units    units already failed before the patch, so the health check only blames the patch
+#                   for new ones.
+#
+# It changes nothing on the host. It is not a snapshot: files a package's scriptlets change outside
+# the package itself are not covered, and the old package versions must still be in the repo for the
+# rollback to install them.
+#
+# Variables: target_host, cve_id (for the record only).
+# Reports with set_stats: checkpoint_json (JSON text), checkpoint_host.
+- name: Record the host's state before patching
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    # Services that come and go on their own; their absence after the patch says nothing about the patch.
+    transient: ['user@', 'session-', 'dnf-makecache', 'packagekit', 'insights-client', 'rhsmcertd-worker',
+                'systemd-tmpfiles', 'fwupd', 'sssd-kcm', 'getty@', 'serial-getty@']
+  tasks:
+    - name: Read the dnf history
+      ansible.builtin.command:
+        cmd: dnf -q history list
+      register: history
+      changed_when: false
+      failed_when: false
+
+    - name: Read the running and default kernels
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop: ['uname -r', 'grubby --default-kernel']
+      register: kernels
+      changed_when: false
+      failed_when: false
+
+    - name: List the running services
+      ansible.builtin.command:
+        cmd: systemctl list-units --type=service --state=running --no-legend --plain
+      register: running
+      changed_when: false
+
+    - name: List the units already failed
+      ansible.builtin.command:
+        cmd: systemctl list-units --state=failed --no-legend --plain
+      register: failed
+      changed_when: false
+
+    # The newest transaction is the first row whose first column is a number; the header and the
+    # separator line are not.
+    - name: Put the checkpoint together
+      ansible.builtin.set_fact:
+        checkpoint:
+          host: "{{ inventory_hostname }}"
+          cve_id: "{{ cve_id | default('') }}"
+          dnf_txn: "{{ (history.stdout_lines | default([]) | map('trim') | select('match', '^[0-9]+\\s')
+                        | map('regex_replace', '^([0-9]+).*$', '\\1') | first | default('0')) | int }}"
+          running_kernel: "{{ kernels.results[0].stdout | default('') | trim }}"
+          default_kernel: "{{ kernels.results[1].stdout | default('') | trim }}"
+          services: "{{ running.stdout_lines | map('split') | map('first') | reject('search', '^(' ~ (transient | map('regex_escape') | join('|')) ~ ')') | list }}"
+          failed_units: "{{ failed.stdout_lines | map('split') | map('first') | list }}"
+          taken_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: dnf transaction {{ checkpoint.dnf_txn }},
+          kernel {{ checkpoint.running_kernel }}, {{ checkpoint.services | length }} services running,
+          {{ checkpoint.failed_units | length }} already failed.
+
+    - name: Publish the checkpoint for the orchestrator
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          checkpoint_json: "{{ checkpoint | to_json }}"
+          checkpoint_host: "{{ inventory_hostname }}"

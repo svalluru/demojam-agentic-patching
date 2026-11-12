@@ -1441,7 +1441,8 @@ class SimStore:
 
     def put(self, run: dict) -> dict:
         run.setdefault('created_at', now_iso())
-        if run.get('outcome') in ('patched', 'rejected', 'failed', 'not_verified'):
+        if run.get('outcome') in ('patched', 'rejected', 'failed', 'not_verified',
+                                  'rolled_back', 'rollback_failed'):
             run['completed_at'] = now_iso()
         with self._lock:
             self.runs[run['execution_id']] = dict(run)
@@ -1621,6 +1622,11 @@ def next_step(summary: dict) -> str:
                 f'{"" if waiting == 1 else "s"} at the gate')
     if running:
         return f'{running} host{"" if running == 1 else "s"} still patching'
+    broken = summary.get('rollback_failed') or 0
+    if broken:
+        # First of the terminal states: the host is unhealthy and the automation has done all it can.
+        return (f'hands-on repair of {broken} host{"" if broken == 1 else "s"} the rollback did not '
+                f'bring back')
     unverified = summary.get('not_verified') or 0
     if unverified:
         # Ahead of 'nothing left to do', because this is the one terminal
@@ -1628,6 +1634,11 @@ def next_step(summary: dict) -> str:
         # went green, and the host is still vulnerable.
         return (f'a retry on {unverified} host'
                 f'{"" if unverified == 1 else "s"} the patch did not take on')
+    rolled = summary.get('rolled_back') or 0
+    if rolled:
+        # Healthy again, and vulnerable again: the rollback undid the fix along with whatever it broke.
+        return (f'a look at {rolled} rolled-back host{"" if rolled == 1 else "s"}: healthy, but the CVE is '
+                f'open there again')
     return 'nothing — all four agents are done with this CVE'
 
 
@@ -1718,6 +1729,116 @@ def verify_verdict(steps: list[dict]) -> dict | None:
         return {'patched': state, 'outstanding_advisories': list(adv),
                 'why': out.get('why') or '', 'remedy': out.get('remedy') or {}}
     return None
+
+
+# The rollback route (ao-setup/demojam_lab_workflow.json): a checkpoint before the remediation, a health check after
+# verify, and a health switch that sends an unhealthy host to "CVE - Rollback Patch". Verify answers "is the CVE
+# gone"; health answers "did the patch break anything". A host can be either, both or neither, and only the second
+# one is a reason to undo the patch.
+CHECKPOINT_NODES = ('checkpoint_prod', 'checkpoint')
+HEALTH_NODES = ('health_check_prod', 'health_check')
+ROLLBACK_NODES = ('rollback_prod', 'rollback')
+# Nodes whose output the console keeps on a step, because something reads it. Everything else's output stays in AO.
+OUTPUT_NODES = VERIFY_NODES + CHECKPOINT_NODES + HEALTH_NODES + ROLLBACK_NODES
+
+
+def _node_output(steps: list[dict], names: tuple[str, ...]) -> tuple[dict | None, dict]:
+    """The first step named one of `names`, and its job artifacts (AO nests set_stats under 'artifacts', next to
+    job_id and job_url, which are kept alongside)."""
+    for step in steps or []:
+        if (step.get('name') or '') not in names:
+            continue
+        out = step.get('output') or {}
+        if not isinstance(out, dict):
+            return step, {}
+        arts = out['artifacts'] if isinstance(out.get('artifacts'), dict) else out
+        return step, {**arts, **{k: out[k] for k in ('job_id', 'job_url') if out.get(k) not in (None, '')}}
+    return None, {}
+
+
+def _csv(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [v.strip() for v in str(value or '').split(',') if v.strip()]
+
+
+def health_verdict(steps: list[dict]) -> dict | None:
+    """What the post-patch health check reported, or None if it has not reported (not reached, or no such node)."""
+    _, out = _node_output(steps, HEALTH_NODES)
+    health = str(out.get('health') or '').strip().lower()
+    if health not in ('ok', 'failed'):
+        return None
+    return {'healthy': health == 'ok',
+            'failed_services': _csv(out.get('failed_services')),
+            'new_failed_units': _csv(out.get('new_failed_units')),
+            'reboot_needed': bool(_as_bool(out.get('reboot_needed'))),
+            'forced': bool(_as_bool(out.get('health_forced'))),
+            'notes': str(out.get('health_notes') or '').strip()}
+
+
+def rollback_verdict(steps: list[dict]) -> dict | None:
+    """What the rollback reported, or None while it has not run. A rollback job that failed without reporting
+    counts as not rolled back: the playbook fails only when the host could not be brought back."""
+    step, out = _node_output(steps, ROLLBACK_NODES)
+    if step is None:
+        return None
+    ok = _as_bool(out.get('rolled_back'))
+    if ok is None:
+        if str(step.get('status') or '').lower() not in ('failed', 'error'):
+            return None
+        ok = False
+    return {'rolled_back': ok,
+            'restored': str(out.get('restored') or '').strip(),
+            'txn': str(out.get('rollback_txn') or ''),
+            'reboot': bool(_as_bool(out.get('rollback_reboot'))),
+            'notes': str(out.get('rollback_notes') or step.get('error') or '').strip(),
+            'job_id': str(out.get('job_id') or ''), 'job_url': str(out.get('job_url') or '')}
+
+
+def checkpoint_of(steps: list[dict]) -> str:
+    """The checkpoint the run took before patching (JSON text), for a manual rollback. '' if it took none."""
+    _, out = _node_output(steps, CHECKPOINT_NODES)
+    cp = out.get('checkpoint_json')
+    if isinstance(cp, dict):
+        return json.dumps(cp)
+    return str(cp or '')
+
+
+def infra_outcome(outcome: str, health: dict | None, rollback: dict | None) -> str:
+    """The row's outcome once the health check and the rollback have had their say.
+
+    Only an unhealthy host changes anything, and then the rollback decides: rolled back, or a rollback that did not
+    bring the host back (a person must act). Both outrank not_verified: an unhealthy host is the worse problem, and
+    after a rollback the CVE is outstanding again by design. A host whose remediation failed never reaches the health
+    check, so a failed run is never talked up by this.
+    """
+    if not health or health.get('healthy'):
+        return outcome
+    if rollback is None:
+        return outcome
+    return 'rolled_back' if rollback.get('rolled_back') else 'rollback_failed'
+
+
+def with_verdicts(run: dict) -> dict:
+    """A simulated run with the health and rollback verdicts read off its steps, the way _await reads a real one,
+    so the console renders both kinds through the same fields."""
+    steps = run.get('steps') or []
+    return {**run, 'health': health_verdict(steps), 'rollback': rollback_verdict(steps),
+            'checkpoint': checkpoint_of(steps)}
+
+
+def infra_force_fail() -> bool:
+    return env('INFRA_FORCE_FAIL', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def forced_host(hosts: list[dict]) -> str:
+    """The one host a forced health failure lands on: the first behind the approval gate, so the rollback shows up
+    on a host the operator approved, else the first host. Never one with a staged not-verified story of its own
+    (fallbacks.VERIFY_REQUIRES), so the two demo beats do not land on the same row."""
+    gated = [h for h in hosts if GROUP_FOR_DECISION.get(h.get('decision')) == 'approved_patch'] or list(hosts)
+    clean = [h for h in gated if not any(k in (h.get('host') or '') for k in fallbacks.VERIFY_REQUIRES)]
+    pick = (clean or gated or [{}])[0]
+    return pick.get('host') or ''
 
 _ao_token: dict[str, Any] = {}
 
@@ -1874,7 +1995,8 @@ class PatchingAgent:
         return text
 
     def patch_host(self, cve_id: str, host: dict, scheduler_date_time: str = '',
-                   params: dict | None = None, cvss: float | None = None) -> dict:
+                   params: dict | None = None, cvss: float | None = None,
+                   force_fail: bool = False) -> dict:
         """Trigger the AO workflow for one host and wait for it to settle."""
         group = GROUP_FOR_DECISION.get(host.get('decision'), 'auto_patch')
         # lab_tag is optional in the trigger schema but fetch_and_commit_prod
@@ -1892,6 +2014,14 @@ class PatchingAgent:
                 'risk_score': f"{float(host.get('risk_score') or 0):.2f}",
                 'triage_reasoning': str(host.get('reason') or '')[:400]}
         inputs.update({k: v for k, v in card.items() if self.trigger_accepts(k)})
+        # Always sent when the trigger declares it, true or false: the health check node dereferences
+        # ${trigger.force_fail}, and AO fails a run at a node that names a property the input left out (lab_tag).
+        if self.trigger_accepts('force_fail'):
+            inputs['force_fail'] = 'true' if force_fail else 'false'
+        if force_fail:
+            self._trace('supervisor', 'patching',
+                        f'{host["host"]}: TEST — health check forced to fail (INFRA_FORCE_FAIL): '
+                        'expect the rollback route')
         if scheduler_date_time:
             inputs['scheduler_date_time'] = scheduler_date_time
         # Remediation parameters, sent only when the operator set one. The
@@ -1927,9 +2057,9 @@ class PatchingAgent:
             # simulated: true, which is what the plan and the ROI page label
             # themselves from.
             demo_pause()
-            run = SIM.put(fallbacks.patch_simulated(
+            run = SIM.put(with_verdicts(fallbacks.patch_simulated(
                 cve_id, host['host'], group, str(exc.cause), SIM.new_id(),
-                inputs=tuning))
+                inputs=tuning, force_fail=force_fail)))
             self._trace('patching', 'supervisor',
                         f'{host["host"]}: SIMULATED {run["outcome"]} — AO unreachable')
             return run
@@ -2014,6 +2144,13 @@ class PatchingAgent:
             adv = ', '.join(verdict['outstanding_advisories']) or 'advisory still listed'
             self._trace('patching', 'supervisor',
                         f'{host}: job succeeded but verify says not patched — {adv}')
+        health, rollback = health_verdict(steps), rollback_verdict(steps)
+        settled = infra_outcome(outcome, health, rollback)
+        if settled != outcome:
+            outcome = settled
+            self._trace('patching', 'supervisor',
+                        f'{host}: unhealthy after the patch ({(health or {}).get("notes") or "health check failed"}) '
+                        f'— {"rolled back to the checkpoint" if outcome == "rolled_back" else "ROLLBACK DID NOT RESTORE IT"}')
         if unreadable is None:
             self._trace('patching', 'supervisor',
                         f'{host}: {outcome}'
@@ -2022,6 +2159,10 @@ class PatchingAgent:
             'host': host, 'group': group, 'execution_id': exec_id,
             'status': status, 'outcome': outcome,
             'verify': verdict,
+            'health': health, 'rollback': rollback,
+            # Kept for "Roll back this host" when the remediation itself failed and the workflow stopped short of
+            # its own rollback route.
+            'checkpoint': checkpoint_of(steps),
             'inputs': dict(tuning or {}),
             'approval_pending': pending,
             # Needed to signal the approval gate; see decide().
@@ -2108,10 +2249,11 @@ class PatchingAgent:
                 port = out.get('matched_port', '')
             if a.get('node_type') == 'approval' and a.get('status') in ('waiting', 'pending'):
                 approval = a.get('temporal_activity_id') or a.get('activity_name') or ''
-            # Only the verify node's output is carried, and only because
-            # something reads it. Attaching every node's output_data would put
-            # job stdout into every poll response and into runs/simulated.json.
-            verify_out = (dict(out) if a.get('activity_name') in VERIFY_NODES
+            # Only the verify, checkpoint, health and rollback nodes' output is
+            # carried, and only because something reads it. Attaching every
+            # node's output_data would put job stdout into every poll response
+            # and into runs/simulated.json.
+            verify_out = (dict(out) if a.get('activity_name') in OUTPUT_NODES
                           and isinstance(out, dict) else None)
             steps.append({'name': a.get('activity_name'),
                           # What a person reads. The id stays in 'name' so
@@ -2285,15 +2427,30 @@ class PatchingAgent:
         # whatever the console happens to be holding now.
         verdict = fallbacks.verify_check(run.get('host') or '', run.get('inputs'))
         ok = bool(verdict.get('patched'))
+        # Then the health check, and on an unhealthy host the rollback route: walked as one more node, so the
+        # progress bar shows the rollback running before the row settles.
+        health = fallbacks.health_check_sim(run.get('host') or '', bool(run.get('force_fail')))
+        rollback = None
+        if health['health'] == 'failed':
+            rollback = fallbacks.rollback_sim(run.get('host') or '')
+            run.update({'status': 'running', 'outcome': 'running',
+                        'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD, verify=verdict, health=health,
+                                                     rollback={**rollback, '_status': 'running'})})
+            SIM.put(run)
+            self._trace('patching', 'console',
+                        f'{execution_id[:12]} -> SIMULATED unhealthy after the patch — rolling back')
+            demo_pause(3)
         run.update({'status': 'completed',
-                    'outcome': 'patched' if ok else 'not_verified',
+                    'outcome': ('rolled_back' if rollback else 'patched' if ok else 'not_verified'),
                     'verify': verdict,
-                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD,
-                                                 verify=verdict)})
+                    'steps': fallbacks.sim_steps(fallbacks.SIM_LAST_PROD, verify=verdict, health=health,
+                                                 rollback=dict(rollback) if rollback else None)})
+        run = with_verdicts(run)
         SIM.put(run)
         self._trace('patching', 'console',
                     f'{execution_id[:12]} -> SIMULATED '
-                    + ('patched' if ok else
+                    + ('rolled_back — ' + (health.get('health_notes') or 'health check failed') if rollback
+                       else 'patched' if ok else
                        'not_verified — ' + (verdict.get('why') or 'advisory still listed')))
         return {**run, 'decision': decision}
 
@@ -2319,16 +2476,26 @@ class PatchingAgent:
                   and s.get('status') in ('completed', 'running', 'failed')
                   for s in steps)
         any_failed = any(s.get('status') in ('failed', 'error') for s in steps)
+        outcome = ('awaiting_approval' if pending
+                   else 'cancelled' if status in ('cancelled', 'canceled')
+                   else 'failed' if status in ('failed', 'error') or any_failed
+                   else ('patched' if ran else 'rejected')
+                   if status in ('completed', 'succeeded')
+                   else 'running')
+        # The same two readings _await applies, so a row refreshed through here (_absorb_run_detail) does not
+        # go back to 'patched' after verify or the rollback route said otherwise.
+        verdict = verify_verdict(steps)
+        if outcome == 'patched' and verdict and not verdict['patched']:
+            outcome = 'not_verified'
+        health, rollback = health_verdict(steps), rollback_verdict(steps)
+        outcome = infra_outcome(outcome, health, rollback)
         return {
             'execution_id': execution_id,
             'cve_id': inp.get('cve_id'), 'host': inp.get('host'),
             'group': inp.get('group'), 'status': status,
-            'outcome': ('awaiting_approval' if pending
-                        else 'cancelled' if status in ('cancelled', 'canceled')
-                        else 'failed' if status in ('failed', 'error') or any_failed
-                        else ('patched' if ran else 'rejected')
-                        if status in ('completed', 'succeeded')
-                        else 'running'),
+            'outcome': outcome,
+            'verify': verdict, 'health': health, 'rollback': rollback,
+            'checkpoint': checkpoint_of(steps),
             'approval_pending': pending,
             'approval_activity_id': approval,
             'matched_port': port, 'steps': steps,
@@ -2581,11 +2748,14 @@ class Supervisor:
         params = assessment.get('remediation') or {}
         prior = [dict(r) for r in (assessment.get('prior_results') or [])]
 
+        forced = forced_host(hosts) if (infra_force_fail() and not prior) else ''
+
         results, failures = [], 0
         for h in hosts:
             try:
                 r = self.patching.patch_host(cve_id, h, params=params,
-                                             cvss=(assessment.get('plan') or {}).get('cvss'))
+                                             cvss=(assessment.get('plan') or {}).get('cvss'),
+                                             force_fail=h.get('host') == forced)
             except BackendUnavailable as exc:
                 # One host failing to launch must not abandon the rest.
                 #
@@ -2624,6 +2794,8 @@ class Supervisor:
             # this is reachable straight off a dispatch — the gated hosts pick
             # it up later, through _summarise.
             'not_verified': sum(1 for r in results if r['outcome'] == 'not_verified'),
+            'rolled_back': sum(1 for r in results if r['outcome'] == 'rolled_back'),
+            'rollback_failed': sum(1 for r in results if r['outcome'] == 'rollback_failed'),
         }
         self.state = {
             # Both are inputs to this call, not part of the state it
@@ -3082,7 +3254,8 @@ def roi_history(runs: list[dict], b: dict) -> dict:
                if r.get('outcome') in ('awaiting_approval', 'running')]
     lost = [r for r in runs
             if r.get('outcome') in ('failed', 'rejected', 'cancelled', 'timeout',
-                                    'unavailable', 'not_verified')]
+                                    'unavailable', 'not_verified', 'rolled_back',
+                                    'rollback_failed')]
 
     cves = {r.get('cve_id') for r in done if r.get('cve_id')}
     hosts = len(done)
@@ -4095,6 +4268,13 @@ SETTINGS: tuple[Setting, ...] = (
             'workflow, so an FQDN still matches an AAP inventory host named '
             'short. Turn off only if your inventory host names are fully '
             'qualified.', binds='AO_HOST_SHORTNAME'),
+    # Read per dispatch (infra_force_fail()), so nothing to rebind.
+    Setting('INFRA_FORCE_FAIL', 'Automation Orchestrator', 'Force a health failure (test the rollback route)',
+            'bool', 'false',
+            'Test only. On the next patch dispatch, one host (the first behind the approval gate) has its '
+            'post-patch health check require a service that does not exist, so it reads unhealthy and the '
+            'workflow rolls it back: dnf history rollback to the pre-patch checkpoint, and the rolled-back card. '
+            'Retries are never forced. Turn it off afterwards.'),
 
     # --- applications v2 ---------------------------------------------------
     # Read per call by appv2.py, so nothing to rebind.
@@ -4397,6 +4577,81 @@ def aap_call(path: str, method: str = 'GET', body: Any = None) -> Any:
                      headers={'Authorization': f"Bearer {env('AAP_TOKEN')}"}, verify=False, timeout=60)
 
 
+ROLLBACK_JT = 'CVE - Rollback Patch'
+
+
+def manual_rollback(exec_id: str) -> dict:
+    """"Roll back this host": launch CVE - Rollback Patch directly, for a run whose remediation job failed.
+
+    AO has no on-failure edge, so a failed remediation stops the workflow before its own health check and rollback
+    route. The checkpoint was taken before the remediation ran, so the console can still hand it to the rollback job
+    through the AAP API. Runs in a thread; the row shows 'running' until the job settles, then rolled_back or
+    rollback_failed, read through rollback_verdict exactly as the workflow's own rollback is.
+    """
+    with _RUN_LOCK:
+        results = (_RUN.get('patch') or {}).get('results') or []
+        row = next((r for r in results if r.get('execution_id') == exec_id), None)
+        if row is None:
+            raise BackendUnavailable('console', f'no row for execution {exec_id}', 'reload the page')
+        if row.get('outcome') not in ('failed', 'timeout'):
+            raise BackendUnavailable('console', f'{row.get("host")} is {row.get("outcome")}, not failed',
+                                     'only a failed run is rolled back by hand')
+        sim = bool(row.get('simulated'))
+        checkpoint = row.get('checkpoint') or ''
+        if not sim and not checkpoint:
+            raise BackendUnavailable('console', f'{row.get("host")} has no pre-patch checkpoint',
+                                     'the run failed before "CVE - Pre-patch Checkpoint" reported; nothing to roll back to')
+        host = row.get('host') or ''
+        row.update(outcome='running', status='rolling_back')
+
+    def settle(outcome: str, rollback: dict | None) -> None:
+        with _RUN_LOCK:
+            patch = _RUN.get('patch') or {}
+            res = patch.get('results') or []
+            for r in res:
+                if r.get('execution_id') == exec_id:
+                    r.update(outcome=outcome, status='completed', rollback=rollback)
+            _RUN['patch'] = {**patch, 'results': res, 'summary': _summarise(res)}
+            _RUN['next'] = next_step(_RUN['patch']['summary'])
+        _run_trace('patching', 'console', f'{host}: manual rollback -> {outcome}')
+
+    def work() -> None:
+        _run_trace('console', 'patching', f'{host}: roll back by hand ({ROLLBACK_JT})')
+        if sim:
+            demo_pause(3)
+            settle('rolled_back', rollback_verdict([{'name': 'rollback', 'status': 'completed',
+                                                     'output': {'artifacts': fallbacks.rollback_sim(host)}}]))
+            return
+        try:
+            found = aap_call('/job_templates/?name=' + urllib.parse.quote(ROLLBACK_JT)) or {}
+            jt = next((t for t in found.get('results') or [] if t.get('name') == ROLLBACK_JT), None)
+            if not jt:
+                raise RuntimeError(f'no job template named {ROLLBACK_JT!r}: run aap-setup/create-verify-template.sh')
+            job = aap_call(f"/job_templates/{jt['id']}/launch/", 'POST',
+                           {'extra_vars': {'target_host': ao_host_name(host), 'checkpoint_json': checkpoint}}) or {}
+            job_id = job.get('job') or job.get('id')
+            deadline = time.time() + 1200
+            state: dict = {}
+            while time.time() < deadline:
+                state = aap_call(f'/jobs/{job_id}/') or {}
+                if state.get('status') in ('successful', 'failed', 'error', 'canceled'):
+                    break
+                time.sleep(5)
+            url = f"{env('AAP_BASE_URL').split('/api/')[0]}/execution/jobs/playbook/{job_id}/output"
+            verdict = rollback_verdict([{'name': 'rollback',
+                                         'status': 'completed' if state.get('status') == 'successful' else 'failed',
+                                         'output': {'artifacts': state.get('artifacts') or {},
+                                                    'job_id': job_id, 'job_url': url}}])
+            settle('rolled_back' if verdict and verdict['rolled_back'] else 'rollback_failed', verdict)
+        except Exception as exc:
+            settle('rollback_failed', {'rolled_back': False, 'restored': '', 'txn': '', 'reboot': False,
+                                       'notes': f'the rollback job could not be run: {exc}', 'job_id': '',
+                                       'job_url': ''})
+
+    threading.Thread(target=work, daemon=True).start()
+    return {'host': host, 'execution_id': exec_id}
+
+
 def lab_ping() -> None:
     """Applications v2: raise within 3 seconds when the lab's Llama Stack (history search and LLM) does not answer."""
     if not LLAMA_URL:
@@ -4660,6 +4915,10 @@ def _summarise(results: list[dict]) -> dict:
         # goes looking for a stack trace for. This one needs a different
         # action, so it gets a different number.
         'not_verified': n('not_verified'),
+        # The rollback route: unhealthy after the patch and put back (rolled_back), or put back and still
+        # unhealthy (rollback_failed: a person must act). Neither is 'failed': the run did what it was built to do.
+        'rolled_back': n('rolled_back'),
+        'rollback_failed': n('rollback_failed'),
         'unavailable': n('unavailable'),
     }
 
@@ -5102,6 +5361,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, {'ok': True, 'changed': changed,
                              'settings': settings_state()})
+            return
+
+        if path == '/api/rollback':
+            # "Roll back this host" on a failed row: launches CVE - Rollback Patch with the run's checkpoint and
+            # returns at once; the row settles through /api/state.
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            try:
+                p = json.loads(self.rfile.read(length) or b'{}')
+            except Exception:
+                p = {}
+            try:
+                started = manual_rollback((p.get('execution_id') or '').strip())
+            except BackendUnavailable as exc:
+                self._send(400, {'ok': False, 'error': str(exc.cause), 'fix': exc.fix})
+                return
+            self._send(200, {'ok': True, **started})
             return
 
         if path == '/api/decide':

@@ -282,17 +282,25 @@ SIM_STEPS_PROD = [
     ('approval_prod',             'Approve Production Patch'),
     ('fetch_and_commit_prod',     'Fetch from Lightspeed & Commit to Gitea'),
     ('deploy_script_prod',        'Sync & Deploy via AAP'),
+    ('checkpoint_prod',           'Pre-patch Checkpoint'),
     ('run_cve_remediation_prod',  'Run CVE Remediation'),
     ('verify_patch_prod',         'Verify Patch'),
+    ('health_check_prod',         'Post-patch Health Check'),
 ]
 SIM_STEPS_DEV = [
     ('trigger_manual',            'CVE Alert'),
     ('route_switch',              'Route Decision'),
     ('fetch_and_commit',          'Fetch from Lightspeed & Commit to Gitea'),
     ('deploy_script',             'Sync & Deploy via AAP'),
+    ('checkpoint',                'Pre-patch Checkpoint'),
     ('run_cve_remediation',       'Run CVE Remediation'),
     ('verify_patch',              'Verify Patch'),
+    ('health_check',              'Post-patch Health Check'),
 ]
+# The health switch's other branch: only an unhealthy host goes this way, so it is appended to a run's steps
+# rather than drawn as pending on every one.
+SIM_ROLLBACK_PROD = ('rollback_prod', 'Roll back (Prod)')
+SIM_ROLLBACK_DEV = ('rollback', 'Roll back (Dev)')
 SIM_GATE = 'approval_prod'
 SIM_LAST_PROD = SIM_STEPS_PROD[-1][0]
 SIM_LAST_DEV = SIM_STEPS_DEV[-1][0]
@@ -300,7 +308,9 @@ SIM_LAST_DEV = SIM_STEPS_DEV[-1][0]
 
 def sim_steps(up_to: str, *, status: str = 'completed',
               prod: bool = True,
-              verify: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+              verify: dict[str, Any] | None = None,
+              health: dict[str, Any] | None = None,
+              rollback: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Step list ending at `up_to`; nodes after it stay pending.
 
     `verify` is the verdict the verify node published, attached to that node
@@ -319,14 +329,46 @@ def sim_steps(up_to: str, *, status: str = 'completed',
                 'error': None}
         if verify is not None and name.startswith('verify_patch'):
             step['output'] = dict(verify)
+        if health is not None and name.startswith('health_check'):
+            step['output'] = {'artifacts': dict(health)}
         out.append(step)
         reached = name == up_to
+    if rollback is not None:
+        name, label = SIM_ROLLBACK_PROD if prod else SIM_ROLLBACK_DEV
+        out.append({'name': name, 'label': label, 'status': rollback.pop('_status', 'completed'),
+                    'error': None, 'output': {'artifacts': dict(rollback)}})
     return out
+
+
+# What the post-patch health check and the rollback report, simulated. Shaped like the playbooks' set_stats
+# (cve_health_check.yml, cve_rollback.yml) so the console reads them through health_verdict / rollback_verdict,
+# exactly as it reads a real run. A host is healthy unless the run was dispatched with force_fail
+# (INFRA_FORCE_FAIL), which the console sets on one host per dispatch.
+FORCED_SERVICE = 'payments-api.service'
+
+
+def health_check_sim(host: str, force_fail: bool = False) -> dict[str, Any]:
+    if not force_fail:
+        return {'health': 'ok', 'failed_services': '', 'new_failed_units': '', 'reboot_needed': False,
+                'health_forced': False, 'health_host': host, 'health_notes': ''}
+    return {'health': 'failed', 'failed_services': FORCED_SERVICE, 'new_failed_units': FORCED_SERVICE,
+            'reboot_needed': False, 'health_forced': True, 'health_host': host,
+            'health_notes': (f'Not running after the patch: {FORCED_SERVICE} (exited on start: the updated openssl '
+                             'rejected its legacy TLS config). Newly failed units: ' + FORCED_SERVICE + '.')}
+
+
+def rollback_sim(host: str) -> dict[str, Any]:
+    return {'rolled_back': True, 'rollback_health': 'ok', 'rollback_txn': '41', 'rollback_reboot': False,
+            'rollback_host': host,
+            'restored': ('Downgrade openssl-1:3.0.7-24.el9.x86_64; Downgraded openssl-1:3.0.7-27.el9.x86_64; '
+                         'Downgrade openssl-libs-1:3.0.7-24.el9.x86_64; Downgraded openssl-libs-1:3.0.7-27.el9.x86_64'),
+            'rollback_notes': ('Packages back to dnf transaction 41. Every service from the checkpoint is running.')}
 
 
 def patch_simulated(cve_id: str, host: str, group: str, reason: str,
                     execution_id: str,
-                    inputs: dict[str, Any] | None = None) -> dict[str, Any]:
+                    inputs: dict[str, Any] | None = None,
+                    force_fail: bool = False) -> dict[str, Any]:
     """A workflow run that did not happen, shaped like one that did.
 
     approved_patch pauses at the approval gate exactly as the real workflow
@@ -341,19 +383,26 @@ def patch_simulated(cve_id: str, host: str, group: str, reason: str,
     pending = group == 'approved_patch'
     verdict = verify_check(host, inputs)
     ok = bool(verdict.get('patched'))
+    health = None if pending else health_check_sim(host, force_fail)
+    rollback = rollback_sim(host) if health and health['health'] == 'failed' else None
+    outcome = ('awaiting_approval' if pending
+               else 'rolled_back' if rollback
+               else 'patched' if ok else 'not_verified')
     return {
         'host': host, 'group': group, 'cve_id': cve_id,
         'execution_id': execution_id,
         'status': 'waiting' if pending else 'completed',
-        'outcome': ('awaiting_approval' if pending
-                    else 'patched' if ok else 'not_verified'),
+        'outcome': outcome,
         'approval_pending': pending,
         'approval_activity_id': SIM_GATE if pending else '',
         'matched_port': group,
         'steps': (sim_steps(SIM_GATE, status='waiting') if pending
-                  else sim_steps(SIM_LAST_DEV, prod=False, verify=verdict)),
+                  else sim_steps(SIM_LAST_DEV, prod=False, verify=verdict, health=health,
+                                 rollback=dict(rollback) if rollback else None)),
         'error': None,
         'inputs': dict(inputs or {}),
+        # Kept for the gated path, which settles later in the console's _decide_sim.
+        'force_fail': bool(force_fail),
         'verify': None if pending else verdict,
         'degraded': True, 'source': 'fallback', 'simulated': True,
         'reason': f'Automation Orchestrator unreachable: {reason}',
