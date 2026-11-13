@@ -174,7 +174,12 @@ step "B4: Deploy Deployment + Service + Route"
 # the internal registry image path; rewrite both when targeting another one.
 RENDERED="$(mktemp -t risk-score-manifest)"
 trap 'rm -f "${RENDERED}"' EXIT
-sed "s/agentic-patching/${NAMESPACE}/g" "${MANIFEST}" > "${RENDERED}"
+# The manifest names risk-score:latest, which does not change when the image is rebuilt, so applying it left the
+# old pod running the old code. Apply it with the image's digest instead: a new build changes the digest and rolls
+# the pod, an unchanged image leaves it be. (Set before the apply, not after: applying :latest and then setting the
+# digest rolled the deployment twice, starting a throwaway pod from the old template each time.)
+sed -e "s/agentic-patching/${NAMESPACE}/g" \
+    -e "s|image: .*/risk-score:latest|image: ${IMAGE_TAG}|" "${MANIFEST}" > "${RENDERED}"
 
 if [[ "${NO_ROUTE}" == true ]]; then
   info "Skipping Route (--no-route)"
@@ -203,8 +208,9 @@ fi
 if [[ "${SKIP_VERIFY}" == false ]]; then
   step "B5: Verify the endpoint"
 
-  POD="$(oc get pods -n "${NAMESPACE}" -l app=risk-score \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  # The newest pod: just after a rollout the old one can still be listed first, terminating, and exec into it fails.
+  POD="$(oc get pods -n "${NAMESPACE}" -l app=risk-score --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)"
   [[ -n "${POD}" ]] || fail "No risk-score pod found"
 
   # Exercised over Service DNS rather than localhost, so this also proves the
