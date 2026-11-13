@@ -2872,7 +2872,7 @@
           <div class="g-qa"><b>“Why take mina-core upstream and not zookeeper?”</b>
             <span>mina-core 2.2.8 stays on the 2.2 line the app runs: low risk, same restart. Zookeeper's fix is 3.7, a
             minor-version jump in the coordination layer every orchestrator node depends on: that deserves its own test
-            and window. Major upgrades are never offered unless you tick them.</span></div>
+            and window. Major upgrades (a code change) are never offered.</span></div>
           <div class="g-qa"><b>“How does it know who depends on the orchestrator?”</b>
             <span>The app's service map (who uses it, what it needs) is in its BOM and in the app history store; the
             window and the apps sharing each server are worked out when you press Assess. Show more lists exactly what
@@ -4325,8 +4325,8 @@ function v2ChangeList(s, readOnly) {
   const n = v2ClCounts(s);
   const picked = Object.fromEntries(v2ClPicked(s).map(p => [p.row.id, p.idx]));
   const sel = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : (v2.sel || new Set());
-  const chips = CL_SRC.map(([k, l, tip]) => `<button class="pill ${c.src.has(k) ? 'active' : ''}" data-v2-clsrc="${k}" title="${esc(tip)}" ${pick ? '' : 'disabled'}>${l}</button>`).join('')
-    + `<label class="v2-check" title="Let an upstream fix cross a major version: a code change, off by default"><input type="checkbox" data-v2-clmajor ${c.major ? 'checked' : ''} ${pick ? '' : 'disabled'}> Major upgrades</label>`;
+  // No "Major upgrades" checkbox: a major version is a code change and is never offered here (c.major stays off).
+  const chips = CL_SRC.map(([k, l, tip]) => `<button class="pill ${c.src.has(k) ? 'active' : ''}" data-v2-clsrc="${k}" title="${esc(tip)}" ${pick ? '' : 'disabled'}>${l}</button>`).join('');
   const groups = (imp.apps || []).map(app => {
     const ts = (imp.targets || []).filter(t => t.app === app);
     const on = ts.filter(t => sel.has(t.key)).length;
@@ -4351,7 +4351,7 @@ function v2ChangeList(s, readOnly) {
         ? `<select class="v2-opt" data-v2-opt="${esc(r.id)}" ${pick ? '' : 'disabled'}>${allowed.map(i =>
             `<option value="${i}" ${i === idx ? 'selected' : ''}>${esc(r.options[i].to)} (${r.options[i].source === 'upstream' ? 'upstream' : 'Lightwell'})</option>`).join('')}</select>`
         : `<b>${esc(o ? o.to : (r.to || '—'))}</b>`;
-      const why = !can ? ({ major: 'Major upgrade: tick Major upgrades and OSV to offer it', residual: 'Left open by this fix', none: 'No fix published yet' }[r.kind]
+      const why = !can ? ({ major: 'Major upgrade: a code change, not offered', residual: 'Left open by this fix', none: 'No fix published yet' }[r.kind]
                           || 'Not offered with the sources chosen') : '';
       return `<tr class="${can ? (isOn ? '' : 'off') : 'na'}">
         <td>${can ? `<input type="checkbox" data-v2-extra="${esc(r.id)}" ${isOn ? 'checked' : ''} ${pick ? '' : 'disabled'}>` : ''}</td>
@@ -4489,7 +4489,6 @@ document.getElementById('v2-body').addEventListener('click', async ev => {
 });
 document.getElementById('v2-body').addEventListener('change', async ev => {
   const t = ev.target;
-  if ('v2Clmajor' in t.dataset) { v2.cl.major = t.checked; v2Render(); return; }
   if ('v2Mode' in t.dataset) { v2.cl.mode = t.value; v2Render(); return; }
   if (t.id === 'v2-cat-mine') { v2.catScope = t.checked ? 'mine' : 'all'; v2.catPage = 1; await v2LoadCatalog(); v2Render(); return; }
   if (t.id === 'v2-sel-all') {
