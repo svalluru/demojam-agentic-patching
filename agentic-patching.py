@@ -605,7 +605,13 @@ def fetch_cve_list(limit: int = 20, offset: int = 0,
         return (rows[:lim] if lim > 0 else []), total
 
     try:
-        hot, hot_total = stream(True, offset, limit)
+        # Insights answers 400 to an offset past a filter's total (offset 20 of 13 exploited), so past the first
+        # page learn the exploited total from a one-row query and ask for exploited rows only while still among them.
+        if offset == 0:
+            hot, hot_total = stream(True, 0, limit)
+        else:
+            _, hot_total = stream(True, 0, 1)
+            hot = stream(True, offset, limit)[0] if offset < hot_total else []
         need = limit - len(hot)
         cold, cold_total = stream(False, max(0, offset - hot_total), need)
         payload = {'data': hot + cold, 'meta': {'total_items': hot_total + cold_total}}
