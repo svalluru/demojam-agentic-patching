@@ -1054,10 +1054,10 @@ class InfoAgent:
 
     # -- step 3 ------------------------------------------------------------
 
-    def risk_scores(self, cvss: float, hosts: list[dict]) -> tuple[list[float], str]:
+    def risk_scores(self, cvss: float, hosts: list[dict], cve_id: str = '') -> tuple[list[float], str]:
         """Returns (scores, source). source is 'model' or 'heuristic'."""
         try:
-            return self._risk_live(cvss, hosts), 'model'
+            return self._risk_live(cvss, hosts, cve_id), 'model'
         except BackendUnavailable as exc:
             degrade('3 risk_score', exc.service, exc.cause, exc.fix)
             demo_pause()
@@ -1066,7 +1066,7 @@ class InfoAgent:
             return ([fallbacks.heuristic_risk(cvss, h['age_days'], len(hosts))
                      for h in hosts], 'heuristic')
 
-    def _risk_live(self, cvss: float, hosts: list[dict]) -> list[float]:
+    def _risk_live(self, cvss: float, hosts: list[dict], cve_id: str = '') -> list[float]:
         """One batched call, not one per host.
 
         The model accepts a list of instances. Calling it per host turned a
@@ -1078,9 +1078,12 @@ class InfoAgent:
                 'risk model', 'RISK_URL not set',
                 'set RISK_URL to the risk-score Route '
                 '(and RISK_VERIFY_TLS=false for a cluster cert)')
+        # cve_id and host are not model features: the server selects its four columns and ignores them. They are sent
+        # so the risk-score pod can log which CVE and host each score is for (risk_score/serving/run_local.py).
         payload = {'instances': [
             {'cvss': cvss, 'age_days': h['age_days'],
-             'affected_hosts': len(hosts), 'type': 'security'}
+             'affected_hosts': len(hosts), 'type': 'security',
+             'cve_id': cve_id, 'host': h.get('host', '')}
             for h in hosts
         ]}
         self._trace('info', 'risk-model', f'scoring {len(hosts)} host(s) in one call')
@@ -1206,7 +1209,7 @@ class InfoAgent:
         self._trace('supervisor', 'info', f'gather {cve_id} ({len(hosts)} hosts)')
 
         # step 3 — risk, batched
-        scores, risk_source = self.risk_scores(cvss, hosts)
+        scores, risk_source = self.risk_scores(cvss, hosts, cve_id)
         threshold = (REVIEW_THRESHOLD if risk_source == 'model'
                      else fallbacks.HEURISTIC_THRESHOLD)
         # The score and the gate are real properties of the run and always
