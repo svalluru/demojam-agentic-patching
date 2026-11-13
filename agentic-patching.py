@@ -582,22 +582,37 @@ def fetch_cve_list(limit: int = 20, offset: int = 0,
     list is paginated server-side: filtering what already arrived would answer
     "not on this page" with "does not exist", and the fleet runs to hundreds
     of CVEs. ?filter= is the parameter this endpoint accepts.
+
+    Known-exploited CVEs come first, then the rest, each newest first: exploitation is the strongest urgency signal
+    there is, and an exploited 8.1 belongs above an unexploited 8.8. Insights cannot sort by known_exploit (400) but
+    can filter by it, so the list is two filtered streams, exploited then not, paged across as one: offsets inside
+    the first stream come from it, the remainder of the page from the second. Two calls per page instead of one.
     """
-    q = {'limit': limit, 'offset': offset, 'sort': '-public_date',
-         'affecting_host_type': 'rpmdnf', 'advisory_available': 'true'}
+    base = {'sort': '-public_date', 'affecting_host_type': 'rpmdnf', 'advisory_available': 'true'}
     if search:
-        q['filter'] = search
+        base['filter'] = search
     # Scoping also fixes the systems_affected column, which otherwise counts
     # the whole organisation: the operator was told a CVE affects 1,840
     # systems when three of them were theirs.
     if HOSTS_TAG and not offline():
-        q['tags'] = HOSTS_TAG
-    params = urllib.parse.urlencode(q)
+        base['tags'] = HOSTS_TAG
+
+    def stream(exploited: bool, off: int, lim: int) -> tuple[list, int]:
+        q = {**base, 'known_exploit': 'true' if exploited else 'false', 'limit': max(lim, 1), 'offset': off}
+        got = insights_get(f'/vulnerabilities/cves?{urllib.parse.urlencode(q)}')
+        rows = got.get('data', []) if isinstance(got, dict) else []
+        total = int(((got.get('meta') if isinstance(got, dict) else None) or {}).get('total_items') or 0)
+        return (rows[:lim] if lim > 0 else []), total
+
     try:
-        payload = insights_get(f'/vulnerabilities/cves?{params}')
+        hot, hot_total = stream(True, offset, limit)
+        need = limit - len(hot)
+        cold, cold_total = stream(False, max(0, offset - hot_total), need)
+        payload = {'data': hot + cold, 'meta': {'total_items': hot_total + cold_total}}
     except BackendUnavailable as exc:
         degrade('C1 cve_list', exc.service, exc.cause, exc.fix)
-        staged = fallbacks.CVE_LIST
+        # Same order as live: known-exploited first, the staged order kept within each group.
+        staged = sorted(fallbacks.CVE_LIST, key=lambda c: not c.get('known_exploit'))
         if search:
             needle = search.lower()
             staged = [c for c in staged
@@ -650,7 +665,7 @@ def _detail_by_tag(cve_id: str, host_limit: int) -> dict[str, Any]:
             'run ./discover-hosts.py — it derives the tag from AAP_BASE_URL '
             'and checks it selects exactly your hosts')
 
-    hosts, cvss, desc, impact = [], None, '', ''
+    hosts, cvss, desc, impact, exploited = [], None, '', '', False
     for r in rows:
         uuid, name = r.get('id'), r.get('display_name') or r.get('id')
         hit = insights_get(f'/systems/{uuid}/cves'
@@ -665,6 +680,7 @@ def _detail_by_tag(cve_id: str, host_limit: int) -> dict[str, Any]:
         if cvss is None:
             cvss = a.get('cvss3_score') or a.get('cvss2_score')
             desc, impact = a.get('description', ''), a.get('impact', '')
+            exploited = bool(a.get('known_exploit'))
         hosts.append({'host': name, 'system_uuid': uuid,
                       'age_days': _age_days(a.get('first_reported'))})
 
@@ -683,6 +699,7 @@ def _detail_by_tag(cve_id: str, host_limit: int) -> dict[str, Any]:
         'cve_id': cve_id,
         'cvss': float(cvss) if cvss is not None else 0.0,
         'description': desc, 'impact': impact,
+        'known_exploit': exploited,
         'hosts': hosts, 'count': len(hosts),
         # The honest total for this tag, not for the organisation.
         'total_affected': total,
@@ -740,6 +757,7 @@ def _detail_host_first(cve_id: str, host_filter: str) -> dict[str, Any]:
         'cvss': float(cvss) if cvss is not None else 0.0,
         'description': a.get('description', ''),
         'impact': a.get('impact', ''),
+        'known_exploit': bool(a.get('known_exploit')),
         'hosts': [{'host': name, 'system_uuid': uuid,
                    'age_days': _age_days(a.get('first_reported'))}],
         'count': 1,
@@ -888,6 +906,7 @@ def fetch_cve_detail(cve_id: str, host_filter: str = '',
         'cvss': float(cvss) if cvss is not None else 0.0,
         'description': a.get('description', ''),
         'impact': a.get('impact', ''),
+        'known_exploit': bool(a.get('known_exploit')),
         'hosts': hosts,
         'count': len(hosts),
         'total_affected': (systems.get('meta') or {}).get('total_items'),
@@ -1039,6 +1058,9 @@ class PatchPlan:
     threshold: float
     verdict: str
     notes: list[str] = field(default_factory=list)
+    # Red Hat's flag that the CVE is exploited in the wild (Insights known_exploit). Carried on the plan so the
+    # page, the report and anything downstream can say so; the plan's first note spells out what it means.
+    known_exploit: bool = False
     # Every step that fell back, with the service and the fix. Carried into
     # the report so an operator approves with the gaps in front of them.
     degraded: list[dict] = field(default_factory=list)
@@ -1127,10 +1149,11 @@ class InfoAgent:
 
     # -- step 1 ------------------------------------------------------------
 
-    def history(self, host: str) -> tuple[str, str]:
-        """Returns (summary, source). source is 'rag' or 'fallback'."""
+    def history(self, host: str, cve: dict | None = None) -> tuple[str, str]:
+        """Returns (summary, source). source is 'rag' or 'fallback'. cve ({cve_id, cvss, known_exploit}) lets the
+        summary weigh the history against how urgent this CVE is."""
         try:
-            return self._history_live(host), 'rag'
+            return self._history_live(host, cve), 'rag'
         except BackendUnavailable as exc:
             degrade('1 rag_history', exc.service, exc.cause, exc.fix)
             demo_pause(0.5)      # per host, so keep it shorter than the rest
@@ -1144,7 +1167,7 @@ class InfoAgent:
                 text = unlabelled(text, 'No patch history on record for this host.')
             return text, 'fallback'
 
-    def _history_live(self, host: str) -> str:
+    def _history_live(self, host: str, cve: dict | None = None) -> str:
         """RAG lookup for one host, summarised by the LLM."""
         circuit('Llama Stack (vector search)')
         if not LLAMA_URL or not VECTOR_DB_ID:
@@ -1183,13 +1206,21 @@ class InfoAgent:
                      if isinstance(c, dict))
             for h in hits
         )[:6000]
-        return self._summarise(host, excerpt)
+        return self._summarise(host, excerpt, cve)
 
-    def _summarise(self, host: str, excerpt: str) -> str:
+    def _summarise(self, host: str, excerpt: str, cve: dict | None = None) -> str:
+        # A known-exploited CVE changes the question the reviewer is asking: not "is this host safe to patch in
+        # the window" but "can it be patched now". So the model is told, and asked to answer that too.
+        urgent = ''
+        if (cve or {}).get('known_exploit'):
+            urgent = (f'This CVE, {cve.get("cve_id")} (CVSS {cve.get("cvss")}), is known to be exploited in the '
+                      f'wild, so the reviewer wants to patch ahead of the normal window. Add one sentence saying '
+                      f'whether this history suggests the host can be patched quickly and safely, and what to '
+                      f'watch for. ')
         prompt = (
             f'Summarise the patch history for host {host} in 2-3 sentences. '
             f'Focus only on what a reviewer needs: repeated failures, known '
-            f'sensitivities, and remediations that worked. Do not mention '
+            f'sensitivities, and remediations that worked. {urgent}Do not mention '
             f'retrieval or chunks. Begin with the finding itself — no '
             f'preamble, and do not restate the question.\n\n{excerpt}'
         )
@@ -1256,7 +1287,8 @@ class InfoAgent:
         if review:
             with concurrent.futures.ThreadPoolExecutor(
                     max_workers=workers, thread_name_prefix='rag') as pool:
-                futures = {pool.submit(self.history, a.host): a for a in review}
+                cve = {'cve_id': cve_id, 'cvss': cvss, 'known_exploit': bool(detail.get('known_exploit'))}
+                futures = {pool.submit(self.history, a.host, cve): a for a in review}
                 try:
                     for fut in concurrent.futures.as_completed(futures):
                         a = futures[fut]
@@ -1278,6 +1310,12 @@ class InfoAgent:
 
         # step 4 — the patch plan
         notes = []
+        # First, and outside label_sources(): it is a fact about the CVE, not about which service answered, and it
+        # is the one note that changes what the reviewer should do.
+        if detail.get('known_exploit'):
+            notes.append(f'{cve_id} is known to be exploited in the wild (Red Hat). Patch ahead of the normal '
+                         f'window, and check the affected hosts for signs of compromise before patching: a patch '
+                         f'does not remove an attacker who is already in.')
         # These three are source labels written as prose, so they follow
         # label_sources() like every other mark on the page. With it off the
         # plan reads the same whether the score behind it came from the model
@@ -1340,6 +1378,7 @@ class InfoAgent:
             threshold=round(float(threshold), 2),
             verdict='review_required' if review else 'auto_approve_eligible',
             notes=notes,
+            known_exploit=bool(detail.get('known_exploit')),
             degraded=[dict(d) for d in DEGRADED],
         )
         self._trace('info', 'supervisor',

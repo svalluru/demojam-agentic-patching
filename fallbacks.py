@@ -83,6 +83,7 @@ def cve_detail(cve_id: str) -> dict[str, Any]:
         'cvss': known['cvss'] if known else CVE_DETAIL_DEFAULT['cvss'],
         'impact': known['impact'] if known else CVE_DETAIL_DEFAULT['impact'],
         'description': known['description'] if known else CVE_DETAIL_DEFAULT['description'],
+        'known_exploit': bool(known.get('known_exploit')) if known else False,
         'hosts': [dict(h) for h in hosts],
         'count': len(hosts),
         'total_affected': len(hosts),
