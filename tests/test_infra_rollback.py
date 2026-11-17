@@ -163,12 +163,36 @@ class ManualRollback(unittest.TestCase):
         deadline = time.time() + 5
         while time.time() < deadline:
             row = self.c._RUN['patch']['results'][0]
-            if row['outcome'] != 'running':
+            if row['outcome'] not in ('running', 'rolling_back'):
                 break
             time.sleep(0.05)
         self.assertEqual(row['outcome'], 'rolled_back')
         self.assertTrue(row['rollback']['rolled_back'])
         self.assertEqual(self.c._RUN['patch']['summary']['rolled_back'], 1)
+
+    def test_marks_the_result_as_manual(self):
+        import time
+        self.rows({'execution_id': 'e1', 'host': 'h', 'outcome': 'failed', 'simulated': True})
+        self.c.manual_rollback('e1')
+        self.assertEqual(self.c._RUN['patch']['results'][0]['outcome'] in ('rolling_back', 'rolled_back'), True)
+        deadline = time.time() + 5
+        while self.c._RUN['patch']['results'][0]['outcome'] == 'rolling_back' and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(self.c._RUN['patch']['results'][0]['rollback']['manual'])
+
+    def test_refuses_a_timeout_and_a_failure_after_a_healthy_check(self):
+        self.rows({'execution_id': 't', 'host': 'a', 'outcome': 'timeout', 'checkpoint': '{}'},
+                  {'execution_id': 'h', 'host': 'b', 'outcome': 'failed', 'checkpoint': '{}', 'health': {'healthy': True}})
+        for exec_id in ('t', 'h'):
+            with self.assertRaises(self.c.BackendUnavailable):
+                self.c.manual_rollback(exec_id)
+
+    def test_an_ao_refresh_never_overwrites_a_hand_rollback(self):
+        self.rows({'execution_id': 'e1', 'host': 'a', 'outcome': 'rolled_back', 'rollback': {'manual': True}},
+                  {'execution_id': 'e2', 'host': 'b', 'outcome': 'rolling_back'})
+        for eid in ('e1', 'e2'):
+            self.c._absorb_run_detail({'execution_id': eid, 'outcome': 'failed'})
+        self.assertEqual([r['outcome'] for r in self.c._RUN['patch']['results']], ['rolled_back', 'rolling_back'])
 
     def test_refuses_rows_that_did_not_fail_or_have_no_checkpoint(self):
         self.rows({'execution_id': 'e1', 'host': 'a', 'outcome': 'patched', 'simulated': True},
@@ -192,6 +216,43 @@ class Workflow(unittest.TestCase):
             self.assertIn((f'health_switch{sfx}', f'notify_remediated{sfx}', 'case_0'), edges)
             self.assertNotIn((f'deploy_script{sfx}', f'run_cve_remediation{sfx}', ''), edges)
         self.assertIn('force_fail', wf['triggers'][0]['parameters']['input_schema']['properties'])
+
+
+
+class RunHistoryOutcomes(unittest.TestCase):
+    """Items 5 and 6 of the corner-case review: outcomes read from AO's steps, not guessed from the list."""
+
+    def setUp(self):
+        self.c = load_console()
+        self.saved = (self.c.ao_call, self.c.PatchingAgent._activities, self.c.PatchingAgent.node_labels)
+        self.c.PatchingAgent.node_labels = lambda self: {}
+        self.c.PatchingAgent._settled = {}
+
+    def tearDown(self):
+        self.c.ao_call, self.c.PatchingAgent._activities, self.c.PatchingAgent.node_labels = self.saved
+        self.c.PatchingAgent._settled = {}
+
+    def test_a_completed_dev_route_run_is_patched_not_rejected(self):
+        self.c.ao_call = lambda path, *a, **k: {'status': 'completed', 'input_data': {'group': 'auto_patch', 'host': 'n1'}}
+        self.c.PatchingAgent._activities = lambda self, eid: ([step('verify_patch', {'patched': True})], '', '')
+        self.assertEqual(self.c.PatchingAgent().run_detail('x')['outcome'], 'patched')
+
+    def test_a_completed_dev_route_run_that_verify_rejects_is_not_verified(self):
+        self.c.ao_call = lambda path, *a, **k: {'status': 'completed', 'input_data': {'group': 'auto_patch', 'host': 'n1'}}
+        self.c.PatchingAgent._activities = lambda self, eid: (
+            [step('verify_patch', {'patched': False, 'outstanding_advisories': 'RHSA-1'})], '', '')
+        self.assertEqual(self.c.PatchingAgent().run_detail('x')['outcome'], 'not_verified')
+
+    def test_the_history_list_reports_a_rolled_back_run_and_asks_ao_once(self):
+        agent = self.c.PatchingAgent()
+        calls = []
+        agent.run_detail = lambda eid: calls.append(eid) or {'outcome': 'rolled_back'}
+        rows = [{'execution_id': 'e1', 'status': 'completed', 'outcome': 'patched'},
+                {'execution_id': 'e2', 'status': 'running', 'outcome': 'running'}]
+        out = agent._settle_finished([dict(r) for r in rows])
+        self.assertEqual([r['outcome'] for r in out], ['rolled_back', 'running'])
+        agent._settle_finished([dict(r) for r in rows])
+        self.assertEqual(calls, ['e1'])          # cached: a finished run is asked about once
 
 
 if __name__ == '__main__':

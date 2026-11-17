@@ -5409,7 +5409,7 @@ function renderHostTable(s) {
       // The remediation job failed, so the workflow stopped before its own
       // rollback route. The checkpoint it took first is still there to go
       // back to (a simulated run has none, and simulates the rollback).
-      : ['failed', 'timeout'].includes(r.outcome) && (r.checkpoint || r.simulated)
+      : r.outcome === 'failed' && (r.checkpoint || r.simulated) && !(r.health && r.health.healthy)
         ? `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`
           + `<button class="btn-retry" onclick="rollbackHost('${esc(r.execution_id)}', this)">Roll back this host</button>`
       : `<span class="badge ${o.cls}">${esc(o.label)}</span>${simChip(r)}`;
@@ -5617,7 +5617,7 @@ function rollbackRow(h, r, cols) {
   // data-retry so retryHost() finds this row: "Patch again" re-dispatches the
   // one host, never forced, through the same gate.
   return `<tr class="retry-row" data-retry="${esc(h.system_uuid)}"><td colspan="${cols}">
-      <div class="retry-why"><b>${hv.healthy === false || !r.health
+      <div class="retry-why"><b>${r.health && hv.healthy === false
           ? 'The post-patch health check failed' : 'Rolled back by hand after the remediation failed'}${
           (hv.failed_services || []).length ? ': ' + esc(hv.failed_services.join(', ')) + ' not running' : ''}.</b>
         ${esc(hv.notes || '')}${hv.forced ? ' <i>(forced failure: test of the rollback route)</i>' : ''}</div>
@@ -5794,6 +5794,7 @@ const OUTCOME = {
   // a person must act, so it gets the loud badge.
   rolled_back:       { cls: 'fail',   label: 'Rolled back' },
   rollback_failed:   { cls: 'review', label: 'Rollback failed' },
+  rolling_back:      { cls: 'work',   label: 'Rolling back' },
 };
 
 // Set by renderMode() before the first render.
@@ -5991,7 +5992,11 @@ async function decide(execId, activityId, decision) {
   }
 }
 
-const TERMINAL = ['patched', 'rejected', 'failed', 'timeout', 'cancelled'];
+// Outcomes that are over. The rollback states and not_verified were missing, so those rows kept being re-read from
+// AO: a hand rollback, which AO knows nothing about, was overwritten back to 'failed'. 'rolling_back' is not over,
+// but it is the console's own state (a hand rollback in progress), so AO is not asked about it either.
+const TERMINAL = ['patched', 'rejected', 'failed', 'timeout', 'cancelled', 'not_verified', 'unavailable',
+                  'rolled_back', 'rollback_failed', 'rolling_back'];
 let trackTimer = null;
 
 // A result row is a snapshot. A run that is still going can fail a moment
@@ -6067,7 +6072,7 @@ function recountPatch(s) {
     not_verified: rs.filter(r => r.outcome === 'not_verified').length,
     // The rollback route, both ends of it in one tile: the health check
     // failed and the packages were put back (or could not be).
-    rolled_back: rs.filter(r => ['rolled_back', 'rollback_failed'].includes(r.outcome)).length,
+    rolled_back: rs.filter(r => r.outcome === 'rolled_back').length,
     rollback_failed: rs.filter(r => r.outcome === 'rollback_failed').length,
     rejected: rs.filter(r => ['rejected', 'cancelled'].includes(r.outcome)).length,
     // Hosts on the plan that no run was dispatched for. Their rows stay in
@@ -6141,7 +6146,7 @@ function renderPatch(s) {
         class="v">${esc(sum.not_verified || 0)}</div><div class="k">Not verified</div></div>
       <div class="stat${sum.rollback_failed ? ' alert' : ''}"
            title="Unhealthy after the patch, so the workflow put the packages back to the pre-patch dnf transaction. Healthy again, and vulnerable again. Alert when a rollback did not bring the host back."><div
-        class="v">${esc(sum.rolled_back || 0)}</div><div class="k">Rolled back</div></div>
+        class="v">${esc((sum.rolled_back || 0) + (sum.rollback_failed || 0))}</div><div class="k">Rolled back</div></div>
       <div class="stat"><div class="v">${esc(sum.rejected || 0)}</div><div class="k">Rejected</div></div>
       <div class="stat${sum.not_sent ? ' alert' : ''}"
            title="Affected hosts left unticked at dispatch. No workflow run exists for them and none will — they are still vulnerable. Assess the CVE again to send them."><div
@@ -6347,6 +6352,7 @@ const RUN_OUTCOME = {
   not_verified:      { cls: 'fail',   label: 'Not verified' },
   rolled_back:       { cls: 'fail',   label: 'Rolled back' },
   rollback_failed:   { cls: 'review', label: 'Rollback failed' },
+  rolling_back:      { cls: 'work',   label: 'Rolling back' },
 };
 
 const ago = iso => {

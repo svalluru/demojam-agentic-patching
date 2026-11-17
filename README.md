@@ -200,7 +200,8 @@ id changes on every rebuild, and a stale one returns no hits with no error.
 ```bash
 ./rag-setup/deploy.sh                          # Milvus + Llama Stack
 ./rag-setup/ingest.py --route https://$ROUTE --dir ./rag-setup/data --ensure
-./risk_score/openshift/deploy-risk-score.sh    # XGBoost model
+./risk_score/openshift/deploy-risk-score.sh    # XGBoost model (rebuilds and rolls the pod when its sources change;
+                                               #  logs each request: CVE, host, inputs, score)
 ./aap-setup/create-verify-template.sh          # our one AAP template
 ./ao-setup/create-ao-objects.sh                # AO credentials + integrations
 ./ao-setup/create-ao-workflow.sh               # the AO workflow, published
@@ -290,6 +291,14 @@ timeout chain and what it does not deploy.
 
 Hit **Assess** on a CVE row, review the patch plan, then dispatch it.
 
+**Known-exploited CVEs come first.** Insights flags a CVE `known_exploit` when Red Hat has evidence it is exploited in
+the wild (the red **EXPLOIT** tag). Those are listed first, then the rest, each newest first, and paging runs across
+both as one list. Insights cannot sort by the flag but can filter by it, so a page is two filtered queries (three after
+the first page, which also counts the exploited ones). Assessing an exploited CVE adds a first plan note ("known to be
+exploited in the wild … patch ahead of the window, and check the hosts for signs of compromise first"), and the
+history summary for each review host is asked whether the host can be patched quickly and safely. The flag does not
+change the risk score or the route.
+
 **Find a CVE…** in the list header searches by id or description, server-side —
 a live estate runs to thousands of CVEs over hundreds of pages, and filtering
 the twenty on screen would report "nothing found" for almost all of them.
@@ -338,8 +347,33 @@ into the table in place, so the other rows keep their outcome and their order.
 Only parameters that differ from the default reach the trigger payload, so an
 ordinary dispatch sends byte for byte what it always sent.
 
+**A patch that breaks the host is taken back out.** Before the remediation runs, the workflow's **Pre-patch
+Checkpoint** (`aap-setup/playbooks/cve_checkpoint.yml`) records the dnf transaction, the running and default kernel,
+and the enabled services that are running. After verify, the **Post-patch Health Check** (`cve_health_check.yml`)
+requires each of those services still running and no newly failed units. A host that fails it takes the workflow's
+health switch to **CVE - Rollback Patch** (`cve_rollback.yml`): the checkpoint's kernel back as the default boot
+entry and a reboot into it if the patch rebooted the host (dnf will not remove the running kernel), then `dnf history
+undo` of every transaction after the checkpoint, newest first, then the services started and checked again. The row
+reads ***Rolled back*** (healthy again, and the CVE open again: the rollback undid the fix with whatever it broke) or
+***Rollback failed*** (a person must restore it). **What happened** opens the health check's finding, the packages
+put back, whether it rebooted, and the rollback job; **Patch again** re-dispatches the host once the cause is fixed.
+Only enabled services count, because D-Bus-activated ones (rhsm) start on demand and are often down after a reboot.
+
+If the **remediation job itself fails**, AO stops before its own rollback route (it has no on-failure edge). The row
+then offers **Roll back this host**: the console launches CVE - Rollback Patch through the AAP API with the checkpoint
+the run took. It is refused on a timed-out row (AO may still be working, and its own rollback would race this one)
+and after a healthy health check (the patch was fine; a later step failed). While it runs the row reads *Rolling back*,
+and a later refresh from AO never overwrites a hand rollback.
+
+To show it on purpose, turn on **Force a health failure** (`INFRA_FORCE_FAIL`, Automation Orchestrator section of the
+settings, test only). On the next dispatch one host (the first behind the gate, never one with its own staged
+not-verified story) has its health check require a service that does not exist. Retries are never forced. Rollback
+needs the old package versions still in the enabled repositories.
+
 **Patch runs** lists past executions, read live from AO. **Details** on any
-row opens that execution: its nodes, their status, and how long each took.
+row opens that execution: its nodes, their status, and how long each took. A finished run's outcome is read from its
+steps once (verify, health check, rollback, gate) and cached, so a rolled-back or not-verified run is not listed as
+patched.
 
 **Calculate ROI** is in the page header rather than on this view, because the
 report covers both halves of the console. It appears as soon as *either* side
@@ -556,7 +590,9 @@ publishes; "Only builds my apps need" asks Lightwell per library version in
 the BOMs, unticked it pages through the whole catalog; **SBOM · app** exports
 that app's BOM as CycloneDX 1.5, `/api/v2/sbom?app=`, to upload to
 [Lightwell Lens](https://console.redhat.com/lightwell/lens), Red Hat's own
-coverage view, which has no public API to call), and **Runs** (every
+coverage view, which has no public API to call; **Assess** refuses while the run on screen has a site waiting at the
+approval gate or still in flight, and says which, so a new assessment never takes those Approve / Reject buttons
+off the page), and **Runs** (every
 finished run, newest first; open one to see it as the reviewer did). The left
 column draws the agent architecture, lit from the run's trace: which agent is
 calling which service, on OpenShift AI or Ansible Automation Platform.
@@ -574,8 +610,8 @@ Maven library the affected apps run (v1's scanner client, `lightwell/scanner/osv
 answers in `lightwell/demo/osv.json`) and lists what is open, minus what a Lightwell build fixes, in the run's
 **2 · Change list**: one group per app, the fix itself locked in, the other libraries tickable. Source chips choose
 where a fix may come from (**Lightwell** = same version, **Another build** = a Lightwell build of a newer version on
-the same major line, **OSV** = the lowest upstream release that clears every advisory) and **Major upgrades** lets an
-upstream fix cross a major version. **Download plan (PDF)** saves the run's plan, laid out as a PDF for the change board (one section per app, the shape of
+the same major line, **OSV** = the lowest upstream release that clears every advisory). An upstream fix never crosses
+a major version: that is a code change, and the row shows as left open. **Download plan (PDF)** saves the run's plan, laid out as a PDF for the change board (one section per app, the shape of
 Applications v1's remediation plan, `/api/v2/plan/preview`).
 
 | Row | When | Offered |
@@ -583,10 +619,11 @@ Applications v1's remediation plan, `/api/v2/plan/preview`).
 | Lightwell build | Lightwell has a build of the same version | yes: Red Hat provenance, no version change |
 | Lightwell · version change | Lightwell has no build of this version but has one of a newer version on the same major line (`/package_versions`) | yes, as an option beside the upstream fix: the row's selector picks one. Upstream is the default when it is a patch release on the same minor line |
 | Upstream fix | no Lightwell build; the lowest release that clears every advisory is on the same major line | yes: from Nexus's `maven-central` proxy, checked against Maven Central's sha1 |
-| Major upgrade | the fix is only in a new major version | only with **Major upgrades** ticked (off by default): a code change |
+| Major upgrade | the fix is only in a new major version | no: a code change, shown greyed with the reason |
 | Still open | the fix being applied leaves advisories open on its own library | no: information |
 
-Each row has a Reasoning line from the app history store and the LLM. Ticked rows (before **Prepare remediation**)
+Each row has a Reasoning line from the app history store and the LLM: TAKE or SKIP and why, up to 100 words
+(`REASONING_WORDS` in `appv2.py`); the cell shows the start and the red arrow opens the rest. Ticked rows (before **Prepare remediation**)
 join that app's change: one playbook per app, one backup, one restart, one health check and one rollback route. The
 commit job checks each jar (cosign for Lightwell builds, sha1 for upstream ones).
 
@@ -824,7 +861,9 @@ Every row below is also a row in the settings panel. Applications has its own gr
 ## ROI report
 
 **Calculate ROI** (`POST /api/roi`) compares what the console actually did
-against doing the same work by hand. Two kinds of number meet there, and the
+against doing the same work by hand. The Applications half prices the run on screen if it has sent the fix to a site,
+and otherwise the newest finished run that did (the page says so), so it does not vanish when the run on screen was
+only assessed or the console has restarted. Two kinds of number meet there, and the
 page keeps them apart because they carry very different warranties.
 
 | | |
@@ -1078,8 +1117,10 @@ Listed so they are not re-raised as bugs.
 
 - **The self-healing loop is not implemented.** `Supervisor.reset()` declares
   `attempts`, `tried_fixes` and `phase_failures`, and nothing reads or writes
-  them — `patch()` counts failures but never stops early. EXIT A/B/C,
-  `diagnose()`, the post-patch health check, rollback and phased
+  them — `patch()` counts failures but never stops early. The post-patch
+  health check and the rollback route now exist (see *A patch that breaks the
+  host is taken back out*); what is still missing is the loop around them:
+  EXIT A/B/C, `diagnose()`, a retry with a different fix, and phased
   test→canary→prod are all absent. The dead state is left in place as the shape
   to build into.
 - **The model's observed output range is 36.6–100, and `REVIEW_THRESHOLD`
@@ -1095,7 +1136,8 @@ Listed so they are not re-raised as bugs.
   predicts a risk score; a patch produces success or failure. `OBSERVED_RISK` in
   `results.py` maps one to the other, and those numbers want tuning against real
   runs before anyone retrains on them.
-- **A Llama Stack restart silently empties the vector store registry** —
+- **A Llama Stack restart silently empties the vector store registry** (a bug in Llama Stack 0.7.x's Milvus
+  provider, upstream ogx-ai/ogx#5954, fixed in OGX 1.2 and later, the renamed successor; not backported to 0.7.x) —
   searches return no hits with no error. Run `ingest.py --ensure` after any
   restart; see [rag-setup/README.md](rag-setup/README.md).
 - No scheduler service exists; the maintenance window is configuration.

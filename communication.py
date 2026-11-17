@@ -183,7 +183,8 @@ class CommunicationAgent:
             doc.table(['Host', 'Result', 'Why (health check)', 'Put back'],
                       [[r.get('host', '—'),
                         OUTCOME_LABEL.get(r.get('outcome'), r.get('outcome')),
-                        ((r.get('health') or {}).get('notes') or 'health check failed')[:160],
+                        (((r.get('health') or {}).get('notes') or 'health check failed') if r.get('health')
+                         else 'remediation failed; rolled back by hand')[:160],
                         (('dnf transaction ' + str((r.get('rollback') or {}).get('txn')) + ': ')
                          if (r.get('rollback') or {}).get('txn') else '')
                         + ((r.get('rollback') or {}).get('restored') or '—')[:160]]

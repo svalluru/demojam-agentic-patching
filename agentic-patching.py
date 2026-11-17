@@ -2416,6 +2416,31 @@ class PatchingAgent:
                                     minus=self._gate_wait(e, terminal)),
                 'url': f'{AO_URL}/executions/{e.get("id")}',
             })
+        return self._settle_finished(runs)
+
+    # execution id -> outcome read from its steps. A finished execution never changes, so each is asked about once.
+    _settled: dict[str, str] = {}
+    SETTLE_PER_CALL = 20
+
+    def _settle_finished(self, runs: list[dict]) -> list[dict]:
+        """The list endpoint has no step data, so it called every completed unattended run 'patched' (and left gated
+        ones 'completed'), although with the rollback route a completed run can be a rolled-back one, and a clean run
+        can be not_verified. Each finished run is settled once through run_detail (verify, health, rollback, gate) and
+        cached; at most SETTLE_PER_CALL new ones per call, newest first, so a long history does not flood AO. A run
+        not settled yet keeps the list's own reading until a later call reaches it."""
+        budget = self.SETTLE_PER_CALL
+        for r in runs:
+            if r.get('status') not in ('completed', 'succeeded', 'failed', 'error'):
+                continue
+            eid = r.get('execution_id') or ''
+            if eid not in self._settled and budget > 0:
+                budget -= 1
+                try:
+                    self._settled[eid] = self.run_detail(eid).get('outcome') or r['outcome']
+                except BackendUnavailable:
+                    continue
+            if eid in self._settled:
+                r['outcome'] = self._settled[eid]
         return runs
 
     # Gate waits per execution. The list endpoint returns activities as null,
@@ -2533,9 +2558,12 @@ class PatchingAgent:
         pending = bool(state.get('approval_pending')) and not terminal
         # With activity data we can tell approved from rejected: a rejected
         # run completes with the downstream nodes never leaving 'pending'.
-        ran = any(s.get('name') == 'fetch_and_commit_prod'
-                  and s.get('status') in ('completed', 'running', 'failed')
-                  for s in steps)
+        # The unattended branch has no gate, so a completed run there ran; only the gated branch can complete
+        # without running (rejected at the gate).
+        ran = inp.get('group') == 'auto_patch' or any(
+            s.get('name') in ('fetch_and_commit_prod', 'fetch_and_commit')
+            and s.get('status') in ('completed', 'running', 'failed')
+            for s in steps)
         any_failed = any(s.get('status') in ('failed', 'error') for s in steps)
         outcome = ('awaiting_approval' if pending
                    else 'cancelled' if status in ('cancelled', 'canceled')
@@ -2845,7 +2873,7 @@ class Supervisor:
             'awaiting_approval': sum(1 for r in results if r['outcome'] == 'awaiting_approval'),
             # A host dispatched into the unattended branch can still be working
             # when this returns, so the counts only add up with this included.
-            'running': sum(1 for r in results if r['outcome'] == 'running'),
+            'running': sum(1 for r in results if r['outcome'] in ('running', 'rolling_back')),
             'failed': failures,
             # The unattended branch runs through verify without stopping, so
             # this is reachable straight off a dispatch — the gated hosts pick
@@ -4652,24 +4680,36 @@ def manual_rollback(exec_id: str) -> dict:
         row = next((r for r in results if r.get('execution_id') == exec_id), None)
         if row is None:
             raise BackendUnavailable('console', f'no row for execution {exec_id}', 'reload the page')
-        if row.get('outcome') not in ('failed', 'timeout'):
+        if row.get('outcome') == 'timeout':
+            # The console stopped waiting, not the workflow: AO may still be remediating, health-checking or taking
+            # its own rollback route, and a second rollback would race it on the same host.
+            raise BackendUnavailable('console', f'{row.get("host")} timed out in the console, but its workflow may '
+                                     f'still be running', 'wait for it to settle (the Runs tab shows AO\'s state)')
+        if row.get('outcome') != 'failed':
             raise BackendUnavailable('console', f'{row.get("host")} is {row.get("outcome")}, not failed',
                                      'only a failed run is rolled back by hand')
+        if (row.get('health') or {}).get('healthy'):
+            # Failed after a healthy health check (the notify step, say): the patch is good, undoing it is wrong.
+            raise BackendUnavailable('console', f'{row.get("host")} was healthy after the patch; the run failed in a '
+                                     f'later step', 'nothing to roll back: the patch itself is fine')
         sim = bool(row.get('simulated'))
         checkpoint = row.get('checkpoint') or ''
         if not sim and not checkpoint:
             raise BackendUnavailable('console', f'{row.get("host")} has no pre-patch checkpoint',
                                      'the run failed before "CVE - Pre-patch Checkpoint" reported; nothing to roll back to')
         host = row.get('host') or ''
-        row.update(outcome='running', status='rolling_back')
+        # Not 'running': that state is re-read from AO, whose answer for this execution is still 'failed', which
+        # overwrote the row mid-rollback and offered the button again. 'rolling_back' is the console's own state.
+        row.update(outcome='rolling_back', status='rolling_back')
 
-    def settle(outcome: str, rollback: dict | None) -> None:
+    def finish(outcome: str, rollback: dict | None) -> None:
         with _RUN_LOCK:
             patch = _RUN.get('patch') or {}
             res = patch.get('results') or []
             for r in res:
                 if r.get('execution_id') == exec_id:
-                    r.update(outcome=outcome, status='completed', rollback=rollback)
+                    r.update(outcome=outcome, status='completed',
+                             rollback={**(rollback or {}), 'manual': True})
             _RUN['patch'] = {**patch, 'results': res, 'summary': _summarise(res)}
             _RUN['next'] = next_step(_RUN['patch']['summary'])
         _run_trace('patching', 'console', f'{host}: manual rollback -> {outcome}')
@@ -4678,7 +4718,7 @@ def manual_rollback(exec_id: str) -> dict:
         _run_trace('console', 'patching', f'{host}: roll back by hand ({ROLLBACK_JT})')
         if sim:
             demo_pause(3)
-            settle('rolled_back', rollback_verdict([{'name': 'rollback', 'status': 'completed',
+            finish('rolled_back', rollback_verdict([{'name': 'rollback', 'status': 'completed',
                                                      'output': {'artifacts': fallbacks.rollback_sim(host)}}]))
             return
         try:
@@ -4701,9 +4741,9 @@ def manual_rollback(exec_id: str) -> dict:
                                          'status': 'completed' if state.get('status') == 'successful' else 'failed',
                                          'output': {'artifacts': state.get('artifacts') or {},
                                                     'job_id': job_id, 'job_url': url}}])
-            settle('rolled_back' if verdict and verdict['rolled_back'] else 'rollback_failed', verdict)
+            finish('rolled_back' if verdict and verdict['rolled_back'] else 'rollback_failed', verdict)
         except Exception as exc:
-            settle('rollback_failed', {'rolled_back': False, 'restored': '', 'txn': '', 'reboot': False,
+            finish('rollback_failed', {'rolled_back': False, 'restored': '', 'txn': '', 'reboot': False,
                                        'notes': f'the rollback job could not be run: {exc}', 'job_id': '',
                                        'job_url': ''})
 
@@ -4950,6 +4990,10 @@ def _absorb_run_detail(detail: dict) -> None:
         row = next((r for r in results if r.get('execution_id') == exec_id), None)
         if row is None or row.get('outcome') == detail.get('outcome'):
             return
+        # A rollback the console ran by hand (or is running) is not in the AO execution, which still reads
+        # 'failed'. Taking AO's answer here undid the result and offered Roll back this host again.
+        if row.get('outcome') == 'rolling_back' or (row.get('rollback') or {}).get('manual'):
+            return
         row.update({k: v for k, v in detail.items() if v is not None})
         _RUN['patch'] = {**patch, 'results': results,
                          'summary': _summarise(results)}
@@ -4966,7 +5010,7 @@ def _summarise(results: list[dict]) -> dict:
     return {
         'patched': n('patched'),
         'awaiting_approval': n('awaiting_approval'),
-        'running': n('running'),
+        'running': n('running', 'rolling_back'),
         'rejected': n('rejected'),
         'failed': n('failed', 'timeout'),
         # Its own count, not folded into failed. The run did not fail — every

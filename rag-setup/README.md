@@ -83,6 +83,17 @@ the same three hits before and after.
 Separate problem from the etcd one above, and not fixed by it: here it is
 Llama Stack's own registry that goes stale, not Milvus's catalogue.
 
+**Root cause:** a bug in the Milvus provider of Llama Stack 0.7.x, upstream
+[ogx-ai/ogx#5954](https://github.com/ogx-ai/ogx/issues/5954) ("Milvus, Chroma, and Weaviate providers do not persist
+vector store metadata to kvstore"), fixed in August 2026 (#6371) and backported to OGX 1.2.x and 1.3.x. Llama Stack
+has since been renamed **OGX**; 0.7.x did not get the fix. Moving to OGX (`ogxai/distribution-starter`, 1.5.0 or
+later) removes the need for the steps below, but its image is about 3.6 GB compressed (8-10 GB unpacked), so check the
+node's free disk first on a single-node lab: on lab x8v2s it would have crossed the kubelet's eviction line.
+
+Note also that `--ensure` deletes a broken store before rebuilding it, but the Milvus collection behind it stays, so
+orphaned `vs_*` collections pile up in Milvus over repeated restarts. They are harmless, and can be dropped once no
+store references them.
+
 **A restart silently breaks search.** Llama Stack 0.7.1 does not rehydrate its
 vector-store registry on startup: the store keeps appearing in
 `/v1/vector_stores` (that reads the kvstore, which does persist) and Milvus

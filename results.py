@@ -126,8 +126,14 @@ class ResultsAgent:
         if outcome in ('rolled_back', 'rollback_failed'):
             # Written for the next assessment of this host: the history search reads these records, so the reason
             # a patch had to be taken back out is what the next plan sees.
-            lines += [f'The patch was applied and the host was unhealthy afterwards: '
-                      f'{health.get("notes") or "the post-patch health check failed"}'.rstrip()]
+            if rollback.get('manual') and not health:
+                # Rolled back by hand: the remediation itself failed, so no health check ran and nothing says the
+                # host was unhealthy. Writing that would put a false lesson into the history the next plan reads.
+                lines += ['The remediation failed before the health check, and the host was rolled back by hand to '
+                          'its pre-patch checkpoint.']
+            else:
+                lines += [f'The patch was applied and the host was unhealthy afterwards: '
+                          f'{health.get("notes") or "the post-patch health check failed"}'.rstrip()]
             lines += [(rollback.get('notes') or f'Rolled back to dnf transaction {rollback.get("txn") or "?"}.')
                       + (' Rebooted into the previous kernel.' if rollback.get('reboot')
                          and 'Rebooted' not in (rollback.get('notes') or '') else '')]

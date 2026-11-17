@@ -66,6 +66,13 @@ class AssessGuard(unittest.TestCase):
         self.assertEqual(code, 409)
         self.assertIn('edge-site-1', body['error'])
 
+    def test_a_site_left_dispatching_without_an_execution_does_not_block(self):
+        # After a restart mid-dispatch: the run failed, a site never reached AO. Assess must not be locked out.
+        self.put(status='failed', hosts=[{'site': 'lab', 'outcome': 'dispatching', 'execution_id': ''}])
+        self.assertFalse(appv2.busy())
+        self.put(status='failed', hosts=[{'site': 'lab', 'outcome': 'running', 'execution_id': 'abc'}])
+        self.assertTrue(appv2.busy())
+
     def test_a_finished_or_assessed_run_can_be_replaced(self):
         for st in ({'status': 'complete', 'hosts': [{'outcome': 'patched'}, {'outcome': 'rejected'}]},
                    {'status': 'assessed', 'hosts': []}, {'status': 'idle'}):

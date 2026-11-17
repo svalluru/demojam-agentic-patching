@@ -1561,6 +1561,11 @@ def restore() -> dict:
         step = _IN_PROCESS[status]
         _set(status='failed', error=f'The console restarted during {step}; start the run again.')
         _trace('console', 'console', f'restarted during {step}; run stopped')
+        # Sites the dispatch had not handed to AO yet: nothing is following them, and nothing will.
+        for h in saved.get('hosts') or []:
+            if h.get('outcome') in ('queued', 'dispatching', 'running') and not h.get('execution_id'):
+                _host(h['key'], outcome='failed', detail=f'Interrupted: the console restarted during {step} before '
+                                                         f'this site reached AO. Nothing ran on it.')
     resumed = []
     for h in saved.get('hosts') or []:
         if h.get('outcome') in ('running', 'queued') and h.get('execution_id') and not saved.get('simulated'):
@@ -1631,7 +1636,11 @@ def busy() -> bool:
         if _RUN.get('status') in ('assessing', 'generating', 'dispatching', 'running', 'cancelling',
                                   'awaiting_approval'):
             return True
-        return any(h.get('outcome') in ('awaiting_approval', 'running', 'dispatching')
+        # A site at the gate always blocks (the gate is open in AO). One running or dispatching only blocks if it
+        # really reached AO: after a restart mid-dispatch a site could stay 'dispatching' with no execution, and
+        # blocking on it locked Assess for good while Cancel had nothing to cancel.
+        return any(h.get('outcome') == 'awaiting_approval'
+                   or (h.get('outcome') in ('running', 'dispatching') and h.get('execution_id'))
                    for h in (_RUN.get('hosts') or []))
 
 
