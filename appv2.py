@@ -1624,8 +1624,15 @@ def _set(**kw) -> None:
 
 
 def busy() -> bool:
+    """A run that must not be replaced by a new Assess. That includes a run waiting at an approval gate, or with any
+    site still waiting there or in flight: replacing it took its Approve / Reject buttons off the page while the gate
+    stayed open in AO, with nothing left on screen to answer it."""
     with _LOCK:
-        return _RUN.get('status') in ('assessing', 'generating', 'dispatching', 'running', 'cancelling')
+        if _RUN.get('status') in ('assessing', 'generating', 'dispatching', 'running', 'cancelling',
+                                  'awaiting_approval'):
+            return True
+        return any(h.get('outcome') in ('awaiting_approval', 'running', 'dispatching')
+                   for h in (_RUN.get('hosts') or []))
 
 
 def enrich(event: dict) -> None:
@@ -1661,7 +1668,9 @@ def accept_webhook(body: bytes, signature: str) -> tuple[int, dict]:
 
 def start_assess(event_id: str) -> tuple[int, dict]:
     if busy():
-        return 409, {'ok': False, 'error': 'a v2 run is already in progress'}
+        waiting = [h.get('site') or h.get('host') for h in (state().get('hosts') or []) if h.get('outcome') == 'awaiting_approval']
+        return 409, {'ok': False, 'error': (f"the current run is waiting for approval on {', '.join(waiting)}: approve or "
+                                            f"reject it first" if waiting else 'a v2 run is already in progress')}
     ev = events().get(event_id)
     if not ev:
         return 404, {'ok': False, 'error': f'no event {event_id}'}
@@ -2946,6 +2955,26 @@ def runs() -> list[dict]:
                        'summary': _summary_of(st.get('hosts') or []), 'hosts': st.get('hosts') or [],
                        'current': True})
     return out
+
+
+def _dispatched(st: dict) -> bool:
+    return any(h.get('outcome') not in (None, '', 'skipped') for h in (st.get('hosts') or []))
+
+
+def roi_state() -> dict:
+    """The run Calculate ROI prices: the one on screen if it has dispatched a site, else the newest finished run
+    that did (its saved snapshot). Without the fallback, ROI for Applications vanished whenever the run on screen was
+    only assessed, or the console had restarted, although finished runs were in the history. A run taken from the
+    history carries roi_from_history, so the page can say which run it is."""
+    st = state()
+    if _dispatched(st):
+        return st
+    for rec in reversed(_history()):
+        snap = rec.get('snapshot') or {}
+        if _dispatched(snap):
+            return {**snap, 'roi_from_history': True, 'run_id': rec.get('run_id') or snap.get('run_id'),
+                    'finished_at': rec.get('finished_at') or snap.get('finished_at')}
+    return st
 
 
 def run_detail(run_id: str) -> dict | None:

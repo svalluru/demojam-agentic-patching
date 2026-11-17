@@ -7083,7 +7083,12 @@ function roiV2Body(roi) {
   const mult = sv.effort_x
     ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
     : `<div class="v sm">No site patched yet</div><div class="k">Operator time</div>`;
-  const waiting = m.status === 'complete' ? '' : `<div class="note">The run is still <b>${esc(m.status)}</b>:
+  // Priced from the run history: the run on screen has not dispatched a site (only assessed, or the console
+  // restarted), so this is the newest finished run, and the page says so rather than implying it is the one open.
+  const past = m.from_history ? `<div class="note">From the last finished Applications run${m.finished_at
+      ? ` (finished ${esc(String(m.finished_at).slice(0, 16).replace('T', ' '))} UTC)` : ''}: the run on screen has not
+      sent the fix to any site yet.</div>` : '';
+  const waiting = m.from_history || m.status === 'complete' ? '' : `<div class="note">The run is still <b>${esc(m.status)}</b>:
       ${esc(m.settled)} of ${esc(m.sites)} site(s) settled. Every site not yet patched is charged at the manual rate
       until it is, so this figure only grows as the run finishes.</div>`;
   const charge = left.minutes > 0 ? `<div class="roi-be"><b>${esc(left.sites)} site(s)</b> not patched by the run
@@ -7115,7 +7120,7 @@ function roiV2Body(roi) {
         live site; the agents, the pod test and AAP do the rest.</div>
       ${roiBars(roi, s.manual, aut)}
       ${charge}
-      ${waiting}
+      ${past}${waiting}
     </div>
 
     <div class="roi-card">

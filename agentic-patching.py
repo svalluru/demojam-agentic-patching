@@ -3658,6 +3658,8 @@ def roi_appv2(st: dict, b: dict) -> dict | None:
                      'changes': changes, 'advisories': advisories, 'patched': patched, 'settled': settled,
                      'left_sites': left_sites, 'status': st.get('status'),
                      'mode': st.get('test_mode', 'swap'), 'simulated': bool(st.get('simulated')),
+                     # Set when the run on screen dispatched nothing and the newest finished run was priced instead.
+                     'from_history': bool(st.get('roi_from_history')), 'finished_at': st.get('finished_at'),
                      'event': {k: (st.get('event') or {}).get(k) for k in ('artifact', 'version')}},
         'manual': {'breakdown': manual, 'minutes': round(manual_min, 1), 'cost': cost(manual_min),
                    'cost_low': low, 'cost_high': high, 'lead_hours': b['lead_h']},
@@ -5284,7 +5286,7 @@ class Handler(BaseHTTPRequestHandler):
         except BackendUnavailable as exc:
             runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
         try:
-            report = roi_report(snapshot, overrides, runs, app, appv2.state())
+            report = roi_report(snapshot, overrides, runs, app, appv2.roi_state())
         except BackendUnavailable as exc:
             self._send(409, {'ok': False, 'error': str(exc.cause),
                              'detail': exc.fix})
