@@ -578,6 +578,12 @@ def refresh_versions() -> tuple[int, dict]:
                     else:
                         _BOM_UPDATES[key] = v
                     readings[app['app']].setdefault(h, {})[dep['artifact']] = v
+        if not readings[app['app']] and any(h in bodies for h in hosts):
+            # The servers answered but named none of the app's libraries: say so (with what they did say) rather
+            # than return an empty reading that looks like success.
+            said = next((bodies[h] for h in hosts if h in bodies), {})
+            errors.append(f"{app['app']}: /health answered but named none of its libraries ({str(said)[:160]}); "
+                          'try again in a minute')
     _ESTATE_CACHE.clear()
     try:
         _estate_file().unlink()

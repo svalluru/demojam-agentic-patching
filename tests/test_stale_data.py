@@ -213,6 +213,15 @@ class RefreshVersionsLive(unittest.TestCase):
         self.assertNotIn('workflow-engine|org.springframework:spring-webmvc', appv2._BOM_UPDATES)
         self.assertTrue(any(c.endswith('?format=json') for c in self.calls))
 
+    def test_an_answer_naming_no_library_is_reported(self):
+        real = appv2.H.aap_call
+        appv2.H.aap_call = staticmethod(lambda path, method='GET', body=None:
+                                        {'content': 'node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{}}\n'}
+                                        if path.endswith('/stdout/?format=json') else real(path, method, body))
+        code, body = appv2.refresh_versions()
+        self.assertEqual(code, 200)
+        self.assertTrue(any('named none of its libraries' in e for e in body['errors']), body['errors'])
+
     def test_a_refused_command_does_not_poll_a_missing_id(self):
         real = appv2.H.aap_call
         appv2.H.aap_call = staticmethod(lambda path, method='GET', body=None:
