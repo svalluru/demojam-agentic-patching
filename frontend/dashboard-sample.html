@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations dashboard (sample) · Agentic Patching</title>
+<!--
+  SAMPLE. A mock-up of an operations dashboard for the console: what needs a person now, alerts, critical exposure,
+  incoming fixes, runs in flight, platform health. Self-contained (no network calls); the data in SAMPLE below
+  mirrors the lab on 2026-11-18. Each panel names the console endpoint that would feed it live.
+  Not linked from the console yet.
+-->
+<style>
+  :root {
+    /* The console's tokens (frontend/index.html :root). */
+    --bg:#ffffff; --panel:#ffffff; --surface:#f6f6f7; --text:#0b0b0c; --muted:#70707a; --border:#e7e7ea;
+    --red:#cc0000; --amber:#9a6300; --blue:#0066cc; --green:#1e7d32;
+    --tint-r:rgba(204,0,0,.07); --tint-a:rgba(154,99,0,.09); --tint-b:rgba(0,102,204,.07); --tint-n:rgba(0,0,0,.05);
+    --sh-1:0 1px 2px rgba(11,11,12,.05);
+    --sh-2:0 1px 2px rgba(11,11,12,.05), 0 10px 26px -14px rgba(11,11,12,.22);
+    --r-sm:9px; --r:12px; --r-lg:16px;
+    --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    /* Chart series (validated: tools dataviz validate_palette, light, all checks pass). */
+    --series-1:#2a78d6;   /* patched · fixable now */
+    --series-2:#eb6834;   /* rolled back · no fix yet */
+    --grid:#ececef;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Red Hat Text", sans-serif;
+         color:var(--text); background:var(--surface); }
+  header { display:flex; align-items:center; gap:14px; padding:16px 28px; background:var(--bg);
+           border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:18px; margin:0; letter-spacing:-.01em; }
+  .badge { font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; padding:3px 8px;
+           border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .badge.live { color:var(--red); border-color:rgba(204,0,0,.35); background:var(--tint-r); }
+  .badge.sample { color:var(--amber); border-color:rgba(154,99,0,.35); background:var(--tint-a); }
+  header .asof { margin-left:auto; color:var(--muted); font-size:12px; }
+  main { padding:22px 28px 40px; max-width:1440px; margin:0 auto; display:grid; grid-template-columns:minmax(0, 1fr); gap:18px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--sh-1);
+           padding:16px 18px; min-width:0; }
+  .panel h2 { font-size:13px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
+              display:flex; align-items:center; gap:8px; }
+  .panel h2 .count { color:var(--text); background:var(--tint-n); border-radius:999px; padding:1px 8px;
+                     font-size:12px; letter-spacing:0; }
+  .src { margin-top:12px; font:11px var(--mono); color:var(--muted); }
+  .src::before { content:"live source · "; font-family:inherit; }
+  .muted { color:var(--muted); }
+  .mono { font-family:var(--mono); font-size:12.5px; }
+
+  /* 1 · Needs you now */
+  .now { border-color:rgba(154,99,0,.35); background:linear-gradient(0deg, var(--panel), var(--panel)),
+         var(--tint-a); }
+  .now h2 { color:var(--amber); }
+  .gates { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(290px, 100%), 1fr)); gap:12px; }
+  .gate { border:1px solid var(--border); border-radius:var(--r); padding:12px 14px; background:var(--bg);
+          display:grid; gap:6px; position:relative; }
+  .gate.waiting { border-left:4px solid var(--amber); }
+  .gate.stale { border-left:4px solid var(--muted); background:var(--surface); }
+  .gate .what { font-weight:600; }
+  .gate .meta { font-size:12.5px; color:var(--muted); }
+  .gate .ttl { font-size:12px; }
+  .bar { height:5px; border-radius:3px; background:var(--tint-n); overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--amber); border-radius:3px; }
+  .gate.stale .bar > i { background:var(--muted); }
+  .actions { display:flex; gap:8px; margin-top:4px; }
+  .btn { font:inherit; font-size:12.5px; font-weight:600; border-radius:8px; padding:5px 12px; cursor:pointer;
+         border:1px solid var(--border); background:var(--bg); color:var(--text); }
+  .btn.approve { background:var(--text); color:#fff; border-color:var(--text); }
+  .btn:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(11,11,12,.15); }
+
+  /* 2 · KPI tiles */
+  .kpis { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:12px; }
+  .kpi { background:var(--panel); border:1px solid var(--border); border-radius:var(--r-lg); padding:14px 16px;
+         box-shadow:var(--sh-1); }
+  .kpi .label { font-size:12px; color:var(--muted); }
+  .kpi .value { font-size:30px; font-weight:650; letter-spacing:-.02em; margin:2px 0; font-variant-numeric:tabular-nums; }
+  .kpi .delta { font-size:12px; color:var(--muted); }
+  .kpi.act { border-color:rgba(204,0,0,.3); }
+  .kpi.act .value { color:var(--red); }
+
+  .grid2 { display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(0, 1fr); gap:18px; align-items:start; }
+  .col { display:grid; gap:18px; min-width:0; }
+
+  /* Status chips: icon + label, never colour alone */
+  .st { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:2px 8px;
+        border-radius:999px; white-space:nowrap; }
+  .st.crit { color:var(--red); background:var(--tint-r); }
+  .st.warn { color:var(--amber); background:var(--tint-a); }
+  .st.info { color:var(--blue); background:var(--tint-b); }
+  .st.ok   { color:var(--green); background:rgba(30,125,50,.08); }
+  .st.off  { color:var(--muted); background:var(--tint-n); }
+
+  /* 3 · Alerts */
+  .feed { list-style:none; margin:0; padding:0; display:grid; }
+  .feed li { display:grid; grid-template-columns:86px 1fr auto; gap:10px; align-items:start; padding:9px 0;
+             border-top:1px solid var(--border); }
+  .feed li:first-child { border-top:0; }
+  .feed time { font:12px var(--mono); color:var(--muted); padding-top:2px; }
+  .feed .msg b { font-weight:600; }
+  .feed .from { font-size:11.5px; color:var(--muted); }
+  .filters { display:flex; gap:6px; margin:-4px 0 10px; flex-wrap:wrap; }
+  .chip { font:inherit; font-size:12px; border:1px solid var(--border); background:var(--bg); border-radius:999px;
+          padding:3px 10px; cursor:pointer; color:var(--muted); }
+  .chip[aria-pressed="true"] { color:var(--text); border-color:var(--text); }
+
+  /* 6 · Runs in flight */
+  .run { padding:10px 0; border-top:1px solid var(--border); }
+  .run:first-of-type { border-top:0; padding-top:0; }
+  .run .head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .run .head b { font-weight:600; }
+  .stages { display:grid; grid-template-columns:repeat(6, 1fr); gap:4px; margin-top:8px; }
+  .stage { font-size:11px; text-align:center; padding:5px 2px; border-radius:6px; background:var(--tint-n);
+           color:var(--muted); }
+  .stage.done { background:var(--tint-b); color:var(--blue); }
+  .stage.wait { background:var(--tint-a); color:var(--amber); font-weight:600; }
+  .stage.fail { background:var(--tint-r); color:var(--red); font-weight:600; }
+  .stage.skip { background:transparent; border:1px dashed var(--border); }
+
+  /* Tables (incoming fixes, health, windows) */
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-weight:600; font-size:11.5px; color:var(--muted); text-transform:uppercase;
+       letter-spacing:.04em; padding:0 8px 6px 0; }
+  td { padding:7px 8px 7px 0; border-top:1px solid var(--border); vertical-align:top; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td:first-child { white-space:nowrap; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:1px; }
+
+  /* Charts */
+  .chart { position:relative; }
+  .chart svg { display:block; width:100%; height:auto; overflow:visible; }
+  .chart .axis text { font-size:11px; fill:var(--muted); }
+  .chart .lbl { font-size:11.5px; fill:var(--text); }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin-bottom:8px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  .tip { position:absolute; pointer-events:none; background:var(--text); color:#fff; font-size:12px; padding:6px 9px;
+         border-radius:8px; box-shadow:var(--sh-2); white-space:nowrap; transform:translate(-50%, calc(-100% - 10px));
+         opacity:0; transition:opacity .12s; z-index:3; }
+  .tip.on { opacity:1; }
+  .viewtoggle { margin-left:auto; font:inherit; font-size:11.5px; text-transform:none; letter-spacing:0;
+                border:0; background:none; color:var(--blue); cursor:pointer; padding:0; }
+  .tableview { display:none; }
+  .show-table .tableview { display:table; }
+  .show-table .chart { display:none; }
+
+  .ideas { font-size:13px; }
+  .ideas ol { margin:0; padding-left:20px; display:grid; gap:4px; }
+
+  @media (max-width: 900px) {
+    main { padding:16px; }
+    .grid2 { grid-template-columns:1fr; }
+    .kpis { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    header { padding:12px 16px; flex-wrap:wrap; }
+    header .asof { margin-left:0; width:100%; }
+    main, .grid2, .col { min-width:0; }
+    table { display:block; overflow-x:auto; }
+    .show-table .tableview { display:block; }
+    .feed li { grid-template-columns:64px minmax(0, 1fr); }
+    .feed li > .st { grid-column:2; justify-self:start; }
+    .stages { grid-template-columns:repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Operations</h1>
+  <span class="badge live" id="mode">Live</span>
+  <span class="badge sample" title="Static sample data, no network calls">Sample</span>
+  <span class="asof" id="asof"></span>
+</header>
+
+<main>
+  <!-- 1 · Needs you now -->
+  <section class="panel now" aria-labelledby="h-now">
+    <h2 id="h-now">Needs you now <span class="count" id="now-count"></span></h2>
+    <div class="gates" id="gates"></div>
+    <div class="src">GET /api/v2/state (awaiting_approval) · GET /api/runs (paused, STALE_GATE_HOURS) → POST /api/v2/decide · /api/decide</div>
+  </section>
+
+  <!-- 2 · KPIs -->
+  <section class="kpis" id="kpis" aria-label="Key figures"></section>
+
+  <div class="grid2">
+    <div class="col">
+      <!-- 3 · Alerts -->
+      <section class="panel" aria-labelledby="h-alerts">
+        <h2 id="h-alerts">Alerts <span class="count" id="alert-count"></span></h2>
+        <div class="filters" id="alert-filters" role="group" aria-label="Filter alerts"></div>
+        <ul class="feed" id="feed"></ul>
+        <div class="src">poller events · AO executions · AAP jobs · PipelineRuns · Mattermost cards · preflight</div>
+      </section>
+
+      <!-- 6 · Runs in flight -->
+      <section class="panel" aria-labelledby="h-runs">
+        <h2 id="h-runs">Runs in flight</h2>
+        <div id="runs"></div>
+        <div class="src">GET /api/v2/state · GET /api/state · GET /api/v2/pipeline</div>
+      </section>
+
+      <!-- 8 · Patch velocity -->
+      <section class="panel" aria-labelledby="h-vel" id="vel-panel">
+        <h2 id="h-vel">Patch velocity · last 14 days
+          <button class="viewtoggle" data-target="vel-panel">Table view</button></h2>
+        <div class="legend"><span><i style="background:var(--series-1)"></i>Sites patched</span>
+          <span><i style="background:var(--series-2)"></i>Sites rolled back</span></div>
+        <div class="chart" id="vel"></div>
+        <table class="tableview" id="vel-table"></table>
+        <div class="src">GET /api/v2/runs · GET /api/runs (outcomes per day)</div>
+      </section>
+    </div>
+
+    <div class="col">
+      <!-- 4 · Critical exposure -->
+      <section class="panel" aria-labelledby="h-exp" id="exp-panel">
+        <h2 id="h-exp">Critical exposure by app
+          <button class="viewtoggle" data-target="exp-panel">Table view</button></h2>
+        <div class="legend"><span><i style="background:var(--series-1)"></i>Fixable now (Lightwell build)</span>
+          <span><i style="background:var(--series-2)"></i>No fix offered yet</span></div>
+        <div class="chart" id="exp"></div>
+        <table class="tableview" id="exp-table"></table>
+        <div class="src">GET /api/v2/estate · GET /api/cves (known exploited first)</div>
+      </section>
+
+      <!-- 5 · Incoming fixes -->
+      <section class="panel" aria-labelledby="h-in">
+        <h2 id="h-in">Incoming fixes <span class="count" id="in-count"></span></h2>
+        <table id="inbox"></table>
+        <div class="src">GET /api/v2/events (Nexus poller, CVEs from the Lightwell API)</div>
+      </section>
+
+      <!-- 7 · Platform health -->
+      <section class="panel" aria-labelledby="h-health">
+        <h2 id="h-health">Platform health</h2>
+        <table id="health"></table>
+        <div class="src">console preflight per backend · GET /api/mode</div>
+      </section>
+
+      <!-- 9 · Change windows -->
+      <section class="panel" aria-labelledby="h-win">
+        <h2 id="h-win">Change windows</h2>
+        <table id="windows"></table>
+        <div class="src">BOM context (window, timezone) · appv2._window_state</div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel ideas" aria-labelledby="h-ideas">
+    <h2 id="h-ideas">More ideas for later</h2>
+    <ol>
+      <li><b>Risk heatmap</b>: host × CVE cells coloured by the risk model's score, so the hot corner of the estate stands out.</li>
+      <li><b>Time to patch</b>: fix arrival → lab → live, per run, against a target (for example 72 h for a known-exploited CVE).</li>
+      <li><b>Approver load</b>: who decided what, how long gates waited, so approvals do not pile up on one person.</li>
+      <li><b>Drift</b>: sites whose /health jars disagree with the BOM (Re-read versions from hosts), flagged here instead of found by accident.</li>
+      <li><b>Notifications</b>: the "Needs you now" strip pushed to Mattermost when a gate passes half its stale time.</li>
+      <li><b>Wallboard mode</b>: one-key fullscreen with larger type, auto-refresh, and only panels 1, 2 and 3.</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+// Sample data: mirrors the lab on 2026-11-18. Times are minutes before NOW.
+const NOW = new Date('2026-11-18T10:30:00Z');
+const STALE_GATE_HOURS = 24;
+const SAMPLE = {
+  mode: 'live',
+  gates: [
+    { side: 'Applications', what: 'workflow-engine on edge-site-1', host: 'node2', fix: 'spring-webmvc 5.3.18.rhlw-00010',
+      cves: 9, exploited: 0, waitedMin: 412, detail: 'Pod test passed · lab patched and healthy · commit verified' },
+    { side: 'Infrastructure', what: 'pay-app-09.example.com', host: 'prod', fix: 'CVE-2024-6387 (openssh)',
+      cves: 1, exploited: 1, waitedMin: 95, detail: 'Known exploited · risk 87 · dev hosts patched' },
+    { side: 'Infrastructure', what: '4 executions from 2026-11-14', host: 'prod', fix: 'gates expired in AO',
+      cves: 0, exploited: 0, waitedMin: 5880, stale: true, detail: 'Their workflows are gone; nothing can answer them' },
+  ],
+  kpis: [
+    { label: 'Known-exploited CVEs open', value: 2, delta: '1 waiting at a gate', act: true },
+    { label: 'Sites patched · 7 days', value: 11, delta: '+4 on the week before' },
+    { label: 'Rollbacks · 7 days', value: 1, delta: 'edge-site-1, health window' },
+    { label: 'Fix arrival → patched', value: '6.8 h', delta: 'median, lab sites' },
+    { label: 'Hours saved · lifetime', value: 46, delta: 'real runs only (ROI)' },
+  ],
+  alerts: [
+    { min: 8,    sev: 'warn', from: 'AO',            text: '<b>workflow-engine on edge-site-1</b> waiting for approval (spring-webmvc, 9 CVEs)' },
+    { min: 11,   sev: 'ok',   from: 'AAP',           text: '<b>node1 patched</b>: healthy on spring-webmvc, spring-expression, spring-core rhlw-00010' },
+    { min: 13,   sev: 'ok',   from: 'Pipelines',     text: 'Pod test <b>app-v2-workflow-engine</b> passed (fetch ✓, build and health skipped on this lab)' },
+    { min: 34,   sev: 'info', from: 'Nexus poller',  text: '6 Lightwell builds arrived from the public demo repository' },
+    { min: 52,   sev: 'crit', from: 'Preflight',     text: 'Insights: Red Hat SSO answered 401. Check LIGHTSPEED_CLIENT_ID / _SECRET' },
+    { min: 95,   sev: 'warn', from: 'AO',            text: '<b>pay-app-09</b> waiting for approval: CVE-2024-6387, known exploited' },
+    { min: 190,  sev: 'crit', from: 'Mattermost',    text: 'Red card: <b>edge-site-1 rolled back</b>, health check gave up after 30 s' },
+    { min: 1440, sev: 'off',  from: 'Console',       text: '4 infra gates listed <b>stale</b> (older than 24 h)' },
+  ],
+  runs: [
+    { side: 'Applications', title: 'spring-webmvc 5.3.18.rhlw-00010', sub: 'workflow-engine · 2 of 3 sites',
+      stages: ['done', 'done', 'done', 'done', 'wait', 'pend'] },
+    { side: 'Infrastructure', title: 'CVE-2024-6387 (openssh)', sub: '5 hosts · 3 dev, 2 prod',
+      stages: ['done', 'done', 'skip', 'done', 'wait', 'pend'] },
+  ],
+  stageNames: ['Assess', 'Prepare', 'Test', 'Lab', 'Gate', 'Live'],
+  exposure: [   // CVEs per app: fixable now with a Lightwell build vs no fix offered
+    { app: 'workflow-engine', sev: 'CRITICAL', fixable: 17, open: 4, exploited: 0 },
+    { app: 'inventory-service', sev: 'HIGH', fixable: 3, open: 2, exploited: 0 },
+    { app: 'analytics-agent', sev: 'MEDIUM', fixable: 0, open: 3, exploited: 0, note: 'Python: not covered' },
+    { app: 'customer-portal', sev: 'LOW', fixable: 0, open: 1, exploited: 0, note: 'npm: not covered' },
+  ],
+  inbox: [
+    { pkg: 'spring-webmvc', build: '5.3.18.rhlw-00010', cves: 9, apps: 'workflow-engine', sites: 3, state: 'In a run' },
+    { pkg: 'spring-expression', build: '5.3.18.rhlw-00010', cves: 7, apps: 'workflow-engine', sites: 3, state: 'In a run' },
+    { pkg: 'spring-core', build: '5.3.18.rhlw-00010', cves: 1, apps: 'workflow-engine', sites: 3, state: 'In a run' },
+    { pkg: 'json', build: '20220320.0.0.rhlw-00003', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
+    { pkg: 'json-path', build: '2.8.0.rhlw-00001', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
+    { pkg: 'woodstox-core', build: '6.0.3.rhlw-00001', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
+  ],
+  health: [
+    { name: 'Automation Orchestrator', st: 'ok', note: '' },
+    { name: 'Ansible Automation Platform', st: 'ok', note: '' },
+    { name: 'Red Hat Insights', st: 'crit', note: 'SSO 401: check LIGHTSPEED_CLIENT_ID / _SECRET' },
+    { name: 'Lightwell API', st: 'ok', note: 'CVEs itemised' },
+    { name: 'Nexus (lightwell-demo-remediated)', st: 'ok', note: 'poller every 300 s' },
+    { name: 'Llama Stack · history stores', st: 'warn', note: 'app store rebuilt at startup' },
+    { name: 'vLLM', st: 'ok', note: '' },
+    { name: 'Risk model', st: 'ok', note: '' },
+    { name: 'OpenShift Pipelines', st: 'warn', note: 'build, health skipped (disk)' },
+    { name: 'Mattermost', st: 'ok', note: '' },
+  ],
+  windows: [
+    { site: 'lab', app: 'workflow-engine, inventory-service', open: true, text: 'any time' },
+    { site: 'edge-site-1', app: 'workflow-engine', open: false, text: 'opens in 2 h 30 m (00:00–04:00 America/Chicago)' },
+    { site: 'core-dc-1', app: 'workflow-engine, inventory-service', open: false, text: 'opens in 3 h 30 m (00:00–04:00 America/New_York)' },
+  ],
+  velocity: Array.from({ length: 14 }, (_, i) => ({
+    day: new Date(NOW.getTime() - (13 - i) * 86400000),
+    patched: [0, 1, 0, 2, 0, 0, 1, 3, 0, 1, 2, 0, 3, 1][i],
+    rolled: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0][i],
+  })),
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ago = m => m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} m` : `${Math.floor(m / 1440)} d`;
+const hhmm = m => new Date(NOW.getTime() - m * 60000).toISOString().slice(11, 16) + 'Z';
+const STATUS = {
+  crit: ['crit', '✕', 'Critical'], warn: ['warn', '!', 'Attention'], info: ['info', 'i', 'Info'],
+  ok: ['ok', '✓', 'OK'], off: ['off', '–', 'Stale'],
+};
+const chip = (k, label) => { const [c, icon, l] = STATUS[k]; return `<span class="st ${c}"><span aria-hidden="true">${icon}</span>${esc(label || l)}</span>`; };
+const SEV = { CRITICAL: 'crit', HIGH: 'warn', MEDIUM: 'info', LOW: 'off' };
+
+$('asof').textContent = 'as of ' + NOW.toISOString().slice(0, 16).replace('T', ' ') + ' UTC · refreshes every 30 s (live)';
+$('mode').textContent = SAMPLE.mode === 'live' ? 'Live' : 'Demo';
+
+// 1 · Needs you now: open gates first, oldest first; stale ones last.
+const gates = [...SAMPLE.gates].sort((a, b) => (Number(!!a.stale) - Number(!!b.stale)) || (b.waitedMin - a.waitedMin));
+$('now-count').textContent = gates.filter(g => !g.stale).length + ' waiting';
+$('gates').innerHTML = gates.map(g => {
+  const used = Math.min(1, g.waitedMin / (STALE_GATE_HOURS * 60));
+  const left = Math.max(0, STALE_GATE_HOURS * 60 - g.waitedMin);
+  return `<article class="gate ${g.stale ? 'stale' : 'waiting'}">
+    <div class="meta">${esc(g.side)} · ${g.stale ? chip('off', 'Stale') : chip('warn', 'Awaiting approval')}
+      ${g.exploited ? chip('crit', 'Known exploited') : ''}</div>
+    <div class="what">${esc(g.what)}</div>
+    <div class="meta"><span class="mono">${esc(g.fix)}</span>${g.cves ? ` · ${g.cves} CVE${g.cves > 1 ? 's' : ''}` : ''}</div>
+    <div class="meta">${esc(g.detail)}</div>
+    <div class="bar" role="img" aria-label="${Math.round(used * 100)}% of the stale-gate time used"><i style="width:${used * 100}%"></i></div>
+    <div class="ttl">${g.stale ? `Waited ${ago(g.waitedMin)}: past ${STALE_GATE_HOURS} h, listed stale`
+                               : `Waiting ${ago(g.waitedMin)} · stale in ${ago(left)}`}</div>
+    ${g.stale ? '<div class="actions"><button class="btn">Open runs</button></div>'
+              : '<div class="actions"><button class="btn approve">Approve</button><button class="btn">Reject</button><button class="btn">Open run</button></div>'}
+  </article>`;
+}).join('');
+
+// 2 · KPIs
+$('kpis').innerHTML = SAMPLE.kpis.map(k => `<div class="kpi ${k.act ? 'act' : ''}">
+  <div class="label">${esc(k.label)}</div><div class="value">${esc(k.value)}</div><div class="delta">${esc(k.delta)}</div></div>`).join('');
+
+// 3 · Alerts, with a severity filter
+let alertFilter = 'all';
+function renderAlerts() {
+  const rows = SAMPLE.alerts.filter(a => alertFilter === 'all' || a.sev === alertFilter);
+  $('alert-count').textContent = SAMPLE.alerts.filter(a => a.sev === 'crit' || a.sev === 'warn').length + ' to look at';
+  $('feed').innerHTML = rows.map(a => `<li><time>${hhmm(a.min)}<br>${ago(a.min)} ago</time>
+    <div><div class="msg">${a.text}</div><div class="from">${esc(a.from)}</div></div>${chip(a.sev)}</li>`).join('')
+    || '<li class="muted">Nothing at this level.</li>';
+}
+$('alert-filters').innerHTML = [['all', 'All'], ['crit', 'Critical'], ['warn', 'Attention'], ['ok', 'OK'], ['info', 'Info']]
+  .map(([k, l]) => `<button class="chip" data-f="${k}" aria-pressed="${k === 'all'}">${l}</button>`).join('');
+$('alert-filters').addEventListener('click', e => {
+  const b = e.target.closest('[data-f]'); if (!b) return;
+  alertFilter = b.dataset.f;
+  $('alert-filters').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+  renderAlerts();
+});
+renderAlerts();
+
+// 6 · Runs in flight
+const STAGE_LABEL = { done: 'done', wait: 'waiting', fail: 'failed', skip: 'skipped', pend: 'pending' };
+$('runs').innerHTML = SAMPLE.runs.map(r => `<div class="run">
+  <div class="head"><b>${esc(r.title)}</b><span class="muted">${esc(r.side)} · ${esc(r.sub)}</span></div>
+  <div class="stages">${r.stages.map((s, i) => `<div class="stage ${s}" title="${SAMPLE.stageNames[i]}: ${STAGE_LABEL[s]}">
+    ${s === 'done' ? '✓ ' : s === 'wait' ? '● ' : s === 'skip' ? '⊘ ' : ''}${SAMPLE.stageNames[i]}</div>`).join('')}</div></div>`).join('');
+
+// 5 · Incoming fixes
+$('in-count').textContent = SAMPLE.inbox.filter(f => f.state === 'New').length + ' new';
+$('inbox').innerHTML = `<tr><th>Package</th><th>Lightwell build</th><th class="num">CVEs</th><th>Apps · sites</th><th></th></tr>` +
+  SAMPLE.inbox.map(f => `<tr><td>${esc(f.pkg)}</td><td class="mono">${esc(f.build)}</td><td class="num">${f.cves}</td>
+    <td>${esc(f.apps)} · ${f.sites}</td><td>${f.state === 'New' ? chip('info', 'New') : chip('warn', f.state)}</td></tr>`).join('');
+
+// 7 · Platform health
+$('health').innerHTML = SAMPLE.health.map(h => `<tr><td>${chip(h.st, h.st === 'ok' ? 'Up' : h.st === 'warn' ? 'Degraded' : 'Down')}</td>
+  <td>${esc(h.name)}</td><td class="muted">${esc(h.note)}</td></tr>`).join('');
+
+// 9 · Change windows
+$('windows').innerHTML = `<tr><th>Site</th><th>Apps</th><th>Window</th></tr>` + SAMPLE.windows.map(w =>
+  `<tr><td>${esc(w.site)}</td><td class="muted">${esc(w.app)}</td><td>${w.open ? chip('ok', 'Open') : chip('off', 'Closed')} ${esc(w.text)}</td></tr>`).join('');
+
+// Shared tooltip
+function tooltip(container) {
+  const tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip);
+  return {
+    show(x, y, html) { tip.innerHTML = html; tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.classList.add('on'); },
+    hide() { tip.classList.remove('on'); },
+  };
+}
+
+// 4 · Critical exposure: horizontal stacked bars, fixable now + no fix yet, 2px surface gap between segments.
+(function exposure() {
+  const data = SAMPLE.exposure, W = 520, rowH = 34, left = 132, right = 44, top = 4;
+  const H = top + data.length * rowH + 22;
+  const max = Math.max(...data.map(d => d.fixable + d.open));
+  const x = v => (v / max) * (W - left - right);
+  const ticks = [0, 5, 10, 15, 20].filter(t => t <= max);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="CVEs per app, fixable now versus no fix offered">`;
+  svg += `<g class="axis">${ticks.map(t => `<line x1="${left + x(t)}" x2="${left + x(t)}" y1="${top}" y2="${H - 20}" stroke="var(--grid)"/>
+    <text x="${left + x(t)}" y="${H - 6}" text-anchor="middle">${t}</text>`).join('')}</g>`;
+  data.forEach((d, i) => {
+    const y = top + i * rowH + 8, h = 16, wf = x(d.fixable), wo = x(d.open), gap = d.fixable && d.open ? 2 : 0;
+    svg += `<text class="lbl" x="${left - 10}" y="${y + 12}" text-anchor="end">${esc(d.app)}</text>`;
+    if (d.fixable) svg += `<rect x="${left}" y="${y}" width="${wf}" height="${h}" rx="4" fill="var(--series-1)" data-i="${i}" data-k="fixable"/>`;
+    if (d.open) svg += `<rect x="${left + wf + gap}" y="${y}" width="${Math.max(0, wo - gap)}" height="${h}" rx="4" fill="var(--series-2)" data-i="${i}" data-k="open"/>`;
+    svg += `<text class="lbl" x="${left + wf + wo + 6}" y="${y + 12}">${d.fixable + d.open}</text>`;
+    svg += `<rect x="0" y="${y - 8}" width="${W}" height="${rowH}" fill="transparent" data-i="${i}" data-hit="1"/>`;
+  });
+  svg += '</svg>';
+  const box = $('exp'); box.innerHTML = svg;
+  const tip = tooltip(box);
+  box.addEventListener('mousemove', e => {
+    const t = e.target.closest('[data-i]'); if (!t) return tip.hide();
+    const d = data[+t.dataset.i], r = box.getBoundingClientRect();
+    tip.show(e.clientX - r.left, e.clientY - r.top,
+      `<b>${esc(d.app)}</b> · ${d.sev}<br>${d.fixable} fixable now · ${d.open} no fix yet${d.note ? '<br>' + esc(d.note) : ''}`);
+  });
+  box.addEventListener('mouseleave', () => tip.hide());
+  $('exp-table').innerHTML = `<tr><th>App</th><th>Severity</th><th class="num">Fixable now</th><th class="num">No fix yet</th></tr>` +
+    data.map(d => `<tr><td>${esc(d.app)}</td><td>${chip(SEV[d.sev], d.sev)}</td><td class="num">${d.fixable}</td><td class="num">${d.open}</td></tr>`).join('');
+})();
+
+// 8 · Patch velocity: grouped columns per day, 2px gap between the pair, hover per day.
+(function velocity() {
+  const data = SAMPLE.velocity, W = 560, H = 170, left = 26, bottom = 22, top = 6;
+  const max = Math.max(3, ...data.map(d => Math.max(d.patched, d.rolled)));
+  const band = (W - left) / data.length, bw = Math.min(10, (band - 8) / 2);
+  const y = v => top + (H - top - bottom) * (1 - v / max);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sites patched and rolled back per day, last 14 days">`;
+  svg += `<g class="axis">${[0, 1, 2, 3].map(t => `<line x1="${left}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/>
+    <text x="${left - 8}" y="${y(t) + 4}" text-anchor="end">${t}</text>`).join('')}</g>`;
+  data.forEach((d, i) => {
+    const cx = left + band * i + band / 2;
+    // Data-ends rounded, anchored to the baseline: a rect with rx, its bottom covered by a square strip.
+    const col = (v, x0, fill) => v ? `<rect x="${x0}" y="${y(v)}" width="${bw}" height="${y(0) - y(v)}" rx="3" fill="${fill}"/>
+      <rect x="${x0}" y="${Math.max(y(v), y(0) - 3)}" width="${bw}" height="${Math.min(3, y(0) - y(v))}" fill="${fill}"/>` : '';
+    svg += col(d.patched, cx - bw - 1, 'var(--series-1)') + col(d.rolled, cx + 1, 'var(--series-2)');
+    if (i % 2 === 1 || i === data.length - 1) svg += `<text class="axis" x="${cx}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${d.day.toISOString().slice(5, 10)}</text>`;
+    svg += `<rect x="${cx - band / 2}" y="${top}" width="${band}" height="${H - top - bottom}" fill="transparent" data-i="${i}"/>`;
+  });
+  svg += `<line x1="${left}" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="var(--border)"/></svg>`;
+  const box = $('vel'); box.innerHTML = svg;
+  const tip = tooltip(box);
+  box.addEventListener('mousemove', e => {
+    const t = e.target.closest('[data-i]'); if (!t) return tip.hide();
+    const d = data[+t.dataset.i], r = box.getBoundingClientRect();
+    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${d.day.toISOString().slice(0, 10)}</b><br>${d.patched} patched · ${d.rolled} rolled back`);
+  });
+  box.addEventListener('mouseleave', () => tip.hide());
+  $('vel-table').innerHTML = `<tr><th>Day</th><th class="num">Patched</th><th class="num">Rolled back</th></tr>` +
+    data.map(d => `<tr><td>${d.day.toISOString().slice(0, 10)}</td><td class="num">${d.patched}</td><td class="num">${d.rolled}</td></tr>`).join('');
+})();
+
+// Chart / table toggles
+document.querySelectorAll('.viewtoggle').forEach(b => b.addEventListener('click', () => {
+  const p = $(b.dataset.target), on = p.classList.toggle('show-table');
+  b.textContent = on ? 'Chart view' : 'Table view';
+}));
+</script>
+</body>
+</html>
