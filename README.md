@@ -846,8 +846,9 @@ apps are patched on servers that never were, and old hosts summarised as this la
 
 ### Dashboard
 
-The tiles icon in the header opens the operations dashboard (`/dashboard`, `frontend/dashboard.html`) in a new tab,
-on the side the console is on (`#infra` or `#apps`). It reads by flow: a platform health strip, headline numbers,
+The tiles icon in the header opens the operations dashboard in the console itself (a destination like the ROI
+report, `#dashboard`), on the side the toggle is on; while it is up the toggle switches its side, and the icon or
+Escape closes it. It reads by flow: a platform health strip, headline numbers,
 four lanes (**Decide → Running → Done today → Problems**), an exposure matrix (hosts × CVEs for Infrastructure, app
 sites × libraries for Applications, each cell marked patched, waiting, fix available or no fix) and a 24-hour activity
 ribbon. **It shows demo data for now** (marked *Demo data*; the page makes no API calls); each box names the console
