@@ -844,6 +844,15 @@ apps are patched on servers that never were, and old hosts summarised as this la
 | AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. PipelineRuns are never pruned (they are shown in the demo; `pipelines-setup/deploy.sh` sets `operator.tekton.dev/prune.skip`), so delete old ones by hand when you no longer need them; prune unused images on the node |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
+### Dashboard
+
+The tiles icon in the header opens the operations dashboard (`/dashboard`, `frontend/dashboard.html`) in a new tab,
+on the side the console is on (`#infra` or `#apps`). It reads by flow: a platform health strip, headline numbers,
+four lanes (**Decide → Running → Done today → Problems**), an exposure matrix (hosts × CVEs for Infrastructure, app
+sites × libraries for Applications, each cell marked patched, waiting, fix available or no fix) and a 24-hour activity
+ribbon. **It shows demo data for now** (marked *Demo data*; the page makes no API calls); each box names the console
+endpoint that would feed it live.
+
 ### Demo guide
 
 The book icon beside the gear opens the presenter's guide, with a tab per side: **Infrastructure** (seven beats) and

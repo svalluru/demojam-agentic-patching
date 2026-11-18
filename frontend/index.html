@@ -2326,6 +2326,14 @@
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
   <button class="pill" id="head-roi" hidden>Calculate ROI</button>
   <div class="head-tools">
+  <button class="icon-btn" id="open-dashboard" title="Dashboard (opens in a new tab)" aria-label="Dashboard">
+    <!-- four tiles, uneven: a dashboard at 18px. Drawn here like every other icon: no network offline -->
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="8" height="10" rx="1.5"></rect><rect x="13" y="3" width="8" height="6" rx="1.5"></rect>
+      <rect x="13" y="11" width="8" height="10" rx="1.5"></rect><rect x="3" y="15" width="8" height="6" rx="1.5"></rect>
+    </svg>
+  </button>
   <button class="icon-btn" id="open-guide" title="Presenter's guide" aria-label="Presenter's guide">
     <!-- open book, drawn here like every other icon: no network offline -->
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -9103,6 +9111,11 @@ function closeFlow() {
 }
 
 document.getElementById('open-flow').addEventListener('click', openFlow);
+// The dashboard opens on the side the console is on: Applications for the v2 pane, Infrastructure otherwise.
+document.getElementById('open-dashboard').addEventListener('click', () => {
+  const pane = document.getElementById('patch-toggle')?.dataset.pane;
+  window.open('/dashboard' + (pane === 'appv2' ? '#apps' : '#infra'), '_blank', 'noopener');
+});
 document.getElementById('close-flow').addEventListener('click', closeFlow);
 document.getElementById('flow-scrim').addEventListener('click', e => {
   if (e.target.id === 'flow-scrim') closeFlow();           // click-outside only

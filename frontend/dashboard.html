@@ -3,22 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Control room (sample B) · Agentic Patching</title>
+<title>Dashboard · Agentic Patching</title>
 <!--
-  SAMPLE B: an alternative to dashboard-sample.html. A dark wallboard organised by flow rather than by panel:
-  a health strip, headline numbers, four lanes (Decide → Running → Done today → Problems), an exposure matrix
-  (hosts × CVEs for infra, apps × libraries for Applications) and a 24-hour activity ribbon.
-  #infra / #apps pick the side. Self-contained, no network calls; data mirrors the lab on 2026-11-18.
+  The operations dashboard, served by the console at /dashboard (header icon). Organised by flow: a platform
+  health strip, headline numbers, four lanes (Decide → Running → Done today → Problems), an exposure matrix
+  (hosts × CVEs for Infrastructure, app sites × libraries for Applications) and a 24-hour activity ribbon.
+  #infra / #apps pick the side. DEMO DATA: the SIDES object below mirrors the lab on 2026-11-18; the page makes no
+  network calls. Each box names the console endpoint that would feed it live.
 -->
 <style>
   :root {
-    color-scheme: dark;
-    --page:#111110; --surface:#1a1a19; --raised:#222220; --line:#2e2e2b;
-    --text:#f0efec; --text-2:#c3c2b7; --muted:#8d8c84;
+    color-scheme: light;
+    /* The console's light tokens (frontend/index.html :root). */
+    --page:#f6f6f7; --surface:#ffffff; --raised:#f9f9fa; --line:#e7e7ea;
+    --text:#0b0b0c; --text-2:#45454c; --muted:#70707a;
+    --amber:#9a6300; --red:#cc0000; --green-ink:#1e7d32;
+    --sh-1:0 1px 2px rgba(11,11,12,.05);
     /* Status (reference palette, fixed): always with an icon and a label. */
     --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
-    /* Series, dark steps (validated: dark surface #1a1a19, all checks pass). */
-    --series-1:#3987e5; --series-2:#d95926;
+    /* Series, light steps (validated: light surface, all checks pass). */
+    --series-1:#2a78d6; --series-2:#eb6834;
     --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --r:12px;
   }
@@ -26,17 +30,19 @@
   body { margin:0; background:var(--page); color:var(--text);
          font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Red Hat Text", sans-serif; }
   header { display:flex; align-items:center; gap:16px; padding:14px 26px; border-bottom:1px solid var(--line);
-           position:sticky; top:0; background:rgba(17,17,16,.92); backdrop-filter:blur(8px); z-index:5; }
+           position:sticky; top:0; background:rgba(255,255,255,.94); backdrop-filter:blur(8px); z-index:5; }
   header h1 { margin:0; font-size:17px; letter-spacing:.02em; }
   header h1 span { color:var(--muted); font-weight:500; }
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:10px; padding:3px; gap:2px; }
   .seg button { font:inherit; font-size:13px; font-weight:600; border:0; background:none; color:var(--muted);
                 padding:5px 14px; border-radius:7px; cursor:pointer; }
-  .seg button[aria-selected="true"] { background:var(--raised); color:var(--text); }
+  .seg button[aria-selected="true"] { background:var(--text); color:#fff; }
   .clock { margin-left:auto; font:13px var(--mono); color:var(--text-2); }
   .tag { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px;
          border-radius:6px; border:1px solid var(--line); color:var(--text-2); }
-  .tag.live { color:#ff8a8a; border-color:rgba(208,59,59,.55); }
+  .tag.demo { color:var(--amber); border-color:rgba(154,99,0,.4); background:rgba(154,99,0,.08); }
+  .back { font-size:13px; color:var(--text-2); text-decoration:none; }
+  .back:hover { color:var(--text); }
 
   main { padding:18px 26px 34px; display:grid; gap:16px; grid-template-columns:minmax(0, 1fr); max-width:1600px; margin:0 auto; }
 
@@ -47,22 +53,23 @@
          background:var(--surface); border:1px solid var(--line); color:var(--text-2); }
   .svc i { font-style:normal; font-weight:700; width:14px; height:14px; border-radius:50%; display:inline-grid;
            place-items:center; font-size:9px; color:#111; }
-  .svc.ok i { background:var(--good); } .svc.warn i { background:var(--warn); } .svc.crit i { background:var(--crit); }
-  .svc.crit { border-color:rgba(208,59,59,.6); color:var(--text); }
+  .svc.ok i { background:var(--good); color:#fff; } .svc.warn i { background:var(--warn); } .svc.crit i { background:var(--crit); }
+  .svc.crit { border-color:rgba(204,0,0,.45); color:var(--red); background:rgba(204,0,0,.05); }
+  .svc.warn { border-color:rgba(154,99,0,.4); color:var(--amber); }
 
   /* Headline numbers */
   .heroes { display:grid; grid-template-columns:1.4fr repeat(4, 1fr); gap:12px; }
-  .hero { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; }
+  .hero { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; box-shadow:var(--sh-1); }
   .hero .k { font-size:12px; color:var(--muted); }
   .hero .v { font-size:38px; font-weight:700; letter-spacing:-.02em; line-height:1.1; margin-top:4px;
              font-variant-numeric:tabular-nums; }
   .hero .s { font-size:12px; color:var(--text-2); margin-top:2px; }
-  .hero.focus { border-color:rgba(250,178,25,.5); background:linear-gradient(180deg, rgba(250,178,25,.08), var(--surface) 70%); }
-  .hero.focus .v { color:var(--warn); }
+  .hero.focus { border-color:rgba(154,99,0,.45); background:linear-gradient(180deg, rgba(154,99,0,.07), var(--surface) 70%); }
+  .hero.focus .v { color:var(--amber); }
 
   /* Lanes */
   .lanes { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; align-items:start; }
-  .lane { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px; min-height:220px; }
+  .lane { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px; min-height:220px; box-shadow:var(--sh-1); }
   .lane h2 { margin:0 0 10px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-2);
              display:flex; align-items:center; gap:8px; }
   .lane h2 b { margin-left:auto; font:600 12px var(--mono); color:var(--text); background:var(--raised);
@@ -82,12 +89,12 @@
   .card .btns { display:flex; gap:6px; margin-top:4px; }
   .card button { font:inherit; font-size:12px; font-weight:600; border-radius:7px; padding:4px 10px; cursor:pointer;
                  border:1px solid var(--line); background:transparent; color:var(--text); }
-  .card button.go { background:var(--text); color:#111; border-color:var(--text); }
+  .card button.go { background:var(--text); color:#fff; border-color:var(--text); }
   .pill { display:inline-flex; gap:4px; align-items:center; font-size:11px; font-weight:700; padding:1px 7px;
           border-radius:999px; width:max-content; }
-  .pill.crit { background:rgba(208,59,59,.18); color:#ff9b9b; }
-  .pill.warn { background:rgba(250,178,25,.15); color:var(--warn); }
-  .pill.good { background:rgba(12,163,12,.16); color:#5fd35f; }
+  .pill.crit { background:rgba(204,0,0,.08); color:var(--red); }
+  .pill.warn { background:rgba(154,99,0,.1); color:var(--amber); }
+  .pill.good { background:rgba(30,125,50,.09); color:var(--green-ink); }
   .pill.off { background:var(--line); color:var(--text-2); }
   .steps { display:flex; gap:3px; margin-top:2px; }
   .steps span { flex:1; height:6px; border-radius:3px; background:var(--line); }
@@ -96,7 +103,7 @@
 
   /* Matrix + ribbon */
   .row2 { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr); gap:12px; align-items:start; }
-  .box { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; min-width:0; }
+  .box { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; min-width:0; box-shadow:var(--sh-1); }
   .box h2 { margin:0 0 4px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-2); }
   .box .sub { font-size:12px; color:var(--muted); margin-bottom:12px; }
   .matrix { overflow-x:auto; }
@@ -105,8 +112,8 @@
   .matrix th.col { writing-mode:vertical-rl; transform:rotate(180deg); text-align:left; height:120px; vertical-align:bottom; }
   .matrix th.row { text-align:right; }
   .cell { width:34px; height:30px; border-radius:6px; text-align:center; font-size:12px; font-weight:700; color:#111; cursor:default; }
-  .cell.none { background:transparent; border:1px dashed var(--line); color:transparent; }
-  .cell.good { background:var(--good); } .cell.warn { background:var(--warn); }
+  .cell.none { background:transparent; border:1px dashed #d6d6db; color:transparent; }
+  .cell.good { background:var(--good); color:#fff; } .cell.warn { background:var(--warn); }
   .cell.serious { background:var(--serious); } .cell.crit { background:var(--crit); color:#fff; }
   .key { display:flex; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--text-2); margin-top:10px; }
   .key span { display:inline-flex; align-items:center; gap:6px; }
@@ -119,7 +126,7 @@
   .events { list-style:none; margin:12px 0 0; padding:0; display:grid; gap:6px; font-size:12.5px; }
   .events li { display:grid; grid-template-columns:52px 1fr; gap:8px; color:var(--text-2); }
   .events time { font-family:var(--mono); color:var(--muted); }
-  .tip { position:fixed; pointer-events:none; background:var(--text); color:#111; font-size:12px; padding:6px 9px;
+  .tip { position:fixed; pointer-events:none; background:var(--text); color:#fff; font-size:12px; padding:6px 9px;
          border-radius:8px; white-space:nowrap; opacity:0; transition:opacity .1s; z-index:10;
          transform:translate(-50%, calc(-100% - 10px)); }
   .tip.on { opacity:1; }
@@ -133,12 +140,13 @@
 </head>
 <body>
 <header>
-  <h1>Control room <span>· sample B</span></h1>
+  <a class="back" href="/" title="Back to the console">← Console</a>
+  <h1>Dashboard</h1>
   <div class="seg" role="tablist" aria-label="Side">
     <button role="tab" data-side="infra">Infrastructure</button>
     <button role="tab" data-side="apps">Applications</button>
   </div>
-  <span class="tag live">Live</span>
+  <span class="tag demo" title="Sample data mirroring the lab; this page makes no network calls">Demo data</span>
   <span class="clock" id="clock"></span>
 </header>
 <main id="main"></main>
@@ -304,7 +312,7 @@ document.addEventListener('mousemove', e => {
   if (!t) return tip.classList.remove('on');
   tip.textContent = t.dataset.tip; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; tip.classList.add('on');
 });
-$('clock').textContent = NOW.toISOString().slice(0, 16).replace('T', ' ') + ' UTC · sample data';
+$('clock').textContent = 'as of ' + NOW.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 const sideFromHash = () => (location.hash === '#apps' ? 'apps' : 'infra');
 document.querySelector('.seg').addEventListener('click', e => { const b = e.target.closest('[data-side]'); if (b) location.hash = b.dataset.side; });
 window.addEventListener('hashchange', () => render(sideFromHash()));

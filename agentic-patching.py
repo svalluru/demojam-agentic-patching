@@ -5269,6 +5269,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             self._send_raw(200, 'text/html; charset=utf-8',
                            (FRONTEND_DIR / 'index.html').read_bytes())
+        elif path == '/dashboard':
+            # The operations dashboard (demo data for now; it makes no API calls of its own).
+            self._send_raw(200, 'text/html; charset=utf-8', (FRONTEND_DIR / 'dashboard.html').read_bytes())
         elif path == '/healthz':
             self._send(200, {'ok': True})
         elif path == '/api/v2/events':
