@@ -657,6 +657,24 @@
   }
   .go-patch:active:not(:disabled) { transform: translateY(0) scale(.985); }
   .go-patch:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+
+  /* The console's own confirm dialog: the browser's confirm() box is unstyled, titled with the host name, and looks
+     like something other than this page asking. Same panel, border and buttons as the rest of the console. */
+  dialog.ap-dialog {
+    border: 1px solid var(--border); border-radius: 14px; padding: 0; color: var(--text); background: var(--panel);
+    width: min(460px, calc(100% - 32px)); box-shadow: 0 24px 60px rgba(11, 11, 12, .22), 0 2px 8px rgba(11, 11, 12, .08);
+  }
+  dialog.ap-dialog::backdrop { background: rgba(11, 11, 12, .38); backdrop-filter: blur(2px); }
+  dialog.ap-dialog[open] { animation: ap-dialog-in .16s ease-out; }
+  @keyframes ap-dialog-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+  .ap-dialog .ap-dlg-body { padding: 22px 24px 8px; }
+  .ap-dialog h3 { margin: 0 0 10px; font-size: calc(17px * var(--ts)); font-weight: 700; display: flex; gap: 10px; align-items: center; }
+  .ap-dialog h3 .ap-dlg-mark { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center;
+    background: var(--tint-r); color: var(--red); font-size: 15px; font-weight: 800; }
+  .ap-dialog p { margin: 0 0 8px; color: var(--muted); line-height: 1.5; font-size: calc(13.5px * var(--ts)); }
+  .ap-dialog p strong { color: var(--text); }
+  .ap-dialog .ap-dlg-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px 20px; }
+  .ap-dialog .ap-dlg-actions .go-patch { padding: 9px 18px; }
   /* Queuing hosts at the approval gate patches nothing, and that difference
      is the honest part of the label, so it still shows — but as weight
      rather than hue. Red now means "this is a button" everywhere on the
@@ -4536,9 +4554,16 @@ document.getElementById('v2-go').addEventListener('click', ev => {
   const btn = ev.currentTarget;
   if (!btn.dataset.act) return;
   if (btn.dataset.act === 'cancel') {
-    if (!confirm('Cancel this run?\n\nThe console stops the AO executions, any App Patch v2 job still running in AAP, and the pod tests, then checks each site the playbook may have reached and tells you if anything was left half done.')) return;
-    btn.disabled = true; btn.textContent = 'Cancelling…';
-    v2Act('/api/v2/cancel', {});
+    apConfirm({
+      title: 'Cancel this run?',
+      body: `<p>The console stops the AO executions, any App Patch v2 job still running in AAP, and the pod tests.</p>
+        <p>Then it checks each site the playbook may have reached and tells you <strong>if anything was left half
+        done</strong>.</p>`,
+      ok: 'Cancel run', cancel: 'Keep running' }).then(yes => {
+        if (!yes) return;
+        btn.disabled = true; btn.textContent = 'Cancelling…';
+        v2Act('/api/v2/cancel', {});
+      });
     return;
   }
   btn.disabled = true;
@@ -4561,15 +4586,45 @@ document.getElementById('v2-views').addEventListener('click', async ev => {
   v2.view = want === 'inbox' && (v2.state || {}).event && (v2.state.status || 'idle') !== 'idle' ? 'run' : want;
   await v2Load();
 });
+// apConfirm({title, body, ok, cancel}) -> Promise<boolean>; apNotice({title, body}) -> Promise. The console's own
+// dialog instead of confirm()/alert(): Esc and a click on the backdrop mean "keep" (false), and focus starts on the
+// safe button, so a stray Enter never confirms. body is HTML the caller builds from trusted text (esc() user data).
+function apDialog({ title, body, ok, cancel, mark = '!' }) {
+  return new Promise(resolve => {
+    const d = document.createElement('dialog');
+    d.className = 'ap-dialog';
+    d.innerHTML = `<div class="ap-dlg-body"><h3><span class="ap-dlg-mark">${mark}</span>${title}</h3>${body}</div>
+      <div class="ap-dlg-actions">${cancel ? `<button class="pill" data-ans="0">${cancel}</button>` : ''}
+        <button class="go-patch" data-ans="1">${ok}</button></div>`;
+    const done = v => { d.close(); d.remove(); resolve(v); };
+    d.addEventListener('click', e => {
+      const b = e.target.closest('[data-ans]');
+      if (b) done(b.dataset.ans === '1');
+      else if (e.target === d) done(false);              // the backdrop
+    });
+    d.addEventListener('cancel', e => { e.preventDefault(); done(false); });   // Esc
+    document.body.appendChild(d);
+    d.showModal();
+    (d.querySelector('[data-ans="0"]') || d.querySelector('[data-ans="1"]')).focus();
+  });
+}
+const apConfirm = o => apDialog(o);
+const apNotice = o => apDialog({ ok: 'OK', mark: 'i', ...o });
+
 document.getElementById('v2-discard').addEventListener('click', async ev => {
   const btn = ev.currentTarget;
-  if (!confirm('Cancel this run?\n\nNothing has been sent to any site yet, so nothing is undone: the console just forgets this assessment and goes back to Incoming fixes. You can assess the same fix again at any time.')) return;
+  const ok = await apConfirm({
+    title: 'Cancel this run?',
+    body: `<p>Nothing has been sent to any site yet, so <strong>nothing is undone</strong>: the console forgets this
+      assessment and goes back to Incoming fixes.</p><p>You can assess the same fix again at any time.</p>`,
+    ok: 'Cancel run', cancel: 'Keep it' });
+  if (!ok) return;
   btn.disabled = true;
   try {
     await v2Fetch('/api/v2/discard', {});
     v2.view = 'inbox';
   } catch (e) {
-    alert('Could not cancel: ' + e.message);
+    apNotice({ title: 'Could not cancel the run', body: `<p>${esc(e.message)}</p>` });
   } finally {
     btn.disabled = false;
     v2Load();
