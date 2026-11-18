@@ -80,5 +80,42 @@ class AssessGuard(unittest.TestCase):
             self.assertFalse(appv2.busy(), st)
 
 
+class DiscardBeforeDispatch(unittest.TestCase):
+    """Cancel on the run page before anything is dispatched: the run is forgotten, nothing is undone."""
+
+    def setUp(self):
+        self.saved = (dict(appv2._RUN), appv2._persist)
+        appv2._persist = lambda: None           # never write the real run file from a test
+
+    def tearDown(self):
+        run, appv2._persist = self.saved
+        appv2._RUN.clear(); appv2._RUN.update(run)
+
+    def put(self, **run):
+        appv2._RUN.clear(); appv2._RUN.update(run)
+
+    def test_an_assessed_or_prepared_run_is_dropped_at_once(self):
+        for status in ('assessed', 'generated', 'failed'):
+            self.put(status=status, run_id='r1', hosts=[{'site': 'lab', 'outcome': 'queued'}])
+            code, body = appv2.discard_run()
+            self.assertEqual((code, body['pending']), (200, False), status)
+            self.assertEqual(appv2.state().get('status'), 'idle')
+
+    def test_cancelled_while_assessing_it_is_dropped_when_the_step_finishes(self):
+        self.put(status='assessing', run_id='r1')
+        self.assertEqual(appv2.discard_run(), (200, {'ok': True, 'pending': True}))
+        self.assertTrue(appv2.busy())                        # the step is still running
+        self.assertIn('still stopping', appv2.start_assess('evt-x')[1]['error'])
+        appv2._set(status='assessed', impact={'targets': []})    # the step finishes
+        self.assertEqual(appv2.state().get('status'), 'idle')
+        self.assertNotIn('impact', appv2.state())
+
+    def test_a_dispatched_run_needs_cancel_run(self):
+        self.put(status='awaiting_approval', hosts=[{'site': 'edge', 'outcome': 'awaiting_approval'}])
+        code, body = appv2.discard_run()
+        self.assertEqual(code, 409)
+        self.assertIn('Cancel run', body['error'])
+
+
 if __name__ == '__main__':
     unittest.main()

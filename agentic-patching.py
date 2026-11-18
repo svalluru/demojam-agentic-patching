@@ -5738,6 +5738,9 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = 502, {'ok': False, 'error': str(exc)}
         elif path == '/api/v2/cancel':
             code, body = appv2.cancel_run()
+        elif path == '/api/v2/discard':
+            # Cancel before dispatch: forget the assessed or prepared run.
+            code, body = appv2.discard_run()
         elif path == '/api/v2/bom/refresh':
             # Re-read versions from hosts: what each app server actually runs, through AAP.
             code, body = appv2.refresh_versions()

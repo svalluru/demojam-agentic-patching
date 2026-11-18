@@ -3057,6 +3057,7 @@
         </div>
         <span class="head-sep"></span>
         <button class="pill" id="v2-back" hidden>&larr; Back</button>
+        <button class="pill" id="v2-discard" hidden title="Cancel this run before anything is sent to a site, and go back to Incoming fixes">Cancel</button>
         <button class="pill icon-pill" id="v2-refresh" title="Refresh: reload this view" aria-label="Refresh"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
         <button class="go-patch" id="v2-go" hidden></button>
       </div>
@@ -3808,7 +3809,7 @@ async function v2Load() {
     const [ev, st] = await Promise.all([v2Fetch('/api/v2/events'), v2Fetch('/api/v2/state')]);
     v2.events = ev.events || [];
     v2.state = st;
-    if (v2.view === 'inbox' && V2_BUSY.includes(st.status)) v2.view = 'run';
+    if (v2.view === 'inbox' && V2_BUSY.includes(st.status) && !st.discard) v2.view = 'run';
     if (v2.view === 'catalog') await v2LoadCatalog();
     if (v2.view === 'runs') v2.runs = (await v2Fetch('/api/v2/runs')).runs || [];
     if (v2.view === 'estate') {
@@ -3984,6 +3985,8 @@ function v2Render() {
   document.querySelectorAll('#v2-views .pill').forEach(b => b.classList.toggle('active', b.dataset.v2View === tab));
   const back = document.getElementById('v2-back');
   const go = document.getElementById('v2-go');
+  const discard = document.getElementById('v2-discard');
+  discard.hidden = true;
   const title = document.getElementById('v2-title');
   const sub = document.getElementById('v2-sub');
   const body = document.getElementById('v2-body');
@@ -4031,6 +4034,7 @@ function v2Render() {
     return;
   }
   back.hidden = V2_BUSY.includes(s.status);
+  discard.hidden = !['assessing', 'assessed', 'generating', 'generated', 'failed'].includes(s.status) || !!s.discard;
   v2InitSel(s);                       // before the button label, which counts the ticked sites
   title.textContent = s.event.artifact;
   sub.innerHTML = `<span class="cve-id">${esc(s.event.version)}</span>`;
@@ -4556,6 +4560,20 @@ document.getElementById('v2-views').addEventListener('click', async ev => {
   const want = b.dataset.v2View;
   v2.view = want === 'inbox' && (v2.state || {}).event && (v2.state.status || 'idle') !== 'idle' ? 'run' : want;
   await v2Load();
+});
+document.getElementById('v2-discard').addEventListener('click', async ev => {
+  const btn = ev.currentTarget;
+  if (!confirm('Cancel this run?\n\nNothing has been sent to any site yet, so nothing is undone: the console just forgets this assessment and goes back to Incoming fixes. You can assess the same fix again at any time.')) return;
+  btn.disabled = true;
+  try {
+    await v2Fetch('/api/v2/discard', {});
+    v2.view = 'inbox';
+  } catch (e) {
+    alert('Could not cancel: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    v2Load();
+  }
 });
 document.getElementById('v2-back').addEventListener('click', () => {
   v2.view = v2.view === 'past' ? 'runs' : 'inbox';

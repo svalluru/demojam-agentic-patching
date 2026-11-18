@@ -592,7 +592,9 @@ that app's BOM as CycloneDX 1.5, `/api/v2/sbom?app=`, to upload to
 [Lightwell Lens](https://console.redhat.com/lightwell/lens), Red Hat's own
 coverage view, which has no public API to call; **Assess** refuses while the run on screen has a site waiting at the
 approval gate or still in flight, and says which, so a new assessment never takes those Approve / Reject buttons
-off the page), and **Runs** (every
+off the page; **Cancel** on the run page drops a run that has not been sent to any site yet, at any step before
+**Run**: assessing, assessed, preparing or prepared, and nothing is undone because nothing ran; a step still working
+finishes and is then dropped), and **Runs** (every
 finished run, newest first; open one to see it as the reviewer did). The left
 column draws the agent architecture, lit from the run's trace: which agent is
 calling which service, on OpenShift AI or Ansible Automation Platform.

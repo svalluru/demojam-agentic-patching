@@ -1772,8 +1772,38 @@ def _stage(key: str, value: str) -> None:
 
 def _set(**kw) -> None:
     with _LOCK:
-        _RUN.update(kw)
+        if _RUN.get('discard') and kw.get('status') in ('assessed', 'generated', 'failed'):
+            # Cancelled while assessing or preparing: the step has finished, so the run is dropped now instead of
+            # appearing with its result.
+            _RUN.clear()
+            _RUN['status'] = 'idle'
+        else:
+            _RUN.update(kw)
     _persist()
+
+
+DISCARDABLE = ('assessing', 'assessed', 'generating', 'generated', 'failed')
+
+
+def discard_run() -> tuple[int, dict]:
+    """Cancel before anything was dispatched: forget the run and go back to Incoming fixes. Nothing has reached AO or
+    a host at these steps, so there is nothing to undo (a dispatched run uses cancel_run, which stops AO). While a step
+    is still assessing or preparing, it is marked and dropped the moment that step finishes."""
+    with _LOCK:
+        status = _RUN.get('status', 'idle')
+        if status not in DISCARDABLE:
+            return 409, {'ok': False, 'error': (f'the run is {status}: use Cancel run' if status in CANCELLABLE
+                                                else f'nothing to cancel (the run is {status})')}
+        if status in ('assessing', 'generating'):
+            _RUN['discard'] = True
+            pending = True
+        else:
+            _RUN.clear()
+            _RUN['status'] = 'idle'
+            pending = False
+    _persist()
+    _trace('console', 'console', f"run cancelled by the operator before dispatch ({status})")
+    return 200, {'ok': True, 'pending': pending}
 
 
 def busy() -> bool:
@@ -1825,6 +1855,8 @@ def accept_webhook(body: bytes, signature: str) -> tuple[int, dict]:
 
 def start_assess(event_id: str) -> tuple[int, dict]:
     if busy():
+        if state().get('discard'):
+            return 409, {'ok': False, 'error': 'the cancelled run is still stopping; try again in a few seconds'}
         waiting = [h.get('site') or h.get('host') for h in (state().get('hosts') or []) if h.get('outcome') == 'awaiting_approval']
         return 409, {'ok': False, 'error': (f"the current run is waiting for approval on {', '.join(waiting)}: approve or "
                                             f"reject it first" if waiting else 'a v2 run is already in progress')}
