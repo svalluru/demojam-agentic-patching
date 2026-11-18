@@ -3,14 +3,14 @@
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
 App: workflow-engine   Site: core-dc-1   Server: node3   Environment: LIVE
-Change: mina-core 2.2.4 -> 2.2.5 (library swap, service restart)
+Change: spring-webmvc 5.3.16 -> 5.3.17 (library swap, service restart)
 Result: ROLLED BACK
 
 What happened:
 core-dc-1 manages 340 network elements. The health check gave up after 30 seconds while
-NETCONF sessions were still reconnecting; the jar was rolled back. A retry the next night with
+the REST API was still warming up and NETCONF sessions were reconnecting; the jar was rolled back. A retry the next night with
 a 60 second health window succeeded.
 
 Lessons:
 Only in the 00:00-04:00 network change window. Use a 60 second health window on core-dc-1.
-A compromise of the NETCONF library here reaches every network element it configures.
+The northbound REST API here is the path every order takes to 340 network elements.

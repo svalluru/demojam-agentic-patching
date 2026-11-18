@@ -3,7 +3,7 @@
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
 App: workflow-engine   Site: edge-site-1   Server: node2   Environment: LIVE
-Change: mina-core 2.2.4 -> 2.2.5 (library swap, service restart)
+Change: spring-core 5.3.16 -> 5.3.17 (library swap, service restart)
 Result: SUCCESS, DEGRADED FOR 12 MINUTES
 
 What happened:

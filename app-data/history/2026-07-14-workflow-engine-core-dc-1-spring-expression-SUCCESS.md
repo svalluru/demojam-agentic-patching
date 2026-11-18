@@ -3,7 +3,7 @@
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
 App: workflow-engine   Site: core-dc-1   Server: node3   Environment: LIVE
-Change: zookeeper 3.5.8 -> 3.5.9 (library swap, service restart)
+Change: spring-expression 5.3.17 -> 5.3.18 (library swap, service restart)
 Result: SUCCESS
 
 What happened:

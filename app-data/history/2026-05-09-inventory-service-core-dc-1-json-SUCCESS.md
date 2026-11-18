@@ -3,7 +3,7 @@
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
 App: inventory-service   Site: core-dc-1   Server: node3   Environment: LIVE
-Change: postgresql 42.3.2 -> 42.3.3 (JDBC driver swap, service restart)
+Change: org.json 20211205 -> 20220320 (library swap, service restart)
 Result: SUCCESS
 
 What happened:

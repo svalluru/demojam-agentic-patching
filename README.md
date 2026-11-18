@@ -599,10 +599,9 @@ finished run, newest first; open one to see it as the reviewer did). The left
 column draws the agent architecture, lit from the run's trace: which agent is
 calling which service, on OpenShift AI or Ansible Automation Platform.
 
-**Demo mode** stages all of it, with real Lightwell builds (`mina-core
-2.2.5.rhlw-00002`, `postgresql 42.3.3.rhlw-00006`, `zookeeper
-3.5.9.rhlw-00001`) and one live site, `workflow-engine` on edge-site-1,
-that fails its health check and is rolled back. Code: `appv2.py`; tests:
+**Demo mode** stages all of it, with real Lightwell builds from Lightwell's public demo repository
+(`spring-webmvc 5.3.18.rhlw-00010`, `json 20220320.0.0.rhlw-00003`, `json-path 2.8.0.rhlw-00001`) and one live
+site, `workflow-engine` on edge-site-1, that fails its health check and is rolled back. Code: `appv2.py`; tests:
 `python3 -m unittest discover -s tests`.
 
 #### osv.dev packages, several jars per change, and the test in a pod
@@ -657,14 +656,37 @@ start (the test-failed card, no site touched). The result says *simulated* in th
 site's status and the report. To turn the real test back on: uncomment the two tasks and their results, drop the
 annotation, and run `pipelines-setup/deploy.sh`.
 
-First verified end to end on 2026-11-09: zookeeper `3.5.9.rhlw-00001` plus inventory-service's upstream mina-core
-`2.1.13`. The pod test passed, and node1 is healthy on both jars; node3 was untouched.
+First verified end to end on 2026-11-09, with the libraries the estate ran then (a Lightwell zookeeper build plus an
+upstream mina-core): the pod test passed, and node1 was healthy on both jars; node3 was untouched.
 
 #### The telco scenario
 
-The estate is a telco's, and the story is *a NETCONF library fix reaches the
-network*: Lightwell publishes `mina-core 2.2.5.rhlw-00002` (CVE-2026-41635),
-the SSH library the NFV orchestrator uses to configure network elements.
+The estate is a telco's, and the story is *a fix for the orchestrator's northbound REST API reaches the network*:
+Lightwell publishes `spring-webmvc 5.3.18.rhlw-00010`, nine CVEs fixed on the Spring 5.3.18 the NFV orchestrator
+serves its REST API with (the order portal and service assurance call it), with no move to Spring 6. Its sibling
+builds, `spring-expression` and `spring-core 5.3.18.rhlw-00010`, show in the Change list beside it. On the IT side,
+inventory-service's JSON and XML parsers (`org.json`, `json-path`, `woodstox-core`) have Lightwell builds of the
+exact versions it runs.
+
+**Where the builds come from.** Every Lightwell build in the scenario is in Lightwell's **public demo repository**,
+`https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/` (in the Lightwell console under
+*Demo*, `java-remediated-demo`): six packages, readable without credentials, each jar with its
+`.provenance.sigstore.json`. Nexus proxies it as `lightwell-demo-remediated`. The CVEs each build fixes still come
+from the Lightwell API (`/advisories`), which needs the console's service account.
+
+| Package | Version the apps run | Lightwell build | CVEs fixed |
+|---|---|---|---|
+| org.springframework:spring-webmvc | 5.3.18 | 5.3.18.rhlw-00010 | 9 (CVE-2023-20860, CVE-2024-38816, CVE-2024-38819, …) |
+| org.springframework:spring-expression | 5.3.18 | 5.3.18.rhlw-00010 | 7 (CVE-2023-20861, CVE-2023-20863, CVE-2024-38808, …) |
+| org.springframework:spring-core | 5.3.18 | 5.3.18.rhlw-00010 | CVE-2025-41249 |
+| org.json:json | 20220320 | 20220320.0.0.rhlw-00003 | CVE-2022-45688 |
+| com.jayway.jsonpath:json-path | 2.8.0 | 2.8.0.rhlw-00001 | CVE-2023-51074 |
+| com.fasterxml.woodstox:woodstox-core | 6.0.3 | 6.0.3.rhlw-00001 | CVE-2022-40152 |
+
+org.json is published as `20220320` on Maven Central and numbered `20220320.0.0` by Lightwell. The console treats
+the two as the same version (an exact match, not a version change), asks Lightwell with the padded number, and keeps
+the jar names apart (`json-20220320.jar` is swapped for `json-20220320.0.0.rhlw-00003.jar`). Because org.json numbers
+releases by date, another release (20211205, 20231013) reads as a different major version: it is listed, not offered.
 
 | Term | Meaning |
 |---|---|
@@ -675,8 +697,8 @@ the SSH library the NFV orchestrator uses to configure network elements.
 
 | App | Domain | Libraries | Live sites |
 |---|---|---|---|
-| workflow-engine | NFVO / MANO | mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11 | node1 lab, node2 edge-site-1, node3 core-dc-1 |
-| inventory-service | OSS – Inventory | postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6 (left alone by the mina-core fix) | node1 lab, node3 core-dc-1 |
+| workflow-engine | NFVO / MANO | spring-webmvc, spring-expression, spring-core 5.3.18 | node1 lab, node2 edge-site-1, node3 core-dc-1 |
+| inventory-service | OSS – Inventory | org.json 20220320, json-path 2.8.0, woodstox-core 6.0.3 | node1 lab, node3 core-dc-1 |
 | analytics-agent | O-RAN Near-RT RIC | Python only: not covered by Lightwell yet | none |
 | customer-portal | Self-care API gateway | npm only: not covered | none |
 
@@ -718,11 +740,12 @@ On a fresh lab, in this order. Each step is idempotent.
 ```bash
 ./setup.sh --skip-aap --skip-ao --skip-smoke      # RAG (both history stores) + risk model, if not done yet
 ./ao-setup/create-ao-objects.sh                   # AO credential + integration for AAP
-./nexus-setup/deploy.sh                           # Nexus, the lightwell-remediated proxy (writes NEXUS_* to .env)
+./nexus-setup/deploy.sh                           # Nexus, the lightwell-demo-remediated proxy (writes NEXUS_* to .env)
 git push                                          # AAP reads the v2 setup playbooks from GitHub
 ./pipelines-setup/deploy.sh                       # OpenShift Pipelines, app-v2-test + app-v2-build, the AAP token
 ./aap-setup/create-app-v2-objects.py --deploy-sample --seed-repos
-#   projects, templates (Commit, Test in a Pod, Sync and Run, Seed App Repos), the apps on node1-3, the Gitea repos
+#   projects, templates (Commit, Test in a Pod, Sync and Run, Seed App Repos), the apps on node1-3 (jars the BOM does
+#   not list are removed from lib first), the Gitea repos. Then Re-read versions from hosts in the console
 DEF_FILE=ao-setup/app_v2_workflow.json WF_NAME="App Patch v2" ./ao-setup/create-ao-workflow.sh
 
 # The console, on your laptop, in live mode:
@@ -736,8 +759,9 @@ of polling); it is optional.
 
 | Key | Notes |
 |---|---|
-| `LIGHTWELL_CLIENT_ID` / `_SECRET` | Console service account in a User Access group with **Repositories viewer**. Without it the CVEs are not itemised |
-| `LIGHTWELL_REGISTRY_USER` / `_TOKEN` | Registry service account; Nexus proxies with it. **Single-quote the user**: it contains a `\|` |
+| `LIGHTWELL_CLIENT_ID` / `_SECRET` | Console service account in a User Access group with **Repositories viewer**. Needed for the demo repository too: the CVEs each build fixes and the catalog come from the API. Without it the CVEs are not itemised |
+| `LIGHTWELL_REGISTRY_USER` / `_TOKEN` | **Not needed for the public demo repository** (commented out in `.env.example`). Only for the full Lightwell repository: set `LIGHTWELL_REMOTE=https://packages.redhat.com/lightwell/java/remediated/` and `NEXUS_REPOSITORY=lightwell-remediated`, uncomment these, and rerun `nexus-setup/deploy.sh`; Nexus then proxies with the registry service account. Applications v1 (`create-app-patch-objects.py`) still needs them. **Single-quote the user**: it contains a `\|` |
+| `LIGHTWELL_REMOTE`, `NEXUS_REPOSITORY` | The Lightwell Maven repository Nexus proxies and the proxy's name. Defaults: the public demo repository, `lightwell-demo-remediated` |
 | `NEXUS_ACCEPT_EULA=true` | Nexus Community Edition serves nothing until its EULA is accepted; deploy.sh accepts it only with this set |
 | `TARGET_INVENTORY`, `MACHINE_CREDENTIAL` | The AAP inventory and machine credential for the app servers (`Workshop Inventory` / `Workshop Credential` on the current lab) |
 | `NEXUS_URL`, `NEXUS_ADMIN_PASSWORD`, `NEXUS_WEBHOOK_SECRET` | Written by `nexus-setup/deploy.sh` |
@@ -763,8 +787,12 @@ Then in the console: Applications → the event → **Assess** → review **1 ·
 **Swap libraries** or **Rebuild from source** → **Prepare remediation** → **Run on N of M** → the test in a pod runs
 (its tasks shown live) → the lab site (node1) is patched without a gate; edge-site-1 and core-dc-1 wait for
 **Approve**. On a server, `curl localhost:8090/health` (workflow-engine;
-8091 is inventory-service) names the jar each probed library is found in: mina-core
-reads `mina-core-2.2.5.rhlw-…jar` once patched.
+8091 is inventory-service) names the jar each probed library is found in: spring-webmvc
+reads `spring-webmvc-5.3.18.rhlw-00010.jar` once patched.
+
+To make the poller see a fix without waiting, or to replay one, `./nexus-setup/send-event.py org.springframework
+spring-webmvc 5.3.18.rhlw-00010` asks Nexus for the jar (so it caches it) and posts the signed webhook the console
+takes.
 
 First verified end to end on 2026-11-05: node1 patched and healthy on the
 Lightwell build, Prod held at the gate, provenance verified, commit
@@ -797,9 +825,10 @@ apps are patched on servers that never were, and old hosts summarised as this la
 
 | Symptom | Cause |
 |---|---|
-| Nexus answers 404 "Repository not found" for `lightwell-remediated` | Nexus restarted while `packages.redhat.com` did not resolve, so it refused to load the proxy (log: "Failed to restore repository … Proxy URL blocked: Failed to resolve host"). The webhook goes with it. `oc rollout restart deploy/nexus` once DNS works |
+| Nexus answers 404 "Repository not found" for `lightwell-demo-remediated` | Nexus restarted while `packages.redhat.com` did not resolve, so it refused to load the proxy (log: "Failed to restore repository … Proxy URL blocked: Failed to resolve host"). The webhook goes with it. `oc rollout restart deploy/nexus` once DNS works |
 | Nexus returns 403 for everything, even to admin | The Community Edition EULA is not accepted. Set `NEXUS_ACCEPT_EULA=true` and rerun `nexus-setup/deploy.sh` |
-| A setup script fails reading `.env` | `LIGHTWELL_REGISTRY_USER` is not single-quoted; the shell reads its `\|` as a pipe |
+| A setup script fails reading `.env` | `LIGHTWELL_REGISTRY_USER` (only set for the full repository) is not single-quoted; the shell reads its `\|` as a pipe |
+| `configure.py` stops: "LIGHTWELL_REGISTRY_USER and LIGHTWELL_REGISTRY_TOKEN must be set" | `LIGHTWELL_REMOTE` points at the full Lightwell repository, which needs the registry account. Unset it to use the public demo repository |
 | Live mode on a Mac: `CERTIFICATE_VERIFY_FAILED` | python.org Python has no CA bundle. Start the console with `SSL_CERT_FILE=/etc/ssl/cert.pem` |
 | Webhook answers 401 (a console in the cluster) | The console's `NEXUS_WEBHOOK_SECRET` differs from Nexus's; run `console-app-ocp-setup/deploy.sh --config-only` after `nexus-setup/deploy.sh` |
 | Webhook answers 503 (live) | `NEXUS_WEBHOOK_SECRET` is not set, so no webhook is trusted |
@@ -818,7 +847,7 @@ apps are patched on servers that never were, and old hosts summarised as this la
 ### Demo guide
 
 The book icon beside the gear opens the presenter's guide, with a tab per side: **Infrastructure** (seven beats) and
-**Applications · live** (a ten-minute act on the spring-security-web fix). Each keeps the thing to click and the line
+**Applications · live** (a ten-minute act on the spring-webmvc fix). Each keeps the thing to click and the line
 to say apart, the questions that actually get asked with answers, and a **Do not say** list of the claims this repo
 cannot back. The guide opens on the side the console is on, and the ⧉ button moves it into its own window for a
 second screen.
@@ -1207,7 +1236,7 @@ aap-setup/
   playbooks/                 cve_verify_patch.yml; app_v2_*.yml (commit, test in a pod,
                              seed repos, deploy the apps); files/ (runner, HealthServer,
                              apply_dependency_changes.py)
-nexus-setup/               Nexus with the lightwell-remediated and maven-central proxies
+nexus-setup/               Nexus with the lightwell-demo-remediated and maven-central proxies
 pipelines-setup/           OpenShift Pipelines: app-v2-test, app-v2-build, the AAP token
 lightwell/                 Applications v1's dependency scanner (osv.dev, Lightwell API)
 rag-setup/

@@ -3,7 +3,7 @@
 SYNTHETIC RECORD for the Applications v2 telco demo. Not a real change.
 
 App: workflow-engine   Site: edge-site-1   Server: node2   Environment: LIVE
-Change: spring-security-web 5.7.10 -> 5.7.11 (library swap, service restart)
+Change: spring-webmvc 5.3.17 -> 5.3.18 (library swap, service restart)
 Result: SUCCESS
 
 What happened:

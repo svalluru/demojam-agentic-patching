@@ -4396,7 +4396,8 @@ SETTINGS: tuple[Setting, ...] = (
             'The Nexus that proxies Lightwell. Written by nexus-setup/deploy.sh. '
             'Hosts download the build from here, never from packages.redhat.com.'),
     Setting('NEXUS_REPOSITORY', 'Applications', 'Nexus repository', 'str',
-            'lightwell-remediated', 'The Maven2 proxy of the Lightwell remediated tier.'),
+            'lightwell-demo-remediated', 'The Maven2 proxy of Lightwell builds: by default of Lightwell\'s public '
+            'demo repository (public-lightwell-demo/java/remediated). Written by nexus-setup/deploy.sh.'),
     Setting('NEXUS_WEBHOOK_SECRET', 'Applications', 'Webhook secret', 'str', '',
             'Nexus signs each webhook with it (X-Nexus-Webhook-Signature). In live '
             'mode a webhook is refused while this is unset.', secret=True),

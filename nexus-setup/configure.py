@@ -4,9 +4,12 @@ Configure a fresh (or existing) Nexus for Applications v2 through its REST API. 
 
   1. admin password: replaces the generated one (NEXUS_INITIAL_PASSWORD) with a new one, stored in .env as
      NEXUS_ADMIN_PASSWORD; an existing NEXUS_ADMIN_PASSWORD is used as is.
-  2. repository lightwell-remediated: Maven2 proxy of the Lightwell Network Java repository, Layout Policy Strict,
-     authenticated with the registry service account (Red Hat's "Configure Nexus to use the Lightwell Network
-     repository").
+  2. repository NEXUS_REPOSITORY (default lightwell-demo-remediated): Maven2 proxy of LIGHTWELL_REMOTE, Layout Policy
+     Strict, authenticated with the registry service account (Red Hat's "Configure Nexus to use the Lightwell Network
+     repository"). The default remote is Lightwell's public demo repository (public-lightwell-demo/java/remediated:
+     Spring 5.3.18, org.json, json-path and woodstox builds, readable without credentials). For the full Lightwell
+     catalog set LIGHTWELL_REMOTE=https://packages.redhat.com/lightwell/java/remediated/ and
+     NEXUS_REPOSITORY=lightwell-remediated.
   2b. the Community Edition EULA, accepted only with NEXUS_ACCEPT_EULA=true (it serves nothing until then).
   3. anonymous read, so the commit job and the hosts can fetch the build without a Nexus credential. This makes the
      cached Lightwell builds readable by anyone who can reach the Route: acceptable in a lab, not elsewhere.
@@ -28,8 +31,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REMOTE = 'https://packages.redhat.com/lightwell/java/remediated/'
-REPO = 'lightwell-remediated'
+DEMO_REMOTE = 'https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/'
+REMOTE = DEMO_REMOTE                 # replaced from LIGHTWELL_REMOTE in main()
+REPO = 'lightwell-demo-remediated'   # replaced from NEXUS_REPOSITORY in main()
 
 
 def read_env(path: Path) -> dict:
@@ -82,14 +86,21 @@ class Nexus:
             return exc.code, exc.read().decode('utf-8', 'replace')[:300]
 
 
+def is_demo_remote() -> bool:
+    return REMOTE.rstrip('/') == DEMO_REMOTE.rstrip('/')
+
+
 def proxy_payload(user: str, token: str) -> dict:
     return {
         'name': REPO, 'online': True,
         'storage': {'blobStoreName': 'default', 'strictContentTypeValidation': True},
         'proxy': {'remoteUrl': REMOTE, 'contentMaxAge': 1440, 'metadataMaxAge': 5},
         'negativeCache': {'enabled': True, 'timeToLive': 60},
+        # The full Lightwell repository needs the registry service account; the public demo repository needs none,
+        # and gets none even when .env still holds a token (they are per lab, and a stale one could be refused).
         'httpClient': {'blocked': False, 'autoBlock': True,
-                       'authentication': {'type': 'username', 'username': user, 'password': token}},
+                       **({'authentication': {'type': 'username', 'username': user, 'password': token}}
+                          if user and token and not is_demo_remote() else {})},
         'maven': {'versionPolicy': 'RELEASE', 'layoutPolicy': 'STRICT', 'contentDisposition': 'ATTACHMENT'},
     }
 
@@ -103,9 +114,13 @@ def main() -> None:
     base = env.get('NEXUS_URL') or sys.exit('NEXUS_URL is not set')
     verify = env.get('NEXUS_VERIFY_TLS', 'false').lower() in ('1', 'true', 'yes')
     user, token = env.get('LIGHTWELL_REGISTRY_USER', ''), env.get('LIGHTWELL_REGISTRY_TOKEN', '')
-    if not (user and token):
-        sys.exit('LIGHTWELL_REGISTRY_USER and LIGHTWELL_REGISTRY_TOKEN must be set in .env')
-    updates = {'NEXUS_URL': base}
+    global REMOTE, REPO
+    REMOTE = (env.get('LIGHTWELL_REMOTE') or os.environ.get('LIGHTWELL_REMOTE') or DEMO_REMOTE).rstrip('/') + '/'
+    REPO = env.get('NEXUS_REPOSITORY') or REPO
+    if not (user and token) and not is_demo_remote():
+        sys.exit('LIGHTWELL_REGISTRY_USER and LIGHTWELL_REGISTRY_TOKEN must be set in .env for ' + REMOTE
+                 + ' (only the public demo repository is readable without them)')
+    updates = {'NEXUS_URL': base, 'NEXUS_REPOSITORY': REPO}
 
     print('Admin password')
     password = env.get('NEXUS_ADMIN_PASSWORD', '')
@@ -159,7 +174,8 @@ def main() -> None:
         verb = 'created'
     if code not in (200, 201, 204):
         sys.exit(f'could not configure {REPO}: HTTP {code} {err}')
-    print(f'  {verb}: proxy of {REMOTE}, layout Strict, registry service account')
+    print(f'  {verb}: proxy of {REMOTE}, layout Strict, '
+          + ('registry service account' if user and token and not is_demo_remote() else 'no credentials (public repository)'))
 
     print('Anonymous read')
     code, err = nx.call('PUT', '/service/rest/v1/security/anonymous',
@@ -167,11 +183,11 @@ def main() -> None:
     print('  enabled' if code in (200, 204) else f'  could not enable: HTTP {code} {err}')
 
     print('Check the proxy reaches Lightwell')
-    probe = f'{base}/repository/{REPO}/org/apache/logging/log4j/log4j-core/maven-metadata.xml'
+    probe = f'{base}/repository/{REPO}/org/springframework/spring-core/maven-metadata.xml'
     try:
         with urllib.request.urlopen(probe, timeout=60, context=nx.ctx) as r:
             versions = re.findall(r'<version>([^<]+)</version>', r.read().decode('utf-8', 'replace'))
-        print(f'  log4j-core through Nexus: {", ".join(versions[-3:]) or "no versions"}')
+        print(f'  spring-core through Nexus: {", ".join(versions[-3:]) or "no versions"}')
     except Exception as exc:                          # the repository is still right; report and carry on
         print(f'  WARNING: {probe} -> {exc}. Check the registry token and that the cluster can reach packages.redhat.com')
 

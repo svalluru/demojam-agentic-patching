@@ -104,33 +104,42 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+# The Nexus proxy of Lightwell builds (nexus-setup/configure.py). Lightwell's public demo repository by default.
+DEFAULT_LW_REPO = 'lightwell-demo-remediated'
+
+
 # ---------------------------------------------------------------------------- demo data
 
-# A telco estate. The fixed builds and their CVEs are real Lightwell facts (registry and /advisories, checked
-# 2026-11-08); the apps, sites and reasoning are staged for the demo. Java-led, because that is where Lightwell's
-# catalog is (1,009 remediated Java packages against 7 Python and no npm): the Python and JS apps are in the estate
-# so the gaps show honestly.
+# A telco estate. The fixed builds and their CVEs are real Lightwell facts: the builds from Lightwell's public demo
+# repository (packages.redhat.com/lightwell/public-lightwell-demo/java/remediated), their CVEs from the Lightwell
+# advisories API (checked 2026-11-18). The apps, sites and reasoning are staged for the demo.
 DEMO_EVENTS = [
-    {'id': 'evt-mina-core', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
-     'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5.rhlw-00002',
-     'received_at': '2026-11-08T18:37:12Z', 'cves': ['CVE-2026-41635'], 'cves_source': 'lightwell',
-     'note': 'The SSH library behind NETCONF: what the orchestrator uses to configure network elements.'},
-    {'id': 'evt-postgresql', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
-     'group': 'org.postgresql', 'artifact': 'postgresql', 'version': '42.3.3.rhlw-00006',
-     'received_at': '2026-11-08T17:02:40Z',
-     'cves': ['CVE-2022-31197', 'CVE-2022-41946', 'CVE-2024-1597', 'CVE-2026-42198'], 'cves_source': 'lightwell',
-     'note': 'The JDBC driver under the inventory service; the fix includes a SQL injection.'},
-    {'id': 'evt-zookeeper', 'source': 'nexus', 'repository': 'lightwell-remediated', 'format': 'maven2',
-     'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9.rhlw-00001',
-     'received_at': '2026-11-08T16:21:05Z', 'cves': ['CVE-2023-44981'], 'cves_source': 'lightwell',
-     'note': 'Coordination for the orchestrator and inventory clusters.'},
+    {'id': 'evt-spring-webmvc', 'source': 'nexus', 'repository': DEFAULT_LW_REPO, 'format': 'maven2',
+     'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18.rhlw-00010',
+     'received_at': '2026-11-18T18:37:12Z',
+     'cves': ['CVE-2023-20860', 'CVE-2024-38816', 'CVE-2024-38819', 'CVE-2024-38828', 'CVE-2025-41242',
+              'CVE-2026-22735', 'CVE-2026-22737', 'CVE-2026-22741', 'CVE-2026-22745'], 'cves_source': 'lightwell',
+     'note': "Spring Web MVC serves the orchestrator's northbound REST API: the order portal and assurance call it."},
+    {'id': 'evt-json', 'source': 'nexus', 'repository': DEFAULT_LW_REPO, 'format': 'maven2',
+     'group': 'org.json', 'artifact': 'json', 'version': '20220320.0.0.rhlw-00003',
+     'received_at': '2026-11-18T17:02:40Z', 'cves': ['CVE-2022-45688'], 'cves_source': 'lightwell',
+     'note': 'The JSON parser the inventory service reads topology documents with; the CVE is a parser stack overflow.'},
+    {'id': 'evt-json-path', 'source': 'nexus', 'repository': DEFAULT_LW_REPO, 'format': 'maven2',
+     'group': 'com.jayway.jsonpath', 'artifact': 'json-path', 'version': '2.8.0.rhlw-00001',
+     'received_at': '2026-11-18T16:21:05Z', 'cves': ['CVE-2023-51074'], 'cves_source': 'lightwell',
+     'note': 'JsonPath queries over the topology model in the inventory service.'},
 ]
 
-# More real Lightwell builds the estate's libraries have (registry and /advisories, 2026-11-08). In the demo
+# More real Lightwell builds the estate's libraries have (the same demo repository and advisories API). In the demo
 # catalog and the estate view, not in the inbox: they have not "arrived" in Nexus in the staged story.
 DEMO_CATALOG_EXTRA = [
-    {'name': 'org.springframework.security:spring-security-web', 'build': '5.7.11.rhlw-00006', 'status': 'remediated',
-     'cves': ['CVE-2024-38821', 'CVE-2026-22732']},
+    {'name': 'org.springframework:spring-expression', 'build': '5.3.18.rhlw-00010', 'status': 'remediated',
+     'cves': ['CVE-2023-20860', 'CVE-2023-20861', 'CVE-2023-20863', 'CVE-2024-22243', 'CVE-2024-38808',
+              'CVE-2024-38816', 'CVE-2025-41249']},
+    {'name': 'org.springframework:spring-core', 'build': '5.3.18.rhlw-00010', 'status': 'remediated',
+     'cves': ['CVE-2025-41249']},
+    {'name': 'com.fasterxml.woodstox:woodstox-core', 'build': '6.0.3.rhlw-00001', 'status': 'remediated',
+     'cves': ['CVE-2022-40152']},
 ]
 
 # Telco domains, grouped as on Lightwell's "One implementation, whole network" slide.
@@ -162,7 +171,7 @@ DEMO_FAILING_KEY = 'workflow-engine|edge-site-1'
 # app history store (APP_VECTOR_DB_ID, app-data/history/) and has the LLM write one line per row.
 DEMO_REASONING = {
     # workflow-engine has a context block in its BOM, so its lines are 2-3 sentences; {window} is filled from the clock.
-    'workflow-engine|lab': 'No live network elements, and the lab restarts in 15 s: it goes first and proves the jar. '
+    'workflow-engine|lab': 'No live network elements, and the lab restarts in 15 s: it goes first and proves the jars. '
                            'Portal orders and closed-loop actions pointed at the lab only pause for seconds. {window}',
     'workflow-engine|edge-site-1': '120 NEs reconnect over NETCONF during the ~30 s restart; the service-order portal '
                                    'queues orders and assurance pauses closed-loop actions. inventory-service shares '
@@ -170,8 +179,8 @@ DEMO_REASONING = {
                                    'Drain sessions first. {window}',
     'workflow-engine|core-dc-1': '340 NEs reconnect over NETCONF; portal orders queue (214 last time, none lost) and '
                                  'closed-loop actions pause about 3 minutes. Confirm zookeeper quorum and '
-                                 'inventory-service health first; use a 60 s health window (the last mina-core change '
-                                 'here rolled back on 30 s). {window}',
+                                 'inventory-service health first; use a 60 s health window (the last Spring change '
+                                 'here rolled back on 30 s while the REST API warmed up). {window}',
     'inventory-service|lab': 'Lab copy with synthetic topology; safe at any time.',
     'inventory-service|core-dc-1': 'Feeds topology to the orchestrator; patch after the NFVO change has settled.',
 }
@@ -179,45 +188,40 @@ DEMO_REASONING = {
 # The estate view's priority and note per app, in demo mode. Live: the app history store plus the Lightwell
 # advisories, one LLM call for all apps.
 DEMO_ESTATE = {
-    'workflow-engine': ('CRITICAL', 'mina-core carries NETCONF to 340 network elements: a compromise here reaches '
-                          'every element it configures. Drain NETCONF sessions before the restart, and take the '
-                          'zookeeper fix in the same change so the orchestrator restarts once.'),
+    'workflow-engine': ('CRITICAL', "Spring Web MVC serves the orchestrator's northbound REST API, which the order portal "
+                          'and assurance drive: nine CVEs on the path every order takes. Take spring-expression and '
+                          'spring-core in the same change so the orchestrator restarts once.'),
     'analytics-agent': ('MEDIUM', 'Python only; Lightwell has no build for its libraries. Track the upstream fixes and keep the '
                  'xApp constrained by RIC platform policy until a fixed build exists.'),
-    'inventory-service': ('HIGH', 'Feeds network topology to the orchestrator. Patch after the NFVO change has settled, so '
-                      'the window never runs with both down. Its mina-core 2.1.6 is a different version and not '
-                      'touched by the mina-core fix.'),
+    'inventory-service': ('HIGH', 'Parses topology documents (JSON and XML) for the orchestrator; all three parser CVEs are '
+                      'denial of service from a crafted document. Patch after the NFVO change has settled, so the '
+                      'window never runs with both down.'),
     'customer-portal': ('LOW', "JavaScript; Lightwell builds aren't available for npm here. Customer-facing, so rely on "
                      'upstream npm updates and the WAF; no action from this console.'),
 }
 
 
-# The Reasoning line for a version change offered in Impact, in demo mode, per app.
-DEMO_VERSION_CHANGE = {
-    'inventory-service': 'Version change 2.1.6 → 2.2.5: the 2.2 API broke its SFTP export last time (2026-03-03). Leave '
-                         'it unticked unless the app team has re-tested; the osv.dev row offers upstream 2.1.13 instead.',
-}
+# The Reasoning line for a version change offered in Impact, in demo mode, per app. Every library in the estate is
+# on the exact version a Lightwell build fixes, so none is offered as a version change in this story.
+DEMO_VERSION_CHANGE: dict[str, str] = {}
 
 # What the reasoning says about each osv.dev package in demo mode (live: the app history store plus the LLM).
-# Keyed app|group:artifact. The advisories and fix versions themselves are real (osv.dev, 2026-11-09).
+# Keyed app|group:artifact. The Lightwell builds and their CVEs are real (Lightwell demo repository and advisories).
 DEMO_EXTRA_REASONING = {
-    'inventory-service|org.apache.mina:mina-core':
-        'Six critical deserialization CVEs and no Lightwell build at 2.1.6. Take upstream 2.1.13: it stays on the '
-        '2.1 line inventory-service pins for its SFTP export (the 2.2 API broke it last time), and it rides the same '
-        'restart as this fix.',
-    'workflow-engine|org.apache.mina:mina-core':
-        "Lightwell's 2.2.5.rhlw-00002 closes the NETCONF deserialization CVE: take it with zookeeper so the "
-        'orchestrator restarts once. Four more critical CVEs stay open until upstream 2.2.8, a version change.',
-    'workflow-engine|org.springframework.security:spring-security-web':
-        'Lightwell has 5.7.11.rhlw-00006 for two critical CVEs: same version, Red Hat provenance. Two moderate '
-        'ones stay open until a 6.x upgrade, which is the app team\'s change.',
-    'workflow-engine|org.apache.zookeeper:zookeeper':
-        'Lightwell has 3.5.9.rhlw-00001 for the SASL authorization bypass; same version, and the orchestrator is '
-        'restarting anyway, so take it in this window instead of booking a second one.',
-    'inventory-service|org.apache.zookeeper:zookeeper':
-        'Lightwell has 3.5.9.rhlw-00001; the last zookeeper change here was clean (2026-11-03). Same restart, no API risk.',
-    'inventory-service|org.postgresql:postgresql':
-        'Lightwell has 42.3.3.rhlw-00006 for all four CVEs, including SQL injection; same version, so no API risk.',
+    'workflow-engine|org.springframework:spring-expression':
+        "Lightwell's 5.3.18.rhlw-00010 closes seven CVEs in the SpEL engine behind the placement policies: same "
+        'version, Red Hat provenance. Take it with Web MVC so the orchestrator restarts once.',
+    'workflow-engine|org.springframework:spring-core':
+        'Lightwell has 5.3.18.rhlw-00010 for CVE-2025-41249; the same 5.3.18 every Spring jar here runs, so it keeps '
+        'the Spring jars on one build. Same restart, no API change.',
+    'inventory-service|com.fasterxml.woodstox:woodstox-core':
+        'Lightwell has 6.0.3.rhlw-00001 for the XML parser stack overflow (CVE-2022-40152): same version. The topology '
+        'feed parses XML from the network inventory, so take it with the JSON fixes in one restart.',
+    'inventory-service|org.json:json':
+        "Lightwell's 20220320.0.0.rhlw-00003 is the same release as the 20220320 the app runs, with the parser fix. "
+        'No API change, so it rides this restart.',
+    'inventory-service|com.jayway.jsonpath:json-path':
+        'Lightwell has 2.8.0.rhlw-00001 for CVE-2023-51074; same version, and the last change here was clean.',
 }
 
 
@@ -227,6 +231,39 @@ def upstream(version: str) -> str:
     """'2.24.3.rhlw-00004' -> '2.24.3'. A version with no Lightwell suffix is returned as is."""
     m = RHLW.match(version or '')
     return m.group('upstream') if m else (version or '')
+
+
+def _canon(version: str) -> str:
+    """The upstream part with trailing .0 groups dropped, for comparing: org.json's Maven Central release is 20220320
+    and Lightwell numbers its builds of it 20220320.0.0.rhlw-NNNNN, which is the same version."""
+    u = upstream(version)
+    return re.sub(r'(\.0)+$', '', u) if re.fullmatch(r'[0-9.]+', u) else u
+
+
+def vsame(a: str, b: str) -> bool:
+    """Same version: upstream parts equal after _canon, and the same Lightwell build if either is one."""
+    ma, mb = RHLW.match(a or ''), RHLW.match(b or '')
+    if bool(ma) != bool(mb):
+        return False
+    return _canon(a) == _canon(b) and (not ma or int(ma.group('build')) == int(mb.group('build')))
+
+
+def shown_from(event: dict, targets: list | None = None) -> str:
+    """The version a fix replaces, as the apps name it: the BOM's 20220320 rather than the build's 20220320.0.0."""
+    for t in targets or []:
+        if not t.get('version_change') and t.get('installed') and not is_lightwell(t['installed']):
+            return t['installed']
+    return upstream(event['version'])
+
+
+def lw_version(version: str) -> str:
+    """The version as Lightwell names it: a numeric upstream version padded to three parts (20220320 ->
+    20220320.0.0). Its API answers nothing for the short form."""
+    u = upstream(version)
+    parts = u.split('.')
+    if all(p.isdigit() for p in parts) and len(parts) < 3:
+        parts += ['0'] * (3 - len(parts))
+    return '.'.join(parts)
 
 
 def is_lightwell(version: str) -> bool:
@@ -329,7 +366,7 @@ def _versions(xml: str) -> list[str]:
 def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] | None = None) -> list[dict]:
     """One pass. fetch(url) -> bytes (raises on HTTP errors). Returns the builds requested this pass; adds them to seen."""
     base = env('NEXUS_URL').rstrip('/')
-    repo = env('NEXUS_REPOSITORY', 'lightwell-remediated')
+    repo = env('NEXUS_REPOSITORY', DEFAULT_LW_REPO)
     if not base:
         return []
     wanted: dict[tuple[str, str], set[str]] = {}
@@ -350,7 +387,8 @@ def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] |
         newest: dict[str, str] = {}
         for v in versions:
             m = RHLW.match(v)
-            if not m or m.group('upstream') not in installed:
+            # Matched on the upstream version, so a site already on an older build of it (-00002) hears of -00003.
+            if not m or not any(_canon(m.group('upstream')) == _canon(i) for i in installed):
                 continue
             current = newest.get(m.group('upstream'))
             if current is None or int(m.group('build')) > int(RHLW.match(current).group('build')):
@@ -452,8 +490,9 @@ def _parse_health_output(stdout: str) -> dict[str, dict]:
 
 
 def _jar_version(artifact: str, jar: str) -> str:
-    """'mina-core-2.2.5.rhlw-00002.jar' -> '2.2.5.rhlw-00002', or '' if the jar is not this artifact."""
-    if jar.startswith(artifact + '-') and jar.endswith('.jar'):
+    """'spring-webmvc-5.3.18.rhlw-00010.jar' -> '5.3.18.rhlw-00010', or '' if the jar is not this artifact."""
+    # The version must start with a digit: 'json' is a prefix of 'json-path-2.8.0.jar', which is not a json jar.
+    if jar.startswith(artifact + '-') and jar.endswith('.jar') and jar[len(artifact) + 1:len(artifact) + 2].isdigit():
         return jar[len(artifact) + 1:-len('.jar')]
     return ''
 
@@ -582,9 +621,18 @@ def impact(event: dict, apps: list[dict]) -> dict:
             # Per server: after a run that patched some sites of an app, each site is matched on its own version.
             for order, s in enumerate(app.get('servers', [])):
                 ver = site_version(dep, s['host'])
-                change = (ver != want and ver != event['version'] and _major(ver) == _major(want)
+                change = (not vsame(ver, want) and not vsame(ver, event['version']) and _major(ver) == _major(want)
                           and _vkey(ver) < _vkey(want))
-                if ver == want or change:
+                # A site on an older Lightwell build of the same version (-00002 when -00003 arrives): the same
+                # version, so an exact match, not a version change.
+                mv, me = RHLW.match(ver or ''), RHLW.match(event['version'])
+                older_build = bool(mv and me and _canon(ver) == _canon(want)
+                                   and int(mv.group('build')) < int(me.group('build')))
+                newer_build = bool(mv and me and _canon(ver) == _canon(want)
+                                   and int(mv.group('build')) > int(me.group('build')))
+                if older_build:
+                    change = False
+                if vsame(ver, want) or change or older_build:
                     targets.append({'key': f"{app['app']}|{s['host']}", 'domain': app.get('domain', ''), 'order': order,
                                     'site': s.get('site', s['host']),
                                     'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
@@ -593,8 +641,10 @@ def impact(event: dict, apps: list[dict]) -> dict:
                                     'health_url': app.get('health_url', ''), 'installed': ver,
                                     'repo': app.get('repo', ''),
                                     **({'version_change': True, 'to_version': want} if change else {})})
-                elif ver == event['version']:
+                elif vsame(ver, event['version']):
                     note(app['app'], ver, 'already on this build')
+                elif newer_build:
+                    note(app['app'], ver, f"already on a newer build than {event['version']}")
                 elif _major(ver) != _major(want):
                     note(app['app'], ver, f'major version {_major(ver)}; this build is for {want}, a code change away')
                 else:
@@ -611,7 +661,7 @@ def helpful_info(event: dict, imp: dict) -> tuple[str, str]:
     t = imp['targets']
     qa = [x for x in t if x['env'] == 'qa']
     prod = [x for x in t if x['env'] != 'qa']
-    pkg = f"{event['artifact']} {upstream(event['version'])}"
+    pkg = f"{event['artifact']} {shown_from(event, imp['targets'])}"
     if not t:
         return (f'No deployed app runs {pkg}, so nothing needs patching for this build. '
                 + (f"{len(imp['other'])} app(s) use another version of {event['artifact']}." if imp['other'] else ''),
@@ -908,7 +958,7 @@ def _lightwell_builds() -> dict[tuple[str, str, str], dict]:
 def _lightwell_builds_uncached() -> dict[tuple[str, str, str], dict]:
     out: dict[tuple[str, str, str], dict] = {}
     for r in (catalog('mine', 1, 1000).get('rows') or []):
-        key = (r['group'], r['artifact'], r['upstream'])
+        key = (r['group'], r['artifact'], _canon(r['upstream']))
         m = RHLW.match(r['build'])
         if not m or not r.get('cves'):
             continue
@@ -944,7 +994,7 @@ def _lightwell_newer(group: str, artifact: str, base: str) -> dict | None:
     """The nearest Lightwell build of a newer version on the same major line, with the CVEs it fixes."""
     try:
         cands = [b for b in lightwell_builds(group, artifact)
-                 if _major(b['version']) == _major(base) and _vkey(b['version']) > _vkey(base)]
+                 if _major(b['version']) == _major(base) and _vkey(_canon(b['version'])) > _vkey(_canon(base))]
     except Exception:
         return None
     if not cands:
@@ -1001,8 +1051,8 @@ def extras(event: dict, imp: dict, apps: list[dict]) -> dict:
         # The event's own library at the version it replaces: what is left open after it is information. On any
         # other version the build does not apply as is, so the library gets the usual options.
         mine = (dep['artifact'] == event['artifact'] and dep['group'] == event['group']
-                and upstream(dep['version']) == upstream(event['version']))
-        build = lw.get((dep['group'], dep['artifact'], base))
+                and _canon(dep['version']) == _canon(event['version']))
+        build = lw.get((dep['group'], dep['artifact'], _canon(base)))
         # What Lightwell fixes for this library: the event's own build, the build already installed, or another
         # Lightwell build of the same version.
         fixed = set(event.get('cves') or []) if mine else set()
@@ -1159,7 +1209,7 @@ def jar_name(artifact: str, version: str) -> str:
 def jar_url(event: dict) -> str:
     """Where the hosts fetch the build from: Nexus, never packages.redhat.com, so the registry token
     stays in one place and every host gets the copy Nexus already holds."""
-    return maven_url(event['group'], event['artifact'], event['version'], env('NEXUS_REPOSITORY', 'lightwell-remediated'))
+    return maven_url(event['group'], event['artifact'], event['version'], env('NEXUS_REPOSITORY', DEFAULT_LW_REPO))
 
 
 def nexus_check(event: dict) -> dict:
@@ -1169,7 +1219,7 @@ def nexus_check(event: dict) -> dict:
     if H.demo_mode() or not H.http_head or not env('NEXUS_URL'):
         return {'ok': True, 'skipped': True}
     url = jar_url(event)
-    repo = env('NEXUS_REPOSITORY', 'lightwell-remediated')
+    repo = env('NEXUS_REPOSITORY', DEFAULT_LW_REPO)
     try:
         status, body = H.http_head(url)
     except Exception as exc:
@@ -1190,12 +1240,12 @@ def nexus_check(event: dict) -> dict:
 
 
 def maven_url(group: str, artifact: str, version: str, repo: str) -> str:
-    """A jar in one of the Nexus repositories: lightwell-remediated for Lightwell builds, maven-central (the proxy
+    """A jar in one of the Nexus repositories: NEXUS_REPOSITORY (default lightwell-demo-remediated) for Lightwell builds, maven-central (the proxy
     Nexus ships with) for upstream ones. Without Nexus, upstream jars come from Maven Central itself."""
     base = env('NEXUS_URL', '').rstrip('/')
     path = f"{group.replace('.', '/')}/{artifact}/{version}/{jar_name(artifact, version)}"
     if not base:
-        return (f'https://repo1.maven.org/maven2/{path}' if repo != env('NEXUS_REPOSITORY', 'lightwell-remediated')
+        return (f'https://repo1.maven.org/maven2/{path}' if repo != env('NEXUS_REPOSITORY', DEFAULT_LW_REPO)
                 else f'https://nexus.example/repository/{repo}/{path}')
     return f'{base}/repository/{repo}/{path}'
 
@@ -1204,7 +1254,7 @@ def change_for_event(event: dict, target: dict) -> dict:
     url = jar_url(event)
     return {'group': event['group'], 'artifact': event['artifact'], 'from': target['installed'],
             'to': event['version'], 'source': 'lightwell', 'cves': list(event.get('cves') or []),
-            'version_change': upstream(event['version']) != upstream(target['installed']),
+            'version_change': _canon(event['version']) != _canon(target['installed']),
             'old_jar': jar_name(event['artifact'], target['installed']), 'new_jar': jar_name(event['artifact'], event['version']),
             'url': url, 'provenance_url': url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json'}
 
@@ -1217,7 +1267,7 @@ def change_for_extra(row: dict, option: int | None = None) -> dict:
     o = opts[option if option is not None and 0 <= option < len(opts) else row.get('default', 0)]
     lw = o['source'] == 'lightwell'
     url = maven_url(row['group'], row['artifact'], o['to'],
-                    env('NEXUS_REPOSITORY', 'lightwell-remediated') if lw else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central'))
+                    env('NEXUS_REPOSITORY', DEFAULT_LW_REPO) if lw else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central'))
     out = {'group': row['group'], 'artifact': row['artifact'], 'from': row['installed'], 'to': o['to'],
            'source': o['source'], 'version_change': bool(o.get('version_change')), 'cves': list(o.get('cves') or []),
            'old_jar': jar_name(row['artifact'], row['installed']), 'new_jar': jar_name(row['artifact'], o['to']),
@@ -2049,6 +2099,14 @@ def _generate() -> None:
 # The class each library's /health probe looks for, so /health can name the jar it is found in. Used by the sample
 # app's deploy (aap-setup/create-app-v2-objects.py) and the test in a pod.
 PROBE_CLASS = {
+    # The demo estate (Lightwell's public demo repository). Any class in the jar works: HealthServer only looks up
+    # which jar holds the class file, it does not load it.
+    'spring-webmvc': 'org.springframework.web.servlet.DispatcherServlet',
+    'spring-expression': 'org.springframework.expression.spel.standard.SpelExpressionParser',
+    'spring-core': 'org.springframework.core.SpringVersion',
+    'json': 'org.json.JSONObject',
+    'json-path': 'com.jayway.jsonpath.JsonPath',
+    'woodstox-core': 'com.ctc.wstx.stax.WstxInputFactory',
     'mina-core': 'org.apache.mina.core.session.IoSession',
     'zookeeper': 'org.apache.zookeeper.ZooKeeper',
     'spring-security-web': 'org.springframework.security.web.FilterChainProxy',
@@ -2497,7 +2555,7 @@ def _learn(st: dict) -> None:
         if not mine:
             continue                         # none of its sites was in this run: nothing to say about its BOM
         changes = (pbs.get(app) or {}).get('changes') or [{'group': ev['group'], 'artifact': ev['artifact'],
-                                                          'to': ev['version'], 'from': upstream(ev['version'])}]
+                                                          'to': ev['version'], 'from': shown_from(ev, st['impact'].get('targets'))}]
         # Per site: each patched server records its new versions. Writing the app's own version when its selected
         # sites were patched marked sites that were never in the run (core-dc-1) as patched too, and the fix stopped
         # being offered for them.
@@ -2542,7 +2600,7 @@ def write_report(st: dict) -> dict:
     now = datetime.now(timezone.utc)
     doc = pdf.Doc()
     doc.text('Application Patch Report', size=19, bold=True)
-    doc.text(f"{ev['group']}:{ev['artifact']}  ·  {upstream(ev['version'])} → {ev['version']}  ·  "
+    doc.text(f"{ev['group']}:{ev['artifact']}  ·  {shown_from(ev, (st.get('impact') or {}).get('targets'))} → {ev['version']}  ·  "
              f"{now.strftime('%d %b %Y %H:%M UTC')}", size=9.5, color='#6a6e73')
     doc.rule()
     doc.gap(4)
@@ -2555,7 +2613,7 @@ def write_report(st: dict) -> dict:
     doc.banner(f"{m['patched']} patched · {m['rolled_back']} rolled back · {m['rejected']} rejected · "
                f"{m['skipped']} not selected", ev.get('note', ''), '#eef3ee' if not m['rolled_back'] else '#fdecec')
     doc.text('Fixes', size=11, bold=True)
-    # The event's CVEs and every other change the run carried (a zookeeper fix riding the same restart, say).
+    # The event's CVEs and every other change the run carried (a spring-expression fix riding the same restart, say).
     fixed = list(dict.fromkeys(list(ev.get('cves') or [])
                                + [x for p in st.get('playbooks') or [] for c in p.get('changes') or [] for x in c.get('cves') or []]))
     doc.text(', '.join(fixed) or 'Not itemised by Lightwell.', size=9)
@@ -2664,7 +2722,7 @@ def feed_history(st: dict) -> dict:
                         f"# App patch record — {h['app']} on {site} ({h['host']}) — {now_iso()[:10]}\n\n"
                         f"App: {h['app']}   Site: {site}   Server: {h['host']}   "
                         f"Environment: {'LAB' if h.get('env') == 'qa' else 'LIVE'}\n"
-                        f"Change: {ev['artifact']} {upstream(ev['version'])} -> {ev['version']} (run {st.get('run_id')})\n"
+                        f"Change: {ev['artifact']} {shown_from(ev, [t for t in (st.get('impact') or {}).get('targets') or [] if t.get('key') == h.get('key')])} -> {ev['version']} (run {st.get('run_id')})\n"
                         f"Result: {h['outcome'].replace('_', ' ').upper()}\n\nWhat happened:\n{h.get('detail') or '—'}\n"))
     if H.demo_mode():
         return {'records': len(records), 'where': 'demo, not stored'}
@@ -2710,10 +2768,10 @@ def _worst(advisories: list[dict]) -> str:
 def _plan_change(group: str, artifact: str, frm: str, to: str, source: str, cves: list) -> dict:
     """A plan option as a change the playbook, commit job and pod test understand."""
     lw = source in ('lightwell', 'another')
-    url = maven_url(group, artifact, to, env('NEXUS_REPOSITORY', 'lightwell-remediated') if lw
+    url = maven_url(group, artifact, to, env('NEXUS_REPOSITORY', DEFAULT_LW_REPO) if lw
                     else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central'))
     out = {'group': group, 'artifact': artifact, 'from': frm, 'to': to, 'source': 'lightwell' if lw else 'upstream',
-           'plan_source': source, 'version_change': upstream(to) != upstream(frm), 'cves': list(cves),
+           'plan_source': source, 'version_change': _canon(to) != _canon(frm), 'cves': list(cves),
            'old_jar': jar_name(artifact, frm), 'new_jar': jar_name(artifact, to), 'url': url}
     out['provenance_url' if lw else 'sha1_url'] = (url.rsplit('.jar', 1)[0] + '.provenance.sigstore.json') if lw else url + '.sha1'
     return out
@@ -2795,7 +2853,7 @@ def app_plan(app_name: str, sources: list[str] | None = None, allow_major: bool 
     for d in maven:
         coord, base = f"{d['group']}:{d['artifact']}", upstream(d['version'])
         advisories = answers.get(('Maven', coord, base)) or []
-        build = lw.get((d['group'], d['artifact'], base))
+        build = lw.get((d['group'], d['artifact'], _canon(base)))
         installed_lw = is_lightwell(d['version'])
         fixed = set((build or {}).get('cves') or []) if installed_lw else set()
 
@@ -2905,7 +2963,7 @@ def plan_markdown(plan: dict) -> str:
                 'started in a pod (OpenShift Pipelines) and its /health checked. LAB sites go first, automatically; LIVE '
                 'sites wait for approval.', '',
                 '## Repository setup', '',
-                'Nothing per host. Lightwell builds come from the Nexus proxy `lightwell-remediated` (packages.redhat.com, '
+                'Nothing per host. Lightwell builds come from the Nexus proxy `' + env('NEXUS_REPOSITORY', DEFAULT_LW_REPO) + '` (packages.redhat.com, '
                 'with the registry service account held in Nexus) and upstream releases from its `maven-central` proxy. Hosts '
                 'never call packages.redhat.com.', '']
     if plan['left_out']:
@@ -2938,10 +2996,19 @@ def estate() -> dict:
     the agent's priority and note: what is critical, how patching affects the current setup, what else to watch."""
     apps = load_bom()
     cat = catalog('mine', 1, 1000)
-    fixes: dict[str, list[dict]] = {}
+    # The newest build of each library version, once: the catalog can list several (spring-core 5.3.18.rhlw-00006
+    # and -00010), and the fix to apply is the newest, as the inbox and the Change list take it.
+    best: dict[tuple[str, str, str, str], dict] = {}
     for r in cat.get('rows') or []:
+        m = RHLW.match(r['build'])
         for a in r.get('affects') or []:
-            fixes.setdefault(a, []).append({'artifact': r['artifact'], 'build': r['build'], 'cves': r.get('cves') or []})
+            k = (a, r['group'], r['artifact'], _canon(upstream(r['build'])))
+            cur = best.get(k)
+            if cur is None or (m and int(m.group('build')) > int(RHLW.match(cur['build']).group('build'))):
+                best[k] = {'artifact': r['artifact'], 'build': r['build'], 'cves': r.get('cves') or []}
+    fixes: dict[str, list[dict]] = {}
+    for (a, *_), f in best.items():
+        fixes.setdefault(a, []).append(f)
     rows = []
     for a in apps:
         maven = [d for d in a.get('dependencies', []) if d.get('ecosystem', 'maven') == 'maven']
@@ -3115,16 +3182,18 @@ def _staged_runs() -> list[dict]:
     """Two past runs, so the demo's Runs screen has history before anything is run."""
     out = []
     for i, (ev, day, outcomes) in enumerate([
-            (DEMO_EVENTS[2], '2026-11-03', {'inventory-service|lab': 'patched', 'inventory-service|core-dc-1': 'patched'}),
-            (DEMO_EVENTS[1], '2026-10-28', {'inventory-service|lab': 'patched',
-                                             'inventory-service|core-dc-1': 'rejected'})]):
+            # Older org.json builds from the same demo repository, so the history comes before the inbox's newer one.
+            (dict(DEMO_EVENTS[1], id='evt-json-00002', version='20220320.0.0.rhlw-00002'), '2026-11-03',
+             {'inventory-service|lab': 'patched', 'inventory-service|core-dc-1': 'patched'}),
+            (dict(DEMO_EVENTS[1], id='evt-json-00001', version='20220320.0.0.rhlw-00001'), '2026-10-28',
+             {'inventory-service|lab': 'patched', 'inventory-service|core-dc-1': 'rejected'})]):
         hosts = [{'key': k, 'app': k.split('|')[0], 'host': k.split('|')[1],
                   'env': 'qa' if k.endswith('|lab') else 'prod', 'outcome': o, 'commit_sha': f'{i + 7:x}' * 8,
                   'commit_url': '', 'execution_id': f'sim-past-{i}'} for k, o in outcomes.items()]
         snap = {'run_id': f'past{i + 1}', 'status': 'complete', 'simulated': True, 'event': ev,
                 'started_at': f'{day}T21:04:00Z', 'finished_at': f'{day}T21:11:00Z',
                 'stages': {k: 'done' for k in STAGES}, 'events': [],
-                'impact': {'targets': [dict(h, installed=upstream(ev['version'])) for h in hosts],
+                'impact': {'targets': [dict(h, installed='20220320') for h in hosts],     # the BOM's org.json
                            'apps': sorted({h['app'] for h in hosts}), 'other': []},
                 'hosts': [dict(h, steps={}, detail='') for h in hosts], 'summary': _summary_of(hosts)}
         out.append({k: snap[k] for k in ('run_id', 'event', 'started_at', 'finished_at', 'summary')}
@@ -3207,7 +3276,8 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
     inst = _installed()
 
     def affects(group: str, artifact: str, version: str) -> list[str]:
-        return sorted(inst.get((group, artifact), {}).get(upstream(version), []))
+        return sorted({a for v, apps in inst.get((group, artifact), {}).items() if _canon(v) == _canon(version)
+                       for a in apps})
 
     rows: list[dict] = []
     total = None
@@ -3219,9 +3289,11 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
         seen = set()
         for e in [{'name': f"{x['group']}:{x['artifact']}", 'build': x['version'], 'cves': x['cves'],
                    'status': 'remediated'} for x in DEMO_EVENTS] + DEMO_CATALOG_EXTRA + list(saved.get('entries') or []):
-            if e.get('status') != 'remediated' or not e.get('build') or e['build'] in seen:
+            # Keyed by package and build: libraries released together share a build string (spring-webmvc,
+            # spring-expression and spring-core are all 5.3.18.rhlw-00010).
+            if e.get('status') != 'remediated' or not e.get('build') or (e.get('name'), e['build']) in seen:
                 continue
-            seen.add(e['build'])
+            seen.add((e.get('name'), e['build']))
             group, _, artifact = e['name'].partition(':')
             rows.append({'group': group, 'artifact': artifact, 'build': e['build'], 'upstream': upstream(e['build']),
                          'cves': e.get('cves') or [], 'affects': affects(group, artifact, e['build'])})
@@ -3237,17 +3309,30 @@ def catalog(scope: str = 'mine', page: int = 1, size: int = 25) -> dict:
             found = hit[2]
         else:
             def ask(gav: tuple[str, str, str]) -> list[tuple[str, str, str, list]]:
-                group, artifact, version = gav
-                body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}', package_version=version, limit=100)
+                group, artifact, version = gav          # version: padded, the way Lightwell names it
+                body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}',
+                                       package_version=version, limit=100)
+                for plain in sorted(raw.get(gav, set()) - {version}):
+                    if body.get('data'):
+                        break
+                    # Padding is how org.json's builds are named; a package Lightwell names unpadded answers this.
+                    body = H.lightwell_get('/advisories', package_name=f'{group}:{artifact}',
+                                           package_version=plain, limit=100)
                 builds: dict[str, set] = {}
                 for adv in body.get('data') or []:
                     ids = {i for i in [adv.get('advisory_id', '')] + list(adv.get('aliases') or [])
                            if str(i).startswith('CVE-')}
                     for b in adv.get('fixed_versions') or []:
-                        if is_lightwell(b) and upstream(b) == version:
+                        if is_lightwell(b) and _canon(b) == _canon(version):
                             builds.setdefault(b, set()).update(ids)
                 return [(group, artifact, version, b, sorted(c)) for b, c in sorted(builds.items())]
-            gavs = [(g, a, v) for (g, a), vs in sorted(inst.items()) for v in vs]
+            # One question per library version: sites on 20220320 and on 20220320.0.0.rhlw-00003 are the same
+            # version, so they are asked about once (asking twice listed every build twice).
+            raw: dict[tuple[str, str, str], set] = {}
+            for (g, a), vs in inst.items():
+                for v in vs:
+                    raw.setdefault((g, a, lw_version(v)), set()).add(upstream(v))
+            gavs = sorted(raw)
             with ThreadPoolExecutor(max_workers=min(8, len(gavs) or 1)) as pool:
                 found = [x for part in pool.map(ask, gavs) for x in part]
             _MINE_CACHE['v'] = (key, time.time(), found)
@@ -3370,7 +3455,7 @@ def test_inputs(app_name: str, changes: list[dict]) -> dict:
         if c:
             lib.append({'group': d['group'], 'artifact': d['artifact'], 'version': c['to'], 'url': c['url'], 'changed': True})
         else:
-            repo = env('NEXUS_REPOSITORY', 'lightwell-remediated') if is_lightwell(d['version']) \
+            repo = env('NEXUS_REPOSITORY', DEFAULT_LW_REPO) if is_lightwell(d['version']) \
                 else env('NEXUS_CENTRAL_REPOSITORY', 'maven-central')
             lib.append({'group': d['group'], 'artifact': d['artifact'], 'version': d['version'],
                         'url': maven_url(d['group'], d['artifact'], d['version'], repo), 'changed': False})

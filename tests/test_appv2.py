@@ -34,6 +34,28 @@ def demo(**extra):
     appv2._ESTATE_BG.update(thread=None, error='')
 
 
+def add_dep(test, app, group, artifact, version):
+    """Give a demo app one more dependency, for cases the staged estate does not have (a fix two apps share, an older
+    version on the same line). Undone when the test ends."""
+    saved = appv2.DEMO_BOM
+    bom = json.loads(json.dumps(saved))
+    next(a for a in bom if a['app'] == app)['dependencies'].append(
+        {'group': group, 'artifact': artifact, 'version': version})
+    appv2.DEMO_BOM = bom
+    test.addCleanup(setattr, appv2, 'DEMO_BOM', saved)
+
+
+def legacy_mina(test):
+    """mina-core 2.1.6 on inventory-service: osv.dev's saved answers give it an upstream fix on its own line (2.1.13),
+    and Lightwell's real 2.2.5.rhlw-00002 build (CVE-2026-41635) is a version change. The staged estate has no
+    library like that, and these are the cases the change list's options are built for."""
+    add_dep(test, 'inventory-service', 'org.apache.mina', 'mina-core', '2.1.6')
+    saved = appv2.DEMO_CATALOG_EXTRA
+    appv2.DEMO_CATALOG_EXTRA = saved + [{'name': 'org.apache.mina:mina-core', 'build': '2.2.5.rhlw-00002',
+                                         'status': 'remediated', 'cves': ['CVE-2026-41635']}]
+    test.addCleanup(setattr, appv2, 'DEMO_CATALOG_EXTRA', saved)
+
+
 class Versions(unittest.TestCase):
     def test_upstream(self):
         self.assertEqual(appv2.upstream('2.24.3.rhlw-00004'), '2.24.3')
@@ -42,11 +64,25 @@ class Versions(unittest.TestCase):
         self.assertTrue(appv2.is_lightwell('2.11.0.rhlw-00009'))
         self.assertFalse(appv2.is_lightwell('2.11.0'))
 
+    def test_lightwell_pads_short_versions(self):
+        # org.json's upstream is 20220320; Lightwell numbers its builds 20220320.0.0.rhlw-0000N.
+        self.assertTrue(appv2.vsame('20220320', '20220320.0.0'))
+        self.assertFalse(appv2.vsame('20220320', '20220320.0.0.rhlw-00003'))    # a build is not the release
+        self.assertTrue(appv2.vsame('20220320.0.0.rhlw-00003', '20220320.rhlw-00003'))
+        self.assertFalse(appv2.vsame('20220320.0.0.rhlw-00002', '20220320.0.0.rhlw-00003'))   # another build
+        self.assertFalse(appv2.vsame('2.8.0', '2.8.1'))
+        self.assertFalse(appv2.vsame('2.8.0', '2.80'))
+        self.assertEqual(appv2.lw_version('20220320'), '20220320.0.0')
+        self.assertEqual(appv2.lw_version('2.8.0'), '2.8.0')
+        self.assertEqual(appv2.lw_version('5.3'), '5.3.0')
+        self.assertEqual(appv2._canon('2.8.0'), appv2._canon('2.8'))
+        self.assertEqual(appv2._canon('1.0-beta'), '1.0-beta')                 # non-numeric: left alone
+
 
 class Webhook(unittest.TestCase):
-    BODY = json.dumps({'action': 'CREATED', 'repositoryName': 'lightwell-remediated',
-                       'component': {'format': 'maven2', 'group': 'org.apache.mina',
-                                     'name': 'mina-core', 'version': '2.2.5.rhlw-00002'}}).encode()
+    BODY = json.dumps({'action': 'CREATED', 'repositoryName': 'lightwell-demo-remediated',
+                       'component': {'format': 'maven2', 'group': 'org.springframework',
+                                     'name': 'spring-webmvc', 'version': '5.3.18.rhlw-00010'}}).encode()
 
     def sign(self, body, secret='s3cret'):
         return hmac.new(secret.encode(), body, hashlib.sha1).hexdigest()
@@ -63,7 +99,7 @@ class Webhook(unittest.TestCase):
         self.assertEqual(code, 401)
         code, body = appv2.accept_webhook(self.BODY, self.sign(self.BODY))
         self.assertEqual(code, 200)
-        self.assertEqual(body['event']['artifact'], 'mina-core')
+        self.assertEqual(body['event']['artifact'], 'spring-webmvc')
 
     def test_live_without_secret_trusts_nothing(self):
         demo()
@@ -76,7 +112,7 @@ class Webhook(unittest.TestCase):
         p = json.loads(self.BODY)
         self.assertIsNotNone(appv2.parse_nexus(p))
         self.assertIsNone(appv2.parse_nexus({**p, 'action': 'UPDATED'}))
-        self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'version': '2.2.5'}}))
+        self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'version': '5.3.18'}}))
         self.assertIsNone(appv2.parse_nexus({**p, 'component': {**p['component'], 'group': ''}}))
         self.assertIsNone(appv2.parse_nexus('nope'))
 
@@ -98,7 +134,7 @@ class Impact(unittest.TestCase):
         return next(e for e in appv2.DEMO_EVENTS if e['artifact'] == artifact)
 
     def test_exact_version_only(self):
-        imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
+        imp = appv2.impact(self.ev('spring-webmvc'), appv2.load_bom())
         exact = [t for t in imp['targets'] if not t.get('version_change')]
         self.assertEqual({t['app'] for t in exact}, {'workflow-engine'})
         self.assertEqual([t['site'] for t in exact], ['lab', 'edge-site-1', 'core-dc-1'])
@@ -107,51 +143,76 @@ class Impact(unittest.TestCase):
         self.assertEqual(imp['other'], [])
 
     def test_older_version_on_the_same_line_is_a_version_change(self):
-        imp = appv2.impact(self.ev('mina-core'), appv2.load_bom())
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.17')
+        imp = appv2.impact(self.ev('spring-webmvc'), appv2.load_bom())
         vc = [t for t in imp['targets'] if t.get('version_change')]
         self.assertEqual([(t['app'], t['installed'], t['to_version']) for t in vc],
-                         [('inventory-service', '2.1.6', '2.2.5')] * 2)
+                         [('inventory-service', '5.3.17', '5.3.18')] * 2)
         self.assertEqual(imp['targets'][-1]['key'], vc[-1]['key'])            # after the exact matches
 
     def test_other_major_or_newer_is_left_alone(self):
-        ev = self.ev('mina-core')
+        ev = self.ev('spring-webmvc')
         bom = [{'app': a, 'servers': [{'host': 'h', 'env': 'qa'}],
-                'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': v}]}
-               for a, v in (('old-major', '1.1.7'), ('newer', '2.2.8'))]
+                'dependencies': [{'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': v}]}
+               for a, v in (('old-major', '4.3.30'), ('newer', '5.3.39'))]
         imp = appv2.impact(ev, bom)
         self.assertEqual(imp['targets'], [])
         self.assertEqual({o['app']: o['why'].split(';')[0] for o in imp['other']},
-                         {'old-major': 'major version 1', 'newer': 'newer than 2.2.5'})
+                         {'old-major': 'major version 4', 'newer': 'newer than 5.3.18'})
+
+    def test_short_upstream_matches_the_padded_lightwell_build(self):
+        # The BOM says json 20220320 (Maven Central's number); the build is 20220320.0.0.rhlw-00003. Same version,
+        # so an exact match, not a version change.
+        ev = self.ev('json')
+        imp = appv2.impact(ev, appv2.load_bom())
+        self.assertEqual([(t['site'], t.get('version_change')) for t in imp['targets']],
+                         [('lab', None), ('core-dc-1', None)])
+        appv2._BOM_UPDATES['inventory-service|org.json:json'] = ev['version']
+        imp = appv2.impact(ev, appv2.load_bom())
+        self.assertEqual((imp['targets'], [o['why'] for o in imp['other']]), ([], ['already on this build']))
+
+    def test_a_site_on_an_older_build_of_the_same_version_is_a_target(self):
+        # The lab took 20220320.0.0.rhlw-00002 earlier; -00003 arrives. Same version: an exact target, no version
+        # change. A site already on a newer build is left alone.
+        ev = self.ev('json')
+        appv2._BOM_UPDATES['inventory-service|lab|org.json:json'] = '20220320.0.0.rhlw-00002'
+        appv2._BOM_UPDATES['inventory-service|core-dc-1|org.json:json'] = '20220320.0.0.rhlw-00004'
+        imp = appv2.impact(ev, appv2.load_bom())
+        self.assertEqual([(t['site'], t['installed'], t.get('version_change')) for t in imp['targets']],
+                         [('lab', '20220320.0.0.rhlw-00002', None)])
+        self.assertIn('already on a newer build', imp['other'][0]['why'])
 
     def test_version_changes_are_opt_in(self):
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.17')
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate()
         st = wait_for({'generated'})
         self.assertNotIn('inventory-service|lab', st['selected'])
         self.assertEqual([p['app'] for p in st['playbooks']], ['workflow-engine'])
         appv2.reset(); demo()
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate(['inventory-service|lab'])
         pb = wait_for({'generated'})['playbooks'][0]
         self.assertEqual((pb['app'], pb['changes'][0]['old_jar'], pb['changes'][0]['new_jar']),
-                         ('inventory-service', 'mina-core-2.1.6.jar', 'mina-core-2.2.5.rhlw-00002.jar'))
+                         ('inventory-service', 'spring-webmvc-5.3.17.jar', 'spring-webmvc-5.3.18.rhlw-00010.jar'))
 
     def test_lab_sites_first_across_apps(self):
-        imp = appv2.impact(self.ev('zookeeper'), appv2.load_bom())
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.18')
+        imp = appv2.impact(self.ev('spring-webmvc'), appv2.load_bom())
         self.assertEqual([t['env'] for t in imp['targets']][:2], ['qa', 'qa'])
         self.assertEqual(len({t['key'] for t in imp['targets']}), 5)         # both apps have a lab copy
 
     def test_non_maven_dependencies_are_skipped(self):
         bom = [{'app': 'x', 'servers': [{'host': 'h', 'env': 'qa'}],
-                'dependencies': [{'group': 'org.apache.mina', 'artifact': 'mina-core', 'version': '2.2.5',
+                'dependencies': [{'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18',
                                   'ecosystem': 'pypi'}]}]
-        imp = appv2.impact(self.ev('mina-core'), bom)
+        imp = appv2.impact(self.ev('spring-webmvc'), bom)
         self.assertEqual((imp['apps'], imp['other']), ([], []))
 
     def test_write_back_removes_app_from_next_impact(self):
-        ev = self.ev('postgresql')
+        ev = self.ev('json-path')
         self.assertEqual(appv2.impact(ev, appv2.load_bom())['apps'], ['inventory-service'])
-        appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'] = ev['version']
+        appv2._BOM_UPDATES['inventory-service|com.jayway.jsonpath:json-path'] = ev['version']
         imp = appv2.impact(ev, appv2.load_bom())
         self.assertEqual(imp['apps'], [])
         self.assertIn('already on this build', [o['why'] for o in imp['other']])
@@ -271,7 +332,7 @@ class DemoRun(unittest.TestCase):
 
     def test_full_staged_run(self):
         demo()
-        self.assertEqual(appv2.start_assess('evt-mina-core')[0], 200)
+        self.assertEqual(appv2.start_assess('evt-spring-webmvc')[0], 200)
         self.wait({'assessed'})
         self.assertEqual(appv2.start_generate()[0], 200)
         self.wait({'generated'})
@@ -283,21 +344,22 @@ class DemoRun(unittest.TestCase):
         for h in gated:
             self.assertEqual(appv2.decide(h, 'approved')[0], 200)
         st = self.wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 2, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 2})
+        self.assertEqual(st['summary'], {'patched': 2, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 0})
         self.assertEqual(st['stages']['verify'], 'failed')
-        # Per site: the patched sites record the build; edge-site-1 rolled back and stays on 2.2.5, so the app's own
-        # version stays 2.2.5 too (not every site has the build).
+        # Per site: the patched sites record the build; edge-site-1 rolled back and stays on 5.3.18, so the app's own
+        # version stays 5.3.18 too (not every site has the build).
         patched = sorted(h['host'] for h in st['hosts'] if h['outcome'] == 'patched')
         rolled = [h['host'] for h in st['hosts'] if h['outcome'] == 'rolled_back']
-        self.assertNotIn('workflow-engine|org.apache.mina:mina-core', appv2._BOM_UPDATES)
+        ga = 'org.springframework:spring-webmvc'
+        self.assertNotIn(f'workflow-engine|{ga}', appv2._BOM_UPDATES)
         for host in patched:
-            self.assertEqual(appv2._BOM_UPDATES[f'workflow-engine|{host}|org.apache.mina:mina-core'], '2.2.5.rhlw-00002')
+            self.assertEqual(appv2._BOM_UPDATES[f'workflow-engine|{host}|{ga}'], '5.3.18.rhlw-00010')
         for host in rolled:
-            self.assertNotIn(f'workflow-engine|{host}|org.apache.mina:mina-core', appv2._BOM_UPDATES)
+            self.assertNotIn(f'workflow-engine|{host}|{ga}', appv2._BOM_UPDATES)
         we = next(a for a in appv2.load_bom() if a['app'] == 'workflow-engine')
-        mina = next(d for d in we['dependencies'] if d['artifact'] == 'mina-core')
-        self.assertEqual(mina['version'], '2.2.5')
-        self.assertEqual(sorted(mina['site_versions']), patched)
+        mvc = next(d for d in we['dependencies'] if d['artifact'] == 'spring-webmvc')
+        self.assertEqual(mvc['version'], '5.3.18')
+        self.assertEqual(sorted(mvc['site_versions']), patched)
         fb = st['feedback']['bom'][0]
         self.assertEqual((fb['app'], fb['changed'], sorted(fb['sites'])), ('workflow-engine', True, patched))
         self.assertEqual(st['feedback']['history']['records'], 3)
@@ -353,6 +415,50 @@ class Poller(unittest.TestCase):
         found = appv2.poll_nexus(fetch, set(), apps)
         self.assertEqual([f['version'] for f in found], ['2.11.0.rhlw-00009'])
         self.assertEqual(len(got), 1)
+
+
+class PollerBuilds(unittest.TestCase):
+    def test_a_site_on_an_older_build_hears_of_the_newer_one(self):
+        demo(NEXUS_URL='https://nexus.lab')
+        meta = ('<versions><version>20220320.0.0.rhlw-00002</version><version>20220320.0.0.rhlw-00003</version>'
+                '</versions>')
+        fetch = lambda url: meta.encode() if url.endswith('maven-metadata.xml') else b'jar'
+        apps = [{'app': 'a', 'dependencies': [{'group': 'org.json', 'artifact': 'json',
+                                               'version': '20220320.0.0.rhlw-00002'}]}]
+        self.assertEqual([f['version'] for f in appv2.poll_nexus(fetch, set(), apps)], ['20220320.0.0.rhlw-00003'])
+        apps[0]['dependencies'][0]['version'] = '20220320'                       # Maven Central's short number
+        self.assertEqual([f['version'] for f in appv2.poll_nexus(fetch, set(), apps)], ['20220320.0.0.rhlw-00003'])
+
+
+class PaddedVersions(unittest.TestCase):
+    def setUp(self):
+        demo()
+
+    def test_the_padded_build_is_not_a_newer_version(self):
+        self.assertIsNone(appv2._lightwell_newer('org.json', 'json', '20220320'))
+        self.assertFalse(appv2._plan_change('org.json', 'json', '20220320', '20220320.0.0.rhlw-00003', 'lightwell',
+                                            [])['version_change'])
+
+    def test_live_mine_asks_once_per_version_across_patched_sites(self):
+        asked = []
+
+        def lw(path, **params):
+            asked.append((params.get('package_name'), params.get('package_version')))
+            if params.get('package_name') == 'org.json:json':
+                return {'data': [{'advisory_id': 'CVE-2022-45688', 'fixed_versions': ['20220320.0.0.rhlw-00003']}]}
+            return {'data': []}
+        appv2.configure(demo_mode=lambda: False, lightwell_get=lw,
+                        env=lambda k, d='': {'BOM_DIR': str(ROOT_DIR / 'app-data' / 'bom'),
+                                             'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
+        appv2._MINE_CACHE.clear()
+        try:
+            appv2._BOM_UPDATES['inventory-service|node1|org.json:json'] = '20220320.0.0.rhlw-00003'   # lab patched
+            rows = [r for r in appv2.catalog('mine')['rows'] if r['artifact'] == 'json']
+        finally:
+            appv2.configure(demo_mode=lambda: True, lightwell_get=None)
+            appv2._MINE_CACHE.clear()
+        self.assertEqual([r['build'] for r in rows], ['20220320.0.0.rhlw-00003'])          # listed once
+        self.assertEqual([a for a in asked if a[0] == 'org.json:json'], [('org.json:json', '20220320.0.0')])
 
 
 class LiveFollow(unittest.TestCase):
@@ -486,7 +592,7 @@ class Restart(unittest.TestCase):
                 break
             time.sleep(0.01)
         self.assertEqual(appv2.state()['hosts'][0]['outcome'], 'patched')
-        self.assertIn('workflow-engine|node1|org.apache.mina:mina-core', json.loads(
+        self.assertIn('workflow-engine|node1|org.springframework:spring-webmvc', json.loads(
             (Path(self.dir) / 'appv2-bom-updates.json').read_text()))
 
     def test_step_inside_the_console_is_reported_interrupted(self):
@@ -519,7 +625,8 @@ class Subset(unittest.TestCase):
 
     def test_only_selected_pairs_run(self):
         demo()
-        appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.18')   # a fix both apps share
+        appv2.start_assess('evt-spring-webmvc'); self.wait({'assessed'})
         appv2.start_generate(); self.wait({'generated'})
         self.assertEqual(appv2.start_dispatch([])[0], 400)                       # nothing selected
         self.assertEqual(appv2.start_dispatch(['inventory-service|lab', 'inventory-service|core-dc-1', 'not|known'])[0], 200)
@@ -533,12 +640,13 @@ class Subset(unittest.TestCase):
         self.assertEqual(st['summary']['skipped'], 3)
         # Both inventory-service sites were patched; workflow-engine was not touched, so its BOM stays.
         inv = next(a for a in appv2.load_bom() if a['app'] == 'inventory-service')
-        self.assertEqual(next(d for d in inv['dependencies'] if d['artifact'] == 'zookeeper')['version'], '3.5.9.rhlw-00001')
+        self.assertEqual(next(d for d in inv['dependencies'] if d['artifact'] == 'spring-webmvc')['version'], '5.3.18.rhlw-00010')
         self.assertFalse([k for k in appv2._BOM_UPDATES if k.startswith('workflow-engine|')])
 
     def test_sites_chosen_before_prepare(self):
         demo()
-        appv2.start_assess('evt-zookeeper'); self.wait({'assessed'})
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.18')
+        appv2.start_assess('evt-spring-webmvc'); self.wait({'assessed'})
         self.assertEqual(appv2.start_generate([])[0], 400)                       # nothing selected
         self.assertEqual(appv2.start_generate(['inventory-service|lab', 'inventory-service|core-dc-1'])[0], 200)
         st = self.wait({'generated'})
@@ -555,7 +663,7 @@ class Subset(unittest.TestCase):
 
     def test_reasoning_is_on_every_target(self):
         demo()
-        appv2.start_assess('evt-mina-core'); st = self.wait({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); st = self.wait({'assessed'})
         self.assertTrue(all(t.get('reasoning') for t in st['impact']['targets']))
         self.assertIn('340 NEs', next(t for t in st['impact']['targets']
                                       if t['key'] == 'workflow-engine|core-dc-1')['reasoning'])
@@ -598,9 +706,11 @@ class Catalog(unittest.TestCase):
     def test_demo_marks_builds_the_apps_need(self):
         demo()
         mine = appv2.catalog('mine')
-        builds = {r['build']: r['affects'] for r in mine['rows']}
-        self.assertEqual(builds['2.2.5.rhlw-00002'], ['workflow-engine'])
-        self.assertEqual(builds['3.5.9.rhlw-00001'], ['inventory-service', 'workflow-engine'])
+        builds = {(r['artifact'], r['build']): r['affects'] for r in mine['rows']}
+        # The three Spring libraries share one build number: each is its own row.
+        for a in ('spring-webmvc', 'spring-expression', 'spring-core'):
+            self.assertEqual(builds[(a, '5.3.18.rhlw-00010')], ['workflow-engine'])
+        self.assertEqual(builds[('json', '20220320.0.0.rhlw-00003')], ['inventory-service'])   # BOM says 20220320
         everything = appv2.catalog('all')
         self.assertGreater(everything['total'], mine['total'])
 
@@ -610,18 +720,21 @@ class Catalog(unittest.TestCase):
 
         def lw(path, **params):
             asked.append((path, params.get('package_name'), params.get('package_version')))
-            if params.get('package_name') == 'org.apache.mina:mina-core' and params.get('package_version') == '2.2.5':
-                return {'data': [{'advisory_id': 'x', 'aliases': ['CVE-2026-1'], 'fixed_versions': ['2.2.5.rhlw-00002']}]}
+            if params.get('package_name') == 'org.springframework:spring-webmvc' and params.get('package_version') == '5.3.18':
+                return {'data': [{'advisory_id': 'x', 'aliases': ['CVE-2026-1'], 'fixed_versions': ['5.3.18.rhlw-00010']}]}
+            if params.get('package_name') == 'org.json:json' and params.get('package_version') == '20220320.0.0':
+                return {'data': [{'advisory_id': 'CVE-2022-45688', 'fixed_versions': ['20220320.0.0.rhlw-00003']}]}
             return {'data': []}
 
         appv2.configure(demo_mode=lambda: False, lightwell_get=lw,
                         env=lambda k, d='': {'BOM_DIR': str(Path(__file__).resolve().parents[1] / 'app-data' / 'bom'),
                                              'APPV2_STATE_DIR': tempfile.mkdtemp()}.get(k, d))
         out = appv2.catalog('mine')
-        self.assertEqual([(r['build'], r['cves'], r['affects']) for r in out['rows']],
-                         [('2.2.5.rhlw-00002', ['CVE-2026-1'], ['workflow-engine'])])
-        self.assertIn(('/advisories', 'org.postgresql:postgresql', '42.3.3'), asked)
-        self.assertIn(('/advisories', 'org.apache.mina:mina-core', '2.1.6'), asked)   # inventory-service's
+        self.assertEqual(sorted((r['build'], r['cves'], r['affects']) for r in out['rows']),
+                         [('20220320.0.0.rhlw-00003', ['CVE-2022-45688'], ['inventory-service']),
+                          ('5.3.18.rhlw-00010', ['CVE-2026-1'], ['workflow-engine'])])
+        self.assertIn(('/advisories', 'com.jayway.jsonpath:json-path', '2.8.0'), asked)
+        self.assertIn(('/advisories', 'org.json:json', '20220320.0.0'), asked)        # padded the way Lightwell numbers it
         self.assertFalse([a for a in asked if a[1] in ('ricxappframe', 'express')])   # Lightwell Java only
 
 
@@ -632,15 +745,15 @@ class Sbom(unittest.TestCase):
         self.assertEqual((doc['bomFormat'], doc['specVersion']), ('CycloneDX', '1.5'))
         self.assertEqual(doc['metadata']['component']['name'], 'workflow-engine')
         purls = {c['purl'] for c in doc['components']}
-        self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5', purls)
+        self.assertIn('pkg:maven/org.springframework/spring-webmvc@5.3.18', purls)
         self.assertEqual(doc['dependencies'][0]['dependsOn'], [c['bom-ref'] for c in doc['components']])
         self.assertIsNone(appv2.sbom('no-such-app'))
 
     def test_write_back_changes_the_exported_version(self):
         demo()
-        appv2._BOM_UPDATES['workflow-engine|org.apache.mina:mina-core'] = '2.2.5.rhlw-00002'
+        appv2._BOM_UPDATES['workflow-engine|org.springframework:spring-webmvc'] = '5.3.18.rhlw-00010'
         purls = {c['purl'] for c in appv2.sbom('workflow-engine')['components']}
-        self.assertIn('pkg:maven/org.apache.mina/mina-core@2.2.5.rhlw-00002', purls)
+        self.assertIn('pkg:maven/org.springframework/spring-webmvc@5.3.18.rhlw-00010', purls)
 
 
 class History(unittest.TestCase):
@@ -648,7 +761,7 @@ class History(unittest.TestCase):
         demo()
         before = appv2.runs()
         self.assertEqual(len(before), 2)                                          # the staged past runs
-        appv2.start_assess('evt-postgresql')
+        appv2.start_assess('evt-json-path')
         for _ in range(200):
             if appv2.state().get('status') == 'assessed':
                 break
@@ -669,7 +782,8 @@ class History(unittest.TestCase):
         self.assertFalse(runs[0]['current'])
         self.assertEqual(runs[0]['run_id'], appv2.state()['run_id'])
         self.assertEqual(appv2.run_detail(runs[0]['run_id'])['status'], 'complete')
-        self.assertEqual(appv2.run_detail('past1')['event']['artifact'], 'zookeeper')
+        past = appv2.run_detail('past1')['event']
+        self.assertEqual((past['artifact'], past['version']), ('json', '20220320.0.0.rhlw-00002'))   # before the inbox's
 
 
 class Estate(unittest.TestCase):
@@ -679,7 +793,8 @@ class Estate(unittest.TestCase):
         self.assertEqual(rows['workflow-engine']['group'], 'network')
         self.assertEqual(rows['inventory-service']['group'], 'it')
         self.assertEqual({f['artifact'] for f in rows['workflow-engine']['fixes']},
-                         {'mina-core', 'zookeeper', 'spring-security-web'})
+                         {'spring-webmvc', 'spring-expression', 'spring-core'})
+        self.assertEqual(len(rows['workflow-engine']['fixes']), 3)                   # newest build once (not -00006 too)
         self.assertFalse(rows['analytics-agent']['covered'])                         # Python only
         self.assertFalse(rows['customer-portal']['covered'])                     # npm only
         self.assertEqual(rows['workflow-engine']['priority'], 'CRITICAL')
@@ -747,7 +862,7 @@ class Feedback(unittest.TestCase):
         out = appv2.feed_history(st)
         self.assertEqual(out['records'], 1)
         self.assertEqual([s for s, _ in added], ['vs_apps'])
-        self.assertIn('workflow-engine-lab-mina-core-PATCHED', added[0][1])
+        self.assertIn('workflow-engine-lab-spring-webmvc-PATCHED', added[0][1])
         self.assertIn('Site: lab', next((Path(d) / 'app-history').glob('*.md')).read_text())
 
 
@@ -771,7 +886,7 @@ def wait_for(statuses, timeout=5):
 
 
 class Extras(unittest.TestCase):
-    def rows(self, event_id='evt-zookeeper'):
+    def rows(self, event_id='evt-json'):
         appv2.start_assess(event_id)
         return {r['id']: r for r in wait_for({'assessed'})['impact']['extra']['rows']}
 
@@ -784,18 +899,18 @@ class Extras(unittest.TestCase):
 
     def test_set_off_is_off(self):
         demo(APPV2_OSV='false')
-        appv2.start_assess('evt-zookeeper')
+        appv2.start_assess('evt-json')
         self.assertNotIn('extra', wait_for({'assessed'})['impact'])
 
     def test_upstream_on_the_same_line(self):
-        with_osv()
+        with_osv(); legacy_mina(self)
         r = self.rows()['inventory-service|org.apache.mina:mina-core']
         self.assertEqual((r['kind'], r['to'], r['selectable']), ('upstream', '2.1.13', True))
         self.assertEqual(len(r['advisories']), 6)
-        self.assertIn('2.1 line', r['reasoning'])
+        self.assertIn('same minor line', r['reasoning'])
 
     def test_lightwell_build_of_a_newer_version_is_a_second_option(self):
-        with_osv()
+        with_osv(); legacy_mina(self)
         r = self.rows()['inventory-service|org.apache.mina:mina-core']
         self.assertEqual([(o['source'], o['to'], o['version_change']) for o in r['options']],
                          [('upstream', '2.1.13', False), ('lightwell', '2.2.5.rhlw-00002', True)])
@@ -803,49 +918,63 @@ class Extras(unittest.TestCase):
         self.assertEqual(r['options'][1]['cves'], ['CVE-2026-41635'])
 
     def test_other_version_of_the_fix_library_gets_options_not_still_open(self):
+        # inventory-service runs an older spring-webmvc than the event's build: it is offered the build as a version
+        # change, while workflow-engine (the build's own version) only sees what is left over.
         with_osv()
-        rows = self.rows('evt-mina-core')
-        self.assertEqual(rows['workflow-engine|org.apache.mina:mina-core']['kind'], 'residual')
-        r = rows['inventory-service|org.apache.mina:mina-core']
-        self.assertTrue(r['selectable'])
-        self.assertEqual([o['to'] for o in r['options']], ['2.1.13', '2.2.5.rhlw-00002'])
-        appv2.start_generate(['inventory-service|lab'], ['inventory-service|org.apache.mina:mina-core'])
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.17')
+        rows = self.rows('evt-spring-webmvc')
+        self.assertEqual(rows['workflow-engine|org.springframework:spring-webmvc']['kind'], 'residual')
+        self.assertNotIn('inventory-service|org.springframework:spring-webmvc', rows)     # a target, not "still open"
+        vc = [t for t in appv2.state()['impact']['targets'] if t['app'] == 'inventory-service']
+        self.assertTrue(vc and all(t.get('version_change') for t in vc))
+        appv2.start_generate(['inventory-service|lab'])
         changes = wait_for({'generated'})['playbooks'][0]['changes']
-        self.assertEqual([(c['artifact'], c['to']) for c in changes], [('mina-core', '2.1.13')])   # one change per library
+        self.assertEqual([(c['artifact'], c['to']) for c in changes], [('spring-webmvc', '5.3.18.rhlw-00010')])
+
+    def test_date_versions_are_not_offered_across_releases(self):
+        # org.json numbers releases by date, so 20211205 -> 20220320 reads as another major: left alone, not offered.
+        with_osv()
+        add_dep(self, 'workflow-engine', 'org.json', 'json', '20211205')
+        imp = appv2.impact(next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'json'), appv2.load_bom())
+        self.assertEqual({t['app'] for t in imp['targets']}, {'inventory-service'})
+        self.assertIn('workflow-engine', [o['app'] for o in imp['other']])
 
     def test_lightwell_build_preferred_and_its_cves_removed(self):
         with_osv()
-        r = self.rows()['workflow-engine|org.springframework.security:spring-security-web']
-        self.assertEqual((r['kind'], r['to']), ('lightwell', '5.7.11.rhlw-00006'))
-        self.assertEqual(sorted(r['lightwell_covers']), ['CVE-2024-38821', 'CVE-2026-22732'])
-        self.assertNotIn('CVE-2024-38821', [a['id'] for a in r['advisories']])   # fixed by Lightwell: not "open"
+        r = self.rows()['inventory-service|com.fasterxml.woodstox:woodstox-core']
+        self.assertEqual((r['kind'], r['to']), ('lightwell', '6.0.3.rhlw-00001'))
+        self.assertEqual(r['lightwell_covers'], ['CVE-2022-40152'])
+        self.assertNotIn('CVE-2022-40152', [a['id'] for a in r['advisories']])   # fixed by Lightwell: not "open"
+        # Libraries that share a build number each get theirs (spring-expression next to the spring-webmvc fix).
+        r = self.rows('evt-spring-webmvc')['workflow-engine|org.springframework:spring-expression']
+        self.assertEqual((r['kind'], r['to'], r['selectable']), ('lightwell', '5.3.18.rhlw-00010', True))
 
     def test_the_events_own_package_is_information_only(self):
         with_osv()
-        r = self.rows('evt-mina-core')['workflow-engine|org.apache.mina:mina-core']
-        self.assertEqual((r['kind'], r['selectable'], r['to']), ('residual', False, '2.2.8'))
-        self.assertNotIn('CVE-2026-41635', [a['id'] for a in r['advisories']])
+        r = self.rows('evt-spring-webmvc')['workflow-engine|org.springframework:spring-webmvc']
+        self.assertEqual((r['kind'], r['selectable'], r['to']), ('residual', False, '7.0.9'))
+        self.assertNotIn('CVE-2024-38816', [a['id'] for a in r['advisories']])
 
     def test_major_upgrade_is_listed_not_offered(self):
         with_osv()
         bom = [{'app': 'a', 'servers': [{'host': 'h', 'env': 'qa'}], 'dependencies': [
-            {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
-            {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]}]
+            {'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18'},
+            {'group': 'org.springframework', 'artifact': 'spring-core', 'version': '5.3.18'}]}]
         appv2.configure(lightwell_get=None)
-        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'zookeeper')
+        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'spring-webmvc')
         imp = appv2.impact(ev, bom)
         real = appv2._lightwell_builds
-        appv2._lightwell_builds = lambda: {}          # as if Lightwell had no spring-security build
+        appv2._lightwell_builds = lambda: {}          # as if Lightwell had no spring-core build
         try:
             rows = {r['artifact']: r for r in appv2.extras(ev, imp, bom)['rows']}
         finally:
             appv2._lightwell_builds = real
-        self.assertEqual((rows['spring-security-web']['kind'], rows['spring-security-web']['selectable']), ('major', False))
+        self.assertEqual((rows['spring-core']['kind'], rows['spring-core']['selectable']), ('major', False))
 
     def test_osv_down_leaves_the_run_alone(self):
         with_osv()
         appv2.configure(osv_lookup=lambda q: (_ for _ in ()).throw(OSError('osv.dev unreachable')))
-        appv2.start_assess('evt-zookeeper')
+        appv2.start_assess('evt-json')
         st = wait_for({'assessed'})
         self.assertEqual(st['impact']['extra']['rows'], [])
         self.assertIn('unreachable', st['impact']['extra']['error'])
@@ -853,15 +982,16 @@ class Extras(unittest.TestCase):
 
 class MultiJar(unittest.TestCase):
     def setUp(self):
-        with_osv()
-        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        with_osv(); legacy_mina(self)
+        add_dep(self, 'workflow-engine', 'org.json', 'json', '20220320')     # the json fix reaches both apps
+        appv2.start_assess('evt-json'); wait_for({'assessed'})
 
     def test_selected_extra_joins_that_apps_playbook_only(self):
         self.assertEqual(appv2.start_generate(None, ['inventory-service|org.apache.mina:mina-core', 'not|offered'])[0], 200)
         st = wait_for({'generated'})
         pbs = {p['app']: p for p in st['playbooks']}
         self.assertEqual([(c['artifact'], c['source']) for c in pbs['inventory-service']['changes']],
-                         [('zookeeper', 'lightwell'), ('mina-core', 'upstream')])
+                         [('json', 'lightwell'), ('mina-core', 'upstream')])
         self.assertEqual(len(pbs['workflow-engine']['changes']), 1)
         text = pbs['inventory-service']['text']
         self.assertIn('new_jar: mina-core-2.1.13.jar', text)
@@ -875,7 +1005,7 @@ class MultiJar(unittest.TestCase):
         self.assertEqual(st['extra_selected'], ['inventory-service|org.apache.mina:mina-core::1'])   # ::9 does not exist
         c = next(p for p in st['playbooks'] if p['app'] == 'inventory-service')['changes'][1]
         self.assertEqual((c['source'], c['to'], c['version_change']), ('lightwell', '2.2.5.rhlw-00002', True))
-        self.assertIn('/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00002/', c['url'])
+        self.assertIn('/lightwell-demo-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00002/', c['url'])
         self.assertTrue(c['provenance_url'].endswith('.provenance.sigstore.json'))
 
     def test_extra_for_an_unselected_app_is_dropped(self):
@@ -895,10 +1025,10 @@ class MultiJar(unittest.TestCase):
         pb = next(p for p in wait_for({'generated'})['playbooks'] if p['app'] == 'inventory-service')
         t = appv2.test_inputs('inventory-service', pb['changes'])
         lib = {x['artifact']: x for x in json.loads(t['lib_json'])}
-        self.assertEqual(set(lib), {'postgresql', 'zookeeper', 'mina-core'})
-        self.assertTrue(lib['mina-core']['changed'] and lib['zookeeper']['changed'])
-        self.assertFalse(lib['postgresql']['changed'])
-        self.assertEqual(json.loads(t['expect_json']), {'zookeeper': 'zookeeper-3.5.9.rhlw-00001.jar',
+        self.assertEqual(set(lib), {'json', 'json-path', 'woodstox-core', 'mina-core'})
+        self.assertTrue(lib['mina-core']['changed'] and lib['json']['changed'])
+        self.assertFalse(lib['json-path']['changed'])                  # json is a prefix of json-path: not confused
+        self.assertEqual(json.loads(t['expect_json']), {'json': 'json-20220320.0.0.rhlw-00003.jar',
                                                         'mina-core': 'mina-core-2.1.13.jar'})
         self.assertIn('mina-core=org.apache.mina.core.session.IoSession', t['probes'])
 
@@ -917,7 +1047,7 @@ class MultiJar(unittest.TestCase):
         # Both inventory-service sites were patched, so the app's own versions move (per-site write-backs agree).
         inv = next(a for a in appv2.load_bom() if a['app'] == 'inventory-service')
         ver = {d['artifact']: d['version'] for d in inv['dependencies']}
-        self.assertEqual((ver['mina-core'], ver['zookeeper']), ('2.1.13', '3.5.9.rhlw-00001'))
+        self.assertEqual((ver['mina-core'], ver['json']), ('2.1.13', '20220320.0.0.rhlw-00003'))
         self.assertTrue((Path(appv2.reports_dir()) / st['report']['file']).exists())
 
 
@@ -950,7 +1080,7 @@ class LiveTestNode(unittest.TestCase):
         appv2.EVENTS = appv2.EventStore(None)
         ev = dict(appv2.DEMO_EVENTS[0])
         target = {'key': 'workflow-engine|node1', 'app': 'workflow-engine', 'host': 'node1', 'env': 'qa',
-                  'installed': '2.2.5', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
+                  'installed': '5.3.18', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
                   'health_url': 'http://localhost:8090/health'}
         with appv2._LOCK:
             appv2._RUN.clear()
@@ -972,22 +1102,22 @@ class LiveTestNode(unittest.TestCase):
 
     def test_evidence_is_kept(self):
         st, inputs = self.run_with('completed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'True', 'osv_open': 5,
-                                                 'test_health': {'status': 'UP', 'jars': {'mina-core': 'm.jar'}}})
+                                                 'test_health': {'status': 'UP', 'jars': {'spring-webmvc': 'm.jar'}}})
         h = st['hosts'][0]
         self.assertEqual((h['outcome'], h['steps']['test']), ('patched', 'done'))
         self.assertEqual((h['test']['pipelinerun'], h['test']['passed'], h['test']['osv_open']), ('app-v2-n-r1', True, '5'))
-        self.assertEqual(json.loads(h['test']['health'])['jars']['mina-core'], 'm.jar')   # parsed by AO: kept as text
-        self.assertEqual(json.loads(inputs['jars_json'])[0]['new_jar'], 'mina-core-2.2.5.rhlw-00002.jar')
+        self.assertEqual(json.loads(h['test']['health'])['jars']['spring-webmvc'], 'm.jar')   # parsed by AO: kept as text
+        self.assertEqual(json.loads(inputs['jars_json'])[0]['new_jar'], 'spring-webmvc-5.3.18.rhlw-00010.jar')
         self.assertIn('lib_json', inputs)
         self.assertEqual(inputs['port'], '8090')
 
     def test_failed_test_stops_the_site(self):
         st, _ = self.run_with('failed', {'pipelinerun': 'app-v2-n-r1', 'test_passed': 'False',
-                                         'test_reason': 'mina-core reported missing'})
+                                         'test_reason': 'spring-webmvc reported missing'})
         h = st['hosts'][0]
         self.assertEqual((h['outcome'], h['steps']['test']), ('failed', 'failed'))
         self.assertIn('no site was touched', h['detail'])
-        self.assertIn('mina-core reported missing', h['detail'])
+        self.assertIn('spring-webmvc reported missing', h['detail'])
 
 
 
@@ -999,6 +1129,7 @@ class PlanAFix(unittest.TestCase):
         return {r['artifact']: (r['to'], r['chosen']) for r in plan['changes']}
 
     def test_source_precedence(self):
+        legacy_mina(self)
         lw = appv2.app_plan('inventory-service', ['lightwell'])
         self.assertNotIn('mina-core', self.pick(lw))
         self.assertIn('Lightwell with Another Build', lw['not_fixable'][0]['why'])
@@ -1008,15 +1139,19 @@ class PlanAFix(unittest.TestCase):
 
     def test_major_gate(self):
         no = appv2.app_plan('workflow-engine', ['osv'])
-        self.assertNotIn('spring-security-web', self.pick(no))
-        self.assertIn('major', next(r for r in no['not_fixable'] if r['artifact'] == 'spring-security-web')['why'])
-        self.assertEqual(self.pick(appv2.app_plan('workflow-engine', ['osv'], True))['spring-security-web'][0], '6.5.11')
+        self.assertNotIn('spring-webmvc', self.pick(no))
+        self.assertIn('major', next(r for r in no['not_fixable'] if r['artifact'] == 'spring-webmvc')['why'])
+        self.assertEqual(self.pick(appv2.app_plan('workflow-engine', ['osv'], True))['spring-webmvc'][0], '7.0.9')
+        # With Lightwell as a source, all three Spring libraries stay on 5.3.18.
+        self.assertEqual(set(self.pick(appv2.app_plan('workflow-engine', ['lightwell'])).values()),
+                         {('5.3.18.rhlw-00010', 'lightwell')})
 
     def test_selection_and_override(self):
+        legacy_mina(self)
         p = appv2.app_plan('inventory-service', ['lightwell', 'another', 'osv'], False,
                            [{'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'}])
         self.assertEqual(self.pick(p), {'mina-core': ('2.1.13', 'osv')})
-        self.assertEqual(sorted(r['artifact'] for r in p['left_out']), ['postgresql', 'zookeeper'])
+        self.assertEqual(sorted(r['artifact'] for r in p['left_out']), ['json', 'json-path', 'woodstox-core'])
         self.assertIn('/maven-central/org/apache/mina/mina-core/2.1.13/', p['changes'][0]['change']['url']
                       .replace('/maven2/', '/maven-central/'))
         md = appv2.plan_markdown(p)
@@ -1028,35 +1163,36 @@ class PlanAFix(unittest.TestCase):
     def test_download_mapping_matches_the_run(self):
         # The Change list sends run options (lightwell / upstream); the download maps them to plan sources
         # (lightwell / another / osv). Both must name the same jars.
-        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        legacy_mina(self)
+        appv2.start_assess('evt-json'); wait_for({'assessed'})
         appv2.start_generate(['inventory-service|lab'], ['inventory-service|org.apache.mina:mina-core'])
         jars = [c['new_jar'] for c in wait_for({'generated'})['playbooks'][0]['changes']]
         p = appv2.app_plan('inventory-service', ['lightwell', 'another', 'osv'], False,
-                           [{'id': 'inventory-service|org.apache.zookeeper:zookeeper', 'source': 'lightwell'},
+                           [{'id': 'inventory-service|org.json:json', 'source': 'lightwell'},
                             {'id': 'inventory-service|org.apache.mina:mina-core', 'source': 'osv'}])
         self.assertEqual(sorted(r['change']['new_jar'] for r in p['changes']), sorted(jars))
 
     def test_major_option_needs_allow_major(self):
         bom = [{'app': 'a', 'path': '/opt/apps/a', 'health_url': 'http://localhost:1/health',
                 'servers': [{'host': 'h', 'site': 'lab', 'env': 'qa'}], 'dependencies': [
-                    {'group': 'org.apache.zookeeper', 'artifact': 'zookeeper', 'version': '3.5.9'},
-                    {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}]}]
+                    {'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18'},
+                    {'group': 'org.springframework', 'artifact': 'spring-core', 'version': '5.3.18'}]}]
         real_bom, real_lw = appv2.load_bom, appv2._lightwell_builds
         appv2.load_bom = lambda: bom
-        appv2._lightwell_builds = lambda: {}          # no Lightwell spring-security build: only the major fix is left
+        appv2._lightwell_builds = lambda: {}          # no Lightwell spring-core build: only the major fix is left
         try:
-            appv2.start_assess('evt-zookeeper'); st = wait_for({'assessed'})
-            row = next(r for r in st['impact']['extra']['rows'] if r['artifact'] == 'spring-security-web')
-            self.assertEqual((row['kind'], row['options'][0]['to'], row['options'][0]['major']), ('major', '6.5.11', True))
+            appv2.start_assess('evt-spring-webmvc'); st = wait_for({'assessed'})
+            row = next(r for r in st['impact']['extra']['rows'] if r['artifact'] == 'spring-core')
+            self.assertEqual((row['kind'], row['options'][0]['to'], row['options'][0]['major']), ('major', '6.2.19', True))
             rid = row['id']
             appv2.start_generate(None, [rid])
             self.assertEqual(wait_for({'generated'})['extra_selected'], [])          # refused without allow_major
             appv2.reset(); with_osv(); appv2.load_bom = lambda: bom; appv2._lightwell_builds = lambda: {}
-            appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+            appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
             appv2.start_generate(None, [rid], allow_major=True)
             st = wait_for({'generated'})
             self.assertEqual(st['extra_selected'], [rid])
-            self.assertIn('spring-security-web-6.5.11.jar', [c['new_jar'] for c in st['playbooks'][0]['changes']])
+            self.assertIn('spring-core-6.2.19.jar', [c['new_jar'] for c in st['playbooks'][0]['changes']])
         finally:
             appv2.load_bom, appv2._lightwell_builds = real_bom, real_lw
 
@@ -1105,7 +1241,7 @@ class PipelineStrip(unittest.TestCase):
 
     def test_demo_run_stages_the_strip(self):
         with_osv()
-        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        appv2.start_assess('evt-json'); wait_for({'assessed'})
         appv2.start_generate(['inventory-service|lab']); wait_for({'generated'})
         appv2.start_dispatch(); wait_for({'complete'}, 10)
         out = appv2.pipeline_status('inventory-service')
@@ -1116,7 +1252,7 @@ class PipelineStrip(unittest.TestCase):
 class CancelRun(unittest.TestCase):
     def test_demo_cancel_at_the_gate(self):
         demo()
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate(); wait_for({'generated'})
         appv2.start_dispatch(); wait_for({'awaiting_approval'})
         self.assertEqual(appv2.cancel_run()[0], 200)
@@ -1153,15 +1289,15 @@ class CancelRun(unittest.TestCase):
             if path.startswith('/ad_hoc_commands/9/events/'):
                 # node1: the backup was taken and the new jar is in, but the old one is gone and the service is down.
                 return {'results': [{'event': 'runner_on_ok', 'host_name': 'node1', 'event_data': {'res': {'stdout':
-                        '== inventory-service\npostgresql-42.3.3.jar\nzookeeper-3.5.9.rhlw-00001.jar\n-- backup\n'
-                        'zookeeper-3.5.9.jar\n-- service\ninactive'}}}]}
+                        '== inventory-service\njson-path-2.8.0.jar\njson-20220320.0.0.rhlw-00003.jar\n-- backup\n'
+                        'json-20220320.jar\n-- service\ninactive'}}}]}
             return {}
 
         def k8s(path, text=False):
             return {'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}]}}
         appv2.configure(demo_mode=lambda: False, ao_call=ao, aap_call=aap, k8s_get=k8s, k8s_patch=lambda p, b: {})
         appv2.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time)
-        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'zookeeper')
+        ev = next(e for e in appv2.DEMO_EVENTS if e['artifact'] == 'json')
         h = {'key': 'inventory-service|node1', 'app': 'inventory-service', 'host': 'node1', 'site': 'lab', 'env': 'qa',
              'outcome': 'running', 'execution_id': 'ex1', 'steps': {'commit': 'done', 'test': 'done', 'sync': 'active'}}
         try:
@@ -1170,8 +1306,8 @@ class CancelRun(unittest.TestCase):
                 appv2._RUN.update(status='running', run_id='r1', event=ev, events=[], started_at='2026-01-01T00:00:00Z',
                                   stages={k: 'pending' for k in appv2.STAGES}, hosts=[h],
                                   impact={'targets': [], 'apps': ['inventory-service'], 'other': []},
-                                  playbooks=[{'app': 'inventory-service', 'changes': [{'old_jar': 'zookeeper-3.5.9.jar',
-                                              'new_jar': 'zookeeper-3.5.9.rhlw-00001.jar'}]}])
+                                  playbooks=[{'app': 'inventory-service', 'changes': [{'old_jar': 'json-20220320.jar',
+                                              'new_jar': 'json-20220320.0.0.rhlw-00003.jar'}]}])
             self.assertEqual(appv2.cancel_run()[0], 200)
             st = wait_for({'cancelled'})
         finally:
@@ -1181,7 +1317,7 @@ class CancelRun(unittest.TestCase):
         site = st['cancel']['sites'][0]
         self.assertFalse(site['clean'])
         self.assertFalse(st['cancel']['clean'])
-        self.assertIn('cp /opt/apps/inventory-service/backup/zookeeper-3.5.9.jar', site['detail'])
+        self.assertIn('cp /opt/apps/inventory-service/backup/json-20220320.jar', site['detail'])
         self.assertIn('service: inactive', site['detail'])
         self.assertEqual(st['hosts'][0]['outcome'], 'cancelled')
 
@@ -1192,15 +1328,15 @@ class SourceMode(unittest.TestCase):
         import app_source
         bom = next(b for b in appv2.DEMO_BOM if b['app'] == 'inventory-service')
         files = app_source.render(bom, appv2.PROBE_CLASS)
-        self.assertIn('<version>2.1.6</version>', files['pom.xml'])
-        self.assertIn('<artifactId>zookeeper</artifactId>', files['pom.xml'])
-        for cls in ('org.apache.mina.core.session.IoSession', 'org.apache.zookeeper.ZooKeeper', 'org.postgresql.Driver'):
+        self.assertIn('<version>20220320</version>', files['pom.xml'])
+        self.assertIn('<artifactId>json-path</artifactId>', files['pom.xml'])
+        for cls in ('org.json.JSONObject', 'com.jayway.jsonpath.JsonPath', 'com.ctc.wstx.stax.WstxInputFactory'):
             self.assertIn(cls + '.class', files['src/main/java/Uses.java'])
         self.assertEqual([b['app'] for b in app_source.repo_apps()], ['inventory-service', 'workflow-engine'])
 
     def test_source_mode_playbook_and_trigger(self):
         demo()
-        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        appv2.start_assess('evt-json'); wait_for({'assessed'})
         self.assertEqual(appv2.start_generate(['inventory-service|lab'], None, False, 'source')[0], 200)
         st = wait_for({'generated'})
         self.assertEqual(st['test_mode'], 'source')
@@ -1212,15 +1348,15 @@ class SourceMode(unittest.TestCase):
 
     def test_source_changes_carry_earlier_write_backs(self):
         demo()
-        appv2._BOM_UPDATES['inventory-service|org.apache.zookeeper:zookeeper'] = '3.5.9.rhlw-00001'
-        out = appv2.source_changes('inventory-service', [{'group': 'org.postgresql', 'artifact': 'postgresql',
-                                                          'from': '42.3.3', 'to': '42.3.3.rhlw-00006'}])
-        self.assertIn({'name': 'org.apache.zookeeper:zookeeper', 'from': '3.5.9', 'to': '3.5.9.rhlw-00001'}, out)
-        self.assertEqual(out[0]['to'], '42.3.3.rhlw-00006')
+        appv2._BOM_UPDATES['inventory-service|org.json:json'] = '20220320.0.0.rhlw-00003'
+        out = appv2.source_changes('inventory-service', [{'group': 'com.jayway.jsonpath', 'artifact': 'json-path',
+                                                          'from': '2.8.0', 'to': '2.8.0.rhlw-00001'}])
+        self.assertIn({'name': 'org.json:json', 'from': '20220320', 'to': '20220320.0.0.rhlw-00003'}, out)
+        self.assertEqual(out[0]['to'], '2.8.0.rhlw-00001')
 
     def test_no_repo_refuses_source_mode(self):
         demo()
-        appv2.start_assess('evt-zookeeper'); wait_for({'assessed'})
+        appv2.start_assess('evt-json'); wait_for({'assessed'})
         real = appv2.load_bom
         appv2.load_bom = lambda: [dict(b, repo='') for b in real()]
         try:
@@ -1258,7 +1394,7 @@ class RollbackRoute(unittest.TestCase):
 
     def target(self):
         return {'key': 'workflow-engine|node1', 'app': 'workflow-engine', 'host': 'node1', 'site': 'lab', 'env': 'qa',
-                'installed': '2.2.5', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
+                'installed': '5.3.18', 'path': '/opt/apps/workflow-engine', 'service': 'workflow-engine',
                 'health_url': 'http://localhost:8090/health', 'domain': 'NFVO / MANO'}
 
     def follow(self, acts):
@@ -1345,15 +1481,16 @@ class RollbackRoute(unittest.TestCase):
             'test_in_pod': ('completed', {'pipelinerun': 'p', 'test_passed': 'True', 'test_outcome': 'passed'}),
             'run_app_patch': ('completed', {'outcome': 'failed', 'patched': False, 'failed_step': 'Verify the service is healthy',
                                             'failed_reason': 'Status code was 503', 'rollback_json': '{}'}),
-            'rollback': ('completed', {'rolled_back': True, 'restored': 'mina-core-2.2.5.jar'}),
+            'rollback': ('completed', {'rolled_back': True, 'restored': 'spring-webmvc-5.3.18.jar'}),
             'notify_rolled_back': ('completed', {'notified': 'rolled_back'})})
         self.assertEqual(h['outcome'], 'rolled_back')
         self.assertEqual((h['steps']['verify'], h['steps']['rollback'], h['steps']['notify']), ('failed', 'done', 'done'))
         self.assertIn('Verify the service is healthy: Status code was 503', h['detail'])
-        self.assertIn('mina-core-2.2.5.jar back', h['detail'])
+        self.assertIn('spring-webmvc-5.3.18.jar back', h['detail'])
         # The cards' inputs went with the trigger.
-        self.assertEqual((inputs['site'], inputs['cves']), ('lab', 'CVE-2026-41635'))
-        self.assertIn('mina-core 2.2.5 -> 2.2.5.rhlw-00002', inputs['change_summary'])
+        self.assertEqual(inputs['site'], 'lab')
+        self.assertTrue(inputs['cves'].startswith('CVE-2023-20860'))
+        self.assertIn('spring-webmvc 5.3.18 -> 5.3.18.rhlw-00010', inputs['change_summary'])
 
     def test_a_rollback_that_does_not_finish_is_a_failure(self):
         h, _ = self.follow({
@@ -1368,7 +1505,7 @@ class RollbackRoute(unittest.TestCase):
         h, _ = self.follow({
             'commit_to_gitea': ('completed', {'commit_sha': 'abc'}),
             'test_in_pod': ('completed', {'pipelinerun': 'p', 'test_passed': 'False', 'test_outcome': 'failed',
-                                          'test_reason': 'mina-core missing'}),
+                                          'test_reason': 'spring-webmvc missing'}),
             'notify_test_failed': ('completed', {'notified': 'test_failed'})})
         self.assertEqual(h['outcome'], 'failed')
         self.assertEqual((h['steps']['test'], h['steps']['notify']), ('failed', 'done'))
@@ -1378,14 +1515,14 @@ class RollbackRoute(unittest.TestCase):
         h, _ = self.follow({
             'commit_to_gitea': ('completed', {'commit_sha': 'abc'}),
             'test_in_pod': ('completed', {'test_outcome': 'passed'}),
-            'run_app_patch': ('completed', {'outcome': 'patched', 'patched': True, 'version': 'mina-core-2.2.5.rhlw-00002.jar'}),
+            'run_app_patch': ('completed', {'outcome': 'patched', 'patched': True, 'version': 'spring-webmvc-5.3.18.rhlw-00010.jar'}),
             'notify_patched': ('completed', {'notified': 'patched'})})
         self.assertEqual((h['outcome'], h['steps']['notify']), ('patched', 'done'))
         self.assertNotIn('rollback', h['steps'])
 
     def test_demo_run_shows_rollback_and_notify(self):
         demo()
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate(); wait_for({'generated'})
         appv2.start_dispatch(); st = wait_for({'awaiting_approval'})
         for h in [x for x in st['hosts'] if x['outcome'] == 'awaiting_approval']:
@@ -1408,7 +1545,7 @@ class ForcedFailure(unittest.TestCase):
 
     def test_forced_playbook_fails_verify_but_hands_over_the_real_health_url(self):
         demo(APPV2_FORCE_FAIL='true')
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate(['workflow-engine|lab']); st = wait_for({'generated'})
         pb = st['playbooks'][0]
         self.assertTrue(pb['ok'])
@@ -1424,7 +1561,7 @@ class ForcedFailure(unittest.TestCase):
 class ForcedFailureDemo(unittest.TestCase):
     def test_demo_forced_failure_rolls_back_every_site(self):
         demo(APPV2_FORCE_FAIL='true')
-        appv2.start_assess('evt-mina-core'); wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
         appv2.start_generate(['workflow-engine|lab', 'workflow-engine|core-dc-1']); wait_for({'generated'})
         appv2.start_dispatch(); st = wait_for({'awaiting_approval', 'complete'})
         for h in [x for x in st['hosts'] if x['outcome'] == 'awaiting_approval']:
@@ -1434,7 +1571,7 @@ class ForcedFailureDemo(unittest.TestCase):
         self.assertEqual({h['key']: h['outcome'] for h in ran},
                          {'workflow-engine|lab': 'rolled_back', 'workflow-engine|core-dc-1': 'rolled_back'})
         self.assertTrue(all(h['steps']['rollback'] == 'done' and h['steps']['notify'] == 'done' for h in ran))
-        self.assertTrue(all('forced failure' in h['detail'] and 'mina-core-2.2.5.jar back' in h['detail'] for h in ran))
+        self.assertTrue(all('forced failure' in h['detail'] and 'spring-webmvc-5.3.18.jar back' in h['detail'] for h in ran))
         self.assertEqual(st['summary']['rolled_back'], 2)
 
 
@@ -1459,6 +1596,7 @@ class SiteContext(unittest.TestCase):
         self.assertEqual(appv2._window_state('any', 'UTC'), 'Lab: any time.')
 
     def test_only_workflow_engine_has_context(self):
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.18')
         imp = appv2.impact(appv2.DEMO_EVENTS[0], appv2.load_bom())
         by = {t['key']: t for t in imp['targets']}
         sc = appv2.site_context(by['workflow-engine|core-dc-1'], imp['targets'])
@@ -1472,7 +1610,8 @@ class SiteContext(unittest.TestCase):
 
     def test_demo_reasoning_and_tag(self):
         appv2._now = self.at(22, 0)
-        appv2.start_assess('evt-mina-core'); st = wait_for({'assessed'})
+        add_dep(self, 'inventory-service', 'org.springframework', 'spring-webmvc', '5.3.18')
+        appv2.start_assess('evt-spring-webmvc'); st = wait_for({'assessed'})
         by = {t['key']: t for t in st['impact']['targets']}
         core = by['workflow-engine|core-dc-1']
         self.assertIn('zookeeper quorum', core['reasoning'])
@@ -1489,8 +1628,15 @@ class SiteContext(unittest.TestCase):
         def llm(p):
             prompts.append(p)
             return '{}'
+        # Live BOM files, with inventory-service also on spring-webmvc so the fix reaches both apps.
+        bom_dir = Path(tempfile.mkdtemp(prefix='appv2-bom-'))
+        for f in (ROOT_DIR / 'app-data' / 'bom').glob('*.json'):
+            rec = json.loads(f.read_text())
+            if rec.get('app') == 'inventory-service':
+                rec['dependencies'].append({'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18'})
+            (bom_dir / f.name).write_text(json.dumps(rec))
         appv2.configure(demo_mode=lambda: False, llm=llm, rag_search=lambda store, q: [],
-                        env=lambda k, d='': {'APP_VECTOR_DB_ID': 'vs1'}.get(k, d))
+                        env=lambda k, d='': {'APP_VECTOR_DB_ID': 'vs1', 'BOM_DIR': str(bom_dir)}.get(k, d))
         try:
             imp = appv2.impact(appv2.DEMO_EVENTS[0], appv2.load_bom())
             out, source = appv2.reasoning(imp['targets'])
@@ -1511,24 +1657,24 @@ class SiteContext(unittest.TestCase):
 class ModeAndOutage(unittest.TestCase):
     def test_demo_write_back_does_not_leak_into_live(self):
         d = tempfile.mkdtemp(prefix='appv2-test-')
-        Path(d, 'appv2-bom-updates.json').write_text(json.dumps({'workflow-engine|org.apache.mina:mina-core': 'live'}))
+        Path(d, 'appv2-bom-updates.json').write_text(json.dumps({'workflow-engine|org.springframework:spring-webmvc': 'live'}))
         demo(APPV2_STATE_DIR=d)
-        appv2._BOM_UPDATES['inventory-service|org.postgresql:postgresql'] = '42.3.3.rhlw-00006'   # a demo run's
+        appv2._BOM_UPDATES['inventory-service|com.jayway.jsonpath:json-path'] = '2.8.0.rhlw-00001'   # a demo run's
         appv2.configure(demo_mode=lambda: False)
         try:
             appv2.reset()                                                # what a mode switch calls
-            self.assertEqual(appv2._BOM_UPDATES, {'workflow-engine|org.apache.mina:mina-core': 'live'})
+            self.assertEqual(appv2._BOM_UPDATES, {'workflow-engine|org.springframework:spring-webmvc': 'live'})
         finally:
             appv2.configure(demo_mode=lambda: True)
         appv2.reset()
         self.assertEqual(appv2._BOM_UPDATES, {})                       # and demo starts clean
 
     def test_lightwell_outage_keeps_the_osv_rows(self):
-        with_osv()
+        with_osv(); legacy_mina(self)
         saved = appv2._lightwell_builds
         appv2._lightwell_builds = lambda: (_ for _ in ()).throw(RuntimeError('HTTP 401'))
         try:
-            ev = appv2.DEMO_EVENTS[2]                                  # zookeeper
+            ev = appv2.DEMO_EVENTS[1]                                  # json
             imp = appv2.impact(ev, appv2.load_bom())
             x = appv2.extras(ev, imp, appv2.load_bom())
         finally:
@@ -1567,7 +1713,7 @@ class NexusCheck(unittest.TestCase):
         r = self.check(lambda url: (404, 'Not Found Repository not found'))
         self.assertFalse(r['ok'])
         self.assertIn('rollout restart deploy/nexus', r['detail'])
-        self.assertIn('/lightwell-remediated/org/apache/mina/mina-core/2.2.5.rhlw-00002/', r['url'])
+        self.assertIn('/lightwell-demo-remediated/org/springframework/spring-webmvc/5.3.18.rhlw-00010/', r['url'])
 
     def test_missing_build_and_unreachable(self):
         self.assertIn('is not in Nexus', self.check(lambda url: (404, 'Not Found'))['detail'])
@@ -1585,16 +1731,16 @@ class SiteHistory(unittest.TestCase):
     """Impact & history: each site's past patches and issues, parsed from the history records."""
 
     def test_parse_record_shapes(self):
-        txt = (ROOT_DIR / 'app-data' / 'history' / '2026-08-21-workflow-engine-core-dc-1-mina-core-ROLLED_BACK.md').read_text()
+        txt = (ROOT_DIR / 'app-data' / 'history' / '2026-08-21-workflow-engine-core-dc-1-spring-webmvc-ROLLED_BACK.md').read_text()
         r = appv2.parse_record(txt)
         self.assertEqual((r['app'], r['site'], r['host'], r['date']), ('workflow-engine', 'core-dc-1', 'node3', '2026-08-21'))
-        self.assertEqual((r['change'], r['result'], r['issue']), ('mina-core 2.2.4 -> 2.2.5', 'ROLLED BACK', True))
+        self.assertEqual((r['change'], r['result'], r['issue']), ('spring-webmvc 5.3.16 -> 5.3.17', 'ROLLED BACK', True))
         self.assertIn('60 second health window', r['lessons'])
         # What the console writes after a run (feed_history) parses too.
         own = ("# App patch record — workflow-engine on lab (node1) — 2026-11-11\n\nApp: workflow-engine   Site: lab\n"
-               "Change: spring-security-web 5.7.11 -> 5.7.11.rhlw-00006 (run ab12)\nResult: PATCHED\n\nWhat happened:\nhealthy\n")
+               "Change: spring-expression 5.3.18 -> 5.3.18.rhlw-00010 (run ab12)\nResult: PATCHED\n\nWhat happened:\nhealthy\n")
         r2 = appv2.parse_record(own)
-        self.assertEqual((r2['change'], r2['result'], r2['issue']), ('spring-security-web 5.7.11 -> 5.7.11.rhlw-00006', 'PATCHED', False))
+        self.assertEqual((r2['change'], r2['result'], r2['issue']), ('spring-expression 5.3.18 -> 5.3.18.rhlw-00010', 'PATCHED', False))
         note = (ROOT_DIR / 'app-data' / 'history' / '2026-10-20-workflow-engine-dependencies-NOTE.md').read_text()
         self.assertIsNone(appv2.parse_record(note))
 
@@ -1609,10 +1755,13 @@ class SiteHistory(unittest.TestCase):
 
     def test_demo_rows_carry_history(self):
         demo()
-        appv2.start_assess('evt-mina-core'); st = wait_for({'assessed'})
+        appv2.start_assess('evt-spring-webmvc'); st = wait_for({'assessed'})
         by = {t['key']: t for t in st['impact']['targets']}
         self.assertEqual(by['workflow-engine|core-dc-1']['history'][0]['result'], 'ROLLED BACK')
-        self.assertEqual(by['inventory-service|lab']['history'][0]['result'], 'SKIPPED')           # version-change rows too
+        appv2.reset(); demo()
+        appv2.start_assess('evt-json'); st = wait_for({'assessed'})
+        by = {t['key']: t for t in st['impact']['targets']}
+        self.assertEqual(by['inventory-service|lab']['history'][0]['result'], 'SKIPPED')
 
 
 class SkippedPipelineTasks(unittest.TestCase):

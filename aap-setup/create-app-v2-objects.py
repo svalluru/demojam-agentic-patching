@@ -79,7 +79,7 @@ def sample_apps(hosts=None):
             continue
         jars = [{'path': f"{d['group'].replace('.', '/')}/{d['artifact']}/{d['version']}/{d['artifact']}-{d['version']}.jar"}
                 for d in maven]
-        jars.append({'path': 'org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar'})   # zookeeper and others log through it
+        jars.append({'path': 'org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar'})   # kept for libraries that log through it
         out.append({'app_name': bom['app'], 'app_port': int(urllib.parse.urlparse(bom['health_url']).port or 8080),
                     'target_hosts': ','.join(names), 'jars': jars,
                     'probes': ','.join(f"{d['artifact']}={PROBE_CLASS[d['artifact']]}" for d in maven

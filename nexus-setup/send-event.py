@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Deliver one Lightwell build to the console as if Nexus had just cached it: the demo's pre-flight step.
 
-    ./nexus-setup/send-event.py org.apache.mina mina-core 2.2.5.rhlw-00002
-    ./nexus-setup/send-event.py org.apache.mina mina-core 2.2.5.rhlw-00002 --console http://localhost:8788
+    ./nexus-setup/send-event.py org.springframework spring-webmvc 5.3.18.rhlw-00010
+    ./nexus-setup/send-event.py org.springframework spring-webmvc 5.3.18.rhlw-00010 --console http://localhost:8788
 
 The poller only takes the newest build of each version, and the newest is not always the one a Lightwell advisory
-names (mina-core 2.2.5: -00009 is newer, -00002 is the one CVE-2026-41635 names). This asks Nexus for the build, so
-its lightwell-remediated proxy caches it, then posts the same payload Nexus's webhook would, signed with
+names (spring-webmvc 5.3.18: -00010 is the newest, with all nine CVEs). This asks Nexus for the build, so
+its Lightwell proxy (NEXUS_REPOSITORY, default lightwell-demo-remediated) caches it, then posts the same payload Nexus's webhook would, signed with
 NEXUS_WEBHOOK_SECRET from .env, to the console's /api/v2/webhook. A redelivery is the same event.
 """
 import argparse
@@ -36,18 +36,19 @@ def main() -> int:
     a = ap.parse_args()
     load_env()
     secret, nexus = os.environ.get('NEXUS_WEBHOOK_SECRET', ''), os.environ.get('NEXUS_URL', '').rstrip('/')
+    repo = os.environ.get('NEXUS_REPOSITORY') or 'lightwell-demo-remediated'
     if not secret:
         sys.exit('NEXUS_WEBHOOK_SECRET is not set in .env (nexus-setup/deploy.sh writes it)')
     ctx = ssl.create_default_context(cafile=os.environ.get('SSL_CERT_FILE') or None)
     if nexus:
-        jar = (f"{nexus}/repository/lightwell-remediated/{a.group.replace('.', '/')}/{a.artifact}/{a.version}/"
+        jar = (f"{nexus}/repository/{repo}/{a.group.replace('.', '/')}/{a.artifact}/{a.version}/"
                f"{a.artifact}-{a.version}.jar")
         try:
             with urllib.request.urlopen(urllib.request.Request(jar, method='HEAD'), timeout=120, context=ctx) as r:
                 print(f'Nexus has it: HTTP {r.status}')
         except Exception as exc:
             sys.exit(f'Nexus does not serve {jar}: {exc}')
-    body = json.dumps({'action': 'CREATED', 'repositoryName': 'lightwell-remediated',
+    body = json.dumps({'action': 'CREATED', 'repositoryName': repo,
                        'component': {'format': 'maven2', 'group': a.group, 'name': a.artifact,
                                      'version': a.version}}).encode()
     req = urllib.request.Request(f"{a.console.rstrip('/')}/api/v2/webhook", body,

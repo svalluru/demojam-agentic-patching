@@ -1,6 +1,6 @@
 {
   "sample": true,
-  "note": "SAMPLE, not Lightwell's catalog. These entries mirror live Lightwell Network API lookups (2026-10-19): the versions pinned in demo/repos/demojam__lightwell-coverage-demo.json, plus every covered version found in three real repositories (JoyChou93/java-sec-code, snyk-labs/java-goof and gitlab.com/pdftk-java/pdftk), so demo mode can show every coverage outcome offline. Any version not listed here is shown as not covered, which is what the live API said for the other recorded repositories on that date. Each entry also carries a snapshot of what the same lookups returned for the build's detail (repository facts, build dates, advisory text, Python distribution files). The live catalog changes, so treat this as a snapshot. Review before publishing.",
+  "note": "SAMPLE, not Lightwell's catalog. These entries mirror live Lightwell Network API lookups (2026-10-19): the versions pinned in demo/repos/demojam__lightwell-coverage-demo.json, plus every covered version found in three real repositories (JoyChou93/java-sec-code, snyk-labs/java-goof and gitlab.com/pdftk-java/pdftk), so demo mode can show every coverage outcome offline. Any version not listed here is shown as not covered, which is what the live API said for the other recorded repositories on that date. Each entry also carries a snapshot of what the same lookups returned for the build's detail (repository facts, build dates, advisory text, Python distribution files). The live catalog changes, so treat this as a snapshot. Review before publishing. The Spring 5.3.18, org.json, json-path and woodstox-core entries (2026-11-18) are Lightwell's public demo repository (packages.redhat.com/lightwell/public-lightwell-demo/java/remediated), with their CVEs from the Lightwell advisories API: the Applications demo estate uses these.",
   "entries": [
     {
       "ecosystem": "maven",
@@ -1502,6 +1502,160 @@
           }
         ]
       }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.springframework:spring-webmvc",
+      "version": "5.3.18",
+      "status": "remediated",
+      "build": "5.3.18.rhlw-00010",
+      "cves": [
+        "CVE-2023-20860",
+        "CVE-2024-38816",
+        "CVE-2024-38819",
+        "CVE-2024-38828",
+        "CVE-2025-41242",
+        "CVE-2026-22735",
+        "CVE-2026-22737",
+        "CVE-2026-22741",
+        "CVE-2026-22745"
+      ],
+      "detail": {
+        "build": {
+          "version": "5.3.18.rhlw-00010",
+          "repository": "lightwell/java/remediated-demo"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated-demo",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "published_distribution_url": "https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/"
+        },
+        "builds": [
+          {
+            "build": "5.3.18.rhlw-00010"
+          }
+        ],
+        "summary": "Spring Web MVC"
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.springframework:spring-expression",
+      "version": "5.3.18",
+      "status": "remediated",
+      "build": "5.3.18.rhlw-00010",
+      "cves": [
+        "CVE-2023-20860",
+        "CVE-2023-20861",
+        "CVE-2023-20863",
+        "CVE-2024-22243",
+        "CVE-2024-38808",
+        "CVE-2024-38816",
+        "CVE-2025-41249"
+      ],
+      "detail": {
+        "build": {
+          "version": "5.3.18.rhlw-00010",
+          "repository": "lightwell/java/remediated-demo"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated-demo",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "published_distribution_url": "https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/"
+        },
+        "builds": [
+          {
+            "build": "5.3.18.rhlw-00010"
+          }
+        ],
+        "summary": "Spring Expression Language (SpEL)"
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.json:json",
+      "version": "20220320.0.0",
+      "status": "remediated",
+      "build": "20220320.0.0.rhlw-00003",
+      "cves": [
+        "CVE-2022-45688"
+      ],
+      "detail": {
+        "build": {
+          "version": "20220320.0.0.rhlw-00003",
+          "repository": "lightwell/java/remediated-demo"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated-demo",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "published_distribution_url": "https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/"
+        },
+        "builds": [
+          {
+            "build": "20220320.0.0.rhlw-00003"
+          }
+        ],
+        "summary": "JSON in Java"
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.jayway.jsonpath:json-path",
+      "version": "2.8.0",
+      "status": "remediated",
+      "build": "2.8.0.rhlw-00001",
+      "cves": [
+        "CVE-2023-51074"
+      ],
+      "detail": {
+        "build": {
+          "version": "2.8.0.rhlw-00001",
+          "repository": "lightwell/java/remediated-demo"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated-demo",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "published_distribution_url": "https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/"
+        },
+        "builds": [
+          {
+            "build": "2.8.0.rhlw-00001"
+          }
+        ],
+        "summary": "Jayway JsonPath"
+      }
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.fasterxml.woodstox:woodstox-core",
+      "version": "6.0.3",
+      "status": "remediated",
+      "build": "6.0.3.rhlw-00001",
+      "cves": [
+        "CVE-2022-40152"
+      ],
+      "detail": {
+        "build": {
+          "version": "6.0.3.rhlw-00001",
+          "repository": "lightwell/java/remediated-demo"
+        },
+        "repository": {
+          "name": "lightwell/java/remediated-demo",
+          "security_level": "remediated",
+          "content_type": "maven",
+          "published_distribution_url": "https://packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/"
+        },
+        "builds": [
+          {
+            "build": "6.0.3.rhlw-00001"
+          }
+        ],
+        "summary": "Woodstox XML processor"
+      }
     }
   ],
   "packages": {
@@ -2543,6 +2697,54 @@
         "4.1.0",
         "4.1.1"
       ]
+    },
+    "maven|org.springframework:spring-webmvc": {
+      "remediated": [
+        {
+          "version": "5.3.18",
+          "build": "5.3.18.rhlw-00010",
+          "repository": "lightwell/java/remediated-demo"
+        }
+      ],
+      "validated": [
+        "5.3.18"
+      ]
+    },
+    "maven|org.json:json": {
+      "remediated": [
+        {
+          "version": "20220320.0.0",
+          "build": "20220320.0.0.rhlw-00003",
+          "repository": "lightwell/java/remediated-demo"
+        }
+      ],
+      "validated": [
+        "20220320.0.0"
+      ]
+    },
+    "maven|com.jayway.jsonpath:json-path": {
+      "remediated": [
+        {
+          "version": "2.8.0",
+          "build": "2.8.0.rhlw-00001",
+          "repository": "lightwell/java/remediated-demo"
+        }
+      ],
+      "validated": [
+        "2.8.0"
+      ]
+    },
+    "maven|com.fasterxml.woodstox:woodstox-core": {
+      "remediated": [
+        {
+          "version": "6.0.3",
+          "build": "6.0.3.rhlw-00001",
+          "repository": "lightwell/java/remediated-demo"
+        }
+      ],
+      "validated": [
+        "6.0.3"
+      ]
     }
   },
   "repositories": [
@@ -2577,6 +2779,12 @@
       "build_count": 9042,
       "advisory_count": 0,
       "package_count": 1997
+    },
+    {
+      "name": "lightwell/java/remediated-demo",
+      "security_level": "remediated",
+      "content_type": "maven",
+      "package_count": 6
     }
   ]
 }

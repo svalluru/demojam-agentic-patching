@@ -1,6 +1,6 @@
 // The Applications v2 sample app. Run by systemd with the source launcher, so there is nothing to build:
 //
-//   PROBES='mina-core=org.apache.mina.core.session.IoSession,...' \
+//   PROBES='spring-webmvc=org.springframework.web.servlet.DispatcherServlet,...' \
 //   java -cp '/opt/apps/<app>/lib/*' /opt/apps/<app>/HealthServer.java
 //
 // /health reports, for each probed library, the jar its class file is found in: after a swap it names the

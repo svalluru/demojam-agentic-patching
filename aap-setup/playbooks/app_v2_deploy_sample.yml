@@ -5,8 +5,8 @@
 #
 #   ansible-playbook -i <inventory> aap-setup/playbooks/app_v2_deploy_sample.yml -e @app.json
 # where app.json gives app_name, app_port, target_hosts, jars (Maven Central paths) and probes. The telco apps:
-#   workflow-engine  port 8090  node1,node2,node3  mina-core 2.2.5, zookeeper 3.5.9, spring-security-web 5.7.11
-#   inventory-service      port 8091  node1,node3        postgresql 42.3.3, zookeeper 3.5.9, mina-core 2.1.6
+#   workflow-engine  port 8090  node1,node2,node3  spring-webmvc, spring-expression, spring-core 5.3.18
+#   inventory-service      port 8091  node1,node3        org.json 20220320, json-path 2.8.0, woodstox-core 6.0.3
 # create-app-v2-objects.py --deploy-sample launches both.
 #
 # The layout matches app-data/bom/<app_name>.json, which is what the inventory agent reads:
@@ -42,6 +42,22 @@
         state: directory
         mode: "0755"
       loop: ["{{ app_dir }}", "{{ app_dir }}/lib", "{{ app_dir }}/backup"]
+
+    - name: Find jars already in lib
+      ansible.builtin.find:
+        paths: "{{ app_dir }}/lib"
+        patterns: "*.jar"
+      register: old_jars
+
+    # A redeploy with other libraries (or a patched build) leaves no stale jar behind for /health to report.
+    - name: Remove jars this deploy does not list
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_jars.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: (item.path | basename) not in (jars | map(attribute='path') | map('basename') | list)
 
     - name: Fetch the published checksums from Maven Central
       ansible.builtin.uri:

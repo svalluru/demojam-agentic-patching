@@ -282,10 +282,13 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
         N="$(params.nexus_url)"
+        # Both Lightwell proxies nexus-setup can create (NEXUS_REPOSITORY): the public demo repository and the full
+        # catalog. Nexus answers 404 for the one it does not have, and Maven moves on to the next.
         cat > "$HOME/settings.xml" <<XML
         <settings>
           <mirrors><mirror><id>nexus-central</id><mirrorOf>central</mirrorOf><url>$N/repository/maven-central/</url></mirror></mirrors>
-          <profiles><profile><id>lightwell</id><repositories><repository><id>lightwell-remediated</id>
+          <profiles><profile><id>lightwell</id><repositories><repository><id>lightwell-demo-remediated</id>
+            <url>$N/repository/lightwell-demo-remediated/</url></repository><repository><id>lightwell-remediated</id>
             <url>$N/repository/lightwell-remediated/</url></repository></repositories></profile></profiles>
           <activeProfiles><activeProfile>lightwell</activeProfile></activeProfiles>
         </settings>

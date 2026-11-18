@@ -29,24 +29,24 @@
   ],
   "dependencies": [
     {
-      "group": "org.apache.mina",
-      "artifact": "mina-core",
-      "version": "2.2.5"
+      "group": "org.springframework",
+      "artifact": "spring-webmvc",
+      "version": "5.3.18"
     },
     {
-      "group": "org.apache.zookeeper",
-      "artifact": "zookeeper",
-      "version": "3.5.9"
+      "group": "org.springframework",
+      "artifact": "spring-expression",
+      "version": "5.3.18"
     },
     {
-      "group": "org.springframework.security",
-      "artifact": "spring-security-web",
-      "version": "5.7.11"
+      "group": "org.springframework",
+      "artifact": "spring-core",
+      "version": "5.3.18"
     }
   ],
   "context": {
     "_note": "Staged context for the demo: who depends on this app, what it needs, and what a restart disrupts. Read by the Reasoning step (appv2.site_context).",
-    "role": "NFV orchestrator: drives NETCONF configuration to the network elements at each site",
+    "role": "NFV orchestrator: drives NETCONF configuration to the network elements at each site; its northbound REST API runs on Spring Web MVC and its placement policies are Spring (SpEL) expressions",
     "used_by": [
       "service-order portal (northbound API): new orders queue during a restart, none are lost",
       "assurance and closed-loop automation: automated corrective actions pause until it is back",

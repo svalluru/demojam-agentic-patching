@@ -100,7 +100,7 @@ class SimulatedRecords(unittest.TestCase):
 
 class PerSiteVersions(unittest.TestCase):
     def app(self, site_versions=None):
-        dep = {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11'}
+        dep = {'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18'}
         if site_versions:
             dep['site_versions'] = site_versions
         return {'app': 'workflow-engine', 'dependencies': [dep],
@@ -108,10 +108,10 @@ class PerSiteVersions(unittest.TestCase):
                             (('node1', 'lab', 'qa'), ('node2', 'edge-site-1', 'prod'), ('node3', 'core-dc-1', 'prod'))]}
 
     def test_a_site_left_out_of_a_run_is_still_offered_the_fix(self):
-        ev = {'group': 'org.springframework.security', 'artifact': 'spring-security-web', 'version': '5.7.11.rhlw-00006'}
-        imp = appv2.impact(ev, [self.app({'node1': '5.7.11.rhlw-00006', 'node2': '5.7.11.rhlw-00006'})])
+        ev = {'group': 'org.springframework', 'artifact': 'spring-webmvc', 'version': '5.3.18.rhlw-00010'}
+        imp = appv2.impact(ev, [self.app({'node1': '5.3.18.rhlw-00010', 'node2': '5.3.18.rhlw-00010'})])
         self.assertEqual([t['site'] for t in imp['targets']], ['core-dc-1'])
-        self.assertEqual(imp['other'], [{'app': 'workflow-engine', 'installed': '5.7.11.rhlw-00006',
+        self.assertEqual(imp['other'], [{'app': 'workflow-engine', 'installed': '5.3.18.rhlw-00010',
                                          'why': 'already on this build'}])
 
     def test_load_bom_keeps_site_versions_until_every_site_matches(self):
@@ -138,22 +138,25 @@ class PerSiteVersions(unittest.TestCase):
 
 class ReadFromHosts(unittest.TestCase):
     def test_health_output_and_jar_names_parse(self):
-        out = ('node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{"mina-core":"mina-core-2.2.5.rhlw-00002.jar"}}\n'
+        out = ('node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{"json":"json-20220320.0.0.rhlw-00003.jar",'
+               '"json-path":"json-path-2.8.0.jar"}}\n'
                'node3 | UNREACHABLE! => {\n    "msg": "timeout"\n}\n')
         bodies = appv2._parse_health_output(out)
         self.assertEqual(list(bodies), ['node1'])
-        jar = bodies['node1']['jars']['mina-core']
-        self.assertEqual(appv2._jar_version('mina-core', jar), '2.2.5.rhlw-00002')
-        self.assertEqual(appv2._jar_version('zookeeper', jar), '')
+        jars = bodies['node1']['jars']
+        self.assertEqual(appv2._jar_version('json', jars['json']), '20220320.0.0.rhlw-00003')
+        self.assertEqual(appv2._jar_version('json-path', jars['json-path']), '2.8.0')
+        self.assertEqual(appv2._jar_version('json', jars['json-path']), '')       # json is a prefix of json-path
+        self.assertEqual(appv2._jar_version('spring-core', jars['json']), '')
 
     def test_real_aap_output_with_colour_codes_parses(self):
         # Copied from a live AAP ad-hoc command's stored stdout (format=json, 'content').
         out = ('SSH password: \n\x1b[0;33mnode1 | CHANGED | rc=0 >>\x1b[0m\n\x1b[0;33m{"status":"UP","jars":'
-               '{"mina-core":"mina-core-2.1.6.jar"}}\x1b[0m\n\x1b[0;33mnode3 | CHANGED | rc=0 >>\x1b[0m\n'
-               '\x1b[0;33m{"status":"UP","jars":{"mina-core":"mina-core-2.1.6.jar"}}\x1b[0m\n')
+               '{"json":"json-20220320.jar"}}\x1b[0m\n\x1b[0;33mnode3 | CHANGED | rc=0 >>\x1b[0m\n'
+               '\x1b[0;33m{"status":"UP","jars":{"json":"json-20220320.jar"}}\x1b[0m\n')
         bodies = appv2._parse_health_output(out)
         self.assertEqual(sorted(bodies), ['node1', 'node3'])
-        self.assertEqual(bodies['node3']['jars']['mina-core'], 'mina-core-2.1.6.jar')
+        self.assertEqual(bodies['node3']['jars']['json'], 'json-20220320.jar')
 
 
 class StaleGates(unittest.TestCase):
@@ -183,7 +186,7 @@ class RefreshVersionsLive(unittest.TestCase):
         appv2.H.env = staticmethod(lambda k, d='': {'BOM_DIR': str(ROOT / 'app-data' / 'bom'),
                                                     'APPV2_STATE_DIR': tmp}.get(k, d))
         appv2._BOM_UPDATES.clear()
-        appv2._BOM_UPDATES['workflow-engine|org.springframework.security:spring-security-web'] = '5.7.11.rhlw-00006'
+        appv2._BOM_UPDATES['workflow-engine|org.springframework:spring-webmvc'] = '5.3.18.rhlw-00010'
         self.calls = []
 
         def aap(path, method='GET', body=None):
@@ -193,8 +196,8 @@ class RefreshVersionsLive(unittest.TestCase):
             if path == '/ad_hoc_commands/':
                 return {'id': 11}
             if path.endswith('/stdout/?format=json'):
-                return {'content': 'node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{"spring-security-web":'
-                                   '"spring-security-web-5.7.11.jar","mina-core":"mina-core-2.2.5.jar"}}\n'}
+                return {'content': 'node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{"spring-webmvc":'
+                                   '"spring-webmvc-5.3.18.jar","spring-core":"spring-core-5.3.18.jar"}}\n'}
             return {'status': 'successful'}
         appv2.H.aap_call = staticmethod(aap)
 
@@ -205,9 +208,9 @@ class RefreshVersionsLive(unittest.TestCase):
     def test_readings_replace_a_stale_app_level_write_back(self):
         code, body = appv2.refresh_versions()
         self.assertEqual(code, 200, body)
-        self.assertEqual(body['versions']['workflow-engine']['node1']['spring-security-web'], '5.7.11')
+        self.assertEqual(body['versions']['workflow-engine']['node1']['spring-webmvc'], '5.3.18')
         # node1 runs the seeded jar again: the stale app-level "patched" record is gone.
-        self.assertNotIn('workflow-engine|org.springframework.security:spring-security-web', appv2._BOM_UPDATES)
+        self.assertNotIn('workflow-engine|org.springframework:spring-webmvc', appv2._BOM_UPDATES)
         self.assertTrue(any(c.endswith('?format=json') for c in self.calls))
 
     def test_a_refused_command_does_not_poll_a_missing_id(self):
@@ -243,13 +246,13 @@ class SourceRebuildPerSite(unittest.TestCase):
         try:
             appv2.H.demo_mode = staticmethod(lambda: True)
             app = next(a for a in appv2.load_bom() if a['app'] == 'workflow-engine')
-            mina = next(d for d in app['dependencies'] if d['artifact'] == 'mina-core')
+            dep = next(d for d in app['dependencies'] if d['artifact'] == 'spring-webmvc')
             appv2._BOM_UPDATES.clear()
             host = app['servers'][0]['host']
-            appv2._BOM_UPDATES[f"workflow-engine|{host}|{mina['group']}:mina-core"] = mina['version'] + '.rhlw-00002'
+            appv2._BOM_UPDATES[f"workflow-engine|{host}|{dep['group']}:spring-webmvc"] = dep['version'] + '.rhlw-00010'
             edits = appv2.source_changes('workflow-engine', [])
-            self.assertIn({'name': f"{mina['group']}:mina-core", 'from': mina['version'],
-                           'to': mina['version'] + '.rhlw-00002'}, edits)
+            self.assertIn({'name': f"{dep['group']}:spring-webmvc", 'from': dep['version'],
+                           'to': dep['version'] + '.rhlw-00010'}, edits)
         finally:
             appv2.H.demo_mode = saved[0]
             appv2._BOM_UPDATES.clear(); appv2._BOM_UPDATES.update(saved[1])

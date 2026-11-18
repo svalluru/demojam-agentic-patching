@@ -2735,7 +2735,8 @@
         <section>
           <h3>Before you open the door</h3>
           <p class="muted-sm">This act runs live on the lab: real Automation Orchestrator, AAP, OpenShift Pipelines,
-            Mattermost and node1–3. The fix is <strong>spring-security-web 5.7.11.rhlw-00006</strong> on workflow-engine.
+            Mattermost and node1–3. The fix is <strong>spring-webmvc 5.3.18.rhlw-00010</strong> on workflow-engine, from
+            Lightwell's public demo repository.
             Budget ten minutes; with the image build switched off on this lab the pod test takes under a minute.
             Do this list half an hour before.</p>
           <ul>
@@ -2743,22 +2744,23 @@
               <code>SSL_CERT_FILE=/etc/ssl/cert.pem MODE=live NEXUS_EVENTS=poller APPV2_OSV=true ./agentic-patching.py serve</code>.
               Its log must say <code>rag store app: healthy</code> (or <code>rebuilt</code>: a lab restart breaks the
               stores and the console rebuilds them).</li>
-            <li><strong>The fix in the inbox.</strong> <strong>Incoming fixes</strong> must list spring-security-web
-              <code>5.7.11.rhlw-00006</code> with CVE-2024-38821 and CVE-2026-22732. If it is missing:
-              <code>./nexus-setup/send-event.py org.springframework.security spring-security-web 5.7.11.rhlw-00006</code>.</li>
+            <li><strong>The fix in the inbox.</strong> <strong>Incoming fixes</strong> must list spring-webmvc
+              <code>5.3.18.rhlw-00010</code> with nine CVEs. If it is missing:
+              <code>./nexus-setup/send-event.py org.springframework spring-webmvc 5.3.18.rhlw-00010</code>.</li>
             <li><strong>Nexus serves the fix.</strong>
-              <code>curl -s -o /dev/null -w '%{http_code}\n' $NEXUS_URL/repository/lightwell-remediated/org/springframework/security/spring-security-web/5.7.11.rhlw-00006/spring-security-web-5.7.11.rhlw-00006.jar</code>
+              <code>curl -s -o /dev/null -w '%{http_code}\n' $NEXUS_URL/repository/lightwell-demo-remediated/org/springframework/spring-webmvc/5.3.18.rhlw-00010/spring-webmvc-5.3.18.rhlw-00010.jar</code>
               must print <code>200</code>. A 404 "Repository not found" means Nexus restarted without loading the
               Lightwell proxy: <code>oc -n agentic-patching rollout restart deploy/nexus</code>, wait two minutes, check
               again. (Assess now warns about this too, above the Sites table.)</li>
             <li><strong>Sites on their original jars.</strong> workflow-engine's <code>/health</code> on node1–3 should
-              name <code>spring-security-web-5.7.11.jar</code> and <code>mina-core-2.2.5.jar</code>. If a rehearsal
-              patched one, reset it (<em>Between demos</em>).</li>
+              name <code>spring-webmvc-5.3.18.jar</code>, <code>spring-expression-5.3.18.jar</code> and
+              <code>spring-core-5.3.18.jar</code>. If a rehearsal patched one, reset it (<em>Between demos</em>).</li>
             <li><strong>Settings (gear).</strong> <em>Include osv.dev packages</em> on; <em>Force a failure</em> off.</li>
-            <li><strong>Lightwell API.</strong> If it answers, the extra rows in the Change list offer Lightwell builds of
-              the same versions. If it does not, the page says <em>Lightwell builds unavailable, upstream options
-              only</em> and the act still works: the fix itself already came through Nexus. Know which one you will
-              get before you start.</li>
+            <li><strong>Lightwell API.</strong> If it answers, the extra rows in the Change list offer the Lightwell
+              builds of spring-expression and spring-core 5.3.18. If it does not, the page says <em>Lightwell builds
+              unavailable, upstream options only</em>: those rows only show Spring 6, a major upgrade that is not
+              offered, and the act still works on the fix itself, which already came through Nexus. Know which one
+              you will get before you start.</li>
             <li><strong>Disk headroom on the cluster.</strong>
               <code>oc get node -o jsonpath='{.items[0].status.conditions[?(@.type=="DiskPressure")].status}'</code>
               must say <code>False</code>; delete finished pods in <code>agentic-patching</code> first.</li>
@@ -2796,11 +2798,12 @@
             <div class="g-n">2</div>
             <div>
               <h4>The fix, and who it touches <span class="t">2 min</span></h4>
-              <div class="g-do"><b>Do</b><span><strong>Incoming fixes</strong>: spring-security-web
-                <code>5.7.11.rhlw-00006</code>, two CVEs. Press <strong>Assess</strong>.</span></div>
-              <div class="g-say"><b>Say</b><span>“Spring Security is what decides who may call the orchestrator's API.
-                One of these CVEs is an authorization bypass. Lightwell rebuilt the exact version we run with the fix:
-                same version, no upgrade, no code change. Where does it run?”</span></div>
+              <div class="g-do"><b>Do</b><span><strong>Incoming fixes</strong>: spring-webmvc
+                <code>5.3.18.rhlw-00010</code>, nine CVEs. Press <strong>Assess</strong>.</span></div>
+              <div class="g-say"><b>Say</b><span>“Spring Web MVC serves the orchestrator's northbound REST API, the one
+                the order portal calls. Nine CVEs are open on the 5.3.18 we run, and open-source Spring 5 no longer
+                gets fixes: upstream, the answer is Spring 6 or 7, a migration. Lightwell rebuilt the exact version we
+                run with the fixes: same version, no upgrade, no code change. Where does it run?”</span></div>
               <div class="g-do"><b>Do</b><span><strong>1 · Sites</strong>: workflow-engine on lab, edge-site-1 and
                 core-dc-1, nothing else runs it. Read edge-site-1's <strong>Impact &amp; history</strong> aloud, then open
                 <strong>Show more</strong> on core-dc-1: the impact, the site's patch history and the issues faced.</span></div>
@@ -2819,23 +2822,24 @@
             <div>
               <h4>One change window, every fix <span class="t">2 min</span></h4>
               <div class="g-do"><b>Do</b><span><strong>2 · Change list</strong>, workflow-engine: the fix is locked in
-                (Lightwell, 2 CVEs). Below it, what osv.dev reports open on the same app.</span></div>
+                (Lightwell, 9 CVEs). Below it, what osv.dev reports open on the same app.</span></div>
               <div class="g-say"><b>Say</b><span>“While the orchestrator restarts anyway, what else is open on it?
-                mina-core, the NETCONF library, has five CVEs, and 2.2.8 fixes them on the same 2.2 line: a candidate
-                for the same restart. Zookeeper's fix means 3.5 to 3.7, a bigger jump on the coordination layer, so it
-                waits for its own window. And Spring Security 6 is a major upgrade, a code change: it stays open, and
-                the page says so.”</span></div>
-              <div class="g-do"><b>Do</b><span>Choose the route to show. <strong>Happy path</strong>: leave the
-                upstream rows unticked (Lightwell builds only), and the pod test passes. <strong>Safety net</strong>: tick
-                <strong>mina-core 2.2.8</strong> (upstream), and the pod test fails, the amber card posts and no site is
-                touched (on this lab that outcome is a stated, simulated rule). Leave zookeeper and the still-open
-                row. <strong>Download plan (PDF)</strong> for the change board. In <strong>1 · Sites</strong> untick
-                core-dc-1 (it keeps the act inside ten minutes). <strong>Prepare remediation</strong>.</span></div>
+                spring-expression and spring-core, the same Spring release: Lightwell has a 5.3.18 build of each, so
+                they ride the same restart. The upstream fix for them is Spring 6, a major upgrade and a code change:
+                the page shows it and does not offer it.”</span></div>
+              <div class="g-do"><b>Do</b><span><strong>Happy path</strong> (this act): tick spring-expression and
+                spring-core (Lightwell builds only), and the pod test passes. <strong>Download plan (PDF)</strong> for
+                the change board. In <strong>1 · Sites</strong> untick core-dc-1 (it keeps the act inside ten minutes).
+                <strong>Prepare remediation</strong>.</span></div>
+              <div class="g-do"><b>Do</b><span><strong>Safety net</strong> (a second, shorter run): assess the
+                <strong>json</strong> fix on inventory-service, and in the Change list pick woodstox-core's
+                <strong>upstream 6.4.0</strong> option instead of its Lightwell build. The pod test fails, the amber
+                card posts and no site is touched (on this lab that outcome is a stated, simulated rule).</span></div>
               <div class="g-say"><b>Say</b><span>“The LLM writes the playbook and the system checks it: allowed modules
                 only, every path and checksum as set, a health check, and on failure it hands over to the workflow's
                 rollback route instead of improvising one.”</span></div>
-              <div class="g-why">If Lightwell answers, the mina-core and zookeeper rows offer Lightwell builds of the
-                versions already running; prefer those (same version, Red Hat provenance) and say so.</div>
+              <div class="g-why">Three jars, one playbook: one backup, one restart, one health check and one rollback
+                route for all of them. Prefer Lightwell builds (same version, Red Hat provenance) and say so.</div>
             </div>
           </div>
 
@@ -2866,9 +2870,9 @@
             <div>
               <h4>The gate, the proof, the card <span class="t">2 min</span></h4>
               <div class="g-do"><b>Do</b><span><strong>Happy path</strong>: the lab patches without a gate; its Status
-                reads healthy on <code>spring-security-web-5.7.11.rhlw-00006.jar</code>. Switch to the Mattermost tab:
+                reads healthy on <code>spring-webmvc-5.3.18.rhlw-00010.jar</code>. Switch to the Mattermost tab:
                 the green card. edge-site-1 waits: point at <strong>Approve</strong>. <strong>Safety net</strong>
-                (mina-core ticked): the test failed, every site reads <em>failed, no site touched</em> with the
+                (woodstox-core upstream): the test failed, every site reads <em>failed, no site touched</em> with the
                 simulated note, and the Mattermost tab shows the amber card; go straight to the report.</span></div>
               <div class="g-say"><b>Say</b><span>“The lab went first, automatically, and the health check names the jars
                 it loaded: evidence of the patch, not just a restart. The team heard about it where they already work.
@@ -2887,13 +2891,17 @@
         <section>
           <h3>If they ask</h3>
           <div class="g-qa"><b>“What does this fix actually close?”</b>
-            <span>Two Spring Security advisories; CVE-2024-38821 is an authorization bypass, which on an orchestrator
-            means the API that changes the network. Lightwell's build is the same 5.7.11 with the fixes backported, so
-            nothing about the app changes but the jar.</span></div>
-          <div class="g-qa"><b>“Why take mina-core upstream and not zookeeper?”</b>
-            <span>mina-core 2.2.8 stays on the 2.2 line the app runs: low risk, same restart. Zookeeper's fix is 3.7, a
-            minor-version jump in the coordination layer every orchestrator node depends on: that deserves its own test
-            and window. Major upgrades (a code change) are never offered.</span></div>
+            <span>Nine Spring Web MVC advisories, among them path traversal (CVE-2024-38816, CVE-2024-38819) and a
+            denial of service (CVE-2024-38828), on the API that changes the network. Lightwell's build is the same
+            5.3.18 with the fixes backported, so nothing about the app changes but the jar.</span></div>
+          <div class="g-qa"><b>“Why not just upgrade to Spring 6?”</b>
+            <span>Spring 6 needs Java 17 and moves from javax to jakarta: a code change and a migration project, not a
+            patch. The console never offers a major upgrade; it lists it with the reason. Lightwell's builds close
+            the CVEs on the version already running.</span></div>
+          <div class="g-qa"><b>“Where do these builds come from?”</b>
+            <span>Lightwell's public demo repository on packages.redhat.com, which Nexus proxies. The same builds are
+            in the full Lightwell repository; a customer points Nexus at that one with their registry account. Each
+            jar has a Sigstore provenance file, and the commit job verifies it before anything is committed.</span></div>
           <div class="g-qa"><b>“How does it know who depends on the orchestrator?”</b>
             <span>The app's service map (who uses it, what it needs) is in its BOM and in the app history store; the
             window and the apps sharing each server are worked out when you press Assess. Show more lists exactly what
@@ -2912,14 +2920,14 @@
             <li><strong>Do not say it scans the servers.</strong> It reads the BOMs; <code>/health</code> only proves a
               patch landed.</li>
             <li><strong>Do not call the history or the service map real.</strong> Both are synthetic, marked so.</li>
-            <li><strong>Do not claim a Lightwell build for mina-core or zookeeper</strong> unless the rows say Lightwell:
-              with the API unavailable they are upstream releases.</li>
+            <li><strong>Do not claim a Lightwell build for spring-expression or spring-core</strong> unless the rows
+              say Lightwell: with the API unavailable they only show the upstream major, which is not offered.</li>
             <li><strong>Do not claim Python or npm patching</strong>, or that the pod test is full regression.</li>
             <li><strong>Do not present the pod-test result as a real start-up check on this lab.</strong> The image
               build and health check are switched off; the jars are verified for real, but pass or fail follows the
               stated rule (Lightwell builds only pass, an upstream jar fails). Say so, as beat 4 does.</li>
-            <li><strong>Do not imply per-site tracking.</strong> The BOM is per app: once every selected site is
-              patched, the app is recorded as patched.</li>
+            <li><strong>Do not say every site was patched</strong> when one was left out or rolled back: versions are
+              recorded per site, and the app's own version moves only when every site has the build.</li>
           </ul>
         </section>
 
@@ -8831,6 +8839,10 @@ const FLOW_APPV2 = {
     + 'replaces, and what to do on them. Everything from step 9 to 15, and the card at 17, is an '
     + 'Automation Orchestrator workflow driving AAP — the console never touches '
     + 'git or a server.',
+    'The builds come from Lightwell’s <strong>public demo repository</strong> '
+    + '(packages.redhat.com/lightwell/public-lightwell-demo/java/remediated), which Nexus proxies as '
+    + '<em>lightwell-demo-remediated</em> without credentials: spring-webmvc, spring-expression and spring-core '
+    + '5.3.18, org.json, json-path and woodstox-core. The CVEs each build fixes come from the Lightwell API.',
     'Four checks stand between an LLM-written playbook and a host: the checks at '
     + 'step 7, provenance and sha1 at step 9, the test in a pod at step 10, and the runner’s sha256 at step 13. The '
     + 'amber box is still the only one a person is inside, and only Prod passes '
@@ -9038,8 +9050,8 @@ const FLOW_LW_APIS = {
     ['GET /api/lightwell/v0.1/package_versions',
      'The whole remediated catalog a page at a time, and every Lightwell build of one package, for a version change.',
      'appv2.catalog(\'all\') · package_facts'],
-    ['packages.redhat.com/lightwell/java/remediated/ (Maven repository, not the API)',
-     'The jars and their .provenance.sigstore.json bundles. Nexus proxies it with the registry service account; hosts never call it.',
+    ['packages.redhat.com/lightwell/public-lightwell-demo/java/remediated/ (Maven repository, not the API)',
+     'Lightwell\'s public demo repository: the jars and their .provenance.sigstore.json bundles, readable without credentials. Nexus proxies it as lightwell-demo-remediated; hosts never call it. (The full repository, lightwell/java/remediated, needs the registry service account: LIGHTWELL_REMOTE.)',
      'nexus-setup/ · app_v2_commit.yml'],
   ],
   app: [
