@@ -90,6 +90,9 @@ has since been renamed **OGX**; 0.7.x did not get the fix. Moving to OGX (`ogxai
 later) removes the need for the steps below, but its image is about 3.6 GB compressed (8-10 GB unpacked), so check the
 node's free disk first on a single-node lab: on lab x8v2s it would have crossed the kubelet's eviction line.
 
+Records of **simulated** runs (marked `NOTE: simulated run`, written when AO was unreachable) are skipped at ingest:
+the store is what the LLM summarises as a host's real history, and a simulated run never happened on a host.
+
 Note also that `--ensure` deletes a broken store before rebuilding it, but the Milvus collection behind it stays, so
 orphaned `vs_*` collections pile up in Milvus over repeated restarts. They are harmless, and can be dropped once no
 store references them.

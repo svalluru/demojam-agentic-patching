@@ -4002,7 +4002,11 @@ function v2Render() {
   }
   if (v2.view === 'estate') {
     title.textContent = 'Telco estate';
-    sub.innerHTML = '<span>where Lightwell fits, from the app BOMs and the Lightwell catalog</span>';
+    // Re-read versions from hosts: the console's record of what each server runs is what it patched, so it goes
+    // wrong when anything else changes a server (a redeploy, a manual revert, a new lab). This asks the servers.
+    sub.innerHTML = '<span>where Lightwell fits, from the app BOMs and the Lightwell catalog</span>'
+      + ` <button class="pill" id="v2-bom-refresh" title="Ask every app server which library versions it actually runs (its /health, through AAP) and correct the console's record">${v2.bomRefreshing ? 'Reading the hosts…' : 'Re-read versions from hosts'}</button>`
+      + (v2.bomNote ? `<span class="muted-sm">${esc(v2.bomNote)}</span>` : '');
     body.innerHTML = v2Estate(v2.estate || {});
     return;
   }
@@ -4474,6 +4478,18 @@ document.getElementById('v2-body').addEventListener('click', async ev => {
   if (ev.target.closest('[data-v2-clprep]')) { document.getElementById('v2-go').click(); return; }
   const a = ev.target.closest('[data-v2-assess]');
   if (a) { v2.view = 'run'; v2Act('/api/v2/assess', { event_id: a.dataset.v2Assess }); return; }
+  if (ev.target.closest('#v2-bom-refresh')) {
+    if (v2.bomRefreshing) return;
+    v2.bomRefreshing = true; v2.bomNote = ''; v2Render();
+    v2Fetch('/api/v2/bom/refresh', {})
+      .then(r => {
+        const n = Object.values(r.versions || {}).reduce((k, h) => k + Object.keys(h).length, 0);
+        v2.bomNote = r.note || (`Read ${n} server(s).` + ((r.unreachable || []).length ? ` No answer from ${r.unreachable.join(', ')}.` : ''));
+      })
+      .catch(e => { v2.bomNote = 'Could not read the hosts: ' + e.message; })
+      .finally(() => { v2.bomRefreshing = false; v2.estate = null; v2Load(); });
+    return;
+  }
   const d = ev.target.closest('[data-v2-decide]');
   if (d) { d.disabled = true; v2Act('/api/v2/decide', { key: d.dataset.key, decision: d.dataset.v2Decide }); return; }
   const pg = ev.target.closest('[data-v2-page]');
@@ -6353,6 +6369,8 @@ const RUN_OUTCOME = {
   rolled_back:       { cls: 'fail',   label: 'Rolled back' },
   rollback_failed:   { cls: 'review', label: 'Rollback failed' },
   rolling_back:      { cls: 'work',   label: 'Rolling back' },
+  // A gate left waiting longer than STALE_GATE_HOURS: its workflow is gone in AO, so nothing can answer it.
+  stale:             { cls: 'fail',   label: 'Stale (gate expired)' },
 };
 
 const ago = iso => {

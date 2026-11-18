@@ -28,6 +28,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -335,7 +336,8 @@ def poll_nexus(fetch: Callable[[str], bytes], seen: set[str], apps: list[dict] |
     for app in (apps if apps is not None else load_bom()):
         for dep in app.get('dependencies', []):
             if dep.get('ecosystem', 'maven') == 'maven':
-                wanted.setdefault((dep['group'], dep['artifact']), set()).add(dep.get('version', ''))
+                versions = {dep.get('version', '')} | set((dep.get('site_versions') or {}).values())
+                wanted.setdefault((dep['group'], dep['artifact']), set()).update(versions)
     found = []
     for (group, artifact), installed in sorted(wanted.items()):
         path = f"{base}/repository/{repo}/{group.replace('.', '/')}/{artifact}"
@@ -412,11 +414,114 @@ def load_bom() -> list[dict]:
                 continue
             apps += rec if isinstance(rec, list) else [rec]
     for app in apps:                      # write-backs from earlier runs, newest last
+        hosts = [s['host'] for s in app.get('servers', [])]
         for dep in app.get('dependencies', []):
-            key = f"{app['app']}|{dep['group']}:{dep['artifact']}"
+            ga = f"{dep['group']}:{dep['artifact']}"
+            key = f"{app['app']}|{ga}"     # an app-level write-back (older runs): every site moved
             if key in _BOM_UPDATES:
                 dep['version'] = _BOM_UPDATES[key]
+            # Per-site write-backs (app|host|group:artifact): the version on each server, where it differs. The app's
+            # own version moves only once every server has the same one; until then each site keeps its own.
+            per = {h: _BOM_UPDATES[f"{app['app']}|{h}|{ga}"] for h in hosts if f"{app['app']}|{h}|{ga}" in _BOM_UPDATES}
+            if hosts and len(per) == len(hosts) and len(set(per.values())) == 1:
+                dep['version'] = next(iter(per.values()))
+            else:
+                site = {h: v for h, v in per.items() if v != dep['version']}
+                if site:
+                    dep['site_versions'] = site
     return apps
+
+
+def _parse_health_output(stdout: str) -> dict[str, dict]:
+    """AAP ad-hoc output ('node1 | CHANGED | rc=0 >>' then the /health JSON) -> {host: health body}."""
+    out: dict[str, dict] = {}
+    for m in re.finditer(r'^(\S+) \| [A-Z]+[^\n]*>>\n(\{[^\n]*\})', stdout or '', re.M):
+        try:
+            out[m.group(1)] = json.loads(m.group(2))
+        except ValueError:
+            pass
+    return out
+
+
+def _jar_version(artifact: str, jar: str) -> str:
+    """'mina-core-2.2.5.rhlw-00002.jar' -> '2.2.5.rhlw-00002', or '' if the jar is not this artifact."""
+    if jar.startswith(artifact + '-') and jar.endswith('.jar'):
+        return jar[len(artifact) + 1:-len('.jar')]
+    return ''
+
+
+def refresh_versions() -> tuple[int, dict]:
+    """Re-read versions from hosts: ask every app server's /health which jars it loaded, through an AAP ad-hoc
+    command on the target inventory, and set the write-backs to what the servers actually run. The write-backs only
+    record what this console did, so they went wrong whenever something else changed a server (a redeploy of the
+    sample apps, a manual revert, a new lab), and the console then offered or hid fixes wrongly."""
+    if H.demo_mode():
+        return 200, {'ok': True, 'note': 'Demo mode: versions come from the staged BOM, there are no servers to ask.'}
+    if not H.aap_call:
+        return 503, {'ok': False, 'error': 'no AAP access configured (AAP_BASE_URL / AAP_TOKEN)'}
+
+    def find(endpoint: str, name: str) -> int | None:
+        rows = (H.aap_call(f'{endpoint}?name={urllib.parse.quote(name)}') or {}).get('results') or []
+        return next((r['id'] for r in rows if r.get('name') == name), None)
+
+    inv = find('/inventories/', env('TARGET_INVENTORY', 'lab-inventory'))
+    cred = find('/credentials/', env('MACHINE_CREDENTIAL', 'lab-credential'))
+    if not inv or not cred:
+        return 400, {'ok': False, 'error': 'set TARGET_INVENTORY and MACHINE_CREDENTIAL to objects that exist in AAP'}
+    with _LOCK:
+        saved = dict(_BOM_UPDATES)
+    _BOM_UPDATES.clear()                     # the files' own versions, for comparing the readings against
+    base = load_bom()
+    _BOM_UPDATES.update(saved)
+    readings: dict[str, dict] = {}
+    unreachable: list[str] = []
+    for app in base:
+        hosts = [s['host'] for s in app.get('servers', [])]
+        if not hosts or not app.get('health_url'):
+            continue
+        cmd = (H.aap_call('/ad_hoc_commands/', 'POST', {
+            'inventory': inv, 'credential': cred, 'module_name': 'shell', 'limit': ','.join(hosts),
+            'module_args': f"curl -s --max-time 10 {app['health_url']}"}) or {})
+        cid, status = cmd.get('id'), ''
+        for _ in range(60):
+            status = (H.aap_call(f'/ad_hoc_commands/{cid}/') or {}).get('status', '')
+            if status in ('successful', 'failed', 'error', 'canceled'):
+                break
+            time.sleep(3)
+        stdout = H.aap_call(f'/ad_hoc_commands/{cid}/stdout/?format=txt') if cid else ''
+        bodies = _parse_health_output(stdout if isinstance(stdout, str) else json.dumps(stdout))
+        unreachable += [f"{app['app']} on {h}" for h in hosts if h not in bodies]
+        readings[app['app']] = {}
+        with _LOCK:
+            for dep in app.get('dependencies', []):
+                ga = f"{dep['group']}:{dep['artifact']}"
+                got = {h: _jar_version(dep['artifact'], ((bodies.get(h) or {}).get('jars') or {}).get(dep['artifact'], ''))
+                       for h in hosts if h in bodies}
+                got = {h: v for h, v in got.items() if v}
+                if not got:
+                    continue                 # nothing read for this library: leave what the console knew
+                _BOM_UPDATES.pop(f"{app['app']}|{ga}", None)
+                for h, v in got.items():
+                    key = f"{app['app']}|{h}|{ga}"
+                    if v == dep['version']:
+                        _BOM_UPDATES.pop(key, None)
+                    else:
+                        _BOM_UPDATES[key] = v
+                    readings[app['app']].setdefault(h, {})[dep['artifact']] = v
+    _ESTATE_CACHE.clear()
+    try:
+        _estate_file().unlink()
+    except OSError:
+        pass
+    _persist()
+    _trace('console', 'inventory', 'versions re-read from the hosts' + (f"; no answer from {', '.join(unreachable)}"
+                                                                         if unreachable else ''))
+    return 200, {'ok': True, 'versions': readings, 'unreachable': unreachable}
+
+
+def site_version(dep: dict, host: str) -> str:
+    """The version this library is at on one server: its per-site write-back if it has one, else the app's."""
+    return (dep.get('site_versions') or {}).get(host, dep.get('version', ''))
 
 
 _BOM_UPDATES: dict[str, str] = {}
@@ -430,34 +535,39 @@ def impact(event: dict, apps: list[dict]) -> dict:
     the operator opts into: it moves the app to another version, not just a patched copy of its own. Anything
     else is listed apart, so a reviewer can see the library is there and why it was left alone."""
     want = upstream(event['version'])
-    targets, other = [], []
+    targets, other, said = [], [], set()
+
+    def note(app: str, installed: str, why: str) -> None:
+        if (app, installed, why) not in said:            # one line per app and version, not per server
+            said.add((app, installed, why))
+            other.append({'app': app, 'installed': installed, 'why': why})
+
     for app in apps:
         for dep in app.get('dependencies', []):
             if dep.get('ecosystem', 'maven') != 'maven':
                 continue                   # a Python or npm library is never the same package as a Maven build
             if (dep.get('group'), dep.get('artifact')) != (event['group'], event['artifact']):
                 continue
-            change = (dep.get('version') != want and dep.get('version') != event['version']
-                      and _major(dep.get('version', '')) == _major(want)
-                      and _vkey(dep.get('version', '')) < _vkey(want))
-            if dep.get('version') == want or change:
-                for order, s in enumerate(app.get('servers', [])):
+            # Per server: after a run that patched some sites of an app, each site is matched on its own version.
+            for order, s in enumerate(app.get('servers', [])):
+                ver = site_version(dep, s['host'])
+                change = (ver != want and ver != event['version'] and _major(ver) == _major(want)
+                          and _vkey(ver) < _vkey(want))
+                if ver == want or change:
                     targets.append({'key': f"{app['app']}|{s['host']}", 'domain': app.get('domain', ''), 'order': order,
                                     'site': s.get('site', s['host']),
                                     'app': app['app'], 'owner': app.get('owner', ''), 'host': s['host'],
                                     'env': s.get('env', 'prod'), 'path': app.get('path', ''),
                                     'service': app.get('service', app['app']),
-                                    'health_url': app.get('health_url', ''), 'installed': dep['version'],
+                                    'health_url': app.get('health_url', ''), 'installed': ver,
                                     'repo': app.get('repo', ''),
                                     **({'version_change': True, 'to_version': want} if change else {})})
-            elif dep.get('version') == event['version']:
-                other.append({'app': app['app'], 'installed': dep['version'], 'why': 'already on this build'})
-            elif _major(dep.get('version', '')) != _major(want):
-                other.append({'app': app['app'], 'installed': dep.get('version', ''),
-                              'why': f'major version {_major(dep.get("version", ""))}; this build is for {want}, a code change away'})
-            else:
-                other.append({'app': app['app'], 'installed': dep.get('version', ''),
-                              'why': f'newer than {want}; this build would be a downgrade'})
+                elif ver == event['version']:
+                    note(app['app'], ver, 'already on this build')
+                elif _major(ver) != _major(want):
+                    note(app['app'], ver, f'major version {_major(ver)}; this build is for {want}, a code change away')
+                else:
+                    note(app['app'], ver, f'newer than {want}; this build would be a downgrade')
     # QA first, so a bad build shows up where it costs least.
     # The lab first, so a bad build shows up where it costs least; then each app's sites in the order its BOM lists.
     # Exact matches before version changes, which are opt-in.
@@ -2318,16 +2428,23 @@ def _learn(st: dict) -> None:
             continue                         # none of its sites was in this run: nothing to say about its BOM
         changes = (pbs.get(app) or {}).get('changes') or [{'group': ev['group'], 'artifact': ev['artifact'],
                                                           'to': ev['version'], 'from': upstream(ev['version'])}]
-        if mine and all(h['outcome'] == 'patched' for h in mine):
+        # Per site: each patched server records its new versions. Writing the app's own version when its selected
+        # sites were patched marked sites that were never in the run (core-dc-1) as patched too, and the fix stopped
+        # being offered for them.
+        done = [h for h in mine if h['outcome'] == 'patched']
+        if done:
             with _LOCK:
-                for c in changes:
-                    _BOM_UPDATES[f"{app}|{c['group']}:{c['artifact']}"] = c['to']
-            bom.append({'app': app, 'version': changes[0]['to'], 'changed': True,
+                for h in done:
+                    for c in changes:
+                        _BOM_UPDATES[f"{app}|{h['host']}|{c['group']}:{c['artifact']}"] = c['to']
+            sites = ', '.join(h.get('site') or h['host'] for h in done)
+            bom.append({'app': app, 'version': changes[0]['to'], 'changed': True, 'sites': [h['host'] for h in done],
                         'also': [f"{c['artifact']} {c['to']}" for c in changes[1:]]})
-            _trace('results', 'inventory', f"{app}: BOM now " + ', '.join(f"{c['artifact']} {c['to']}" for c in changes))
+            _trace('results', 'inventory', f"{app}: now " + ', '.join(f"{c['artifact']} {c['to']}" for c in changes)
+                   + f' on {sites}')
         else:
             bom.append({'app': app, 'version': changes[0]['from'], 'changed': False, 'also': []})
-            _trace('results', 'inventory', f'{app}: BOM unchanged (not every selected site patched)')
+            _trace('results', 'inventory', f'{app}: BOM unchanged (no site patched)')
     history = feed_history(st)
     _ESTATE_CACHE.clear()
     try:
@@ -2488,7 +2605,9 @@ def feed_history(st: dict) -> dict:
         path = folder / name
         path.write_text(text)
         store = env('APP_VECTOR_DB_ID')
-        if store and H.rag_add:
+        # A simulated run changed nothing on any server; its record is kept here, but it must not become history the
+        # Reasoning column later quotes as something that happened.
+        if store and H.rag_add and not st.get('simulated'):
             try:
                 H.rag_add(store, path)
                 added += 1

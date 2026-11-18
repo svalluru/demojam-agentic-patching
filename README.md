@@ -768,6 +768,29 @@ First verified end to end on 2026-11-05: node1 patched and healthy on the
 Lightwell build, Prod held at the gate, provenance verified, commit
 `dc522fd` in Gitea.
 
+#### Runtime data, one lab at a time
+
+The console keeps what it learns at run time under `runs/` (the Applications run, the inbox of incoming fixes, the
+per-site version write-backs, the run history, the Nexus poller's memory of builds it has seen, simulated infra runs)
+and its learning records under `rag-setup/data/runs/`. All of it describes one lab. Carried to the next lab it
+misleads: old incoming fixes, a poller that never asks the new Nexus about builds it has "seen", write-backs saying
+apps are patched on servers that never were, and old hosts summarised as this lab's history.
+
+- **Tagged with the lab.** At startup in live mode the console compares the lab (the cluster API host from
+  `OCP_API_URL`) with `runs/lab.json`. On a different lab it **moves** `runs/` and `rag-setup/data/runs/` to
+  `runs/archive/<old lab>-<time>/` (nothing is deleted) and starts clean. The first start with this check only
+  writes the tag; `./agentic-patching.py archive-runs` (with the console stopped) archives by hand.
+- **Simulated runs never become history.** Their records are kept, but `ingest.py` skips them (the
+  `NOTE: simulated run` marker), the Applications history store does not get them, and lifetime ROI counts only
+  real runs in live mode.
+- **Versions are per site.** A patched site records its new version (`app|host|group:artifact`); the app's own
+  version moves only when every site has it, so a site left out of a run (core-dc-1) is still offered the fix.
+  **Re-read versions from hosts** (Telco estate view) asks every app server's `/health` which jars it loaded,
+  through an AAP ad-hoc command on `TARGET_INVENTORY`, and resets the record to what the servers actually run: use
+  it after anything else changed a server (a redeploy of the samples, a manual revert).
+- **Stale gates.** An infra run still waiting at its approval gate after `STALE_GATE_HOURS` (24) is listed as
+  *Stale (gate expired)*: its workflow is gone in AO, so nothing can answer it.
+
 #### When it goes wrong
 
 | Symptom | Cause |

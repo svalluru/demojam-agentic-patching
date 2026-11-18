@@ -116,7 +116,26 @@ def attach(route: str, store_id: str, file_id: str) -> bool:
     return True
 
 
+# The marker results.py writes into a record of a simulated run (AO was unreachable, nothing was patched).
+SIMULATED_MARKER = 'NOTE: simulated run'
+
+
+def is_simulated(p: Path) -> bool:
+    """A record of a simulated run. Kept on disk for the record, never ingested: the history store is what the LLM
+    later summarises as a host's real history, and a simulated run never happened on any host."""
+    if 'SIMULATED' in p.name.upper():
+        return True
+    try:
+        return SIMULATED_MARKER in p.read_text(errors='replace')[:4000]
+    except OSError:
+        return False
+
+
 def ingest(route: str, store_id: str, paths: list[Path]) -> int:
+    skipped = [p for p in paths if is_simulated(p)]
+    if skipped:
+        print(f'  skipping {len(skipped)} simulated-run record(s): they never happened on a host')
+    paths = [p for p in paths if p not in skipped]
     n = 0
     for p in paths:
         fid = upload_file(route, p)

@@ -285,9 +285,21 @@ class DemoRun(unittest.TestCase):
         st = self.wait({'complete'})
         self.assertEqual(st['summary'], {'patched': 2, 'rolled_back': 1, 'rejected': 0, 'failed': 0, 'skipped': 2})
         self.assertEqual(st['stages']['verify'], 'failed')
-        # edge-site-1 rolled back, so workflow-engine's BOM stays on 2.2.5.
+        # Per site: the patched sites record the build; edge-site-1 rolled back and stays on 2.2.5, so the app's own
+        # version stays 2.2.5 too (not every site has the build).
+        patched = sorted(h['host'] for h in st['hosts'] if h['outcome'] == 'patched')
+        rolled = [h['host'] for h in st['hosts'] if h['outcome'] == 'rolled_back']
         self.assertNotIn('workflow-engine|org.apache.mina:mina-core', appv2._BOM_UPDATES)
-        self.assertEqual(st['feedback']['bom'], [{'app': 'workflow-engine', 'version': '2.2.5', 'changed': False, 'also': []}])
+        for host in patched:
+            self.assertEqual(appv2._BOM_UPDATES[f'workflow-engine|{host}|org.apache.mina:mina-core'], '2.2.5.rhlw-00002')
+        for host in rolled:
+            self.assertNotIn(f'workflow-engine|{host}|org.apache.mina:mina-core', appv2._BOM_UPDATES)
+        we = next(a for a in appv2.load_bom() if a['app'] == 'workflow-engine')
+        mina = next(d for d in we['dependencies'] if d['artifact'] == 'mina-core')
+        self.assertEqual(mina['version'], '2.2.5')
+        self.assertEqual(sorted(mina['site_versions']), patched)
+        fb = st['feedback']['bom'][0]
+        self.assertEqual((fb['app'], fb['changed'], sorted(fb['sites'])), ('workflow-engine', True, patched))
         self.assertEqual(st['feedback']['history']['records'], 3)
         # The Report agent's PDF.
         self.assertEqual(st['stages']['report'], 'done')
@@ -474,7 +486,7 @@ class Restart(unittest.TestCase):
                 break
             time.sleep(0.01)
         self.assertEqual(appv2.state()['hosts'][0]['outcome'], 'patched')
-        self.assertIn('workflow-engine|org.apache.mina:mina-core', json.loads(
+        self.assertIn('workflow-engine|node1|org.apache.mina:mina-core', json.loads(
             (Path(self.dir) / 'appv2-bom-updates.json').read_text()))
 
     def test_step_inside_the_console_is_reported_interrupted(self):
@@ -520,8 +532,9 @@ class Subset(unittest.TestCase):
         self.assertFalse(by['workflow-engine|lab']['execution_id'])         # never sent to AO
         self.assertEqual(st['summary']['skipped'], 3)
         # Both inventory-service sites were patched; workflow-engine was not touched, so its BOM stays.
-        self.assertIn('inventory-service|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
-        self.assertNotIn('workflow-engine|org.apache.zookeeper:zookeeper', appv2._BOM_UPDATES)
+        inv = next(a for a in appv2.load_bom() if a['app'] == 'inventory-service')
+        self.assertEqual(next(d for d in inv['dependencies'] if d['artifact'] == 'zookeeper')['version'], '3.5.9.rhlw-00001')
+        self.assertFalse([k for k in appv2._BOM_UPDATES if k.startswith('workflow-engine|')])
 
     def test_sites_chosen_before_prepare(self):
         demo()
@@ -901,8 +914,10 @@ class MultiJar(unittest.TestCase):
         self.assertTrue(h['test']['passed'])
         self.assertEqual(json.loads(h['test']['health'])['jars']['mina-core'], 'mina-core-2.1.13.jar')
         self.assertIn('mina-core-2.1.13.jar', h['detail'])
-        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.mina:mina-core'], '2.1.13')
-        self.assertEqual(appv2._BOM_UPDATES['inventory-service|org.apache.zookeeper:zookeeper'], '3.5.9.rhlw-00001')
+        # Both inventory-service sites were patched, so the app's own versions move (per-site write-backs agree).
+        inv = next(a for a in appv2.load_bom() if a['app'] == 'inventory-service')
+        ver = {d['artifact']: d['version'] for d in inv['dependencies']}
+        self.assertEqual((ver['mina-core'], ver['zookeeper']), ('2.1.13', '3.5.9.rhlw-00001'))
         self.assertTrue((Path(appv2.reports_dir()) / st['report']['file']).exists())
 
 

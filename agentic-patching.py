@@ -2367,7 +2367,9 @@ class PatchingAgent:
         # Filter server-side. AO returns newest-first across every workflow and
         # the built-in Integration Health Check runs every few minutes, so a
         # client-side filter progressively loses patch runs as those pile up.
-        found = ao_call(f'/api/v1/executions?limit={limit}'
+        # AO refuses a limit above 100 ("Input should be less than or equal to 100"). Asking for 200 (the ROI's
+        # lifetime figure) failed outright, and that figure was quietly computed from the simulated runs alone.
+        found = ao_call(f'/api/v1/executions?limit={min(int(limit), 100)}'
                         f'&workflow_id={self.workflow_id()}')
         runs = []
         for e in (found or {}).get('resources', []):
@@ -2428,6 +2430,17 @@ class PatchingAgent:
         can be not_verified. Each finished run is settled once through run_detail (verify, health, rollback, gate) and
         cached; at most SETTLE_PER_CALL new ones per call, newest first, so a long history does not flood AO. A run
         not settled yet keeps the list's own reading until a later call reaches it."""
+        # A gate still "waiting" after STALE_GATE_HOURS is an orphan: its Temporal workflow is gone, so neither Approve
+        # nor Reject nor Cancel reaches it (seen on lab x8v2s). Listed as stale, not as something to approve.
+        stale_after = float(env('STALE_GATE_HOURS', '24') or 24) * 3600
+        for r in runs:
+            if r.get('outcome') == 'awaiting_approval' and not r.get('simulated'):
+                try:
+                    age = time.time() - datetime.fromisoformat(str(r.get('created_at')).replace('Z', '+00:00')).timestamp()
+                except ValueError:
+                    continue
+                if age > stale_after:
+                    r['outcome'] = 'stale'
         budget = self.SETTLE_PER_CALL
         for r in runs:
             if r.get('status') not in ('completed', 'succeeded', 'failed', 'error'):
@@ -4010,6 +4023,10 @@ def roi_report(state: dict, overrides: dict | None = None,
     # answer rather than just the presentation: it is one platform, built
     # once, and recovering its cost from two use cases halves the time it
     # takes. So it is assembled here rather than inside either half.
+    # Live, the lifetime total counts only real runs: simulated ones (AO was unreachable) patched nothing, and they
+    # were mixed into this total from runs/simulated.json. Offline every run is simulated, which the page labels.
+    if not offline():
+        runs = [r for r in runs if not r.get('simulated')]
     lifetime = roi_history(runs, b) if runs else None
     recovered = ((lifetime or {}).get('cost') or 0) + ((app or {}).get('saved') or {}).get('cost', 0) \
         + max(0, ((appv2_roi or {}).get('saved') or {}).get('cost', 0))
@@ -4749,6 +4766,71 @@ def manual_rollback(exec_id: str) -> dict:
 
     threading.Thread(target=work, daemon=True).start()
     return {'host': host, 'execution_id': exec_id}
+
+
+# ---------------------------------------------------------------------- one lab's runtime data
+#
+# runs/ (the Applications run, inbox, BOM write-backs, run history, poller memory, simulated infra runs) and the
+# learning records in rag-setup/data/runs/ survived from one lab to the next, and then misled: old incoming fixes, a
+# poller that never asked the new Nexus about builds it had "seen", write-backs saying apps were patched on servers
+# that never were, and old labs' hosts summarised as this lab's history. So the data is tagged with the lab it came
+# from, and on a different lab it is archived (moved, not deleted) before anything reads it.
+RUNTIME_DIR = ROOT / 'runs'
+LAB_FILE = RUNTIME_DIR / 'lab.json'
+
+
+def lab_id() -> str:
+    """This lab: the cluster API host from OCP_API_URL, else the AAP host, else LAB_TAG."""
+    for key in ('OCP_API_URL', 'AAP_BASE_URL'):
+        host = urllib.parse.urlparse(env(key)).hostname or ''
+        if host:
+            return host
+    return env('LAB_TAG')
+
+
+def archive_runtime(old: str = '') -> Path | None:
+    """Move runs/ (except earlier archives) and rag-setup/data/runs/ into runs/archive/<old lab>-<time>/."""
+    import shutil
+    items = [p for p in RUNTIME_DIR.iterdir() if p.name not in ('archive', 'lab.json')] if RUNTIME_DIR.exists() else []
+    rag = ROOT / 'rag-setup' / 'data' / 'runs'
+    if not items and not (rag.exists() and any(rag.iterdir())):
+        return None
+    label = re.sub(r'[^A-Za-z0-9._-]', '_', old or 'unknown-lab')[:80]
+    dest = RUNTIME_DIR / 'archive' / f"{label}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for p in items:
+        shutil.move(str(p), str(dest / p.name))
+    if rag.exists() and any(rag.iterdir()):
+        shutil.move(str(rag), str(dest / 'rag-runs'))
+    # What was already loaded from those files is forgotten too.
+    SIM.runs = {}
+    appv2._BOM_UPDATES.clear()
+    appv2.EVENTS = None
+    return dest
+
+
+def lab_guard(force: bool = False) -> str:
+    """Live mode, at startup: archive the runtime data if it belongs to another lab (or always, with force)."""
+    if demo_mode() and not force:
+        return ''
+    cur = lab_id()
+    if not cur:
+        return 'no lab id (set OCP_API_URL): runtime data not tagged'
+    try:
+        prev = json.loads(LAB_FILE.read_text()).get('lab', '')
+    except (OSError, ValueError):
+        prev = None
+    msg = ''
+    if force or (prev is not None and prev != cur):
+        dest = archive_runtime(prev or 'untagged')
+        msg = (f'runtime data from {prev or "an untagged lab"} archived to {dest}' if dest
+               else f'new lab {cur}: nothing to archive')
+    elif prev is None:
+        msg = (f'runtime data now tagged with {cur}. It may hold earlier labs\' data: '
+               f'./agentic-patching.py archive-runs starts clean')
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    LAB_FILE.write_text(json.dumps({'lab': cur, 'since': now_iso()}))
+    return msg
 
 
 def lab_ping() -> None:
@@ -5637,6 +5719,9 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = 502, {'ok': False, 'error': str(exc)}
         elif path == '/api/v2/cancel':
             code, body = appv2.cancel_run()
+        elif path == '/api/v2/bom/refresh':
+            # Re-read versions from hosts: what each app server actually runs, through AAP.
+            code, body = appv2.refresh_versions()
         elif path == '/api/v2/reset':
             appv2.reset()
             code, body = 200, {'ok': True}
@@ -5661,6 +5746,9 @@ def serve(host: str, port: int) -> None:
                   'assessment will be refused until one is. '
                   'Run ./discover-hosts.py --write.')
     # Applications v2: the run a restart interrupted, back from runs/ (live mode).
+    lab_note = lab_guard()
+    if lab_note:
+        print(f'  lab: {lab_note}')
     restored = appv2.restore()
     if restored.get('restored'):
         print(f'  apps v2: restored run ({restored["status"]})'
@@ -5761,6 +5849,8 @@ def main() -> None:
     p_patch.add_argument('--limit', type=int, default=0, help='cap host count')
     p_patch.add_argument('--json', action='store_true')
 
+    sub.add_parser('archive-runs', help='move runs/ and the learning records to runs/archive/ and start clean')
+
     p_serve = sub.add_parser('serve', help='the console: page, API and /lightwell/ on one port')
     p_serve.add_argument('--host', default=env('CONSOLE_HOST', '127.0.0.1'))
     p_serve.add_argument('--port', type=int, default=int(env('CONSOLE_PORT', '8788')))
@@ -5804,6 +5894,14 @@ def main() -> None:
 
         elif args.cmd == 'serve':
             serve(args.host, args.port)
+
+        elif args.cmd == 'archive-runs':
+            # Not under a running console: it holds the same state in memory and would write it straight back.
+            with socket.socket() as sock:
+                sock.settimeout(1)
+                if sock.connect_ex((env('CONSOLE_HOST', '127.0.0.1'), int(env('CONSOLE_PORT', '8788')))) == 0:
+                    sys.exit('the console is running on port ' + env('CONSOLE_PORT', '8788') + ': stop it first')
+            print(lab_guard(force=True) or 'nothing to archive')
 
     except BackendUnavailable as exc:
         print(f'\nFAILED — {exc}', file=sys.stderr)
