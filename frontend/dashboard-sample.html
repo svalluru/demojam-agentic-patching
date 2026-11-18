@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Operations dashboard (sample) · Agentic Patching</title>
 <!--
-  SAMPLE. A mock-up of an operations dashboard for the console: what needs a person now, alerts, critical exposure,
-  incoming fixes, runs in flight, platform health. Self-contained (no network calls); the data in SAMPLE below
-  mirrors the lab on 2026-11-18. Each panel names the console endpoint that would feed it live.
+  SAMPLE. Two operations dashboards for the console, Infrastructure (#infra) and Applications (#apps): what needs a
+  person now, alerts, exposure, runs in flight, platform health. Self-contained (no network calls); the data in
+  SIDES below mirrors the lab on 2026-11-18. Each panel names the console endpoint that would feed it live.
   Not linked from the console yet.
 -->
 <style>
@@ -146,6 +146,11 @@
   .ideas { font-size:13px; }
   .ideas ol { margin:0; padding-left:20px; display:grid; gap:4px; }
 
+  .seg { display:inline-flex; background:var(--tint-n); border-radius:10px; padding:3px; gap:2px; }
+  .seg button { font:inherit; font-size:13px; font-weight:600; border:0; background:none; color:var(--muted);
+                padding:5px 12px; border-radius:8px; cursor:pointer; }
+  .seg button[aria-selected="true"] { background:var(--bg); color:var(--text); box-shadow:var(--sh-1); }
+  .seg button:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(11,11,12,.15); }
   @media (max-width: 900px) {
     main { padding:16px; }
     .grid2 { grid-template-columns:1fr; }
@@ -164,330 +169,328 @@
 <body>
 <header>
   <h1>Operations</h1>
+  <div class="seg" role="tablist" aria-label="Dashboard">
+    <button role="tab" data-side="infra">Infrastructure</button>
+    <button role="tab" data-side="apps">Applications</button>
+  </div>
   <span class="badge live" id="mode">Live</span>
   <span class="badge sample" title="Static sample data, no network calls">Sample</span>
   <span class="asof" id="asof"></span>
 </header>
 
-<main>
-  <!-- 1 · Needs you now -->
-  <section class="panel now" aria-labelledby="h-now">
-    <h2 id="h-now">Needs you now <span class="count" id="now-count"></span></h2>
-    <div class="gates" id="gates"></div>
-    <div class="src">GET /api/v2/state (awaiting_approval) · GET /api/runs (paused, STALE_GATE_HOURS) → POST /api/v2/decide · /api/decide</div>
-  </section>
-
-  <!-- 2 · KPIs -->
-  <section class="kpis" id="kpis" aria-label="Key figures"></section>
-
-  <div class="grid2">
-    <div class="col">
-      <!-- 3 · Alerts -->
-      <section class="panel" aria-labelledby="h-alerts">
-        <h2 id="h-alerts">Alerts <span class="count" id="alert-count"></span></h2>
-        <div class="filters" id="alert-filters" role="group" aria-label="Filter alerts"></div>
-        <ul class="feed" id="feed"></ul>
-        <div class="src">poller events · AO executions · AAP jobs · PipelineRuns · Mattermost cards · preflight</div>
-      </section>
-
-      <!-- 6 · Runs in flight -->
-      <section class="panel" aria-labelledby="h-runs">
-        <h2 id="h-runs">Runs in flight</h2>
-        <div id="runs"></div>
-        <div class="src">GET /api/v2/state · GET /api/state · GET /api/v2/pipeline</div>
-      </section>
-
-      <!-- 8 · Patch velocity -->
-      <section class="panel" aria-labelledby="h-vel" id="vel-panel">
-        <h2 id="h-vel">Patch velocity · last 14 days
-          <button class="viewtoggle" data-target="vel-panel">Table view</button></h2>
-        <div class="legend"><span><i style="background:var(--series-1)"></i>Sites patched</span>
-          <span><i style="background:var(--series-2)"></i>Sites rolled back</span></div>
-        <div class="chart" id="vel"></div>
-        <table class="tableview" id="vel-table"></table>
-        <div class="src">GET /api/v2/runs · GET /api/runs (outcomes per day)</div>
-      </section>
-    </div>
-
-    <div class="col">
-      <!-- 4 · Critical exposure -->
-      <section class="panel" aria-labelledby="h-exp" id="exp-panel">
-        <h2 id="h-exp">Critical exposure by app
-          <button class="viewtoggle" data-target="exp-panel">Table view</button></h2>
-        <div class="legend"><span><i style="background:var(--series-1)"></i>Fixable now (Lightwell build)</span>
-          <span><i style="background:var(--series-2)"></i>No fix offered yet</span></div>
-        <div class="chart" id="exp"></div>
-        <table class="tableview" id="exp-table"></table>
-        <div class="src">GET /api/v2/estate · GET /api/cves (known exploited first)</div>
-      </section>
-
-      <!-- 5 · Incoming fixes -->
-      <section class="panel" aria-labelledby="h-in">
-        <h2 id="h-in">Incoming fixes <span class="count" id="in-count"></span></h2>
-        <table id="inbox"></table>
-        <div class="src">GET /api/v2/events (Nexus poller, CVEs from the Lightwell API)</div>
-      </section>
-
-      <!-- 7 · Platform health -->
-      <section class="panel" aria-labelledby="h-health">
-        <h2 id="h-health">Platform health</h2>
-        <table id="health"></table>
-        <div class="src">console preflight per backend · GET /api/mode</div>
-      </section>
-
-      <!-- 9 · Change windows -->
-      <section class="panel" aria-labelledby="h-win">
-        <h2 id="h-win">Change windows</h2>
-        <table id="windows"></table>
-        <div class="src">BOM context (window, timezone) · appv2._window_state</div>
-      </section>
-    </div>
-  </div>
-
-  <section class="panel ideas" aria-labelledby="h-ideas">
-    <h2 id="h-ideas">More ideas for later</h2>
-    <ol>
-      <li><b>Risk heatmap</b>: host × CVE cells coloured by the risk model's score, so the hot corner of the estate stands out.</li>
-      <li><b>Time to patch</b>: fix arrival → lab → live, per run, against a target (for example 72 h for a known-exploited CVE).</li>
-      <li><b>Approver load</b>: who decided what, how long gates waited, so approvals do not pile up on one person.</li>
-      <li><b>Drift</b>: sites whose /health jars disagree with the BOM (Re-read versions from hosts), flagged here instead of found by accident.</li>
-      <li><b>Notifications</b>: the "Needs you now" strip pushed to Mattermost when a gate passes half its stale time.</li>
-      <li><b>Wallboard mode</b>: one-key fullscreen with larger type, auto-refresh, and only panels 1, 2 and 3.</li>
-    </ol>
-  </section>
-</main>
+<main id="main"></main>
 
 <script>
 // Sample data: mirrors the lab on 2026-11-18. Times are minutes before NOW.
 const NOW = new Date('2026-11-18T10:30:00Z');
 const STALE_GATE_HOURS = 24;
-const SAMPLE = {
-  mode: 'live',
-  gates: [
-    { side: 'Applications', what: 'workflow-engine on edge-site-1', host: 'node2', fix: 'spring-webmvc 5.3.18.rhlw-00010',
-      cves: 9, exploited: 0, waitedMin: 412, detail: 'Pod test passed · lab patched and healthy · commit verified' },
-    { side: 'Infrastructure', what: 'pay-app-09.example.com', host: 'prod', fix: 'CVE-2024-6387 (openssh)',
-      cves: 1, exploited: 1, waitedMin: 95, detail: 'Known exploited · risk 87 · dev hosts patched' },
-    { side: 'Infrastructure', what: '4 executions from 2026-11-14', host: 'prod', fix: 'gates expired in AO',
-      cves: 0, exploited: 0, waitedMin: 5880, stale: true, detail: 'Their workflows are gone; nothing can answer them' },
-  ],
-  kpis: [
-    { label: 'Known-exploited CVEs open', value: 2, delta: '1 waiting at a gate', act: true },
-    { label: 'Sites patched · 7 days', value: 11, delta: '+4 on the week before' },
-    { label: 'Rollbacks · 7 days', value: 1, delta: 'edge-site-1, health window' },
-    { label: 'Fix arrival → patched', value: '6.8 h', delta: 'median, lab sites' },
-    { label: 'Hours saved · lifetime', value: 46, delta: 'real runs only (ROI)' },
-  ],
-  alerts: [
-    { min: 8,    sev: 'warn', from: 'AO',            text: '<b>workflow-engine on edge-site-1</b> waiting for approval (spring-webmvc, 9 CVEs)' },
-    { min: 11,   sev: 'ok',   from: 'AAP',           text: '<b>node1 patched</b>: healthy on spring-webmvc, spring-expression, spring-core rhlw-00010' },
-    { min: 13,   sev: 'ok',   from: 'Pipelines',     text: 'Pod test <b>app-v2-workflow-engine</b> passed (fetch ✓, build and health skipped on this lab)' },
-    { min: 34,   sev: 'info', from: 'Nexus poller',  text: '6 Lightwell builds arrived from the public demo repository' },
-    { min: 52,   sev: 'crit', from: 'Preflight',     text: 'Insights: Red Hat SSO answered 401. Check LIGHTSPEED_CLIENT_ID / _SECRET' },
-    { min: 95,   sev: 'warn', from: 'AO',            text: '<b>pay-app-09</b> waiting for approval: CVE-2024-6387, known exploited' },
-    { min: 190,  sev: 'crit', from: 'Mattermost',    text: 'Red card: <b>edge-site-1 rolled back</b>, health check gave up after 30 s' },
-    { min: 1440, sev: 'off',  from: 'Console',       text: '4 infra gates listed <b>stale</b> (older than 24 h)' },
-  ],
-  runs: [
-    { side: 'Applications', title: 'spring-webmvc 5.3.18.rhlw-00010', sub: 'workflow-engine · 2 of 3 sites',
-      stages: ['done', 'done', 'done', 'done', 'wait', 'pend'] },
-    { side: 'Infrastructure', title: 'CVE-2024-6387 (openssh)', sub: '5 hosts · 3 dev, 2 prod',
-      stages: ['done', 'done', 'skip', 'done', 'wait', 'pend'] },
-  ],
-  stageNames: ['Assess', 'Prepare', 'Test', 'Lab', 'Gate', 'Live'],
-  exposure: [   // CVEs per app: fixable now with a Lightwell build vs no fix offered
-    { app: 'workflow-engine', sev: 'CRITICAL', fixable: 17, open: 4, exploited: 0 },
-    { app: 'inventory-service', sev: 'HIGH', fixable: 3, open: 2, exploited: 0 },
-    { app: 'analytics-agent', sev: 'MEDIUM', fixable: 0, open: 3, exploited: 0, note: 'Python: not covered' },
-    { app: 'customer-portal', sev: 'LOW', fixable: 0, open: 1, exploited: 0, note: 'npm: not covered' },
-  ],
-  inbox: [
-    { pkg: 'spring-webmvc', build: '5.3.18.rhlw-00010', cves: 9, apps: 'workflow-engine', sites: 3, state: 'In a run' },
-    { pkg: 'spring-expression', build: '5.3.18.rhlw-00010', cves: 7, apps: 'workflow-engine', sites: 3, state: 'In a run' },
-    { pkg: 'spring-core', build: '5.3.18.rhlw-00010', cves: 1, apps: 'workflow-engine', sites: 3, state: 'In a run' },
-    { pkg: 'json', build: '20220320.0.0.rhlw-00003', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
-    { pkg: 'json-path', build: '2.8.0.rhlw-00001', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
-    { pkg: 'woodstox-core', build: '6.0.3.rhlw-00001', cves: 1, apps: 'inventory-service', sites: 2, state: 'New' },
-  ],
-  health: [
-    { name: 'Automation Orchestrator', st: 'ok', note: '' },
-    { name: 'Ansible Automation Platform', st: 'ok', note: '' },
-    { name: 'Red Hat Insights', st: 'crit', note: 'SSO 401: check LIGHTSPEED_CLIENT_ID / _SECRET' },
-    { name: 'Lightwell API', st: 'ok', note: 'CVEs itemised' },
-    { name: 'Nexus (lightwell-demo-remediated)', st: 'ok', note: 'poller every 300 s' },
-    { name: 'Llama Stack · history stores', st: 'warn', note: 'app store rebuilt at startup' },
-    { name: 'vLLM', st: 'ok', note: '' },
-    { name: 'Risk model', st: 'ok', note: '' },
-    { name: 'OpenShift Pipelines', st: 'warn', note: 'build, health skipped (disk)' },
-    { name: 'Mattermost', st: 'ok', note: '' },
-  ],
-  windows: [
-    { site: 'lab', app: 'workflow-engine, inventory-service', open: true, text: 'any time' },
-    { site: 'edge-site-1', app: 'workflow-engine', open: false, text: 'opens in 2 h 30 m (00:00–04:00 America/Chicago)' },
-    { site: 'core-dc-1', app: 'workflow-engine, inventory-service', open: false, text: 'opens in 3 h 30 m (00:00–04:00 America/New_York)' },
-  ],
-  velocity: Array.from({ length: 14 }, (_, i) => ({
-    day: new Date(NOW.getTime() - (13 - i) * 86400000),
-    patched: [0, 1, 0, 2, 0, 0, 1, 3, 0, 1, 2, 0, 3, 1][i],
-    rolled: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0][i],
-  })),
+const days = (patched, rolled) => patched.map((p, i) => ({
+  day: new Date(NOW.getTime() - (patched.length - 1 - i) * 86400000), patched: p, rolled: rolled[i] }));
+
+const SIDES = {
+  infra: {
+    title: 'Infrastructure',
+    unit: 'hosts',
+    gates: [
+      { what: 'pay-app-09.example.com', fix: 'CVE-2024-6387 (openssh)', cves: 1, exploited: 1, waitedMin: 95,
+        detail: 'Risk 87 (model) · 3 dev hosts patched and verified · reboot needed' },
+      { what: 'pay-app-07.example.com', fix: 'CVE-2024-6387 (openssh)', cves: 1, exploited: 1, waitedMin: 92,
+        detail: 'Risk 74 · history: one rollback in September (httpd did not come back)' },
+      { what: '4 executions from 2026-11-14', fix: 'gates expired in AO', cves: 0, exploited: 0, waitedMin: 5880,
+        stale: true, detail: 'Their workflows are gone; nothing can answer them' },
+    ],
+    gateSrc: 'GET /api/state (patch results awaiting_approval) · GET /api/runs (STALE_GATE_HOURS) → POST /api/decide',
+    kpis: [
+      { label: 'Known-exploited CVEs open', value: 2, delta: 'on 5 hosts · 2 at a gate', act: true },
+      { label: 'Hosts patched · 7 days', value: 9, delta: 'verified by Insights after the patch' },
+      { label: 'Rolled back · 7 days', value: 1, delta: 'dnf history, health check failed' },
+      { label: 'Not verified', value: 1, delta: 'Insights still lists an advisory' },
+      { label: 'Hours saved · infra', value: 31, delta: 'real runs only (ROI)' },
+    ],
+    alerts: [
+      { min: 6,    sev: 'warn', from: 'AO',         text: '<b>pay-app-09</b> and <b>pay-app-07</b> waiting for approval: CVE-2024-6387, known exploited' },
+      { min: 14,   sev: 'ok',   from: 'AAP',        text: '<b>dev-01..03 patched</b>: openssh updated, Insights verified, healthy' },
+      { min: 21,   sev: 'info', from: 'Risk model', text: 'Scored 5 hosts for CVE-2024-6387: 2 routed to the gate (risk ≥ 70)' },
+      { min: 52,   sev: 'crit', from: 'Preflight',  text: 'Insights: Red Hat SSO answered 401. Check LIGHTSPEED_CLIENT_ID / _SECRET' },
+      { min: 230,  sev: 'crit', from: 'Mattermost', text: 'Red card: <b>web-02 rolled back</b> to dnf transaction 41, httpd did not start' },
+      { min: 410,  sev: 'warn', from: 'Console',    text: '<b>db-01 not verified</b>: patched, but Insights still lists RHSA-2026:1182' },
+      { min: 1440, sev: 'off',  from: 'Console',    text: '4 gates listed <b>stale</b> (older than 24 h)' },
+    ],
+    alertSrc: 'AO executions · AAP jobs · Insights · risk model · Mattermost cards · preflight',
+    runs: [
+      { title: 'CVE-2024-6387 (openssh)', sub: '5 hosts · 3 dev, 2 prod', stages: ['done', 'done', 'done', 'done', 'wait', 'pend'] },
+      { title: 'CVE-2025-26465 (openssh)', sub: '2 hosts · assessing', stages: ['done', 'pend', 'pend', 'pend', 'pend', 'pend'] },
+    ],
+    stageNames: ['Assess', 'Score', 'Checkpoint', 'Dev', 'Gate', 'Prod'],
+    runSrc: 'GET /api/state · GET /api/runs',
+    exposure: {
+      title: 'Hosts exposed per CVE', series: ['Hosts patched', 'Hosts still exposed'],
+      rows: [
+        { name: 'CVE-2024-6387', tag: 'Known exploited', a: 3, b: 2 },
+        { name: 'CVE-2025-26465', tag: 'CVSS 6.8', a: 0, b: 2 },
+        { name: 'CVE-2024-3094', tag: 'Known exploited', a: 4, b: 0 },
+        { name: 'CVE-2025-0938', tag: 'CVSS 5.4', a: 1, b: 3 },
+      ],
+      src: 'GET /api/cves (Insights, known exploited first) · GET /api/runs',
+    },
+    table: {
+      title: 'Top CVEs', head: ['CVE', 'CVSS', 'Hosts', 'State'],
+      rows: [
+        ['CVE-2024-6387', '8.1', '5', ['warn', 'At a gate'], ['crit', 'Known exploited']],
+        ['CVE-2025-26465', '6.8', '2', ['info', 'Assessing']],
+        ['CVE-2025-0938', '5.4', '4', ['off', 'Not started']],
+        ['CVE-2024-3094', '10.0', '4', ['ok', 'Patched'], ['crit', 'Known exploited']],
+      ],
+      src: 'GET /api/cves',
+    },
+    health: [
+      ['Red Hat Insights', 'crit', 'SSO 401: check LIGHTSPEED_CLIENT_ID / _SECRET'],
+      ['Lightspeed MCP (playbooks)', 'ok', ''],
+      ['Automation Orchestrator', 'ok', ''],
+      ['Ansible Automation Platform', 'ok', ''],
+      ['Risk model', 'ok', 'request log on'],
+      ['Llama Stack · infra history', 'ok', '45 records'],
+      ['vLLM', 'ok', ''],
+      ['Mattermost', 'ok', ''],
+    ],
+    velocity: days([0, 2, 0, 1, 0, 0, 1, 2, 0, 0, 1, 0, 3, 3], [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]),
+    velocitySrc: 'GET /api/runs (outcomes per day)',
+    ideas: [
+      '<b>Risk heatmap</b>: host × CVE cells shaded by the risk model, so the hot corner of the estate stands out.',
+      '<b>Reboot queue</b>: hosts patched but waiting for a kernel reboot, grouped by maintenance window.',
+      '<b>Rollback watch</b>: hosts with a rollback in their history, flagged before the next patch reaches them.',
+      '<b>Insights drift</b>: hosts Insights says are exposed that no run has touched in 30 days.',
+    ],
+  },
+
+  apps: {
+    title: 'Applications',
+    unit: 'sites',
+    gates: [
+      { what: 'workflow-engine on edge-site-1', fix: 'spring-webmvc 5.3.18.rhlw-00010', cves: 9, exploited: 0,
+        waitedMin: 412, detail: 'Pod test passed · lab patched and healthy · provenance verified' },
+    ],
+    gateSrc: 'GET /api/v2/state (awaiting_approval) → POST /api/v2/decide',
+    kpis: [
+      { label: 'Lightwell fixes waiting', value: 3, delta: 'json, json-path, woodstox-core', act: true },
+      { label: 'Sites patched · 7 days', value: 4, delta: 'lab first, then live' },
+      { label: 'Rolled back · 7 days', value: 1, delta: 'edge-site-1, health window' },
+      { label: 'Fix arrival → patched', value: '6.8 h', delta: 'median, lab sites' },
+      { label: 'Hours saved · apps', value: 15, delta: 'real runs only (ROI)' },
+    ],
+    alerts: [
+      { min: 8,   sev: 'warn', from: 'AO',           text: '<b>workflow-engine on edge-site-1</b> waiting for approval (spring-webmvc, 9 CVEs)' },
+      { min: 11,  sev: 'ok',   from: 'AAP',          text: '<b>node1 patched</b>: healthy on spring-webmvc, spring-expression, spring-core rhlw-00010' },
+      { min: 13,  sev: 'ok',   from: 'Pipelines',    text: 'Pod test <b>app-v2-workflow-engine</b> passed (fetch ✓, build and health skipped on this lab)' },
+      { min: 15,  sev: 'ok',   from: 'Gitea',        text: 'Commit verified: Sigstore provenance for 3 Lightwell jars' },
+      { min: 34,  sev: 'info', from: 'Nexus poller', text: '6 Lightwell builds arrived from the public demo repository' },
+      { min: 190, sev: 'crit', from: 'Mattermost',   text: 'Red card: <b>edge-site-1 rolled back</b>, health check gave up after 30 s' },
+    ],
+    alertSrc: 'Nexus poller · AO executions · AAP jobs · PipelineRuns · Gitea commits · Mattermost cards',
+    runs: [
+      { title: 'spring-webmvc 5.3.18.rhlw-00010', sub: 'workflow-engine · 2 of 3 sites', stages: ['done', 'done', 'done', 'done', 'wait', 'pend'] },
+    ],
+    stageNames: ['Assess', 'Prepare', 'Test', 'Lab', 'Gate', 'Live'],
+    runSrc: 'GET /api/v2/state · GET /api/v2/pipeline',
+    exposure: {
+      title: 'Critical exposure by app', series: ['Fixable now (Lightwell build)', 'No fix offered yet'],
+      rows: [
+        { name: 'workflow-engine', tag: 'CRITICAL', a: 17, b: 4 },
+        { name: 'inventory-service', tag: 'HIGH', a: 3, b: 2 },
+        { name: 'analytics-agent', tag: 'Python: not covered', a: 0, b: 3 },
+        { name: 'customer-portal', tag: 'npm: not covered', a: 0, b: 1 },
+      ],
+      src: 'GET /api/v2/estate · osv.dev rows from Assess',
+    },
+    table: {
+      title: 'Incoming fixes', head: ['Package', 'Lightwell build', 'CVEs', 'Apps · sites'],
+      rows: [
+        ['spring-webmvc', '5.3.18.rhlw-00010', '9', 'workflow-engine · 3', ['warn', 'In a run']],
+        ['spring-expression', '5.3.18.rhlw-00010', '7', 'workflow-engine · 3', ['warn', 'In a run']],
+        ['spring-core', '5.3.18.rhlw-00010', '1', 'workflow-engine · 3', ['warn', 'In a run']],
+        ['json', '20220320.0.0.rhlw-00003', '1', 'inventory-service · 2', ['info', 'New']],
+        ['json-path', '2.8.0.rhlw-00001', '1', 'inventory-service · 2', ['info', 'New']],
+        ['woodstox-core', '6.0.3.rhlw-00001', '1', 'inventory-service · 2', ['info', 'New']],
+      ],
+      src: 'GET /api/v2/events (Nexus poller, CVEs from the Lightwell API)',
+    },
+    health: [
+      ['Nexus (lightwell-demo-remediated)', 'ok', 'poller every 300 s'],
+      ['Lightwell API', 'ok', 'CVEs itemised'],
+      ['OpenShift Pipelines', 'warn', 'build, health skipped (disk)'],
+      ['Gitea', 'ok', ''],
+      ['Automation Orchestrator', 'ok', ''],
+      ['Ansible Automation Platform', 'ok', ''],
+      ['Llama Stack · app history', 'warn', 'store rebuilt at startup'],
+      ['vLLM', 'ok', ''],
+      ['Mattermost', 'ok', ''],
+    ],
+    windows: [
+      ['lab', 'workflow-engine, inventory-service', true, 'any time'],
+      ['edge-site-1', 'workflow-engine', false, 'opens in 2 h 30 m (00:00–04:00 America/Chicago)'],
+      ['core-dc-1', 'workflow-engine, inventory-service', false, 'opens in 3 h 30 m (00:00–04:00 America/New_York)'],
+    ],
+    velocity: days([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1], [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]),
+    velocitySrc: 'GET /api/v2/runs (outcomes per day)',
+    ideas: [
+      '<b>Drift</b>: sites whose /health jars disagree with the BOM (Re-read versions from hosts), flagged here.',
+      '<b>Lightwell coverage</b>: share of each app\'s Maven libraries that have a Lightwell build of the running version.',
+      '<b>Pod-test history</b>: pass/fail per app over time, with the jar that broke it.',
+      '<b>Time to patch</b>: fix arrival → lab → live per run, against a target (72 h for a known-exploited CVE).',
+    ],
+  },
 };
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ago = m => m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} m` : `${Math.floor(m / 1440)} d`;
 const hhmm = m => new Date(NOW.getTime() - m * 60000).toISOString().slice(11, 16) + 'Z';
-const STATUS = {
-  crit: ['crit', '✕', 'Critical'], warn: ['warn', '!', 'Attention'], info: ['info', 'i', 'Info'],
-  ok: ['ok', '✓', 'OK'], off: ['off', '–', 'Stale'],
-};
-const chip = (k, label) => { const [c, icon, l] = STATUS[k]; return `<span class="st ${c}"><span aria-hidden="true">${icon}</span>${esc(label || l)}</span>`; };
-const SEV = { CRITICAL: 'crit', HIGH: 'warn', MEDIUM: 'info', LOW: 'off' };
+const STATUS = { crit: ['✕', 'Critical'], warn: ['!', 'Attention'], info: ['i', 'Info'], ok: ['✓', 'OK'], off: ['–', 'Stale'] };
+const chip = (k, label) => `<span class="st ${k}"><span aria-hidden="true">${STATUS[k][0]}</span>${esc(label || STATUS[k][1])}</span>`;
+const panel = (id, title, body, src, extra = '') =>
+  `<section class="panel" id="${id}" aria-labelledby="h-${id}"><h2 id="h-${id}">${title}${extra}</h2>${body}<div class="src">${esc(src)}</div></section>`;
+const toggle = id => `<button class="viewtoggle" data-target="${id}">Table view</button>`;
+const legend = names => `<div class="legend">${names.map((n, i) => `<span><i style="background:var(--series-${i + 1})"></i>${esc(n)}</span>`).join('')}</div>`;
 
-$('asof').textContent = 'as of ' + NOW.toISOString().slice(0, 16).replace('T', ' ') + ' UTC · refreshes every 30 s (live)';
-$('mode').textContent = SAMPLE.mode === 'live' ? 'Live' : 'Demo';
-
-// 1 · Needs you now: open gates first, oldest first; stale ones last.
-const gates = [...SAMPLE.gates].sort((a, b) => (Number(!!a.stale) - Number(!!b.stale)) || (b.waitedMin - a.waitedMin));
-$('now-count').textContent = gates.filter(g => !g.stale).length + ' waiting';
-$('gates').innerHTML = gates.map(g => {
-  const used = Math.min(1, g.waitedMin / (STALE_GATE_HOURS * 60));
-  const left = Math.max(0, STALE_GATE_HOURS * 60 - g.waitedMin);
-  return `<article class="gate ${g.stale ? 'stale' : 'waiting'}">
-    <div class="meta">${esc(g.side)} · ${g.stale ? chip('off', 'Stale') : chip('warn', 'Awaiting approval')}
-      ${g.exploited ? chip('crit', 'Known exploited') : ''}</div>
-    <div class="what">${esc(g.what)}</div>
-    <div class="meta"><span class="mono">${esc(g.fix)}</span>${g.cves ? ` · ${g.cves} CVE${g.cves > 1 ? 's' : ''}` : ''}</div>
-    <div class="meta">${esc(g.detail)}</div>
-    <div class="bar" role="img" aria-label="${Math.round(used * 100)}% of the stale-gate time used"><i style="width:${used * 100}%"></i></div>
-    <div class="ttl">${g.stale ? `Waited ${ago(g.waitedMin)}: past ${STALE_GATE_HOURS} h, listed stale`
-                               : `Waiting ${ago(g.waitedMin)} · stale in ${ago(left)}`}</div>
-    ${g.stale ? '<div class="actions"><button class="btn">Open runs</button></div>'
-              : '<div class="actions"><button class="btn approve">Approve</button><button class="btn">Reject</button><button class="btn">Open run</button></div>'}
-  </article>`;
-}).join('');
-
-// 2 · KPIs
-$('kpis').innerHTML = SAMPLE.kpis.map(k => `<div class="kpi ${k.act ? 'act' : ''}">
-  <div class="label">${esc(k.label)}</div><div class="value">${esc(k.value)}</div><div class="delta">${esc(k.delta)}</div></div>`).join('');
-
-// 3 · Alerts, with a severity filter
-let alertFilter = 'all';
-function renderAlerts() {
-  const rows = SAMPLE.alerts.filter(a => alertFilter === 'all' || a.sev === alertFilter);
-  $('alert-count').textContent = SAMPLE.alerts.filter(a => a.sev === 'crit' || a.sev === 'warn').length + ' to look at';
-  $('feed').innerHTML = rows.map(a => `<li><time>${hhmm(a.min)}<br>${ago(a.min)} ago</time>
-    <div><div class="msg">${a.text}</div><div class="from">${esc(a.from)}</div></div>${chip(a.sev)}</li>`).join('')
-    || '<li class="muted">Nothing at this level.</li>';
+function gatesHtml(d) {
+  const gates = [...d.gates].sort((a, b) => (Number(!!a.stale) - Number(!!b.stale)) || (b.waitedMin - a.waitedMin));
+  const open = gates.filter(g => !g.stale).length;
+  const cards = gates.map(g => {
+    const used = Math.min(1, g.waitedMin / (STALE_GATE_HOURS * 60)), left = Math.max(0, STALE_GATE_HOURS * 60 - g.waitedMin);
+    return `<article class="gate ${g.stale ? 'stale' : 'waiting'}">
+      <div class="meta">${g.stale ? chip('off', 'Stale') : chip('warn', 'Awaiting approval')} ${g.exploited ? chip('crit', 'Known exploited') : ''}</div>
+      <div class="what">${esc(g.what)}</div>
+      <div class="meta"><span class="mono">${esc(g.fix)}</span>${g.cves ? ` · ${g.cves} CVE${g.cves > 1 ? 's' : ''}` : ''}</div>
+      <div class="meta">${esc(g.detail)}</div>
+      <div class="bar" role="img" aria-label="${Math.round(used * 100)}% of the stale-gate time used"><i style="width:${used * 100}%"></i></div>
+      <div class="ttl">${g.stale ? `Waited ${ago(g.waitedMin)}: past ${STALE_GATE_HOURS} h, listed stale` : `Waiting ${ago(g.waitedMin)} · stale in ${ago(left)}`}</div>
+      <div class="actions">${g.stale ? '<button class="btn">Open runs</button>'
+        : '<button class="btn approve">Approve</button><button class="btn">Reject</button><button class="btn">Open run</button>'}</div>
+    </article>`;
+  }).join('') || '<p class="muted">Nothing is waiting for a person.</p>';
+  return `<section class="panel now" aria-labelledby="h-now"><h2 id="h-now">Needs you now <span class="count">${open} waiting</span></h2>
+    <div class="gates">${cards}</div><div class="src">${esc(d.gateSrc)}</div></section>`;
 }
-$('alert-filters').innerHTML = [['all', 'All'], ['crit', 'Critical'], ['warn', 'Attention'], ['ok', 'OK'], ['info', 'Info']]
-  .map(([k, l]) => `<button class="chip" data-f="${k}" aria-pressed="${k === 'all'}">${l}</button>`).join('');
-$('alert-filters').addEventListener('click', e => {
-  const b = e.target.closest('[data-f]'); if (!b) return;
-  alertFilter = b.dataset.f;
-  $('alert-filters').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
-  renderAlerts();
-});
-renderAlerts();
 
-// 6 · Runs in flight
-const STAGE_LABEL = { done: 'done', wait: 'waiting', fail: 'failed', skip: 'skipped', pend: 'pending' };
-$('runs').innerHTML = SAMPLE.runs.map(r => `<div class="run">
-  <div class="head"><b>${esc(r.title)}</b><span class="muted">${esc(r.side)} · ${esc(r.sub)}</span></div>
-  <div class="stages">${r.stages.map((s, i) => `<div class="stage ${s}" title="${SAMPLE.stageNames[i]}: ${STAGE_LABEL[s]}">
-    ${s === 'done' ? '✓ ' : s === 'wait' ? '● ' : s === 'skip' ? '⊘ ' : ''}${SAMPLE.stageNames[i]}</div>`).join('')}</div></div>`).join('');
+function render(side) {
+  const d = SIDES[side];
+  document.title = `${d.title} operations (sample) · Agentic Patching`;
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.side === side)));
+  const kpis = `<section class="kpis" aria-label="Key figures">${d.kpis.map(k => `<div class="kpi ${k.act ? 'act' : ''}">
+    <div class="label">${esc(k.label)}</div><div class="value">${esc(k.value)}</div><div class="delta">${esc(k.delta)}</div></div>`).join('')}</section>`;
+  const toLook = d.alerts.filter(a => a.sev === 'crit' || a.sev === 'warn').length;
+  const alerts = panel('alerts', 'Alerts', `<div class="filters" role="group" aria-label="Filter alerts">${
+      [['all', 'All'], ['crit', 'Critical'], ['warn', 'Attention'], ['ok', 'OK'], ['info', 'Info']]
+        .map(([k, l]) => `<button class="chip" data-f="${k}" aria-pressed="${k === 'all'}">${l}</button>`).join('')}</div><ul class="feed"></ul>`,
+    d.alertSrc, ` <span class="count">${toLook} to look at</span>`);
+  const runs = panel('runs', 'Runs in flight', d.runs.map(r => `<div class="run">
+    <div class="head"><b>${esc(r.title)}</b><span class="muted">${esc(r.sub)}</span></div>
+    <div class="stages">${r.stages.map((s, i) => `<div class="stage ${s}" title="${d.stageNames[i]}: ${s}">${s === 'done' ? '✓ ' : s === 'wait' ? '● ' : ''}${d.stageNames[i]}</div>`).join('')}</div></div>`).join(''), d.runSrc);
+  const vel = panel('vel', `Patch velocity · ${d.unit} · last 14 days`,
+    `${legend([`${d.unit[0].toUpperCase() + d.unit.slice(1)} patched`, `${d.unit[0].toUpperCase() + d.unit.slice(1)} rolled back`])}<div class="chart"></div><table class="tableview"></table>`,
+    d.velocitySrc, toggle('vel'));
+  const exp = panel('exp', d.exposure.title, `${legend(d.exposure.series)}<div class="chart"></div><table class="tableview"></table>`, d.exposure.src, toggle('exp'));
+  const tbl = panel('tbl', d.table.title, `<table><tr>${d.table.head.map((h, i) => `<th class="${i === 2 ? 'num' : ''}">${esc(h)}</th>`).join('')}<th></th></tr>${
+      d.table.rows.map(r => `<tr>${r.filter(c => !Array.isArray(c)).map((c, i) => `<td class="${i === 1 ? 'mono' : i === 2 ? 'num' : ''}">${esc(c)}</td>`).join('')}
+        <td>${r.filter(Array.isArray).map(([k, l]) => chip(k, l)).join(' ')}</td></tr>`).join('')}</table>`, d.table.src);
+  const health = panel('health', 'Platform health', `<table>${d.health.map(([n, s, note]) =>
+    `<tr><td>${chip(s, s === 'ok' ? 'Up' : s === 'warn' ? 'Degraded' : 'Down')}</td><td>${esc(n)}</td><td class="muted">${esc(note)}</td></tr>`).join('')}</table>`,
+    'console preflight per backend · GET /api/mode');
+  const windows = d.windows ? panel('win', 'Change windows', `<table><tr><th>Site</th><th>Apps</th><th>Window</th></tr>${d.windows.map(([s, a, open, t]) =>
+    `<tr><td>${esc(s)}</td><td class="muted">${esc(a)}</td><td>${open ? chip('ok', 'Open') : chip('off', 'Closed')} ${esc(t)}</td></tr>`).join('')}</table>`,
+    'BOM context (window, timezone) · appv2._window_state') : '';
+  const ideas = `<section class="panel ideas"><h2>More ${d.title.toLowerCase()} ideas for later</h2><ol>${d.ideas.map(i => `<li>${i}</li>`).join('')}</ol></section>`;
 
-// 5 · Incoming fixes
-$('in-count').textContent = SAMPLE.inbox.filter(f => f.state === 'New').length + ' new';
-$('inbox').innerHTML = `<tr><th>Package</th><th>Lightwell build</th><th class="num">CVEs</th><th>Apps · sites</th><th></th></tr>` +
-  SAMPLE.inbox.map(f => `<tr><td>${esc(f.pkg)}</td><td class="mono">${esc(f.build)}</td><td class="num">${f.cves}</td>
-    <td>${esc(f.apps)} · ${f.sites}</td><td>${f.state === 'New' ? chip('info', 'New') : chip('warn', f.state)}</td></tr>`).join('');
+  $('main').innerHTML = gatesHtml(d) + kpis +
+    `<div class="grid2"><div class="col">${alerts}${runs}${vel}</div><div class="col">${exp}${tbl}${health}${windows}</div></div>` + ideas;
 
-// 7 · Platform health
-$('health').innerHTML = SAMPLE.health.map(h => `<tr><td>${chip(h.st, h.st === 'ok' ? 'Up' : h.st === 'warn' ? 'Degraded' : 'Down')}</td>
-  <td>${esc(h.name)}</td><td class="muted">${esc(h.note)}</td></tr>`).join('');
+  // Alerts filter
+  let f = 'all';
+  const feed = $('alerts').querySelector('.feed');
+  const drawFeed = () => { feed.innerHTML = d.alerts.filter(a => f === 'all' || a.sev === f).map(a => `<li><time>${hhmm(a.min)}<br>${ago(a.min)} ago</time>
+    <div><div class="msg">${a.text}</div><div class="from">${esc(a.from)}</div></div>${chip(a.sev)}</li>`).join('') || '<li class="muted">Nothing at this level.</li>'; };
+  $('alerts').querySelector('.filters').addEventListener('click', e => {
+    const b = e.target.closest('[data-f]'); if (!b) return;
+    f = b.dataset.f; b.parentNode.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b))); drawFeed();
+  });
+  drawFeed();
+  exposureChart($('exp'), d.exposure);
+  velocityChart($('vel'), d.velocity, d.unit);
+  document.querySelectorAll('.viewtoggle').forEach(b => b.addEventListener('click', () => {
+    const on = $(b.dataset.target).classList.toggle('show-table'); b.textContent = on ? 'Chart view' : 'Table view';
+  }));
+}
 
-// 9 · Change windows
-$('windows').innerHTML = `<tr><th>Site</th><th>Apps</th><th>Window</th></tr>` + SAMPLE.windows.map(w =>
-  `<tr><td>${esc(w.site)}</td><td class="muted">${esc(w.app)}</td><td>${w.open ? chip('ok', 'Open') : chip('off', 'Closed')} ${esc(w.text)}</td></tr>`).join('');
-
-// Shared tooltip
 function tooltip(container) {
   const tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip);
-  return {
-    show(x, y, html) { tip.innerHTML = html; tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.classList.add('on'); },
-    hide() { tip.classList.remove('on'); },
-  };
+  return { show(x, y, html) { tip.innerHTML = html; tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.classList.add('on'); },
+           hide() { tip.classList.remove('on'); } };
 }
 
-// 4 · Critical exposure: horizontal stacked bars, fixable now + no fix yet, 2px surface gap between segments.
-(function exposure() {
-  const data = SAMPLE.exposure, W = 520, rowH = 34, left = 132, right = 44, top = 4;
-  const H = top + data.length * rowH + 22;
-  const max = Math.max(...data.map(d => d.fixable + d.open));
-  const x = v => (v / max) * (W - left - right);
-  const ticks = [0, 5, 10, 15, 20].filter(t => t <= max);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="CVEs per app, fixable now versus no fix offered">`;
+// Horizontal stacked bars: series 1 then series 2, a 2px surface gap between the segments.
+function exposureChart(p, e) {
+  const data = e.rows, W = 520, rowH = 34, left = 132, right = 44, top = 4, H = top + data.length * rowH + 22;
+  const max = Math.max(...data.map(d => d.a + d.b)), x = v => (v / max) * (W - left - right);
+  const step = max > 10 ? 5 : 1, ticks = Array.from({ length: Math.floor(max / step) + 1 }, (_, i) => i * step);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(e.title)}">`;
   svg += `<g class="axis">${ticks.map(t => `<line x1="${left + x(t)}" x2="${left + x(t)}" y1="${top}" y2="${H - 20}" stroke="var(--grid)"/>
     <text x="${left + x(t)}" y="${H - 6}" text-anchor="middle">${t}</text>`).join('')}</g>`;
   data.forEach((d, i) => {
-    const y = top + i * rowH + 8, h = 16, wf = x(d.fixable), wo = x(d.open), gap = d.fixable && d.open ? 2 : 0;
-    svg += `<text class="lbl" x="${left - 10}" y="${y + 12}" text-anchor="end">${esc(d.app)}</text>`;
-    if (d.fixable) svg += `<rect x="${left}" y="${y}" width="${wf}" height="${h}" rx="4" fill="var(--series-1)" data-i="${i}" data-k="fixable"/>`;
-    if (d.open) svg += `<rect x="${left + wf + gap}" y="${y}" width="${Math.max(0, wo - gap)}" height="${h}" rx="4" fill="var(--series-2)" data-i="${i}" data-k="open"/>`;
-    svg += `<text class="lbl" x="${left + wf + wo + 6}" y="${y + 12}">${d.fixable + d.open}</text>`;
-    svg += `<rect x="0" y="${y - 8}" width="${W}" height="${rowH}" fill="transparent" data-i="${i}" data-hit="1"/>`;
+    const y = top + i * rowH + 8, h = 16, wa = x(d.a), wb = x(d.b), gap = d.a && d.b ? 2 : 0;
+    svg += `<text class="lbl" x="${left - 10}" y="${y + 12}" text-anchor="end">${esc(d.name)}</text>`;
+    if (d.a) svg += `<rect x="${left}" y="${y}" width="${wa}" height="${h}" rx="4" fill="var(--series-1)"/>`;
+    if (d.b) svg += `<rect x="${left + wa + gap}" y="${y}" width="${Math.max(0, wb - gap)}" height="${h}" rx="4" fill="var(--series-2)"/>`;
+    svg += `<text class="lbl" x="${left + wa + wb + 6}" y="${y + 12}">${d.a + d.b}</text>`;
+    svg += `<rect x="0" y="${y - 8}" width="${W}" height="${rowH}" fill="transparent" data-i="${i}"/>`;
   });
-  svg += '</svg>';
-  const box = $('exp'); box.innerHTML = svg;
+  const box = p.querySelector('.chart'); box.innerHTML = svg + '</svg>';
   const tip = tooltip(box);
-  box.addEventListener('mousemove', e => {
-    const t = e.target.closest('[data-i]'); if (!t) return tip.hide();
+  box.addEventListener('mousemove', ev => {
+    const t = ev.target.closest('[data-i]'); if (!t) return tip.hide();
     const d = data[+t.dataset.i], r = box.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top,
-      `<b>${esc(d.app)}</b> · ${d.sev}<br>${d.fixable} fixable now · ${d.open} no fix yet${d.note ? '<br>' + esc(d.note) : ''}`);
+    tip.show(ev.clientX - r.left, ev.clientY - r.top, `<b>${esc(d.name)}</b> · ${esc(d.tag)}<br>${d.a} ${esc(e.series[0].toLowerCase())} · ${d.b} ${esc(e.series[1].toLowerCase())}`);
   });
   box.addEventListener('mouseleave', () => tip.hide());
-  $('exp-table').innerHTML = `<tr><th>App</th><th>Severity</th><th class="num">Fixable now</th><th class="num">No fix yet</th></tr>` +
-    data.map(d => `<tr><td>${esc(d.app)}</td><td>${chip(SEV[d.sev], d.sev)}</td><td class="num">${d.fixable}</td><td class="num">${d.open}</td></tr>`).join('');
-})();
+  p.querySelector('.tableview').innerHTML = `<tr><th></th><th></th><th class="num">${esc(e.series[0])}</th><th class="num">${esc(e.series[1])}</th></tr>` +
+    data.map(d => `<tr><td>${esc(d.name)}</td><td class="muted">${esc(d.tag)}</td><td class="num">${d.a}</td><td class="num">${d.b}</td></tr>`).join('');
+}
 
-// 8 · Patch velocity: grouped columns per day, 2px gap between the pair, hover per day.
-(function velocity() {
-  const data = SAMPLE.velocity, W = 560, H = 170, left = 26, bottom = 22, top = 6;
+// Grouped columns per day: patched and rolled back, data-ends rounded and anchored to the baseline.
+function velocityChart(p, data, unit) {
+  const W = 560, H = 170, left = 26, bottom = 22, top = 6;
   const max = Math.max(3, ...data.map(d => Math.max(d.patched, d.rolled)));
-  const band = (W - left) / data.length, bw = Math.min(10, (band - 8) / 2);
-  const y = v => top + (H - top - bottom) * (1 - v / max);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sites patched and rolled back per day, last 14 days">`;
-  svg += `<g class="axis">${[0, 1, 2, 3].map(t => `<line x1="${left}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/>
+  const band = (W - left) / data.length, bw = Math.min(10, (band - 8) / 2), y = v => top + (H - top - bottom) * (1 - v / max);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${unit} patched and rolled back per day">`;
+  svg += `<g class="axis">${Array.from({ length: max + 1 }, (_, t) => `<line x1="${left}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/>
     <text x="${left - 8}" y="${y(t) + 4}" text-anchor="end">${t}</text>`).join('')}</g>`;
+  const col = (v, x0, fill) => v ? `<rect x="${x0}" y="${y(v)}" width="${bw}" height="${y(0) - y(v)}" rx="3" fill="${fill}"/>
+    <rect x="${x0}" y="${Math.max(y(v), y(0) - 3)}" width="${bw}" height="${Math.min(3, y(0) - y(v))}" fill="${fill}"/>` : '';
   data.forEach((d, i) => {
     const cx = left + band * i + band / 2;
-    // Data-ends rounded, anchored to the baseline: a rect with rx, its bottom covered by a square strip.
-    const col = (v, x0, fill) => v ? `<rect x="${x0}" y="${y(v)}" width="${bw}" height="${y(0) - y(v)}" rx="3" fill="${fill}"/>
-      <rect x="${x0}" y="${Math.max(y(v), y(0) - 3)}" width="${bw}" height="${Math.min(3, y(0) - y(v))}" fill="${fill}"/>` : '';
     svg += col(d.patched, cx - bw - 1, 'var(--series-1)') + col(d.rolled, cx + 1, 'var(--series-2)');
-    if (i % 2 === 1 || i === data.length - 1) svg += `<text class="axis" x="${cx}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${d.day.toISOString().slice(5, 10)}</text>`;
+    if (i % 2 === 1) svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${d.day.toISOString().slice(5, 10)}</text>`;
     svg += `<rect x="${cx - band / 2}" y="${top}" width="${band}" height="${H - top - bottom}" fill="transparent" data-i="${i}"/>`;
   });
   svg += `<line x1="${left}" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="var(--border)"/></svg>`;
-  const box = $('vel'); box.innerHTML = svg;
+  const box = p.querySelector('.chart'); box.innerHTML = svg;
   const tip = tooltip(box);
-  box.addEventListener('mousemove', e => {
-    const t = e.target.closest('[data-i]'); if (!t) return tip.hide();
+  box.addEventListener('mousemove', ev => {
+    const t = ev.target.closest('[data-i]'); if (!t) return tip.hide();
     const d = data[+t.dataset.i], r = box.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${d.day.toISOString().slice(0, 10)}</b><br>${d.patched} patched · ${d.rolled} rolled back`);
+    tip.show(ev.clientX - r.left, ev.clientY - r.top, `<b>${d.day.toISOString().slice(0, 10)}</b><br>${d.patched} patched · ${d.rolled} rolled back`);
   });
   box.addEventListener('mouseleave', () => tip.hide());
-  $('vel-table').innerHTML = `<tr><th>Day</th><th class="num">Patched</th><th class="num">Rolled back</th></tr>` +
+  p.querySelector('.tableview').innerHTML = `<tr><th>Day</th><th class="num">Patched</th><th class="num">Rolled back</th></tr>` +
     data.map(d => `<tr><td>${d.day.toISOString().slice(0, 10)}</td><td class="num">${d.patched}</td><td class="num">${d.rolled}</td></tr>`).join('');
-})();
+}
 
-// Chart / table toggles
-document.querySelectorAll('.viewtoggle').forEach(b => b.addEventListener('click', () => {
-  const p = $(b.dataset.target), on = p.classList.toggle('show-table');
-  b.textContent = on ? 'Chart view' : 'Table view';
-}));
+$('asof').textContent = 'as of ' + NOW.toISOString().slice(0, 16).replace('T', ' ') + ' UTC · refreshes every 30 s (live)';
+const sideFromHash = () => (location.hash === '#apps' ? 'apps' : 'infra');
+document.querySelector('.seg').addEventListener('click', e => {
+  const b = e.target.closest('[data-side]'); if (b) location.hash = b.dataset.side === 'apps' ? '#apps' : '#infra';
+});
+window.addEventListener('hashchange', () => render(sideFromHash()));
+render(sideFromHash());
 </script>
 </body>
 </html>
