@@ -661,6 +661,9 @@
   /* The console's own confirm dialog: the browser's confirm() box is unstyled, titled with the host name, and looks
      like something other than this page asking. Same panel, border and buttons as the rest of the console. */
   dialog.ap-dialog {
+    /* Centred explicitly: the page's reset (*, line 8) sets margin: 0, which removes the margin: auto a modal dialog
+       is centred with, and the dialog sat in the top-left corner. */
+    position: fixed; inset: 0; margin: auto; height: fit-content; max-height: calc(100vh - 32px); overflow: auto;
     border: 1px solid var(--border); border-radius: 14px; padding: 0; color: var(--text); background: var(--panel);
     width: min(460px, calc(100% - 32px)); box-shadow: 0 24px 60px rgba(11, 11, 12, .22), 0 2px 8px rgba(11, 11, 12, .08);
   }
