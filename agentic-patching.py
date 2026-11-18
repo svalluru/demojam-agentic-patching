@@ -2441,19 +2441,29 @@ class PatchingAgent:
                     continue
                 if age > stale_after:
                     r['outcome'] = 'stale'
-        budget = self.SETTLE_PER_CALL
-        for r in runs:
-            if r.get('status') not in ('completed', 'succeeded', 'failed', 'error'):
-                continue
-            eid = r.get('execution_id') or ''
-            if eid not in self._settled and budget > 0:
-                budget -= 1
-                try:
-                    self._settled[eid] = self.run_detail(eid).get('outcome') or r['outcome']
-                except BackendUnavailable:
-                    continue
-            if eid in self._settled:
-                r['outcome'] = self._settled[eid]
+        finished = [r for r in runs if r.get('status') in ('completed', 'succeeded', 'failed', 'error')]
+        todo = [r['execution_id'] for r in finished
+                if r.get('execution_id') and r['execution_id'] not in self._settled][:self.SETTLE_PER_CALL]
+
+        def read(eid: str) -> tuple[str, str | None]:
+            try:
+                d = self.run_detail(eid)
+            except BackendUnavailable:
+                return eid, None
+            # Only a reading that had the run's steps is final. _activities answers an AO error with no steps, and an
+            # empty reading settled as 'rejected' (or 'patched') was cached for good.
+            return eid, (d.get('outcome') if d.get('steps') else None)
+
+        if todo:
+            # In parallel: up to SETTLE_PER_CALL runs at two AO calls each made the Runs tab and ROI page wait for
+            # forty round trips in a row.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6, thread_name_prefix='settle') as pool:
+                for eid, outcome in pool.map(read, todo):
+                    if outcome:
+                        self._settled[eid] = outcome
+        for r in finished:
+            if r.get('execution_id') in self._settled:
+                r['outcome'] = self._settled[r['execution_id']]
         return runs
 
     # Gate waits per execution. The list endpoint returns activities as null,
@@ -4791,15 +4801,20 @@ def lab_id() -> str:
 def archive_runtime(old: str = '') -> Path | None:
     """Move runs/ (except earlier archives) and rag-setup/data/runs/ into runs/archive/<old lab>-<time>/."""
     import shutil
-    items = [p for p in RUNTIME_DIR.iterdir() if p.name not in ('archive', 'lab.json')] if RUNTIME_DIR.exists() else []
-    rag = ROOT / 'rag-setup' / 'data' / 'runs'
+    # runs/ (simulated infra runs), the Applications state (APPV2_STATE_DIR, runs/ unless a deployment points it at a
+    # volume), and the learning records (RAG_DATA_DIR).
+    dirs = [RUNTIME_DIR] + [d for d in (Path(appv2.state_dir()),) if d.resolve() != RUNTIME_DIR.resolve()]
+    items = [(d, p) for d in dirs if d.exists() for p in d.iterdir() if p.name not in ('archive', 'lab.json')]
+    rag = Path(RAG_DATA_DIR)
     if not items and not (rag.exists() and any(rag.iterdir())):
         return None
     label = re.sub(r'[^A-Za-z0-9._-]', '_', old or 'unknown-lab')[:80]
     dest = RUNTIME_DIR / 'archive' / f"{label}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
     dest.mkdir(parents=True, exist_ok=True)
-    for p in items:
-        shutil.move(str(p), str(dest / p.name))
+    for d, p in items:
+        target = dest if d == RUNTIME_DIR else dest / 'appv2-state'
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(p), str(target / p.name))
     if rag.exists() and any(rag.iterdir()):
         shutil.move(str(rag), str(dest / 'rag-runs'))
     # What was already loaded from those files is forgotten too.
@@ -4815,6 +4830,10 @@ def lab_guard(force: bool = False) -> str:
         return ''
     cur = lab_id()
     if not cur:
+        if force:                            # archive-runs: start clean even where no lab can be named
+            dest = archive_runtime('untagged')
+            return f'runtime data archived to {dest} (no lab id: set OCP_API_URL to tag it)' if dest \
+                else 'nothing to archive'
         return 'no lab id (set OCP_API_URL): runtime data not tagged'
     try:
         prev = json.loads(LAB_FILE.read_text()).get('lab', '')

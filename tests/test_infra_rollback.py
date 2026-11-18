@@ -246,7 +246,7 @@ class RunHistoryOutcomes(unittest.TestCase):
     def test_the_history_list_reports_a_rolled_back_run_and_asks_ao_once(self):
         agent = self.c.PatchingAgent()
         calls = []
-        agent.run_detail = lambda eid: calls.append(eid) or {'outcome': 'rolled_back'}
+        agent.run_detail = lambda eid: calls.append(eid) or {'outcome': 'rolled_back', 'steps': [{'name': 'rollback'}]}
         rows = [{'execution_id': 'e1', 'status': 'completed', 'outcome': 'patched'},
                 {'execution_id': 'e2', 'status': 'running', 'outcome': 'running'}]
         out = agent._settle_finished([dict(r) for r in rows])

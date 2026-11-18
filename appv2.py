@@ -401,8 +401,9 @@ def bom_dir() -> Path:
     return Path(env('BOM_DIR', str(ROOT / 'app-data' / 'bom')))
 
 
-def load_bom() -> list[dict]:
-    """Every app's BOM. Demo: the staged fleet. Live: one JSON file per app under BOM_DIR (app-data/bom)."""
+def load_bom(with_writebacks: bool = True) -> list[dict]:
+    """Every app's BOM. Demo: the staged fleet. Live: one JSON file per app under BOM_DIR (app-data/bom).
+    with_writebacks=False: the files' own versions, ignoring what runs have written back."""
     if H.demo_mode():
         apps = json.loads(json.dumps(DEMO_BOM))
     else:
@@ -413,16 +414,21 @@ def load_bom() -> list[dict]:
             except (OSError, ValueError):
                 continue
             apps += rec if isinstance(rec, list) else [rec]
+    if not with_writebacks:
+        return apps
+    # A copy, not the lock: callers already hold _LOCK when they call this (start_dispatch), and _LOCK is not
+    # re-entrant, so taking it here deadlocked. A dict copy is consistent on its own.
+    updates = dict(_BOM_UPDATES)
     for app in apps:                      # write-backs from earlier runs, newest last
         hosts = [s['host'] for s in app.get('servers', [])]
         for dep in app.get('dependencies', []):
             ga = f"{dep['group']}:{dep['artifact']}"
             key = f"{app['app']}|{ga}"     # an app-level write-back (older runs): every site moved
-            if key in _BOM_UPDATES:
-                dep['version'] = _BOM_UPDATES[key]
+            if key in updates:
+                dep['version'] = updates[key]
             # Per-site write-backs (app|host|group:artifact): the version on each server, where it differs. The app's
             # own version moves only once every server has the same one; until then each site keeps its own.
-            per = {h: _BOM_UPDATES[f"{app['app']}|{h}|{ga}"] for h in hosts if f"{app['app']}|{h}|{ga}" in _BOM_UPDATES}
+            per = {h: updates[f"{app['app']}|{h}|{ga}"] for h in hosts if f"{app['app']}|{h}|{ga}" in updates}
             if hosts and len(per) == len(hosts) and len(set(per.values())) == 1:
                 dep['version'] = next(iter(per.values()))
             else:
@@ -435,7 +441,9 @@ def load_bom() -> list[dict]:
 def _parse_health_output(stdout: str) -> dict[str, dict]:
     """AAP ad-hoc output ('node1 | CHANGED | rc=0 >>' then the /health JSON) -> {host: health body}."""
     out: dict[str, dict] = {}
-    for m in re.finditer(r'^(\S+) \| [A-Z]+[^\n]*>>\n(\{[^\n]*\})', stdout or '', re.M):
+    # AAP keeps ansible's colour codes in the stored output (\x1b[0;33m ... \x1b[0m around every line).
+    stdout = re.sub(r'\x1b\[[0-9;]*m', '', stdout or '')
+    for m in re.finditer(r'^(\S+) \| [A-Z]+[^\n]*>>\n(\{[^\n]*\})', stdout, re.M):
         try:
             out[m.group(1)] = json.loads(m.group(2))
         except ValueError:
@@ -468,28 +476,51 @@ def refresh_versions() -> tuple[int, dict]:
     cred = find('/credentials/', env('MACHINE_CREDENTIAL', 'lab-credential'))
     if not inv or not cred:
         return 400, {'ok': False, 'error': 'set TARGET_INVENTORY and MACHINE_CREDENTIAL to objects that exist in AAP'}
-    with _LOCK:
-        saved = dict(_BOM_UPDATES)
-    _BOM_UPDATES.clear()                     # the files' own versions, for comparing the readings against
-    base = load_bom()
-    _BOM_UPDATES.update(saved)
-    readings: dict[str, dict] = {}
-    unreachable: list[str] = []
-    for app in base:
-        hosts = [s['host'] for s in app.get('servers', [])]
-        if not hosts or not app.get('health_url'):
-            continue
-        cmd = (H.aap_call('/ad_hoc_commands/', 'POST', {
+    base = load_bom(with_writebacks=False)   # the files' own versions, to compare the readings against
+
+    def ask(url: str, hosts: list[str]) -> tuple[dict[str, dict], str]:
+        """One ad-hoc command over these hosts -> ({host: /health body}, error)."""
+        cmd = H.aap_call('/ad_hoc_commands/', 'POST', {
             'inventory': inv, 'credential': cred, 'module_name': 'shell', 'limit': ','.join(hosts),
-            'module_args': f"curl -s --max-time 10 {app['health_url']}"}) or {})
-        cid, status = cmd.get('id'), ''
-        for _ in range(60):
+            'module_args': f'curl -s --max-time 10 {url}'}) or {}
+        cid = cmd.get('id')
+        if not cid:
+            return {}, f'AAP did not start the command: {str(cmd)[:160]}'
+        status = ''
+        for _ in range(40):
             status = (H.aap_call(f'/ad_hoc_commands/{cid}/') or {}).get('status', '')
             if status in ('successful', 'failed', 'error', 'canceled'):
                 break
             time.sleep(3)
-        stdout = H.aap_call(f'/ad_hoc_commands/{cid}/stdout/?format=txt') if cid else ''
-        bodies = _parse_health_output(stdout if isinstance(stdout, str) else json.dumps(stdout))
+        # format=json: the console's AAP helper parses every body as JSON, and the plain-text stdout is not; the JSON
+        # form carries the same text under 'content'.
+        out = H.aap_call(f'/ad_hoc_commands/{cid}/stdout/?format=json') or {}
+        text = out.get('content', '') if isinstance(out, dict) else str(out)
+        return _parse_health_output(text), ('' if status == 'successful' else f'command {status or "did not finish"}')
+
+    groups: dict[str, set[str]] = {}
+    for app in base:
+        if app.get('health_url'):
+            groups.setdefault(app['health_url'], set()).update(s['host'] for s in app.get('servers', []))
+    bodies_by_url: dict[str, dict[str, dict]] = {}
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {url: pool.submit(ask, url, sorted(hosts)) for url, hosts in groups.items() if hosts}
+        for url, fut in futures.items():
+            try:
+                bodies_by_url[url], err = fut.result()
+            except Exception as exc:            # one bad command must not lose the others' readings
+                bodies_by_url[url], err = {}, str(exc)
+            if err:
+                errors.append(err)
+
+    readings: dict[str, dict] = {}
+    unreachable: list[str] = []
+    for app in base:
+        hosts = [s['host'] for s in app.get('servers', [])]
+        bodies = bodies_by_url.get(app.get('health_url', ''), {})
+        if not hosts or not app.get('health_url'):
+            continue
         unreachable += [f"{app['app']} on {h}" for h in hosts if h not in bodies]
         readings[app['app']] = {}
         with _LOCK:
@@ -516,7 +547,7 @@ def refresh_versions() -> tuple[int, dict]:
     _persist()
     _trace('console', 'inventory', 'versions re-read from the hosts' + (f"; no answer from {', '.join(unreachable)}"
                                                                          if unreachable else ''))
-    return 200, {'ok': True, 'versions': readings, 'unreachable': unreachable}
+    return 200, {'ok': True, 'versions': readings, 'unreachable': unreachable, 'errors': errors}
 
 
 def site_version(dep: dict, host: str) -> str:
@@ -846,6 +877,13 @@ def osv_enabled() -> bool:
 
 def _vkey(v: str) -> tuple:
     return tuple((0, int(p)) if p.isdigit() else (1, p) for p in re.split(r'[.\-]', upstream(v)))
+
+
+def _vkey_full(v: str) -> tuple:
+    """Like _vkey, but a Lightwell build ranks above its upstream version and a later build above an earlier one
+    (_vkey compares the upstream part only, so 5.7.11 and 5.7.11.rhlw-00006 tie)."""
+    m = RHLW.match(v or '')
+    return _vkey(v), int(m.group('build')) if m else -1
 
 
 def _major(v: str) -> str:
@@ -3120,7 +3158,9 @@ def _installed() -> dict[tuple[str, str], dict[str, list[str]]]:
     for app in load_bom():
         for dep in app.get('dependencies', []):
             if dep.get('ecosystem', 'maven') == 'maven':
-                out.setdefault((dep['group'], dep['artifact']), {}).setdefault(dep['version'], []).append(app['app'])
+                # Every version in use, the app's own and any a site has moved to.
+                for v in {dep['version']} | set((dep.get('site_versions') or {}).values()):
+                    out.setdefault((dep['group'], dep['artifact']), {}).setdefault(v, []).append(app['app'])
     return out
 
 
@@ -3264,11 +3304,17 @@ def source_changes(app_name: str, changes: list[dict]) -> list[dict]:
         base = json.loads((bom_dir() / f'{app_name}.json').read_text())
     except (OSError, ValueError):
         base = next((a for a in DEMO_BOM if a['app'] == app_name), {})
+    eff = {}
+    for d in next((a for a in load_bom() if a['app'] == app_name), {}).get('dependencies', []):
+        vs = {d.get('version', '')} | set((d.get('site_versions') or {}).values())
+        eff[f"{d['group']}:{d['artifact']}"] = max(vs, key=_vkey_full)
     for d in base.get('dependencies', []):
         if d.get('ecosystem', 'maven') != 'maven':
             continue
         name = f"{d['group']}:{d['artifact']}"
-        cur = _BOM_UPDATES.get(f'{app_name}|{name}')
+        # What the app's sites run now: its own version when every site agrees, else the newest a site has been
+        # patched to, so a source build never puts a patched site back on the seeded version.
+        cur = eff.get(name)
         if cur and cur != d['version'] and name not in done:
             out.append({'name': name, 'from': d['version'], 'to': cur})
         elif name in done:                   # this run's change starts from the seeded version too

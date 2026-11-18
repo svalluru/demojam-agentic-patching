@@ -23,8 +23,11 @@ class LabGuard(unittest.TestCase):
         self.c = load_console()
         self.tmp = Path(tempfile.mkdtemp(prefix='labguard-'))
         self.saved = (self.c.ROOT, self.c.RUNTIME_DIR, self.c.LAB_FILE, self.c.demo_mode, self.c.lab_id,
-                      dict(self.c.SIM.runs), dict(appv2._BOM_UPDATES))
+                      dict(self.c.SIM.runs), dict(appv2._BOM_UPDATES), self.c.RAG_DATA_DIR, appv2.state_dir)
+        # Every place the archive reads must point into the temp dir, or the test moves the repo's real runtime data.
         self.c.ROOT = self.tmp
+        self.c.RAG_DATA_DIR = self.tmp / 'rag-setup' / 'data' / 'runs'
+        appv2.state_dir = lambda: self.tmp / 'runs'
         self.c.RUNTIME_DIR = self.tmp / 'runs'
         self.c.LAB_FILE = self.c.RUNTIME_DIR / 'lab.json'
         self.c.demo_mode = lambda: False
@@ -36,7 +39,7 @@ class LabGuard(unittest.TestCase):
 
     def tearDown(self):
         (self.c.ROOT, self.c.RUNTIME_DIR, self.c.LAB_FILE, self.c.demo_mode, self.c.lab_id,
-         runs, bom) = self.saved
+         runs, bom, self.c.RAG_DATA_DIR, appv2.state_dir) = self.saved
         self.c.SIM.runs = runs
         appv2._BOM_UPDATES.clear(); appv2._BOM_UPDATES.update(bom)
 
@@ -67,6 +70,23 @@ class LabGuard(unittest.TestCase):
         self.assertTrue((archived / 'rag-runs' / 'rec.md').exists())
         self.assertEqual(appv2._BOM_UPDATES, {})
         self.assertEqual(json.loads(self.c.LAB_FILE.read_text())['lab'], 'api.cluster-b')
+
+
+class LabGuardEdges(LabGuard):
+    def test_archive_runs_works_without_a_lab_id(self):
+        self.c.lab_id = lambda: ''
+        msg = self.c.lab_guard(force=True)
+        self.assertIn('archived', msg)
+        self.assertFalse((self.tmp / 'runs' / 'nexus-poller.json').exists())
+
+    def test_a_separate_applications_state_dir_is_archived_too(self):
+        state = self.tmp / 'state'; state.mkdir()
+        (state / 'appv2-bom-updates.json').write_text('{}')
+        appv2.state_dir = lambda: state
+        self.at('api.cluster-a'); self.at('api.cluster-b')
+        self.assertFalse((state / 'appv2-bom-updates.json').exists())
+        archived = next((self.tmp / 'runs' / 'archive').iterdir())
+        self.assertTrue((archived / 'appv2-state' / 'appv2-bom-updates.json').exists())
 
 
 class SimulatedRecords(unittest.TestCase):
@@ -126,6 +146,15 @@ class ReadFromHosts(unittest.TestCase):
         self.assertEqual(appv2._jar_version('mina-core', jar), '2.2.5.rhlw-00002')
         self.assertEqual(appv2._jar_version('zookeeper', jar), '')
 
+    def test_real_aap_output_with_colour_codes_parses(self):
+        # Copied from a live AAP ad-hoc command's stored stdout (format=json, 'content').
+        out = ('SSH password: \n\x1b[0;33mnode1 | CHANGED | rc=0 >>\x1b[0m\n\x1b[0;33m{"status":"UP","jars":'
+               '{"mina-core":"mina-core-2.1.6.jar"}}\x1b[0m\n\x1b[0;33mnode3 | CHANGED | rc=0 >>\x1b[0m\n'
+               '\x1b[0;33m{"status":"UP","jars":{"mina-core":"mina-core-2.1.6.jar"}}\x1b[0m\n')
+        bodies = appv2._parse_health_output(out)
+        self.assertEqual(sorted(bodies), ['node1', 'node3'])
+        self.assertEqual(bodies['node3']['jars']['mina-core'], 'mina-core-2.1.6.jar')
+
 
 class StaleGates(unittest.TestCase):
     def test_a_gate_waiting_more_than_a_day_is_listed_stale(self):
@@ -138,6 +167,92 @@ class StaleGates(unittest.TestCase):
                  'simulated': True}]
         out = c.PatchingAgent()._settle_finished(rows)
         self.assertEqual([r['outcome'] for r in out], ['stale', 'awaiting_approval', 'awaiting_approval'])
+
+
+class RefreshVersionsLive(unittest.TestCase):
+    """Item 1 of the second review: the AAP stdout comes back as JSON with the text under 'content', the way the
+    console's AAP helper (which parses every body as JSON) can read it."""
+
+    def setUp(self):
+        self.saved = (appv2.H.demo_mode, appv2.H.aap_call, appv2.H.env, dict(appv2._BOM_UPDATES), appv2._persist)
+        appv2._persist = lambda: None
+        appv2.H.demo_mode = staticmethod(lambda: False)
+        # APPV2_STATE_DIR into a temp dir: refresh_versions clears the estate cache file, and without this the test
+        # deleted the real runs/appv2-estate-reasoning.json.
+        tmp = tempfile.mkdtemp(prefix='refresh-')
+        appv2.H.env = staticmethod(lambda k, d='': {'BOM_DIR': str(ROOT / 'app-data' / 'bom'),
+                                                    'APPV2_STATE_DIR': tmp}.get(k, d))
+        appv2._BOM_UPDATES.clear()
+        appv2._BOM_UPDATES['workflow-engine|org.springframework.security:spring-security-web'] = '5.7.11.rhlw-00006'
+        self.calls = []
+
+        def aap(path, method='GET', body=None):
+            self.calls.append(path)
+            if path.startswith(('/inventories/', '/credentials/')):
+                return {'results': [{'id': 7, 'name': path.split('name=')[1].replace('%20', ' ')}]}
+            if path == '/ad_hoc_commands/':
+                return {'id': 11}
+            if path.endswith('/stdout/?format=json'):
+                return {'content': 'node1 | CHANGED | rc=0 >>\n{"status":"UP","jars":{"spring-security-web":'
+                                   '"spring-security-web-5.7.11.jar","mina-core":"mina-core-2.2.5.jar"}}\n'}
+            return {'status': 'successful'}
+        appv2.H.aap_call = staticmethod(aap)
+
+    def tearDown(self):
+        appv2.H.demo_mode, appv2.H.aap_call, appv2.H.env, bom, appv2._persist = self.saved
+        appv2._BOM_UPDATES.clear(); appv2._BOM_UPDATES.update(bom)
+
+    def test_readings_replace_a_stale_app_level_write_back(self):
+        code, body = appv2.refresh_versions()
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body['versions']['workflow-engine']['node1']['spring-security-web'], '5.7.11')
+        # node1 runs the seeded jar again: the stale app-level "patched" record is gone.
+        self.assertNotIn('workflow-engine|org.springframework.security:spring-security-web', appv2._BOM_UPDATES)
+        self.assertTrue(any(c.endswith('?format=json') for c in self.calls))
+
+    def test_a_refused_command_does_not_poll_a_missing_id(self):
+        real = appv2.H.aap_call
+        appv2.H.aap_call = staticmethod(lambda path, method='GET', body=None:
+                                        {} if path == '/ad_hoc_commands/' else real(path, method, body))
+        code, body = appv2.refresh_versions()
+        self.assertEqual(code, 200)
+        self.assertTrue(body['errors'])
+        self.assertFalse([c for c in self.calls if '/ad_hoc_commands/None' in c])
+
+
+class SettleOnlyReadings(unittest.TestCase):
+    """Item 2: a run read without steps (an AO hiccup) is not cached as its final outcome."""
+
+    def test_an_empty_reading_is_not_cached(self):
+        c = load_console()
+        c.PatchingAgent._settled = {}
+        a = c.PatchingAgent()
+        replies = iter([{'outcome': 'rejected', 'steps': []}, {'outcome': 'patched', 'steps': [{'name': 'x'}]}])
+        a.run_detail = lambda eid: next(replies)
+        row = {'execution_id': 'e1', 'status': 'completed', 'outcome': 'completed'}
+        self.assertEqual(a._settle_finished([dict(row)])[0]['outcome'], 'completed')   # list's own reading kept
+        self.assertEqual(a._settle_finished([dict(row)])[0]['outcome'], 'patched')     # read again, now settled
+        c.PatchingAgent._settled = {}
+
+
+class SourceRebuildPerSite(unittest.TestCase):
+    """Item 3: a source rebuild keeps versions sites were patched to, even when only per-site write-backs exist."""
+
+    def test_per_site_patched_versions_reach_the_pom_edits(self):
+        saved = (appv2.H.demo_mode, dict(appv2._BOM_UPDATES))
+        try:
+            appv2.H.demo_mode = staticmethod(lambda: True)
+            app = next(a for a in appv2.load_bom() if a['app'] == 'workflow-engine')
+            mina = next(d for d in app['dependencies'] if d['artifact'] == 'mina-core')
+            appv2._BOM_UPDATES.clear()
+            host = app['servers'][0]['host']
+            appv2._BOM_UPDATES[f"workflow-engine|{host}|{mina['group']}:mina-core"] = mina['version'] + '.rhlw-00002'
+            edits = appv2.source_changes('workflow-engine', [])
+            self.assertIn({'name': f"{mina['group']}:mina-core", 'from': mina['version'],
+                           'to': mina['version'] + '.rhlw-00002'}, edits)
+        finally:
+            appv2.H.demo_mode = saved[0]
+            appv2._BOM_UPDATES.clear(); appv2._BOM_UPDATES.update(saved[1])
 
 
 if __name__ == '__main__':

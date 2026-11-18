@@ -6011,8 +6011,14 @@ async function decide(execId, activityId, decision) {
 // Outcomes that are over. The rollback states and not_verified were missing, so those rows kept being re-read from
 // AO: a hand rollback, which AO knows nothing about, was overwritten back to 'failed'. 'rolling_back' is not over,
 // but it is the console's own state (a hand rollback in progress), so AO is not asked about it either.
-const TERMINAL = ['patched', 'rejected', 'failed', 'timeout', 'cancelled', 'not_verified', 'unavailable',
-                  'rolled_back', 'rollback_failed', 'rolling_back'];
+// 'timeout' is not here: the console stopped waiting, not the workflow, and the row has to keep being read until AO
+// settles it (failed, patched, rolled back), or it stays stuck on Timeout without the actions its real outcome has.
+const TERMINAL = ['patched', 'rejected', 'failed', 'cancelled', 'not_verified', 'unavailable',
+                  'rolled_back', 'rollback_failed'];
+// Rows the page does not ask AO about: the terminal ones, plus a hand rollback in progress, which is the console's
+// own state (AO still reads 'failed'). Kept apart from TERMINAL, which also decides whether a run is finished, and a
+// rollback still running is not.
+const NO_AO_POLL = TERMINAL.concat(['rolling_back']);
 let trackTimer = null;
 
 // A result row is a snapshot. A run that is still going can fail a moment
@@ -6036,7 +6042,7 @@ function trackPatchRuns() {
   const tick = async () => {
     if (!patchState || !patchState.patch) return;
     const live = (patchState.patch.results || [])
-      .filter(r => r.execution_id && !TERMINAL.includes(r.outcome));
+      .filter(r => r.execution_id && !NO_AO_POLL.includes(r.outcome));
     if (!live.length || ++ticks > POLL_MAX_TICKS) return;
     const moving = live.some(r => r.outcome === 'running' || r._signal);
 
