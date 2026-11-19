@@ -251,6 +251,7 @@ def _elapsed_secs(secs: int) -> str:
 # --------------------------------------------------------------------------
 
 import appv2
+import ctr
 import communication
 import fallbacks
 import results as results_mod
@@ -4997,6 +4998,7 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
                 k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi,
                 http_head=nexus_head)
+ctr.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause, llm=llm_answer, rag_search=app_history_search)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -5276,6 +5278,15 @@ class Handler(BaseHTTPRequestHandler):
                              'mode': 'demo' if demo_mode() else 'live'})
         elif path == '/api/v2/state':
             self._send(200, {'ok': True, **appv2.state()})
+        elif path == '/api/ctr/fixes':
+            try:
+                self._send(200, ctr.fixes())
+            except ctr.AcsError as exc:
+                self._send(503, {'ok': False, 'error': str(exc)})
+        elif path == '/api/ctr/state':
+            self._send(200, {'ok': True, 'source': 'demo' if demo_mode() else 'acs', **ctr.state()})
+        elif path == '/api/ctr/runs':
+            self._send(200, {'ok': True, 'runs': ctr.runs()})
         elif path == '/api/v2/runs':
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             if q.get('run_id'):
@@ -5456,6 +5467,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith('/api/v2/'):
             self._appv2(path)
+            return
+
+        if path.startswith('/api/ctr/'):
+            self._ctr(path)
             return
 
         if path == '/api/roi':
@@ -5674,6 +5689,35 @@ class Handler(BaseHTTPRequestHandler):
             daemon=True, name=f'supervisor-{cve}').start()
         self._send(200, {'ok': True, 'cve': cve, 'mode': 'supervisor',
                          'status': 'running'})
+
+    def _ctr(self, path: str) -> None:
+        """Containers (ctr.py): intake from ACS, assess, prepare, run, decide. The webhook is ACS's notifier."""
+        length = int(self.headers.get('Content-Length', '0') or '0')
+        if length > 1_000_000:
+            self._send(413, {'ok': False, 'error': 'body too large'})
+            return
+        raw = self.rfile.read(length) if length else b''
+        if path == '/api/ctr/webhook':
+            code, body = ctr.accept_webhook(raw, self.headers.get('X-Console-Token', ''))
+            self._send(code, body)
+            return
+        try:
+            payload = json.loads(raw or b'{}')
+        except ValueError:
+            payload = {}
+        targets = payload.get('targets')
+        routes = {
+            '/api/ctr/assess': lambda: ctr.start_assess(str(payload.get('fix_id', ''))),
+            '/api/ctr/generate': lambda: ctr.start_generate([str(t) for t in targets] if isinstance(targets, list) else None),
+            '/api/ctr/dispatch': ctr.start_dispatch,
+            '/api/ctr/decide': lambda: ctr.decide(str(payload.get('key', '')), str(payload.get('decision', ''))),
+            '/api/ctr/reset': ctr.reset,
+        }
+        if path not in routes:
+            self._send(404, {'ok': False, 'error': 'not found'})
+            return
+        code, body = routes[path]()
+        self._send(code, body)
 
     def _appv2(self, path: str) -> None:
         """Applications v2. The webhook reads the raw body, because the

@@ -844,27 +844,37 @@ apps are patched on servers that never were, and old hosts summarised as this la
 | AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. PipelineRuns are never pruned (they are shown in the demo; `pipelines-setup/deploy.sh` sets `operator.tekton.dev/prune.skip`), so delete old ones by hand when you no longer need them; prune unused images on the node |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
-### Containers (Red Hat ACS, demo data)
+### Containers (Red Hat ACS)
 
-The third side of the toggle, **Infrastructure | Applications | Containers** (`#containers`), is for what runs on
-OpenShift. Red Hat Advanced Cluster Security (ACS) finds the CVEs in images and deployments (Scanner V4 reads OS
-packages and the Java jars inside images), adds runtime alerts and the network graph, and the fix is never applied in
-place: rebuild the image with the Lightwell jar (the same build the Applications side uses) or a newer UBI base, scan
-it with `roxctl image check`, sign it with cosign, roll it out lab first and production after approval, and let ACS
-rescan. What cannot be fixed yet is **deferred in ACS** with a reason and an expiry. The OpenShift node and platform
-CVEs are listed too (fixed by a cluster update); RHEL hosts outside the cluster stay on the Infrastructure side.
+The third side of the toggle, **Infrastructure | Applications | Containers** (`#containers`, code in `ctr.py`), takes a
+CVE in a running container image from finding to a verified rollout, the same way the other two sides do:
+
+1. **Fixes for running images.** Intake never polls every image:
+   - **Lightwell builds:** each build in the Applications inbox becomes one targeted ACS query (`Component:… +
+     Component Version:…`) across every cluster on that Central.
+   - **Base image:** a narrow reconcile query (`Fixable:true`, capped by `CTR_RECONCILE_LIMIT`) finds OS packages a
+     newer UBI fixes.
+   - **ACS policy:** violations ACS pushes to `POST /api/ctr/webhook` through a generic-webhook notifier, with the
+     header `X-Console-Token: $CTR_WEBHOOK_TOKEN`.
+2. **Assess → 1 · Deployments.** The deployments running the affected images become the sites: cluster, namespace, env,
+   replicas, a risk score (CVEs, production, runtime alert, replicas), who calls them, the change window, and per
+   deployment reasoning (the history store and the LLM in live mode).
+3. **Prepare → 2 · Change.** The change is `pom.xml` to the Lightwell build, the Containerfile `FROM` to a pinned UBI
+   digest, and each deployment's GitOps image reference to the digest the build produces. `check_container_change`
+   allows only those files and requires pinned digests.
+4. **Run.** Commit, build and `roxctl image check`, cosign sign, lab rollout and health, then **Approve** or
+   **Reject + defer** at the production gate (the reject files an ACS deferral with a 30-day expiry), then ACS rescan
+   and notify.
 
 **Servers patched, image not.** A jar swap on the Applications side fixes the servers, not the images: the image is a
-separate copy and a swap changes nothing in git. The Containers side reads the Applications runs (`/api/v2/runs`) and
-says so per image: which run patched how many of that app's servers, with what. If the run used **Rebuild from
-source**, the pom.xml fix is already in branch `fix/<run>` of the app's Gitea repository, and the image plan builds
-from it; after a swap, the plan still has to change pom.xml.
+separate copy, and a swap changes nothing in git. Assess names the Applications run that patched the app's servers.
+After **Rebuild from source**, the pom.xml fix is already in branch `fix/<run>`.
 
-**It is demo data for now** (marked *Demo data*; nothing calls ACS): Approve rollout and Defer show what a live run or
-ACS request would do. The Applications side links to it when a Lightwell fix is also inside container images, the
-dashboard has a Containers tab, and How to run lists the ACS calls a live version makes (`/v1/images`,
-`/v1/deployments`, `/v1/alerts`, `/v1/networkgraph`, `/v2/vulnerability-exceptions/deferral`, `roxctl`). Live wiring
-needs `ACS_URL`, an API token and a cluster with room to build images.
+**Live ACS:** set `ACS_URL` (the Central route), `ACS_TOKEN` (an API token whose access scope covers the clusters this
+console is responsible for), and optionally `ACS_VERIFY_TLS=false`, `CTR_WEBHOOK_TOKEN`, `CTR_WINDOWS` (JSON,
+namespace to window) and `CTR_VECTOR_DB_ID` (a container rollout history store). Intake and assessment then read ACS
+(the chip says *Live ACS*). **The run stays a demo simulator** until an AO workflow "Container Patch" and its AAP
+templates exist; live mode says so instead of pretending. The dashboard's Containers tab is still static demo data.
 
 ### Dashboard
 

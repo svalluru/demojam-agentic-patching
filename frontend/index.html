@@ -9407,203 +9407,193 @@ renderStages({});
   btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
 })();
 
-// ---- Containers (demo data). The third side: what Red Hat Advanced Cluster Security (ACS) reports for the images
-// and deployments on OpenShift, and how each would be fixed: rebuild the image (a Lightwell jar, or a newer UBI base),
-// sign it, roll it out lab first, prod behind approval, and let ACS rescan. Nothing here calls ACS yet; each box names
-// the ACS endpoint that would feed it. The data mirrors the lab on 2026-11-18.
-const CTR = {
-  cluster: 'cluster-x8v2s · OpenShift 4.19.3 · 1 node',
-  images: [
-    { id: 'workflow-engine', image: 'quay.io/telco/workflow-engine:1.4.2', risk: 'CRITICAL', state: 'decide',
-      deploys: [['nfvo-lab', 'lab', 1], ['nfvo-prod', 'prod', 3]],
-      runtime: 'Unexpected /bin/sh exec in nfvo-prod/workflow-engine-7d9f (outside the process baseline), 09:12',
-      callers: ['order-portal', 'service-assurance', 'inventory-service'],
-      findings: [
-        { comp: 'spring-webmvc 5.3.18', kind: 'lw', cves: 9, fix: '5.3.18.rhlw-00010' },
-        { comp: 'spring-expression 5.3.18', kind: 'lw', cves: 7, fix: '5.3.18.rhlw-00010' },
-        { comp: 'spring-core 5.3.18', kind: 'lw', cves: 1, fix: '5.3.18.rhlw-00010' },
-        { comp: 'openssl-libs 3.0.7 (ubi9 base)', kind: 'base', cves: 2, fix: 'ubi9/ubi-minimal:9.5' },
-      ] },
-    { id: 'inventory-service', image: 'quay.io/telco/inventory-service:2.0.1', risk: 'HIGH', state: 'new',
-      deploys: [['oss-lab', 'lab', 1], ['oss-prod', 'prod', 2]],
-      callers: ['workflow-engine', 'order-portal'],
-      findings: [
-        { comp: 'json 20220320', kind: 'lw', cves: 1, fix: '20220320.0.0.rhlw-00003' },
-        { comp: 'json-path 2.8.0', kind: 'lw', cves: 1, fix: '2.8.0.rhlw-00001' },
-        { comp: 'woodstox-core 6.0.3', kind: 'lw', cves: 1, fix: '6.0.3.rhlw-00001' },
-        { comp: 'glibc 2.34 (ubi9 base)', kind: 'base', cves: 1, fix: 'ubi9/ubi-minimal:9.5' },
-      ] },
-    { id: 'ric-xapp', image: 'quay.io/telco/ric-xapp:0.9.3', risk: 'MEDIUM', state: 'deferred',
-      deploys: [['ric', 'prod', 2]], callers: ['near-rt-ric'],
-      deferral: 'Deferred until 2026-12-15 by the platform team: no fixed build; a network policy limits who can reach it.',
-      findings: [{ comp: 'ricxappframe 3.2.1 (Python)', kind: 'none', cves: 3, fix: '' }] },
-    { id: 'llama-stack', image: 'quay.io/opendatahub/llama-stack:latest', risk: 'LOW', state: 'new',
-      deploys: [['agentic-patching', 'platform', 1]], callers: ['agentic-patching console'],
-      findings: [{ comp: 'urllib3 1.26.18 (Python)', kind: 'none', cves: 1, fix: '' },
-                 { comp: 'image is not signed', kind: 'policy', cves: 0, fix: 'policy: Require signed images (inform)' }] },
-  ],
-  nodes: [
-    ['Node', 'cluster-x8v2s-master-0 · RHCOS 4.19.3', 'kernel: 2 CVEs', 'Fixed in OpenShift 4.19.5 (cluster update)'],
-    ['Platform', 'OpenShift 4.19.3', 'kube-apiserver: 1 CVE', 'Fixed in OpenShift 4.19.5'],
-  ],
-};
-const CTR_KIND = { lw: ['good', 'Lightwell build'], base: ['info', 'Base image update'], none: ['crit', 'No fix'], policy: ['warn', 'Policy'] };
-const CTR_STATE = { decide: ['warn', '! Waiting for approval'], new: ['info', 'New'], deferred: ['off', '– Deferred'] };
-let ctrSel = 'workflow-engine';
-// The Applications runs, read from /api/v2/runs (live in both modes): what the servers of each image's app already got.
-let ctrRuns = null, ctrRunsAt = 0;
-async function ctrLoadRuns() {
-  try { ctrRuns = (await v2Fetch('/api/v2/runs')).runs || []; } catch (e) { ctrRuns = ctrRuns || []; }
-  ctrRunsAt = Date.now();
-  if (!document.getElementById('ctr-pane').hidden) ctrRender(true);
-}
-// The newest Applications run that changed one of this image's Lightwell libraries on its app's servers.
-function ctrRunFor(img) {
-  const libs = img.findings.filter(f => f.kind === 'lw').map(f => f.comp.split(' ')[0]);
-  for (const r of ctrRuns || []) {
-    const arts = ((r.artifacts || {})[img.id] || []).filter(a => libs.includes(a));
-    const mine = (r.hosts || []).filter(h => h.app === img.id);
-    const patched = mine.filter(h => h.outcome === 'patched');
-    const moving = r.current && mine.some(h => ['running', 'awaiting_approval'].includes(h.outcome));
-    if (arts.length && (patched.length || moving)) {
-      return { run: r, arts, patched, sites: mine.filter(h => h.outcome !== 'skipped').length || mine.length,
-               moving, source: r.test_mode === 'source', version: (r.event || {}).version || '' };
-    }
-  }
-  return null;
+// ---- Containers. The third side, driven by ctr.py: intake from Red Hat ACS (a Lightwell build turned into one
+// targeted ACS query, base-image fixes, policy violations ACS pushes), assess the deployments, prepare a checked
+// change, and run it: build and scan, sign, lab first, production behind approval, ACS rescan. Demo mode answers the
+// ACS calls from fixtures; the run is a simulator until the container workflow exists in AO.
+const ctr = { fixes: null, state: {}, timer: null, sel: null, at: 0, err: '' };
+const CTR_KIND = { lightwell: ['good', 'Lightwell build'], base: ['info', 'Base image'], policy: ['warn', 'ACS policy'] };
+const CTR_BUSY = ['assessing', 'generating', 'running', 'awaiting_approval'];
+const CTR_STEP = { commit: 'Commit', build_scan: 'Build + roxctl', sign: 'Sign', deploy: 'Deploy', health: 'Health',
+                   approval: 'Approval', verify: 'ACS rescan', notify: 'Notify' };
+
+async function ctrApi(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
 }
 
-// The Applications side's cross-link: a Lightwell fix that is also inside container images.
+async function ctrLoad(force) {
+  try {
+    if (force || !ctr.fixes || Date.now() - ctr.at > 30000) { ctr.fixes = await ctrApi('/api/ctr/fixes'); ctr.at = Date.now(); }
+    ctr.state = await ctrApi('/api/ctr/state');
+    ctr.err = '';
+  } catch (e) { ctr.err = e.message; }
+  if (!document.getElementById('ctr-pane').hidden) ctrRender();
+  clearTimeout(ctr.timer);
+  if (CTR_BUSY.includes(ctr.state.status)) ctr.timer = setTimeout(() => ctrLoad(), 900);
+}
+
+// The Applications side's cross-link: a Lightwell fix that ACS also found inside container images.
 function ctrAlso(ev) {
-  const imgs = { 'spring-webmvc': ['workflow-engine'], 'spring-expression': ['workflow-engine'], 'spring-core': ['workflow-engine'],
-                 'json': ['inventory-service'], 'json-path': ['inventory-service'], 'woodstox-core': ['inventory-service'] }[(ev || {}).artifact];
-  if (!imgs) return '';
-  return `<div class="ctr-also">The same Lightwell build is also inside ${imgs.length} container image${imgs.length > 1 ? 's' : ''}
-    (${imgs.map(esc).join(', ')}). Patching these servers does not change the images; Containers lists them until they
-    are rebuilt. <button type="button" data-ctr-open="${esc(imgs[0])}">Open in Containers →</button> <span>(demo data)</span></div>`;
+  const f = ((ctr.fixes || {}).fixes || []).find(x => x.kind === 'lightwell' && x.component === (ev || {}).artifact);
+  if (!f) return '';
+  const names = f.images.map(i => i.name.split('/').pop());
+  return `<div class="ctr-also">The same Lightwell build is also inside ${names.length} container image${names.length > 1 ? 's' : ''}
+    (${names.map(esc).join(', ')}). Patching these servers does not change the images; Containers lists them until they
+    are rebuilt. <button type="button" data-ctr-open="${esc(f.id)}">Open in Containers →</button></div>`;
 }
 
-function ctrRender(fromLoad) {
-  const pane = document.getElementById('ctr-pane');
-  if (!fromLoad && (!ctrRuns || Date.now() - ctrRunsAt > 15000)) ctrLoadRuns();
-  const img = CTR.images.find(i => i.id === ctrSel) || CTR.images[0];
-  const total = i => i.findings.reduce((n, f) => n + f.cves, 0);
-  const list = CTR.images.map(i => `<button type="button" class="c-img" data-ctr-img="${esc(i.id)}" aria-current="${i.id === img.id}">
-      <div class="c-chips"><span class="pill-s ${CTR_STATE[i.state][0]}">${esc(CTR_STATE[i.state][1])}</span>
-        <span class="pill-s ${i.risk === 'CRITICAL' ? 'crit' : i.risk === 'HIGH' ? 'warn' : 'off'}">${esc(i.risk)}</span>
-        ${i.runtime ? '<span class="pill-s crit">✕ Runtime alert</span>' : ''}
-        ${(m => m ? `<span class="pill-s warn" title="The servers got the fix through Applications; this image did not">${m.moving && !m.patched.length ? 'Servers being patched' : 'Servers patched · image not'}</span>` : '')(ctrRunFor(i))}</div>
-      <div class="t">${esc(i.id)}</div><div class="m">${esc(i.image)}</div>
-      <div class="c-chips">${['lw', 'base', 'none'].filter(k => i.findings.some(f => f.kind === k)).map(k =>
-        `<span class="pill-s ${CTR_KIND[k][0]}">${esc(CTR_KIND[k][1])}</span>`).join('')}<span class="pill-s off">${total(i)} CVEs</span></div>
-    </button>`).join('');
-  const lw = img.findings.filter(f => f.kind === 'lw'), base = img.findings.filter(f => f.kind === 'base');
-  const ran = ctrRunFor(img), rid = ran ? String(ran.run.run_id || '').slice(0, 8) : '';
-  const repo = `app-${img.id}`;
-  const banner = !lw.length ? '' : ran ? `<div class="c-sec"><div class="c-alert" style="border-color:rgba(154,99,0,.45);background:rgba(154,99,0,.06)">
-      <b style="color:var(--c-amber)">${ran.patched.length ? '! Servers patched, image not' : '! Servers being patched'}</b> ·
-      ${esc(img.id)} ${ran.patched.length ? `was patched on ${ran.patched.length} of ${ran.sites} server${ran.sites === 1 ? '' : 's'}` : 'is being patched on its servers'}
-      by Applications run <span class="mono">${esc(rid)}</span>
-      (${ran.source ? 'rebuilt from source' : 'jar swap'}: ${ran.arts.map(esc).join(', ')} → <span class="mono">${esc(ran.version)}</span>).
-      This image is a separate copy and still carries the old jars.
-      ${ran.source ? `The pom.xml fix is already in branch <span class="mono">fix/${esc(String(ran.run.run_id || ''))}</span> of ${esc(repo)}: build this image from it.`
-                   : 'A jar swap changes nothing in git, so a rebuild needs the pom.xml change below.'}</div></div>`
-    : `<div class="c-note">No Applications run has patched ${esc(img.id)}'s servers with these Lightwell builds yet.</div>`;
-  const fixable = lw.length || base.length;
-  const steps = fixable ? [
-    lw.length ? (ran && ran.source
-      ? `Build from branch <span class="mono">fix/${esc(String(ran.run.run_id || ''))}</span> of ${esc(repo)}: its pom.xml already uses the Lightwell build${lw.length > 1 ? 's' : ''}`
-      : `Swap ${lw.map(f => esc(f.comp.split(' ')[0])).join(', ')} for the Lightwell build${lw.length > 1 ? 's' : ''} (${esc(lw[0].fix)}…) in pom.xml; the jars come through Nexus and their provenance is checked`) : '',
-    base.length ? `Rebase on <span class="mono">${esc(base[0].fix)}</span> for the OS packages` : '',
-    'Build the image in OpenShift Pipelines (app-v2-build) and scan it with <span class="mono">roxctl image check</span>: no fixable critical CVEs, no policy violations',
-    'Sign the image with cosign; the ACS policy "Require signed images" admits only signed images',
-    `Roll out to ${esc(img.deploys.filter(d => d[1] !== 'prod').map(d => d[0]).join(', ') || 'the lab namespace')} first, then ${esc(img.deploys.filter(d => d[1] === 'prod').map(d => d[0]).join(', ') || 'production')} after approval`,
-    'ACS rescans the running deployments: the CVEs fixed above must be gone, or the run is reported as not verified',
-  ].filter(Boolean) : [];
-  pane.innerHTML = `<div class="c-wrap">
-    <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc(CTR.cluster)}</span>
-      <span class="c-tag" title="Sample data mirroring the lab; nothing here calls ACS">Demo data</span></div>
-    <div class="c-grid">
-      <section class="c-box"><h3>Images with findings<b>${CTR.images.length}</b></h3>${list}
-        <div class="c-src">ACS GET /v1/images · /v1/deployments</div></section>
-      <section class="c-box">
-        <h3>${esc(img.id)} <span class="pill-s ${CTR_STATE[img.state][0]}">${esc(CTR_STATE[img.state][1])}</span></h3>
-        <div class="mono">${esc(img.image)}</div>
-        ${img.runtime ? `<div class="c-sec"><div class="c-alert"><b>✕ Runtime alert</b> · ${esc(img.runtime)}. An open CVE plus
-          activity outside the baseline: this image goes first.</div></div>` : ''}
-        ${banner}
-        ${img.deferral ? `<div class="c-sec"><div class="c-alert" style="border-color:var(--c-line);background:var(--surface)"><b style="color:var(--c-text-2)">– Deferred</b> · ${esc(img.deferral)}</div></div>` : ''}
-        <div class="c-sec"><h4>Findings</h4><table class="c-t"><tr><th>Component</th><th>CVEs</th><th>Fix</th><th></th></tr>
-          ${img.findings.map(f => `<tr><td>${esc(f.comp)}</td><td>${f.cves || '–'}</td><td class="mono">${esc(f.fix || '—')}</td>
-            <td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span></td></tr>`).join('')}
-        </table>
-        ${lw.length ? `<div class="c-note">The same Lightwell build is on the Applications side, for ${esc(img.id)}'s servers:
-          <button type="button" class="c-link" data-ctr-apps="${esc(lw[0].comp.split(' ')[0])}">open the ${esc(lw[0].comp.split(' ')[0])} fix →</button></div>` : ''}</div>
-        <div class="c-two">
-          <div class="c-sec"><h4>Deployments</h4><table class="c-t"><tr><th>Namespace</th><th>Env</th><th>Replicas</th></tr>
-            ${img.deploys.map(([ns, env, n]) => `<tr><td class="mono">${esc(ns)}</td><td>${esc(env)}</td><td>${n}</td></tr>`).join('')}</table></div>
-          <div class="c-sec"><h4>Blast radius (network graph)</h4><div class="c-chips">${img.callers.map(c => `<span class="pill-s off">${esc(c)}</span>`).join('')}</div>
-            <div class="c-note">Observed traffic into these deployments: who notices a rollout.</div></div>
-        </div>
-        ${fixable ? `<div class="c-sec"><h4>Plan: rebuild, never patch in place</h4><ol class="c-steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></div>
-          <div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="approve">Approve rollout</button>
-            <button type="button" class="c-btn" data-ctr-act="defer">Defer in ACS…</button></div>`
-          : `<div class="c-sec"><h4>Plan</h4><div class="c-note">No fixed build is offered for these components. Defer with a reason and an
-            expiry, so the exposure is recorded rather than forgotten.</div></div>
-            <div class="c-actions"><button type="button" class="c-btn" data-ctr-act="defer">Defer in ACS…</button></div>`}
-        <div class="c-src">ACS GET /v1/images/{id} · /v1/networkgraph · /v1/alerts · POST /v2/vulnerability-exceptions/deferral</div>
-      </section>
-    </div>
-    <section class="c-box"><h3>Cluster: nodes and platform<b>${CTR.nodes.length}</b></h3>
+function ctrInbox() {
+  const fx = (ctr.fixes || {}).fixes || [];
+  const errs = (ctr.fixes || {}).errors || [];
+  return `<section class="c-box"><h3>Fixes for running images<b>${fx.length}</b></h3>
+    ${errs.length ? `<div class="c-alert">${errs.map(esc).join('<br>')}</div>` : ''}
+    ${fx.length ? `<table class="c-t"><tr><th>Source</th><th>Fix</th><th>CVEs</th><th>Images</th><th></th></tr>
+      ${fx.map(f => `<tr><td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span></td>
+        <td><b>${esc(f.component)}</b>${f.to ? ` <span class="mono">${esc(f.from)} → ${esc(f.to.length > 60 ? f.to.slice(0, 60) + '…' : f.to)}</span>` : ''}
+          <div class="c-note" style="margin:2px 0 0">${esc(f.source)}${f.detail ? ' · ' + esc(f.detail) : ''}</div></td>
+        <td>${f.cves.length || '–'}</td><td class="mono">${f.images.map(i => esc(i.name.split('/').pop())).join('<br>')}</td>
+        <td><button type="button" class="c-btn go" data-ctr-assess="${esc(f.id)}">Assess</button></td></tr>`).join('')}</table>`
+      : '<div class="c-note">No fixes for running images right now.</div>'}
+    <div class="c-src">Lightwell builds (Applications inbox) → ACS GET /v1/images?query=Component:…+Component Version:… ·
+      reconcile ?query=Fixable:true · POST /api/ctr/webhook (ACS notifier)</div></section>
+    ${(ctr.fixes || {}).nodes && ctr.fixes.nodes.length ? `<section class="c-box"><h3>Cluster: nodes and platform<b>${ctr.fixes.nodes.length}</b></h3>
       <table class="c-t"><tr><th>Kind</th><th>What</th><th>Findings</th><th>Fix</th></tr>
-        ${CTR.nodes.map(r => `<tr><td>${esc(r[0])}</td><td class="mono">${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table>
-      <div class="c-note">The OpenShift node and platform are fixed by a cluster update, not by these runs. RHEL hosts outside the cluster stay on the Infrastructure side (Insights).</div>
-      <div class="c-src">ACS GET /v1/nodes · platform CVEs</div></section>
+        ${ctr.fixes.nodes.map(r => `<tr><td>${esc(r[0])}</td><td class="mono">${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table>
+      <div class="c-note">Fixed by a cluster update, not by these runs. RHEL hosts outside the cluster stay on the Infrastructure side.</div></section>` : ''}`;
+}
+
+function ctrRun(s) {
+  const t = (s.impact || {}).targets || [];
+  const pick = s.status === 'assessed';
+  if (pick && (!ctr.sel || ctr.sel.run !== s.run_id)) ctr.sel = { run: s.run_id, keys: new Set(t.map(x => x.key)) };
+  const hosts = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
+  const f = s.fix || {};
+  const servers = (s.impact || {}).servers || [];
+  const lwApp = f.kind === 'lightwell';
+  const out = [];
+  out.push(`<section class="c-box"><h3>${esc(f.component || '')} <span class="pill-s ${(CTR_KIND[f.kind] || ['off'])[0]}">${esc((CTR_KIND[f.kind] || ['', ''])[1])}</span>
+      <b>${esc(s.status)}</b></h3>
+    <div class="mono">${esc(f.from || '')}${f.to ? ' → ' + esc(f.to) : ''}</div>
+    <div class="c-note">${esc(f.source || '')} · ${(f.cves || []).length} CVE${(f.cves || []).length === 1 ? '' : 's'} · ${f.images ? f.images.map(i => esc(i.name)).join(', ') : ''}</div>
+    ${servers.map(sv => `<div class="c-sec"><div class="c-alert" style="border-color:rgba(154,99,0,.45);background:rgba(154,99,0,.06)">
+      <b style="color:var(--c-amber)">! Servers patched, image not</b> · ${esc(sv.app)} was patched on ${sv.patched} server${sv.patched === 1 ? '' : 's'}
+      by Applications run <span class="mono">${esc(String(sv.run_id).slice(0, 8))}</span> (${sv.mode === 'source' ? 'rebuilt from source' : 'jar swap'},
+      <span class="mono">${esc(sv.version)}</span>). The image is a separate copy and still carries the old jar.
+      ${sv.mode === 'source' ? `The pom.xml fix is in branch <span class="mono">fix/${esc(sv.run_id)}</span>: build the image from it.`
+                             : 'A jar swap changes nothing in git, so the change below edits pom.xml.'}</div></div>`).join('')}
+    ${lwApp ? `<div class="c-note">Same Lightwell build on the Applications side: <button type="button" class="c-link" data-ctr-apps="${esc(f.component)}">open the ${esc(f.component)} fix →</button></div>` : ''}
+  </section>`);
+  if (s.status === 'assessing') out.push('<section class="c-box"><div class="empty"><div class="spinner"></div><span>Asking ACS which deployments run it…</span></div></section>');
+  if (t.length) {
+    out.push(`<section class="c-box"><h3>1 · Deployments<b>${t.length}</b></h3><table class="c-t">
+      <tr><th></th><th>Deployment</th><th>Env</th><th>Risk</th><th>Who notices · window</th><th>Reasoning</th><th>Status</th></tr>
+      ${t.map(x => { const h = hosts[x.key]; return `<tr>
+        <td><input type="checkbox" data-ctr-sel="${esc(x.key)}" ${(pick ? ctr.sel.keys.has(x.key) : (s.selected || []).includes(x.key)) ? 'checked' : ''} ${pick ? '' : 'disabled'}></td>
+        <td><b>${esc(x.namespace)}/${esc(x.name)}</b><div class="c-note" style="margin:2px 0 0">${esc(x.cluster)} · ${x.replicas} replica${x.replicas === 1 ? '' : 's'}</div>
+          ${x.runtime ? `<div style="margin-top:4px"><span class="pill-s crit" title="${esc(x.runtime)}">✕ Runtime alert</span></div>` : ''}</td>
+        <td>${esc(x.env)}</td>
+        <td><b>${x.risk}</b><div class="c-note" style="margin:2px 0 0">${esc(x.risk_why)}</div></td>
+        <td>${(x.callers || []).map(c => `<span class="pill-s off">${esc(c)}</span>`).join(' ') || '<span class="c-note">—</span>'}
+          <div class="c-note" style="margin:4px 0 0">${x.window ? 'Window ' + esc(x.window) : 'Any time'}</div></td>
+        <td style="max-width:360px">${esc(x.reasoning)}<div class="c-note" style="margin:2px 0 0">${esc(x.reasoning_source)}</div></td>
+        <td>${h ? ctrHostCell(h) : '<span class="c-note">—</span>'}</td></tr>`; }).join('')}
+    </table><div class="c-src">ACS GET /v1/deployments?query=Image Sha:… · /v1/deployments/{id} · /v1/alerts · network graph · app history store + LLM</div>
+    ${pick ? `<div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="generate">Prepare change</button>
+      <button type="button" class="c-btn" data-ctr-act="reset">Cancel</button></div>` : ''}</section>`);
+  }
+  if (s.change) {
+    out.push(`<section class="c-box"><h3>2 · Change <span class="pill-s ${s.ok ? 'good' : 'crit'}">${s.ok ? '✓ Checks pass' : '✕ Checks fail'}</span></h3>
+      <table class="c-t"><tr><th>File</th><th>What</th><th>From</th><th>To</th></tr>
+        ${s.change.map(e => `<tr><td class="mono">${esc(e.file)}</td><td>${esc(e.what)}</td><td class="mono">${esc(e.from)}</td><td class="mono">${esc(e.to)}</td></tr>`).join('')}</table>
+      <div class="c-chips" style="margin-top:10px">${(s.checks || []).map(c => `<span class="pill-s ${c.ok ? 'good' : 'crit'}" title="${esc(c.detail)}">${c.ok ? '✓' : '✕'} ${esc(c.id)}: ${esc(c.detail)}</span>`).join('')}</div>
+      <div class="c-note">Then: build in OpenShift Pipelines and <span class="mono">roxctl image check</span>, cosign sign, roll out lab first, production after approval, ACS rescan.</div>
+      ${s.status === 'generated' ? `<div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="dispatch" ${s.ok ? '' : 'disabled'}>Run on ${(s.selected || []).length} deployment${(s.selected || []).length === 1 ? '' : 's'}</button>
+        <button type="button" class="c-btn" data-ctr-act="reset">Cancel</button></div>` : ''}</section>`);
+  }
+  if (s.status === 'complete' || s.status === 'failed') {
+    const sm = s.summary || {};
+    out.push(`<section class="c-box"><h3>Result</h3>
+      ${s.status === 'failed' ? `<div class="c-alert">${esc(s.error || 'failed')}</div>`
+        : `<div>${sm.patched || 0} rolled out and verified · ${sm.deferred || 0} deferred in ACS · ${sm.failed || 0} failed</div>`}
+      ${(s.deferrals || []).map(d => `<div class="c-note">Deferral for ${esc(d.key)}: <span class="mono">${esc(d.ref)}</span>, expires ${esc(d.request.exceptionExpiry.expiresOn)}</div>`).join('')}
+      <div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button></div></section>`);
+  }
+  return out.join('');
+}
+
+function ctrHostCell(h) {
+  const steps = Object.entries(h.steps || {});
+  return `<div>${h.outcome === 'awaiting_approval'
+      ? `<div class="c-actions" style="margin:0 0 6px"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}">Approve</button>
+         <button type="button" class="c-btn" data-ctr-decide="rejected" data-key="${esc(h.key)}" title="Reject and defer the CVEs in ACS for 30 days">Reject + defer</button></div>`
+      : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : h.outcome === 'deferred' ? 'off' : h.outcome === 'failed' ? 'crit' : 'info'}">${esc(h.outcome)}</span>`}
+    <div class="c-chips" style="margin-top:4px">${steps.map(([k, v]) => `<span class="pill-s ${v === 'done' ? 'good' : v === 'waiting' ? 'warn' : v === 'rejected' ? 'off' : 'info'}">${esc(CTR_STEP[k] || k)}</span>`).join('')}</div>
+    ${h.detail ? `<div class="c-note" style="margin:4px 0 0">${esc(h.detail)}</div>` : ''}</div>`;
+}
+
+function ctrRender() {
+  const pane = document.getElementById('ctr-pane');
+  const s = ctr.state || {};
+  const live = (ctr.fixes || {}).source === 'acs';
+  const body = !s.status || s.status === 'idle' ? ctrInbox() : ctrRun(s);
+  pane.innerHTML = `<div class="c-wrap">
+    <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc((ctr.fixes || {}).cluster || '')}</span>
+      <span class="c-tag" ${live ? 'style="color:var(--blue);border-color:rgba(0,102,204,.35);background:rgba(0,102,204,.07)"' : ''}
+        title="${live ? 'Intake and assessment read ACS; the run is a simulator until the container workflow exists in AO' : 'ACS answered from fixtures; nothing is called'}">${live ? 'Live ACS' : 'Demo data'}</span>
+      ${s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh" style="margin-left:auto">Refresh</button>'}</div>
+    ${ctr.err ? `<div class="c-alert">${esc(ctr.err)}</div>` : ''}
+    ${ctr.fixes || ctr.err ? body : '<div class="empty"><div class="spinner"></div><span>Asking ACS…</span></div>'}
   </div>`;
 }
 
 document.getElementById('ctr-pane').addEventListener('click', async e => {
-  const pick = e.target.closest('[data-ctr-img]');
-  if (pick) { ctrSel = pick.dataset.ctrImg; ctrRender(); return; }
-  const toApps = e.target.closest('[data-ctr-apps]');
-  if (toApps) {
-    const art = toApps.dataset.ctrApps, st = v2.state || {};
-    v2.focus = art;
-    v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
-    paneShow('appv2');
-    return;
-  }
-  const act = e.target.closest('[data-ctr-act]');
-  if (!act) return;
-  const img = CTR.images.find(i => i.id === ctrSel);
-  const cves = img.findings.reduce((n, f) => n + f.cves, 0);
-  if (act.dataset.ctrAct === 'approve') {
-    await apNotice({ title: 'Demo: rollout approved',
-      body: `<p>A live run would rebuild <span class="mono">${esc(img.image)}</span>, scan it with roxctl, sign it, roll it out to the lab
-        namespace, then to production, and ask ACS to rescan. On this lab ACS and the image build are not live, so nothing was changed.</p>` });
-    return;
-  }
-  const expiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-  const ok = await apDialog({ title: 'Defer in ACS', ok: 'Show what it would file', cancel: 'Cancel',
-    body: `<p>Defers ${cves} CVE${cves === 1 ? '' : 's'} on <span class="mono">${esc(img.image)}</span> until <b>${expiry}</b>, with a reason, so
-      the exposure stays on record and comes back when it expires. ACS sends the request to an approver, like the gate here.</p>` });
-  if (!ok) return;
-  await apNotice({ title: 'Demo: the ACS request',
-    body: `<pre class="mono" style="white-space:pre-wrap;font-size:12px;margin:0">POST /v2/vulnerability-exceptions/deferral
-{ "cves": [ …${cves} CVEs… ],
-  "scope": { "imageScope": { "registry": "${esc(img.image.split('/')[0])}",
-             "remote": "${esc(img.image.split('/').slice(1).join('/').split(':')[0])}", "tag": "${esc(img.image.split(':').pop())}" } },
-  "comment": "Change window closed; rebuild planned",
-  "exceptionExpiry": { "expiryType": "TIME", "expiresOn": "${expiry}" } }</pre>
-      <p class="muted-sm">Not sent: ACS is not live on this lab.</p>` });
+  const t = e.target;
+  try {
+    const a = t.closest('[data-ctr-assess]');
+    if (a) { await ctrApi('/api/ctr/assess', { fix_id: a.dataset.ctrAssess }); return ctrLoad(); }
+    const sel = t.closest('[data-ctr-sel]');
+    if (sel && ctr.sel) { sel.checked ? ctr.sel.keys.add(sel.dataset.ctrSel) : ctr.sel.keys.delete(sel.dataset.ctrSel); return; }
+    const d = t.closest('[data-ctr-decide]');
+    if (d) {
+      if (d.dataset.ctrDecide === 'rejected' && !(await apDialog({ title: 'Reject and defer in ACS', ok: 'Reject and defer', cancel: 'Cancel',
+          body: `<p>Production stays on the old image. The console files an ACS deferral for these CVEs, expiring in 30 days, so the
+          exposure stays on record and comes back.</p>` }))) return;
+      await ctrApi('/api/ctr/decide', { key: d.dataset.key, decision: d.dataset.ctrDecide }); return ctrLoad();
+    }
+    const toApps = t.closest('[data-ctr-apps]');
+    if (toApps) {
+      const art = toApps.dataset.ctrApps, st = v2.state || {};
+      v2.focus = art;
+      v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
+      paneShow('appv2');
+      return;
+    }
+    const act = t.closest('[data-ctr-act]');
+    if (!act) return;
+    const k = act.dataset.ctrAct;
+    if (k === 'refresh') return ctrLoad(true);
+    if (k === 'generate') await ctrApi('/api/ctr/generate', { targets: [...(ctr.sel ? ctr.sel.keys : [])] });
+    if (k === 'dispatch') await ctrApi('/api/ctr/dispatch', {});
+    if (k === 'reset') { await ctrApi('/api/ctr/reset', {}); await ctrLoad(true); return; }
+    await ctrLoad();
+  } catch (err) { apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` }); }
 });
-// Applications → Containers cross-link (rendered by ctrAlso inside the Applications pane).
-document.addEventListener('click', e => {
+// Applications → Containers cross-link: open Containers on that fix (assessed, if nothing else is open).
+document.addEventListener('click', async e => {
   const b = e.target.closest('[data-ctr-open]');
   if (!b) return;
-  ctrSel = b.dataset.ctrOpen;
   paneShow('ctr');
+  if (!CTR_BUSY.includes((ctr.state || {}).status)) {
+    try { await ctrApi('/api/ctr/reset', {}); await ctrApi('/api/ctr/assess', { fix_id: b.dataset.ctrOpen }); } catch (err) { /* shown by ctrLoad */ }
+  }
+  ctrLoad();
 });
+// The Applications cross-link needs the Containers fixes; ask once, quietly, after the page settles.
+setTimeout(() => ctrLoad(), 1500);
 
 // ---- Dashboard (demo data). A destination like the ROI report: the header's tiles icon opens it, and while it is
 // up the side toggle switches which side it shows. The data mirrors the lab on 2026-11-18; nothing here calls
@@ -9860,7 +9850,7 @@ return render;
     scanner.hidden = !app;
     v2pane.hidden = !v2on;
     ctrPane.hidden = !ctrOn;
-    if (ctrOn) ctrRender();
+    if (ctrOn) { ctrRender(); ctrLoad(); }
     frames.hidden = app || v2on || onRoi || ctrOn;
     roi.hidden = !onRoi || onDash;
     dash.hidden = !onDash;
