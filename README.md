@@ -844,6 +844,22 @@ apps are patched on servers that never were, and old hosts summarised as this la
 | AAP jobs or the pod test are evicted; DiskPressure on the node | The lab is one node with little disk headroom. PipelineRuns are never pruned (they are shown in the demo; `pipelines-setup/deploy.sh` sets `operator.tekton.dev/prune.skip`), so delete old ones by hand when you no longer need them; prune unused images on the node |
 | Test in a pod fails "parameters have mismatching types" | A PipelineRun param arrived as an object. `app_v2_test_pod.yml` builds the body in one expression so they stay strings; keep it that way |
 
+### Containers (Red Hat ACS, demo data)
+
+The third side of the toggle, **Infrastructure | Applications | Containers** (`#containers`), is for what runs on
+OpenShift. Red Hat Advanced Cluster Security (ACS) finds the CVEs in images and deployments (Scanner V4 reads OS
+packages and the Java jars inside images), adds runtime alerts and the network graph, and the fix is never applied in
+place: rebuild the image with the Lightwell jar (the same build the Applications side uses) or a newer UBI base, scan
+it with `roxctl image check`, sign it with cosign, roll it out lab first and production after approval, and let ACS
+rescan. What cannot be fixed yet is **deferred in ACS** with a reason and an expiry. The OpenShift node and platform
+CVEs are listed too (fixed by a cluster update); RHEL hosts outside the cluster stay on the Infrastructure side.
+
+**It is demo data for now** (marked *Demo data*; nothing calls ACS): Approve rollout and Defer show what a live run or
+ACS request would do. The Applications side links to it when a Lightwell fix is also inside container images, the
+dashboard has a Containers tab, and How to run lists the ACS calls a live version makes (`/v1/images`,
+`/v1/deployments`, `/v1/alerts`, `/v1/networkgraph`, `/v2/vulnerability-exceptions/deferral`, `roxctl`). Live wiring
+needs `ACS_URL`, an API token and a cluster with room to build images.
+
 ### Dashboard
 
 The tiles icon in the header opens the operations dashboard in the console itself (a destination like the ROI

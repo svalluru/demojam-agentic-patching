@@ -2390,6 +2390,75 @@
   #dash-pane .lanes, #dash-pane .heroes { grid-template-columns:1fr; }
   #dash-pane .d-body { padding:14px; }
   }
+
+  /* ---- Containers (#ctr-pane): Red Hat ACS findings, demo data. Scoped so nothing leaks into the console. */
+  #ctr-pane[hidden] { display:none; }
+  #ctr-pane { --c-page:#f6f6f7; --c-line:#e7e7ea; --c-text-2:#45454c; --c-good:#0ca30c; --c-warn:#fab219;
+              --c-serious:#ec835a; --c-crit:#d03b3b; --c-amber:#9a6300;
+              background:var(--c-page); min-height:calc(100vh - 64px); padding:18px 26px 34px; }
+  #ctr-pane .c-wrap { max-width:1600px; margin:0 auto; display:grid; gap:14px; }
+  #ctr-pane .c-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  #ctr-pane .c-head h2 { margin:0; font-size:17px; letter-spacing:-.01em; }
+  #ctr-pane .c-head .sub { color:var(--muted); font-size:13px; }
+  #ctr-pane .c-tag { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px;
+                     border-radius:6px; color:var(--c-amber); border:1px solid rgba(154,99,0,.4); background:rgba(154,99,0,.08); }
+  #ctr-pane .c-health { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; }
+  #ctr-pane .c-health .lbl { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-right:4px; }
+  #ctr-pane .c-svc { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:4px 10px; border-radius:999px;
+                     background:#fff; border:1px solid var(--c-line); color:var(--c-text-2); }
+  #ctr-pane .c-svc i { font-style:normal; font-weight:700; width:14px; height:14px; border-radius:50%; display:inline-grid;
+                       place-items:center; font-size:9px; color:#fff; background:var(--c-good); }
+  #ctr-pane .c-svc.warn { border-color:rgba(154,99,0,.4); color:var(--c-amber); }
+  #ctr-pane .c-svc.warn i { background:var(--c-warn); color:#111; }
+  #ctr-pane .c-grid { display:grid; grid-template-columns:minmax(300px, 380px) minmax(0, 1fr); gap:14px; align-items:start; }
+  #ctr-pane .c-box { background:#fff; border:1px solid var(--c-line); border-radius:12px; padding:14px 16px; box-shadow:var(--sh-1); min-width:0; }
+  #ctr-pane .c-box h3 { margin:0 0 10px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--c-text-2);
+                        display:flex; align-items:center; gap:8px; }
+  #ctr-pane .c-box h3 b { margin-left:auto; font:600 12px var(--mono); background:var(--surface); border-radius:6px; padding:1px 7px; color:var(--text); }
+  #ctr-pane .c-img { display:grid; gap:4px; padding:10px 11px; border:1px solid var(--c-line); border-radius:10px; margin-top:8px;
+                     cursor:pointer; background:#fff; text-align:left; width:100%; font:inherit; color:inherit; }
+  #ctr-pane .c-img:hover { border-color:#c9c9cf; }
+  #ctr-pane .c-img[aria-current="true"] { border-color:var(--red); box-shadow:0 0 0 2px rgba(204,0,0,.12); }
+  #ctr-pane .c-img .t { font-weight:600; }
+  #ctr-pane .c-img .m { font:12px var(--mono); color:var(--c-text-2); word-break:break-all; }
+  #ctr-pane .c-chips { display:flex; flex-wrap:wrap; gap:5px; }
+  #ctr-pane .pill-s { display:inline-flex; gap:4px; align-items:center; font-size:11px; font-weight:700; padding:1px 7px;
+                      border-radius:999px; width:max-content; white-space:nowrap; }
+  #ctr-pane .pill-s.crit { background:rgba(204,0,0,.08); color:var(--red); }
+  #ctr-pane .pill-s.warn { background:rgba(154,99,0,.1); color:var(--c-amber); }
+  #ctr-pane .pill-s.good { background:rgba(30,125,50,.09); color:#1e7d32; }
+  #ctr-pane .pill-s.info { background:rgba(0,102,204,.08); color:var(--blue); }
+  #ctr-pane .pill-s.off { background:var(--surface); color:var(--c-text-2); }
+  #ctr-pane table.c-t { width:100%; border-collapse:collapse; }
+  #ctr-pane table.c-t th { position:static; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+                           color:var(--muted); padding:0 8px 6px 0; border:0; background:none; }
+  #ctr-pane table.c-t td { padding:8px 8px 8px 0; border-top:1px solid var(--c-line); border-bottom:0; font-size:13px; vertical-align:top; }
+  #ctr-pane table.c-t tr { cursor:default; }
+  #ctr-pane .mono { font-family:var(--mono); font-size:12.5px; }
+  #ctr-pane .c-sec { margin-top:16px; }
+  #ctr-pane .c-sec h4 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--c-text-2); }
+  #ctr-pane .c-alert { border:1px solid rgba(204,0,0,.35); background:rgba(204,0,0,.05); color:var(--text); border-radius:10px;
+                       padding:9px 11px; font-size:13px; }
+  #ctr-pane .c-alert b { color:var(--red); }
+  #ctr-pane ol.c-steps { margin:0; padding-left:20px; display:grid; gap:4px; font-size:13px; }
+  #ctr-pane .c-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  #ctr-pane .c-btn { font:inherit; font-size:13px; font-weight:600; border-radius:999px; padding:6px 14px; cursor:pointer;
+                     border:1px solid var(--red); color:var(--red); background:#fff; }
+  #ctr-pane .c-btn.go { background:var(--red); color:#fff; }
+  #ctr-pane .c-btn:hover { filter:brightness(.95); }
+  #ctr-pane .c-link { font:inherit; font-size:12px; border:0; background:none; color:var(--blue); cursor:pointer; padding:0; }
+  #ctr-pane .c-note { font-size:12px; color:var(--muted); margin-top:10px; }
+  #ctr-pane .c-src { margin-top:10px; font:11px var(--mono); color:var(--muted); }
+  #ctr-pane .c-src::before { content:"live source · "; }
+  #ctr-pane .c-two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width: 1000px) { #ctr-pane .c-grid, #ctr-pane .c-two { grid-template-columns:1fr; } }
+  /* Applications' cross-link to the same fix in container images. */
+  .ctr-also { margin:2px 0 10px; font-size:12.5px; color:var(--muted); }
+  .ctr-also button { font:inherit; border:0; background:none; color:var(--blue); cursor:pointer; padding:0; }
+  /* The side toggle with the Containers side: three visible columns. */
+  .domain-toggle.with-ctr .dt-thumb { width:calc((100% - 4px) / 3); }
+  .domain-toggle.with-ctr[data-pane="appv2"] .dt-thumb { transform:translateX(100%); }
+  .domain-toggle.with-ctr[data-pane="ctr"] .dt-thumb { transform:translateX(200%); }
 </style>
 <script>
   // Before first paint, on purpose: applied from the main script instead,
@@ -2422,7 +2491,7 @@
        (a Lightwell build lands in Nexus and the agent patches the servers
        running the old version), beside the repository scanner it does not
        replace. -->
-  <span class="domain-toggle" id="patch-toggle" role="radiogroup" aria-label="Patching domain" data-pane="infra" data-src="/lightwell/">
+  <span class="domain-toggle with-ctr" id="patch-toggle" role="radiogroup" aria-label="Patching domain" data-pane="infra" data-src="/lightwell/">
     <span class="dt-thumb" aria-hidden="true"></span>
     <button type="button" class="dt-btn" role="radio" data-pane="infra" aria-pressed="true" aria-checked="true"
             title="Patch the hosts: CVE triage, risk assessment and supervised remediation.">Infra<span class="wide-only">structure</span></button>
@@ -2430,6 +2499,8 @@
             title="Patch what the applications depend on: scan repositories for vulnerable dependencies and check Lightwell coverage. The console keeps its place while you are here.">App<span class="wide-only">lications</span></button>
     <button type="button" class="dt-btn" role="radio" data-pane="appv2" aria-pressed="false" aria-checked="false"
             title="Patch running applications when a Lightwell build lands in Nexus: find the sites on the old version, prepare the change, commit it to Gitea, test it in a pod on OpenShift Pipelines, and run it through AO and AAP.">App<span class="wide-only">lications</span></button>
+    <button type="button" class="dt-btn" role="radio" data-pane="ctr" aria-pressed="false" aria-checked="false"
+            title="Containers on OpenShift: what Red Hat Advanced Cluster Security finds in images and deployments, and the rebuild-and-roll-out that fixes it (demo data).">Cont<span class="wide-only">ainers</span></button>
   </span>
   <div class="head-right">
   <!-- Chrome, not a frame action. It was in the right-hand frame's toolbar,
@@ -3109,7 +3180,7 @@
            same choice, and a second control for it that looked different
            would read as a different choice. -->
       <div class="fd-tabs">
-        <span class="domain-toggle" id="flow-toggle" role="group"
+        <span class="domain-toggle with-ctr" id="flow-toggle" role="group"
               aria-label="Which side of the demo" data-pane="infra">
           <span class="dt-thumb" aria-hidden="true"></span>
           <button type="button" class="dt-btn" data-pane="infra" aria-pressed="true"
@@ -3118,6 +3189,8 @@
                   >App<span class="wide-only">lications</span></button>
           <button type="button" class="dt-btn" data-pane="appv2" aria-pressed="false"
                   >App<span class="wide-only">lications</span></button>
+          <button type="button" class="dt-btn" data-pane="ctr" aria-pressed="false"
+                  >Cont<span class="wide-only">ainers</span></button>
         </span>
       </div>
       <div id="flow-body"></div>
@@ -3200,6 +3273,9 @@
 
 <!-- The dashboard: a destination like the report, opened by the tiles icon. It shows the side the toggle is on,
      and the toggle switches it while it is up. Demo data for now (see dashRender). -->
+<!-- Containers: the third side (Red Hat ACS, demo data for now; see CTR). -->
+<main id="ctr-pane" hidden></main>
+
 <main id="dash-pane" hidden><div class="d-body" id="dash-body"></div><div class="tip" id="dash-tip"></div></main>
 
 <!-- Applications v2. Built like the infrastructure frames, not as an
@@ -4352,7 +4428,7 @@ function v2Run(s, readOnly) {
     const canPick = x => pick && (!prepared || prepared.has(x.key));
     const chosen = s.hosts ? new Set(s.hosts.filter(h => h.outcome !== 'skipped').map(h => h.key)) : v2.sel;
     const run = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
-    out.push(`<div class="v2-sec"><h3>1 · Sites</h3>`
+    out.push(`<div class="v2-sec"><h3>1 · Sites</h3>${ctrAlso(s.event)}`
       + (t.length ? `<table><thead><tr>
           <th>${pick ? `<input type="checkbox" id="v2-sel-all" title="Select all" ${chosen.size === t.filter(canPick).length ? 'checked' : ''}>` : ''}</th>
           <th>Site</th><th>Domain</th><th>App</th><th>Env</th><th>Installed</th><th title="Who a restart affects, what to check first, and this site's past patches and issues">Impact &amp; history</th>
@@ -9212,12 +9288,33 @@ const FLOW_LW_APIS = {
   ],
 };
 
+// The Containers side is demo data for now, so How to run describes the flow and the ACS calls a live version makes.
+const FLOW_CTR_HTML = `<h3 class="fd-mode">Containers <span>demo data: nothing here calls ACS yet</span></h3>
+  <p class="fd-cap"><strong>Find, rebuild, roll out, verify.</strong> Red Hat Advanced Cluster Security (ACS) finds CVEs in the
+  images and deployments on OpenShift (Scanner V4 reads OS packages and the Java jars inside them), ranks deployments by risk, and
+  adds what it observes at run time (process baselines, the network graph). A container is never patched in place: the fix is a
+  rebuilt image, with a Lightwell jar (the same build the Applications side uses, through Nexus) or a newer UBI base, built and
+  scanned in OpenShift Pipelines, signed with cosign, rolled out lab first and production after approval, and rescanned by ACS.
+  An image that cannot be fixed yet is deferred in ACS with a reason and an expiry.</p>
+  <table class="fd-api"><thead><tr><th>Call</th><th>What for</th></tr></thead><tbody>
+    <tr><td class="mono">GET /v1/images, /v1/images/{id}</td><td>Components and CVEs per image, with fixed-in versions</td></tr>
+    <tr><td class="mono">GET /v1/deployments</td><td>Where each image runs: namespace, replicas, risk</td></tr>
+    <tr><td class="mono">GET /v1/alerts</td><td>Policy violations and runtime alerts (exec outside the baseline)</td></tr>
+    <tr><td class="mono">GET /v1/networkgraph/cluster/{id}</td><td>Observed traffic: the blast radius of a rollout</td></tr>
+    <tr><td class="mono">roxctl image check / scan</td><td>The gate in the pipeline: no fixable critical CVEs, no policy violations</td></tr>
+    <tr><td class="mono">POST /v2/vulnerability-exceptions/deferral</td><td>Defer what cannot be fixed yet, with an approver and an expiry</td></tr>
+    <tr><td class="mono">GET /v1/nodes</td><td>The OpenShift node's own CVEs (fixed by a cluster update)</td></tr>
+  </tbody></table>
+  <p class="fd-cap">Live wiring needs <span class="mono">ACS_URL</span> and an API token, and a cluster with room to build images
+  (the image build is switched off on the current lab).</p>`;
+
 function renderFlow() {
   const seg = document.getElementById('flow-toggle');
   seg.dataset.pane = flowSide;
   seg.querySelectorAll('.dt-btn').forEach(
     b => b.setAttribute('aria-pressed', String(b.dataset.pane === flowSide)));
   const body = document.getElementById('flow-body');
+  if (flowSide === 'ctr') { body.innerHTML = FLOW_CTR_HTML; return; }
   const f = { app: FLOW_APP, appv2: FLOW_APPV2 }[flowSide] || FLOW_INFRA;
   // Live mode first: what a real run needs. Then the same drawing in demo mode, with everything outside this
   // console greyed out, because demo mode contacts none of it.
@@ -9235,7 +9332,7 @@ function renderFlow() {
 function openFlow() {
   // paneSide, not paneNow: from the ROI report, which is neither side, open
   // on the side the reader will go back to.
-  flowSide = ['app', 'appv2'].includes(paneSide) ? paneSide : 'infra';
+  flowSide = ['app', 'appv2', 'ctr'].includes(paneSide) ? paneSide : 'infra';
   // Unhidden first, then drawn: renderFlow measures its own labels, and
   // nothing inside a hidden subtree has a width to measure.
   document.getElementById('flow-scrim').hidden = false;
@@ -9310,6 +9407,161 @@ renderStages({});
   apply(localStorage.getItem('sideOff') === '1');
   btn.addEventListener('click', () => apply(!frames.classList.contains('side-off')));
 })();
+
+// ---- Containers (demo data). The third side: what Red Hat Advanced Cluster Security (ACS) reports for the images
+// and deployments on OpenShift, and how each would be fixed: rebuild the image (a Lightwell jar, or a newer UBI base),
+// sign it, roll it out lab first, prod behind approval, and let ACS rescan. Nothing here calls ACS yet; each box names
+// the ACS endpoint that would feed it. The data mirrors the lab on 2026-11-18.
+const CTR = {
+  cluster: 'cluster-x8v2s · OpenShift 4.19.3 · 1 node',
+  health: [['ACS Central', 'ok'], ['Scanner V4', 'ok'], ['Sensor', 'ok'], ['Admission controller', 'ok', 'inform: fixable critical'],
+           ['Collector (runtime)', 'ok'], ['OpenShift Pipelines', 'warn', 'image build off on this lab'], ['Quay', 'ok']],
+  images: [
+    { id: 'workflow-engine', image: 'quay.io/telco/workflow-engine:1.4.2', risk: 'CRITICAL', state: 'decide',
+      deploys: [['nfvo-lab', 'lab', 1], ['nfvo-prod', 'prod', 3]],
+      runtime: 'Unexpected /bin/sh exec in nfvo-prod/workflow-engine-7d9f (outside the process baseline), 09:12',
+      callers: ['order-portal', 'service-assurance', 'inventory-service'],
+      findings: [
+        { comp: 'spring-webmvc 5.3.18', kind: 'lw', cves: 9, fix: '5.3.18.rhlw-00010' },
+        { comp: 'spring-expression 5.3.18', kind: 'lw', cves: 7, fix: '5.3.18.rhlw-00010' },
+        { comp: 'spring-core 5.3.18', kind: 'lw', cves: 1, fix: '5.3.18.rhlw-00010' },
+        { comp: 'openssl-libs 3.0.7 (ubi9 base)', kind: 'base', cves: 2, fix: 'ubi9/ubi-minimal:9.5' },
+      ] },
+    { id: 'inventory-service', image: 'quay.io/telco/inventory-service:2.0.1', risk: 'HIGH', state: 'new',
+      deploys: [['oss-lab', 'lab', 1], ['oss-prod', 'prod', 2]],
+      callers: ['workflow-engine', 'order-portal'],
+      findings: [
+        { comp: 'json 20220320', kind: 'lw', cves: 1, fix: '20220320.0.0.rhlw-00003' },
+        { comp: 'json-path 2.8.0', kind: 'lw', cves: 1, fix: '2.8.0.rhlw-00001' },
+        { comp: 'woodstox-core 6.0.3', kind: 'lw', cves: 1, fix: '6.0.3.rhlw-00001' },
+        { comp: 'glibc 2.34 (ubi9 base)', kind: 'base', cves: 1, fix: 'ubi9/ubi-minimal:9.5' },
+      ] },
+    { id: 'ric-xapp', image: 'quay.io/telco/ric-xapp:0.9.3', risk: 'MEDIUM', state: 'deferred',
+      deploys: [['ric', 'prod', 2]], callers: ['near-rt-ric'],
+      deferral: 'Deferred until 2026-12-15 by the platform team: no fixed build; a network policy limits who can reach it.',
+      findings: [{ comp: 'ricxappframe 3.2.1 (Python)', kind: 'none', cves: 3, fix: '' }] },
+    { id: 'llama-stack', image: 'quay.io/opendatahub/llama-stack:latest', risk: 'LOW', state: 'new',
+      deploys: [['agentic-patching', 'platform', 1]], callers: ['agentic-patching console'],
+      findings: [{ comp: 'urllib3 1.26.18 (Python)', kind: 'none', cves: 1, fix: '' },
+                 { comp: 'image is not signed', kind: 'policy', cves: 0, fix: 'policy: Require signed images (inform)' }] },
+  ],
+  nodes: [
+    ['Node', 'cluster-x8v2s-master-0 · RHCOS 4.19.3', 'kernel: 2 CVEs', 'Fixed in OpenShift 4.19.5 (cluster update)'],
+    ['Platform', 'OpenShift 4.19.3', 'kube-apiserver: 1 CVE', 'Fixed in OpenShift 4.19.5'],
+  ],
+};
+const CTR_KIND = { lw: ['good', 'Lightwell build'], base: ['info', 'Base image update'], none: ['crit', 'No fix'], policy: ['warn', 'Policy'] };
+const CTR_STATE = { decide: ['warn', '! Waiting for approval'], new: ['info', 'New'], deferred: ['off', '– Deferred'] };
+let ctrSel = 'workflow-engine';
+
+// The Applications side's cross-link: a Lightwell fix that is also inside container images.
+function ctrAlso(ev) {
+  const imgs = { 'spring-webmvc': ['workflow-engine'], 'spring-expression': ['workflow-engine'], 'spring-core': ['workflow-engine'],
+                 'json': ['inventory-service'], 'json-path': ['inventory-service'], 'woodstox-core': ['inventory-service'] }[(ev || {}).artifact];
+  if (!imgs) return '';
+  return `<div class="ctr-also">The same Lightwell build is also inside ${imgs.length} container image${imgs.length > 1 ? 's' : ''}
+    (${imgs.map(esc).join(', ')}). <button type="button" data-ctr-open="${esc(imgs[0])}">Open in Containers →</button> <span>(demo data)</span></div>`;
+}
+
+function ctrRender() {
+  const pane = document.getElementById('ctr-pane');
+  const img = CTR.images.find(i => i.id === ctrSel) || CTR.images[0];
+  const total = i => i.findings.reduce((n, f) => n + f.cves, 0);
+  const list = CTR.images.map(i => `<button type="button" class="c-img" data-ctr-img="${esc(i.id)}" aria-current="${i.id === img.id}">
+      <div class="c-chips"><span class="pill-s ${CTR_STATE[i.state][0]}">${esc(CTR_STATE[i.state][1])}</span>
+        <span class="pill-s ${i.risk === 'CRITICAL' ? 'crit' : i.risk === 'HIGH' ? 'warn' : 'off'}">${esc(i.risk)}</span>
+        ${i.runtime ? '<span class="pill-s crit">✕ Runtime alert</span>' : ''}</div>
+      <div class="t">${esc(i.id)}</div><div class="m">${esc(i.image)}</div>
+      <div class="c-chips">${['lw', 'base', 'none'].filter(k => i.findings.some(f => f.kind === k)).map(k =>
+        `<span class="pill-s ${CTR_KIND[k][0]}">${esc(CTR_KIND[k][1])}</span>`).join('')}<span class="pill-s off">${total(i)} CVEs</span></div>
+    </button>`).join('');
+  const lw = img.findings.filter(f => f.kind === 'lw'), base = img.findings.filter(f => f.kind === 'base');
+  const fixable = lw.length || base.length;
+  const steps = fixable ? [
+    lw.length ? `Swap ${lw.map(f => esc(f.comp.split(' ')[0])).join(', ')} for the Lightwell build${lw.length > 1 ? 's' : ''} (${esc(lw[0].fix)}…) in pom.xml; the jars come through Nexus and their provenance is checked` : '',
+    base.length ? `Rebase on <span class="mono">${esc(base[0].fix)}</span> for the OS packages` : '',
+    'Build the image in OpenShift Pipelines (app-v2-build) and scan it with <span class="mono">roxctl image check</span>: no fixable critical CVEs, no policy violations',
+    'Sign the image with cosign; the ACS policy "Require signed images" admits only signed images',
+    `Roll out to ${esc(img.deploys.filter(d => d[1] !== 'prod').map(d => d[0]).join(', ') || 'the lab namespace')} first, then ${esc(img.deploys.filter(d => d[1] === 'prod').map(d => d[0]).join(', ') || 'production')} after approval`,
+    'ACS rescans the running deployments: the CVEs fixed above must be gone, or the run is reported as not verified',
+  ].filter(Boolean) : [];
+  pane.innerHTML = `<div class="c-wrap">
+    <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc(CTR.cluster)}</span>
+      <span class="c-tag" title="Sample data mirroring the lab; nothing here calls ACS">Demo data</span></div>
+    <div class="c-health"><span class="lbl">Platform</span>${CTR.health.map(([n, s, note]) =>
+      `<span class="c-svc ${s}" title="${esc(note || 'up')}"><i aria-hidden="true">${s === 'ok' ? '✓' : '!'}</i>${esc(n)}${note ? ` · ${esc(note)}` : ''}</span>`).join('')}</div>
+    <div class="c-grid">
+      <section class="c-box"><h3>Images with findings<b>${CTR.images.length}</b></h3>${list}
+        <div class="c-src">ACS GET /v1/images · /v1/deployments</div></section>
+      <section class="c-box">
+        <h3>${esc(img.id)} <span class="pill-s ${CTR_STATE[img.state][0]}">${esc(CTR_STATE[img.state][1])}</span></h3>
+        <div class="mono">${esc(img.image)}</div>
+        ${img.runtime ? `<div class="c-sec"><div class="c-alert"><b>✕ Runtime alert</b> · ${esc(img.runtime)}. An open CVE plus
+          activity outside the baseline: this image goes first.</div></div>` : ''}
+        ${img.deferral ? `<div class="c-sec"><div class="c-alert" style="border-color:var(--c-line);background:var(--surface)"><b style="color:var(--c-text-2)">– Deferred</b> · ${esc(img.deferral)}</div></div>` : ''}
+        <div class="c-sec"><h4>Findings</h4><table class="c-t"><tr><th>Component</th><th>CVEs</th><th>Fix</th><th></th></tr>
+          ${img.findings.map(f => `<tr><td>${esc(f.comp)}</td><td>${f.cves || '–'}</td><td class="mono">${esc(f.fix || '—')}</td>
+            <td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span>
+            ${f.kind === 'lw' ? ' <button type="button" class="c-link" data-ctr-apps="1" title="The same Lightwell build on the Applications side">Applications →</button>' : ''}</td></tr>`).join('')}
+        </table></div>
+        <div class="c-two">
+          <div class="c-sec"><h4>Deployments</h4><table class="c-t"><tr><th>Namespace</th><th>Env</th><th>Replicas</th></tr>
+            ${img.deploys.map(([ns, env, n]) => `<tr><td class="mono">${esc(ns)}</td><td>${esc(env)}</td><td>${n}</td></tr>`).join('')}</table></div>
+          <div class="c-sec"><h4>Blast radius (network graph)</h4><div class="c-chips">${img.callers.map(c => `<span class="pill-s off">${esc(c)}</span>`).join('')}</div>
+            <div class="c-note">Observed traffic into these deployments: who notices a rollout.</div></div>
+        </div>
+        ${fixable ? `<div class="c-sec"><h4>Plan: rebuild, never patch in place</h4><ol class="c-steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></div>
+          <div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="approve">Approve rollout</button>
+            <button type="button" class="c-btn" data-ctr-act="defer">Defer in ACS…</button></div>`
+          : `<div class="c-sec"><h4>Plan</h4><div class="c-note">No fixed build is offered for these components. Defer with a reason and an
+            expiry, so the exposure is recorded rather than forgotten.</div></div>
+            <div class="c-actions"><button type="button" class="c-btn" data-ctr-act="defer">Defer in ACS…</button></div>`}
+        <div class="c-src">ACS GET /v1/images/{id} · /v1/networkgraph · /v1/alerts · POST /v2/vulnerability-exceptions/deferral</div>
+      </section>
+    </div>
+    <section class="c-box"><h3>Cluster: nodes and platform<b>${CTR.nodes.length}</b></h3>
+      <table class="c-t"><tr><th>Kind</th><th>What</th><th>Findings</th><th>Fix</th></tr>
+        ${CTR.nodes.map(r => `<tr><td>${esc(r[0])}</td><td class="mono">${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table>
+      <div class="c-note">The OpenShift node and platform are fixed by a cluster update, not by these runs. RHEL hosts outside the cluster stay on the Infrastructure side (Insights).</div>
+      <div class="c-src">ACS GET /v1/nodes · platform CVEs</div></section>
+  </div>`;
+}
+
+document.getElementById('ctr-pane').addEventListener('click', async e => {
+  const pick = e.target.closest('[data-ctr-img]');
+  if (pick) { ctrSel = pick.dataset.ctrImg; ctrRender(); return; }
+  if (e.target.closest('[data-ctr-apps]')) { paneShow('appv2'); return; }
+  const act = e.target.closest('[data-ctr-act]');
+  if (!act) return;
+  const img = CTR.images.find(i => i.id === ctrSel);
+  const cves = img.findings.reduce((n, f) => n + f.cves, 0);
+  if (act.dataset.ctrAct === 'approve') {
+    await apNotice({ title: 'Demo: rollout approved',
+      body: `<p>A live run would rebuild <span class="mono">${esc(img.image)}</span>, scan it with roxctl, sign it, roll it out to the lab
+        namespace, then to production, and ask ACS to rescan. On this lab ACS and the image build are not live, so nothing was changed.</p>` });
+    return;
+  }
+  const expiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const ok = await apDialog({ title: 'Defer in ACS', ok: 'Show what it would file', cancel: 'Cancel',
+    body: `<p>Defers ${cves} CVE${cves === 1 ? '' : 's'} on <span class="mono">${esc(img.image)}</span> until <b>${expiry}</b>, with a reason, so
+      the exposure stays on record and comes back when it expires. ACS sends the request to an approver, like the gate here.</p>` });
+  if (!ok) return;
+  await apNotice({ title: 'Demo: the ACS request',
+    body: `<pre class="mono" style="white-space:pre-wrap;font-size:12px;margin:0">POST /v2/vulnerability-exceptions/deferral
+{ "cves": [ …${cves} CVEs… ],
+  "scope": { "imageScope": { "registry": "${esc(img.image.split('/')[0])}",
+             "remote": "${esc(img.image.split('/').slice(1).join('/').split(':')[0])}", "tag": "${esc(img.image.split(':').pop())}" } },
+  "comment": "Change window closed; rebuild planned",
+  "exceptionExpiry": { "expiryType": "TIME", "expiresOn": "${expiry}" } }</pre>
+      <p class="muted-sm">Not sent: ACS is not live on this lab.</p>` });
+});
+// Applications → Containers cross-link (rendered by ctrAlso inside the Applications pane).
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-ctr-open]');
+  if (!b) return;
+  ctrSel = b.dataset.ctrOpen;
+  paneShow('ctr');
+});
 
 // ---- Dashboard (demo data). A destination like the ROI report: the header's tiles icon opens it, and while it is
 // up the side toggle switches which side it shows. The data mirrors the lab on 2026-11-18; nothing here calls
@@ -9405,12 +9657,56 @@ const SIDES = {
   },
 };
 // Matrix key: status colour + glyph, never colour alone. 'g' = patched (good) shorthand.
+SIDES.ctr = {
+  health: [['ACS Central', 'ok'], ['Scanner V4', 'ok'], ['Sensor', 'ok'], ['Admission controller', 'ok'], ['Collector', 'ok'],
+           ['Pipelines', 'warn', 'image build off on this lab'], ['Quay', 'ok']],
+  heroes: [
+    { k: 'Waiting for a decision', v: 1, s: 'workflow-engine rollout to nfvo-prod', focus: true },
+    { k: 'Images with fixable CVEs', v: 2, s: '22 CVEs: Lightwell builds and UBI base' },
+    { k: 'Runtime alerts', v: 1, s: 'shell exec in nfvo-prod' },
+    { k: 'Policy violations', v: 2, s: 'fixable critical, unsigned image' },
+    { k: 'Deferred in ACS', v: 1, s: 'ric-xapp until 2026-12-15' },
+  ],
+  decide: [
+    { t: 'workflow-engine · nfvo-prod', f: 'quay.io/telco/workflow-engine:1.4.2', m: '19 CVEs · rebuilt, roxctl clean, signed · lab rolled out', age: 140 },
+  ],
+  running: [
+    { t: 'workflow-engine:1.4.3 (rebuild)', m: 'Lightwell Spring jars + ubi9 9.5 · nfvo-lab done, nfvo-prod at the gate', steps: 'ddddw' },
+    { t: 'inventory-service:2.0.2 (rebuild)', m: 'scanning with roxctl', steps: 'ddwpp' },
+  ],
+  done: [
+    { t: 'nfvo-lab · workflow-engine', m: 'rolled out 1.4.3 · ACS rescan: 19 CVEs gone', at: '10:05' },
+    { t: 'Signature policy', m: 'workflow-engine:1.4.3 signed with cosign', at: '09:58' },
+  ],
+  problems: [
+    { t: 'Runtime alert · nfvo-prod', m: '/bin/sh exec outside the process baseline', p: ['crit', '✕ Runtime'] },
+    { t: 'llama-stack image not signed', m: 'policy Require signed images (inform)', p: ['warn', '! Policy'] },
+    { t: 'ric-xapp deferred', m: 'no fixed build · expires 2026-12-15', p: ['off', '– Deferred'] },
+  ],
+  matrix: {
+    title: 'Exposure matrix · deployments × components', sub: 'What ACS finds in each running deployment, by state of its fix.',
+    cols: ['spring-webmvc', 'spring-expression', 'json', 'woodstox-core', 'openssl (ubi9)', 'glibc (ubi9)', 'ricxappframe', 'urllib3'],
+    rows: [
+      ['nfvo-lab/workflow-engine', ['good', 'good', '', '', 'good', '', '', '']],
+      ['nfvo-prod/workflow-engine', ['warn', 'warn', '', '', 'warn', '', '', '']],
+      ['oss-lab/inventory-service', ['', '', 'serious', 'serious', '', 'serious', '', '']],
+      ['oss-prod/inventory-service', ['', '', 'serious', 'serious', '', 'serious', '', '']],
+      ['ric/ric-xapp', ['', '', '', '', '', '', 'crit', '']],
+      ['agentic-patching/llama-stack', ['', '', '', '', '', '', '', 'crit']],
+    ],
+    src: 'ACS GET /v1/deployments · /v1/images · /v1/alerts',
+  },
+  activity: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 1, 0],
+  problemsByHour: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0],
+  events: [['10:05', 'nfvo-lab rolled out, ACS rescan clean'], ['09:58', 'workflow-engine:1.4.3 signed'],
+           ['09:12', 'runtime alert in nfvo-prod'], ['08:40', 'roxctl check passed']],
+};
 const CELL = { good: ['✓', 'Patched'], warn: ['!', 'Waiting for approval'], serious: ['●', 'Fix available, not applied'],
                crit: ['✕', 'No fix offered'], '': ['', 'Not affected'] };
 
 const $ = id => document.getElementById(id);
 const dhead = side => `<div class="d-head">
-  <h2>Dashboard · ${side === 'apps' ? 'Applications' : 'Infrastructure'}</h2>
+  <h2>Dashboard · ${{ apps: 'Applications', ctr: 'Containers' }[side] || 'Infrastructure'}</h2>
   <span class="tag demo" title="Sample data mirroring the lab; nothing here calls the backends">Demo data</span>
   <span class="asof">as of ${NOW.toISOString().slice(0, 16).replace('T', ' ')} UTC</span>
   <button type="button" class="d-btn" data-dash="back" title="Back to the console (Esc)">&larr; Console</button>
@@ -9419,7 +9715,7 @@ const dhead = side => `<div class="d-head">
 $('dash-pane').addEventListener('click', e => {
   const b = e.target.closest('[data-dash]'); if (!b) return;
   if (b.dataset.dash === 'back') { paneShow(paneSide); return; }
-  const side = paneSide === 'appv2' ? '/apps' : '';
+  const side = { appv2: '/apps', ctr: '/containers' }[paneSide] || '';
   window.open(location.pathname + location.search + '#dashboard' + side, 'ap-dashboard' + side.replace('/', '-'),
               'noopener,width=1480,height=960');
 });
@@ -9506,10 +9802,11 @@ return render;
   const v2pane = document.getElementById('appv2-pane');
   const roi = document.getElementById('roi-pane');
   const dash = document.getElementById('dash-pane');
+  const ctrPane = document.getElementById('ctr-pane');
   const btns = [...seg.querySelectorAll('.dt-btn')];
 
   const show = where => {
-    const onDash = where === 'dash';
+    const onDash = where === 'dash', ctrOn = where === 'ctr';
     const app = where === 'app', v2on = where === 'appv2', onRoi = where === 'roi' || onDash;
     // The side being shown, or the side to come back to. The toggle must keep
     // reading as a side even while the report is up — it is still true that
@@ -9520,10 +9817,12 @@ return render;
     if (app && !scanner.src) scanner.src = seg.dataset.src;
     scanner.hidden = !app;
     v2pane.hidden = !v2on;
-    frames.hidden = app || v2on || onRoi;
+    ctrPane.hidden = !ctrOn;
+    if (ctrOn) ctrRender();
+    frames.hidden = app || v2on || onRoi || ctrOn;
     roi.hidden = !onRoi || onDash;
     dash.hidden = !onDash;
-    if (onDash) dashRender(paneSide === 'appv2' ? 'apps' : 'infra');
+    if (onDash) dashRender(paneSide === 'appv2' ? 'apps' : paneSide === 'ctr' ? 'ctr' : 'infra');
     document.getElementById('open-dashboard').classList.toggle('on', onDash);
     paneNow = where;
 
@@ -9541,6 +9840,8 @@ return render;
       ? 'Dependency scanning, Lightwell coverage and supervised remediation'
       : v2on
       ? 'Lightwell fixes for the telco estate, patched site by site through AO and AAP'
+      : ctrOn
+      ? 'What ACS finds in images and deployments, fixed by rebuilding and rolling out'
       : 'CVE triage, risk assessment and supervised remediation';
 
     // And so does the bar under the toggle. Both are measured once they are
@@ -9551,28 +9852,29 @@ return render;
     const bars = { infra: document.getElementById('stages'),
                    app: document.getElementById('app-stages'),
                    appv2: document.getElementById('appv2-stages') };
-    bars.infra.hidden = onRoi || app || v2on;
+    bars.infra.hidden = onRoi || app || v2on || ctrOn;
     bars.app.hidden = onRoi || !app;
     bars.appv2.hidden = onRoi || !v2on;
-    if (!onRoi) fitBar(bars[paneSide]);
+    if (!onRoi && bars[paneSide]) fitBar(bars[paneSide]);
 
     // The status chip counts CVEs from Insights, which is the Infrastructure
     // side's business. On the Application side it would be reporting on a
     // service this half of the console never calls — and the scanner has its
     // own status in its own header row, so the slot is not even empty. On the
     // report it belongs to neither side.
-    document.querySelector('.head-right .status').hidden = onRoi || app || v2on;
+    document.querySelector('.head-right .status').hidden = onRoi || app || v2on || ctrOn;
 
     // The button is its own way back, and says so once it is the only one.
     const rb = document.getElementById('head-roi');
     const onReport = onRoi && !onDash;
     rb.textContent = onReport ? 'Close' : 'Calculate ROI';
     rb.title = onReport
-      ? `Back to ${{ app: 'Applications', appv2: 'Applications' }[paneSide] || 'Infrastructure'}.`
+      ? `Back to ${{ app: 'Applications', appv2: 'Applications', ctr: 'Containers' }[paneSide] || 'Infrastructure'}.`
       : 'What both sides saved, against doing the same work by hand.';
     rb.classList.toggle('on', onReport);
 
-    const hash = onDash ? '#dashboard' + (paneSide === 'appv2' ? '/apps' : '') : onRoi ? '#roi' : app ? '#scanner' : v2on ? '#apps-v2' : '';
+    const hash = onDash ? '#dashboard' + ({ appv2: '/apps', ctr: '/containers' }[paneSide] || '') : onRoi ? '#roi'
+      : app ? '#scanner' : v2on ? '#apps-v2' : ctrOn ? '#containers' : '';
     history.replaceState(null, '', hash || location.pathname + location.search);
     if (onReport) roi.scrollTop = 0;
     if (v2on) v2Load();
@@ -9596,8 +9898,10 @@ return render;
   });
   if (location.hash === '#scanner') show('app');
   if (location.hash === '#apps-v2') show('appv2');
+  if (location.hash === '#containers') show('ctr');
   if (location.hash.startsWith('#dashboard')) {
     if (location.hash === '#dashboard/apps') paneSide = 'appv2';
+    if (location.hash === '#dashboard/containers') paneSide = 'ctr';
     show('dash');
   }
 })();
