@@ -2402,14 +2402,6 @@
   #ctr-pane .c-head .sub { color:var(--muted); font-size:13px; }
   #ctr-pane .c-tag { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px;
                      border-radius:6px; color:var(--c-amber); border:1px solid rgba(154,99,0,.4); background:rgba(154,99,0,.08); }
-  #ctr-pane .c-health { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; }
-  #ctr-pane .c-health .lbl { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-right:4px; }
-  #ctr-pane .c-svc { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:4px 10px; border-radius:999px;
-                     background:#fff; border:1px solid var(--c-line); color:var(--c-text-2); }
-  #ctr-pane .c-svc i { font-style:normal; font-weight:700; width:14px; height:14px; border-radius:50%; display:inline-grid;
-                       place-items:center; font-size:9px; color:#fff; background:var(--c-good); }
-  #ctr-pane .c-svc.warn { border-color:rgba(154,99,0,.4); color:var(--c-amber); }
-  #ctr-pane .c-svc.warn i { background:var(--c-warn); color:#111; }
   #ctr-pane .c-grid { display:grid; grid-template-columns:minmax(300px, 380px) minmax(0, 1fr); gap:14px; align-items:start; }
   #ctr-pane .c-box { background:#fff; border:1px solid var(--c-line); border-radius:12px; padding:14px 16px; box-shadow:var(--sh-1); min-width:0; }
   #ctr-pane .c-box h3 { margin:0 0 10px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--c-text-2);
@@ -2459,6 +2451,8 @@
   .domain-toggle.with-ctr .dt-thumb { width:calc((100% - 4px) / 3); }
   .domain-toggle.with-ctr[data-pane="appv2"] .dt-thumb { transform:translateX(100%); }
   .domain-toggle.with-ctr[data-pane="ctr"] .dt-thumb { transform:translateX(200%); }
+  #appv2-pane tr.v2-focus td { background:rgba(204,0,0,.06); animation:v2Flash 1.6s ease-out 1; }
+  @keyframes v2Flash { from { background:rgba(204,0,0,.22); } to { background:rgba(204,0,0,.06); } }
 </style>
 <script>
   // Before first paint, on purpose: applied from the main script instead,
@@ -4322,6 +4316,11 @@ function v2Render() {
 const v2Shown = () => v2.events.filter(e => (e.cves || []).length || e.cves_source === 'pending');
 
 function v2Inbox() {
+  // Opened from Containers on one fix: highlight its row once, bring it into view, then let go.
+  if (v2.focus) setTimeout(() => {
+    document.querySelector('#v2-body tr.v2-focus')?.scrollIntoView({ block: 'center' });
+    setTimeout(() => { v2.focus = null; }, 4000);
+  }, 0);
   if (!v2Shown().length) {
     return `<div class="empty"><strong>No fixes yet</strong>
       <span>They arrive when a fixed build is published to the artifact repository. The Lightwell catalog
@@ -4329,7 +4328,7 @@ function v2Inbox() {
   }
   const busy = V2_BUSY.includes((v2.state || {}).status);
   return `<table><thead><tr><th>Package</th><th>Fixed build</th><th>Fixes</th><th>Received</th><th></th></tr></thead>
-    <tbody>${v2Shown().map(e => `<tr>
+    <tbody>${v2Shown().map(e => `<tr${v2.focus && e.artifact === v2.focus ? ' class="v2-focus"' : ''}>
       <td>${v2Pkg(e)}</td><td class="mono">${esc(e.version)}</td><td>${v2Cves(e.cves)}</td>
       <td class="muted-sm">${v2When(e.received_at)}</td>
       <td class="act"><button class="go-patch calm" data-v2-assess="${esc(e.id)}" ${busy ? 'disabled' : ''}>Assess</button></td>
@@ -9414,8 +9413,6 @@ renderStages({});
 // the ACS endpoint that would feed it. The data mirrors the lab on 2026-11-18.
 const CTR = {
   cluster: 'cluster-x8v2s · OpenShift 4.19.3 · 1 node',
-  health: [['ACS Central', 'ok'], ['Scanner V4', 'ok'], ['Sensor', 'ok'], ['Admission controller', 'ok', 'inform: fixable critical'],
-           ['Collector (runtime)', 'ok'], ['OpenShift Pipelines', 'warn', 'image build off on this lab'], ['Quay', 'ok']],
   images: [
     { id: 'workflow-engine', image: 'quay.io/telco/workflow-engine:1.4.2', risk: 'CRITICAL', state: 'decide',
       deploys: [['nfvo-lab', 'lab', 1], ['nfvo-prod', 'prod', 3]],
@@ -9453,6 +9450,28 @@ const CTR = {
 const CTR_KIND = { lw: ['good', 'Lightwell build'], base: ['info', 'Base image update'], none: ['crit', 'No fix'], policy: ['warn', 'Policy'] };
 const CTR_STATE = { decide: ['warn', '! Waiting for approval'], new: ['info', 'New'], deferred: ['off', '– Deferred'] };
 let ctrSel = 'workflow-engine';
+// The Applications runs, read from /api/v2/runs (live in both modes): what the servers of each image's app already got.
+let ctrRuns = null, ctrRunsAt = 0;
+async function ctrLoadRuns() {
+  try { ctrRuns = (await v2Fetch('/api/v2/runs')).runs || []; } catch (e) { ctrRuns = ctrRuns || []; }
+  ctrRunsAt = Date.now();
+  if (!document.getElementById('ctr-pane').hidden) ctrRender(true);
+}
+// The newest Applications run that changed one of this image's Lightwell libraries on its app's servers.
+function ctrRunFor(img) {
+  const libs = img.findings.filter(f => f.kind === 'lw').map(f => f.comp.split(' ')[0]);
+  for (const r of ctrRuns || []) {
+    const arts = ((r.artifacts || {})[img.id] || []).filter(a => libs.includes(a));
+    const mine = (r.hosts || []).filter(h => h.app === img.id);
+    const patched = mine.filter(h => h.outcome === 'patched');
+    const moving = r.current && mine.some(h => ['running', 'awaiting_approval'].includes(h.outcome));
+    if (arts.length && (patched.length || moving)) {
+      return { run: r, arts, patched, sites: mine.filter(h => h.outcome !== 'skipped').length || mine.length,
+               moving, source: r.test_mode === 'source', version: (r.event || {}).version || '' };
+    }
+  }
+  return null;
+}
 
 // The Applications side's cross-link: a Lightwell fix that is also inside container images.
 function ctrAlso(ev) {
@@ -9460,25 +9479,41 @@ function ctrAlso(ev) {
                  'json': ['inventory-service'], 'json-path': ['inventory-service'], 'woodstox-core': ['inventory-service'] }[(ev || {}).artifact];
   if (!imgs) return '';
   return `<div class="ctr-also">The same Lightwell build is also inside ${imgs.length} container image${imgs.length > 1 ? 's' : ''}
-    (${imgs.map(esc).join(', ')}). <button type="button" data-ctr-open="${esc(imgs[0])}">Open in Containers →</button> <span>(demo data)</span></div>`;
+    (${imgs.map(esc).join(', ')}). Patching these servers does not change the images; Containers lists them until they
+    are rebuilt. <button type="button" data-ctr-open="${esc(imgs[0])}">Open in Containers →</button> <span>(demo data)</span></div>`;
 }
 
-function ctrRender() {
+function ctrRender(fromLoad) {
   const pane = document.getElementById('ctr-pane');
+  if (!fromLoad && (!ctrRuns || Date.now() - ctrRunsAt > 15000)) ctrLoadRuns();
   const img = CTR.images.find(i => i.id === ctrSel) || CTR.images[0];
   const total = i => i.findings.reduce((n, f) => n + f.cves, 0);
   const list = CTR.images.map(i => `<button type="button" class="c-img" data-ctr-img="${esc(i.id)}" aria-current="${i.id === img.id}">
       <div class="c-chips"><span class="pill-s ${CTR_STATE[i.state][0]}">${esc(CTR_STATE[i.state][1])}</span>
         <span class="pill-s ${i.risk === 'CRITICAL' ? 'crit' : i.risk === 'HIGH' ? 'warn' : 'off'}">${esc(i.risk)}</span>
-        ${i.runtime ? '<span class="pill-s crit">✕ Runtime alert</span>' : ''}</div>
+        ${i.runtime ? '<span class="pill-s crit">✕ Runtime alert</span>' : ''}
+        ${(m => m ? `<span class="pill-s warn" title="The servers got the fix through Applications; this image did not">${m.moving && !m.patched.length ? 'Servers being patched' : 'Servers patched · image not'}</span>` : '')(ctrRunFor(i))}</div>
       <div class="t">${esc(i.id)}</div><div class="m">${esc(i.image)}</div>
       <div class="c-chips">${['lw', 'base', 'none'].filter(k => i.findings.some(f => f.kind === k)).map(k =>
         `<span class="pill-s ${CTR_KIND[k][0]}">${esc(CTR_KIND[k][1])}</span>`).join('')}<span class="pill-s off">${total(i)} CVEs</span></div>
     </button>`).join('');
   const lw = img.findings.filter(f => f.kind === 'lw'), base = img.findings.filter(f => f.kind === 'base');
+  const ran = ctrRunFor(img), rid = ran ? String(ran.run.run_id || '').slice(0, 8) : '';
+  const repo = `app-${img.id}`;
+  const banner = !lw.length ? '' : ran ? `<div class="c-sec"><div class="c-alert" style="border-color:rgba(154,99,0,.45);background:rgba(154,99,0,.06)">
+      <b style="color:var(--c-amber)">${ran.patched.length ? '! Servers patched, image not' : '! Servers being patched'}</b> ·
+      ${esc(img.id)} ${ran.patched.length ? `was patched on ${ran.patched.length} of ${ran.sites} server${ran.sites === 1 ? '' : 's'}` : 'is being patched on its servers'}
+      by Applications run <span class="mono">${esc(rid)}</span>
+      (${ran.source ? 'rebuilt from source' : 'jar swap'}: ${ran.arts.map(esc).join(', ')} → <span class="mono">${esc(ran.version)}</span>).
+      This image is a separate copy and still carries the old jars.
+      ${ran.source ? `The pom.xml fix is already in branch <span class="mono">fix/${esc(String(ran.run.run_id || ''))}</span> of ${esc(repo)}: build this image from it.`
+                   : 'A jar swap changes nothing in git, so a rebuild needs the pom.xml change below.'}</div></div>`
+    : `<div class="c-note">No Applications run has patched ${esc(img.id)}'s servers with these Lightwell builds yet.</div>`;
   const fixable = lw.length || base.length;
   const steps = fixable ? [
-    lw.length ? `Swap ${lw.map(f => esc(f.comp.split(' ')[0])).join(', ')} for the Lightwell build${lw.length > 1 ? 's' : ''} (${esc(lw[0].fix)}…) in pom.xml; the jars come through Nexus and their provenance is checked` : '',
+    lw.length ? (ran && ran.source
+      ? `Build from branch <span class="mono">fix/${esc(String(ran.run.run_id || ''))}</span> of ${esc(repo)}: its pom.xml already uses the Lightwell build${lw.length > 1 ? 's' : ''}`
+      : `Swap ${lw.map(f => esc(f.comp.split(' ')[0])).join(', ')} for the Lightwell build${lw.length > 1 ? 's' : ''} (${esc(lw[0].fix)}…) in pom.xml; the jars come through Nexus and their provenance is checked`) : '',
     base.length ? `Rebase on <span class="mono">${esc(base[0].fix)}</span> for the OS packages` : '',
     'Build the image in OpenShift Pipelines (app-v2-build) and scan it with <span class="mono">roxctl image check</span>: no fixable critical CVEs, no policy violations',
     'Sign the image with cosign; the ACS policy "Require signed images" admits only signed images',
@@ -9488,8 +9523,6 @@ function ctrRender() {
   pane.innerHTML = `<div class="c-wrap">
     <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc(CTR.cluster)}</span>
       <span class="c-tag" title="Sample data mirroring the lab; nothing here calls ACS">Demo data</span></div>
-    <div class="c-health"><span class="lbl">Platform</span>${CTR.health.map(([n, s, note]) =>
-      `<span class="c-svc ${s}" title="${esc(note || 'up')}"><i aria-hidden="true">${s === 'ok' ? '✓' : '!'}</i>${esc(n)}${note ? ` · ${esc(note)}` : ''}</span>`).join('')}</div>
     <div class="c-grid">
       <section class="c-box"><h3>Images with findings<b>${CTR.images.length}</b></h3>${list}
         <div class="c-src">ACS GET /v1/images · /v1/deployments</div></section>
@@ -9498,12 +9531,14 @@ function ctrRender() {
         <div class="mono">${esc(img.image)}</div>
         ${img.runtime ? `<div class="c-sec"><div class="c-alert"><b>✕ Runtime alert</b> · ${esc(img.runtime)}. An open CVE plus
           activity outside the baseline: this image goes first.</div></div>` : ''}
+        ${banner}
         ${img.deferral ? `<div class="c-sec"><div class="c-alert" style="border-color:var(--c-line);background:var(--surface)"><b style="color:var(--c-text-2)">– Deferred</b> · ${esc(img.deferral)}</div></div>` : ''}
         <div class="c-sec"><h4>Findings</h4><table class="c-t"><tr><th>Component</th><th>CVEs</th><th>Fix</th><th></th></tr>
           ${img.findings.map(f => `<tr><td>${esc(f.comp)}</td><td>${f.cves || '–'}</td><td class="mono">${esc(f.fix || '—')}</td>
-            <td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span>
-            ${f.kind === 'lw' ? ' <button type="button" class="c-link" data-ctr-apps="1" title="The same Lightwell build on the Applications side">Applications →</button>' : ''}</td></tr>`).join('')}
-        </table></div>
+            <td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span></td></tr>`).join('')}
+        </table>
+        ${lw.length ? `<div class="c-note">The same Lightwell build is on the Applications side, for ${esc(img.id)}'s servers:
+          <button type="button" class="c-link" data-ctr-apps="${esc(lw[0].comp.split(' ')[0])}">open the ${esc(lw[0].comp.split(' ')[0])} fix →</button></div>` : ''}</div>
         <div class="c-two">
           <div class="c-sec"><h4>Deployments</h4><table class="c-t"><tr><th>Namespace</th><th>Env</th><th>Replicas</th></tr>
             ${img.deploys.map(([ns, env, n]) => `<tr><td class="mono">${esc(ns)}</td><td>${esc(env)}</td><td>${n}</td></tr>`).join('')}</table></div>
@@ -9530,7 +9565,14 @@ function ctrRender() {
 document.getElementById('ctr-pane').addEventListener('click', async e => {
   const pick = e.target.closest('[data-ctr-img]');
   if (pick) { ctrSel = pick.dataset.ctrImg; ctrRender(); return; }
-  if (e.target.closest('[data-ctr-apps]')) { paneShow('appv2'); return; }
+  const toApps = e.target.closest('[data-ctr-apps]');
+  if (toApps) {
+    const art = toApps.dataset.ctrApps, st = v2.state || {};
+    v2.focus = art;
+    v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
+    paneShow('appv2');
+    return;
+  }
   const act = e.target.closest('[data-ctr-act]');
   if (!act) return;
   const img = CTR.images.find(i => i.id === ctrSel);

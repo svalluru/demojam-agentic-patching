@@ -782,6 +782,7 @@ class History(unittest.TestCase):
         self.assertFalse(runs[0]['current'])
         self.assertEqual(runs[0]['run_id'], appv2.state()['run_id'])
         self.assertEqual(appv2.run_detail(runs[0]['run_id'])['status'], 'complete')
+        self.assertEqual((runs[0]['test_mode'], runs[0]['artifacts']), ('swap', {'inventory-service': ['json-path']}))
         past = appv2.run_detail('past1')['event']
         self.assertEqual((past['artifact'], past['version']), ('json', '20220320.0.0.rhlw-00002'))   # before the inbox's
 
@@ -1345,6 +1346,18 @@ class SourceMode(unittest.TestCase):
         self.assertIn(f"bundle_name: inventory-service-bundle-{st['run_id']}.tgz", text)
         self.assertIn('ansible.builtin.unarchive', text)
         self.assertIn('checksum: "sha256:{{ jar_sha256s[bundle_name] }}"', text)
+
+    def test_run_list_says_source_mode_and_libraries(self):
+        # The Containers side reads these: a source run's pom.xml fix is in branch fix/<run>, a swap's is nowhere in git.
+        demo()
+        appv2.start_assess('evt-spring-webmvc'); wait_for({'assessed'})
+        extra = ['workflow-engine|org.springframework:spring-expression']
+        appv2.start_generate(['workflow-engine|lab'], extra, False, 'source'); wait_for({'generated'})
+        appv2.start_dispatch(); wait_for({'complete'}, 10)
+        top = appv2.runs()[0]
+        self.assertEqual(top['test_mode'], 'source')
+        self.assertEqual(top['artifacts'].get('workflow-engine', [])[:1], ['spring-webmvc'])
+        self.assertTrue(any(h['outcome'] == 'patched' for h in top['hosts']))
 
     def test_source_changes_carry_earlier_write_backs(self):
         demo()

@@ -854,6 +854,12 @@ it with `roxctl image check`, sign it with cosign, roll it out lab first and pro
 rescan. What cannot be fixed yet is **deferred in ACS** with a reason and an expiry. The OpenShift node and platform
 CVEs are listed too (fixed by a cluster update); RHEL hosts outside the cluster stay on the Infrastructure side.
 
+**Servers patched, image not.** A jar swap on the Applications side fixes the servers, not the images: the image is a
+separate copy and a swap changes nothing in git. The Containers side reads the Applications runs (`/api/v2/runs`) and
+says so per image: which run patched how many of that app's servers, with what. If the run used **Rebuild from
+source**, the pom.xml fix is already in branch `fix/<run>` of the app's Gitea repository, and the image plan builds
+from it; after a swap, the plan still has to change pom.xml.
+
 **It is demo data for now** (marked *Demo data*; nothing calls ACS): Approve rollout and Defer show what a live run or
 ACS request would do. The Applications side links to it when a Lightwell fix is also inside container images, the
 dashboard has a Containers tab, and How to run lists the ACS calls a live version makes (`/v1/images`,

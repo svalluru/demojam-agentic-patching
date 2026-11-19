@@ -3216,9 +3216,27 @@ def _history() -> list[dict]:
         return []
 
 
+def _run_meta(st: dict) -> dict:
+    """How a run changed things, for the run list: 'swap' (jars swapped on the servers, nothing in git) or 'source'
+    (pom.xml changed in branch fix/<run>), and the libraries it changed per app. The Containers side reads this to say
+    whether an image built from source already has the fix. Old records without it read as a swap of the event's
+    library."""
+    ev = st.get('event') or {}
+    arts: dict[str, list[str]] = {}
+    for pb in st.get('playbooks') or []:
+        for c in pb.get('changes') or []:
+            if c.get('artifact') and c['artifact'] not in arts.setdefault(pb.get('app', ''), []):
+                arts[pb['app']].append(c['artifact'])
+    for h in st.get('hosts') or []:
+        if ev.get('artifact') and ev['artifact'] not in arts.setdefault(h.get('app', ''), []):
+            arts[h['app']].insert(0, ev['artifact'])
+    return {'test_mode': 'source' if st.get('test_mode') == 'source' else 'swap', 'artifacts': arts}
+
+
 def runs() -> list[dict]:
     """Newest first, without the snapshots; the run in progress (if any) on top."""
-    out = [{k: v for k, v in r.items() if k != 'snapshot'} | {'current': False} for r in reversed(_history())]
+    out = [{k: v for k, v in r.items() if k != 'snapshot'} | _run_meta(r.get('snapshot') or r) | {'current': False}
+           for r in reversed(_history())]
     st = state()
     # The run on screen, unless it has already been recorded (a finished or cancelled run is in the history).
     recorded = {r.get('run_id') for r in out}
@@ -3226,7 +3244,7 @@ def runs() -> list[dict]:
         out.insert(0, {'run_id': st.get('run_id'), 'event': st['event'], 'started_at': st.get('started_at'),
                        'finished_at': None, 'simulated': bool(st.get('simulated')), 'status': st.get('status'),
                        'summary': _summary_of(st.get('hosts') or []), 'hosts': st.get('hosts') or [],
-                       'current': True})
+                       'current': True} | _run_meta(st))
     return out
 
 
