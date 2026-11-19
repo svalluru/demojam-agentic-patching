@@ -481,10 +481,10 @@
      which one of the set is lit; an action has no lit sibling to be read
      against, so it carries the red outline at rest like every other button
      on the page. */
-  #head-back, .view-toggle, #head-roi, #head-dash {
+  #head-back, .view-toggle, #head-roi {
     color: var(--red); border-color: var(--red); font-weight: 700;
   }
-  #head-back:hover, .view-toggle:hover, #head-roi:hover, #head-dash:hover {
+  #head-back:hover, .view-toggle:hover, #head-roi:hover {
     background: var(--red); color: #ffffff;
   }
   /* While the report is up the button is the way out of it, so it reads as a
@@ -2456,7 +2456,6 @@
        control that spans both sides has to be in one place on both sides, or
        the first thing a presenter does on the toggle is go looking for it. -->
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
-  <button class="pill" id="head-dash" hidden title="Back to the dashboard you came from">&larr; Back to dashboard</button>
   <button class="pill" id="head-roi" hidden>Calculate ROI</button>
   <div class="head-tools">
   <button class="icon-btn" id="open-dashboard" title="Dashboard" aria-label="Dashboard">
@@ -9250,7 +9249,6 @@ function closeFlow() {
 document.getElementById('open-flow').addEventListener('click', openFlow);
 // The tiles icon opens the dashboard on the side the console is on, and closes it again.
 document.getElementById('open-dashboard').addEventListener('click', () => paneShow(paneNow === 'dash' ? paneSide : 'dash'));
-document.getElementById('head-dash').addEventListener('click', () => paneShow('dash'));
 document.getElementById('close-flow').addEventListener('click', closeFlow);
 document.getElementById('flow-scrim').addEventListener('click', e => {
   if (e.target.id === 'flow-scrim') closeFlow();           // click-outside only
@@ -9508,7 +9506,6 @@ return render;
   const v2pane = document.getElementById('appv2-pane');
   const roi = document.getElementById('roi-pane');
   const dash = document.getElementById('dash-pane');
-  let dashVisited = false;          // once the dashboard has been up, the header offers the way back to it
   const btns = [...seg.querySelectorAll('.dt-btn')];
 
   const show = where => {
@@ -9526,8 +9523,6 @@ return render;
     frames.hidden = app || v2on || onRoi;
     roi.hidden = !onRoi || onDash;
     dash.hidden = !onDash;
-    if (onDash) dashVisited = true;
-    document.getElementById('head-dash').hidden = onDash || !dashVisited;
     if (onDash) dashRender(paneSide === 'appv2' ? 'apps' : 'infra');
     document.getElementById('open-dashboard').classList.toggle('on', onDash);
     paneNow = where;
