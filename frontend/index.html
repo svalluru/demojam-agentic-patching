@@ -9410,10 +9410,10 @@ const CELL = { good: ['✓', 'Patched'], warn: ['!', 'Waiting for approval'], se
 
 const $ = id => document.getElementById(id);
 const dhead = side => `<div class="d-head">
-  <button type="button" class="d-btn" data-dash="back" title="Back to the console (Esc)">&larr; Back to console</button>
   <h2>Dashboard · ${side === 'apps' ? 'Applications' : 'Infrastructure'}</h2>
   <span class="tag demo" title="Sample data mirroring the lab; nothing here calls the backends">Demo data</span>
   <span class="asof">as of ${NOW.toISOString().slice(0, 16).replace('T', ' ')} UTC</span>
+  <button type="button" class="d-btn" data-dash="back" title="Back to the console (Esc)">&larr; Back to console</button>
   <button type="button" class="d-btn" data-dash="window" title="Open this dashboard in its own window, for a second screen">Open in new window &#8599;</button></div>`;
 // The heading's two buttons. A new window opens the console on the dashboard, on this side (#dashboard[/apps]).
 $('dash-pane').addEventListener('click', e => {
