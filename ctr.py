@@ -157,7 +157,7 @@ def _demo_api(method: str, path: str, params: dict, body: Any) -> dict:
     if path == '/v1/deployments':
         sha = q.get('image sha', [])
         return {'deployments': [{'id': did, 'name': d['name'], 'namespace': d['namespace'],
-                                 'clusterName': DEMO_CLUSTER['name'], 'clusterId': DEMO_CLUSTER['id']}
+                                 'cluster': DEMO_CLUSTER['name'], 'clusterId': DEMO_CLUSTER['id']}
                                 for did, d in DEMO_DEPLOYMENTS.items() if not sha or d['image'] in sha]}
     if path.startswith('/v1/deployments/'):
         d = DEMO_DEPLOYMENTS.get(path.rsplit('/', 1)[1])
@@ -230,7 +230,7 @@ def _lightwell_fixes() -> list[dict]:
         comp, up = ev['artifact'], appv2.upstream(ev['version'])
         found = []
         for ver in dict.fromkeys([up, appv2._canon(up)]):         # org.json: 20220320 in the jar, 20220320.0.0 at Lightwell
-            found = acs_get('/v1/images', query=f'Component:{comp}+Component Version:{ver}', pagination_limit=50).get('images') or []
+            found = acs_get('/v1/images', query=f'Component:{comp}+Component Version:{ver}', **{'pagination.limit': 50}).get('images') or []
             if found:
                 break
         if found:
@@ -242,7 +242,8 @@ def _lightwell_fixes() -> list[dict]:
 
 def _base_fixes() -> list[dict]:
     """The reconcile query: fixable images (capped), whose OS packages a newer UBI fixes."""
-    rows = acs_get('/v1/images', query='Fixable:true', pagination_limit=int(env('CTR_RECONCILE_LIMIT', '50'))).get('images') or []
+    # ACS's paging parameter is 'pagination.limit' (checked against ACS 4.9: anything else is ignored).
+    rows = acs_get('/v1/images', query='Fixable:true', **{'pagination.limit': int(env('CTR_RECONCILE_LIMIT', '50'))}).get('images') or []
     imgs, cves = [], []
     for r in rows:
         d = _image_detail(r['id'])
@@ -410,8 +411,9 @@ def _assess(fix: dict) -> None:
                 alerts = [a for a in acs_get('/v1/alerts', query=f"Deployment Id:{d['id']}").get('alerts') or []
                           if a.get('lifecycleStage') == 'RUNTIME']
                 runtime = (alerts[0].get('violations') or [{}])[0].get('message', '') if alerts else ''
-                t = {'key': f"{dd.get('clusterName', '')}/{ns}/{dd.get('name', '')}", 'deployment_id': d['id'],
-                     'cluster': dd.get('clusterName', ''), 'namespace': ns, 'name': dd.get('name', ''),
+                cluster = dd.get('clusterName') or d.get('clusterName') or d.get('cluster', '')
+                t = {'key': f"{cluster}/{ns}/{dd.get('name', '')}", 'deployment_id': d['id'],
+                     'cluster': cluster, 'namespace': ns, 'name': dd.get('name', ''),
                      'env': envname, 'replicas': int(dd.get('replicas') or 1), 'image': img['name'], 'image_id': img['id'],
                      'runtime': runtime, 'callers': DEMO_CALLERS.get(d['id'], []) if H.demo_mode() else [],
                      'window': DEMO_WINDOWS.get(ns, '') if H.demo_mode() else json.loads(env('CTR_WINDOWS', '{}') or '{}').get(ns, '')}
