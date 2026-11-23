@@ -4999,7 +4999,7 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi,
                 http_head=nexus_head)
 ctr.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause, llm=llm_answer, rag_search=app_history_search,
-              ao_call=ao_call)
+              ao_call=ao_call, aap_call=aap_call)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()

@@ -271,6 +271,58 @@ class LiveRun(unittest.TestCase):
         self.assertIn('create-ao-workflow.sh', body['error'])
 
 
+class AoListsEveryNode(unittest.TestCase):
+    """AO's activities list has every node from the start: pending (not reached) and skipped (branch not taken).
+    Copied from the lab's first live run, where the follower read them as having run."""
+
+    def test_pending_and_skipped_nodes_do_not_count(self):
+        demo()
+        def a(node, status, art=None):
+            return {'temporal_activity_id': node, 'status': status, 'output_data': {'artifacts': art or {}}}
+        lab = [a('notify_rolled_back_prod', 'skipped'), a('deploy_prod', 'skipped'), a('approval_prod', 'skipped'),
+               a('notify_build_failed', 'skipped'), a('rollback', 'skipped'),
+               a('commit', 'completed'), a('build_scan', 'completed', {'build_outcome': 'passed', 'image_digest': 'sha256:' + 'c' * 64}),
+               a('deploy', 'completed'), a('health', 'completed', {'outcome': 'patched'}),
+               a('verify', 'completed', {'verified': 'True', 'detail': 'ACS: runs with 5.3.18.rhlw-00010'}), a('notify_patched', 'completed')]
+        prod = [a('deploy_prod', 'pending'), a('verify_prod', 'pending'), a('notify_build_failed', 'skipped'),
+                a('deploy', 'skipped'), a('approval_prod', 'waiting'), a('commit', 'completed'),
+                a('build_scan', 'completed', {'build_outcome': 'passed', 'image_digest': 'sha256:' + 'c' * 64})]
+        runs = {'ex-lab': ('completed', lab), 'ex-prod': ('paused', prod)}
+        ctr.configure(ao_call=lambda path, method='GET', body=None:
+                      {'resources': runs[path.split('/')[4]][1]} if path.endswith('/activities') else {'status': runs[path.split('/')[4]][0]})
+        with ctr._LOCK:
+            ctr._RUN.update(status='running', hosts=[{'key': 'lab', 'execution_id': 'ex-lab', 'outcome': 'running', 'steps': {}},
+                                                     {'key': 'prod', 'execution_id': 'ex-prod', 'outcome': 'running', 'steps': {}}])
+        self.assertTrue(ctr._read_execution('lab'))
+        self.assertFalse(ctr._read_execution('prod'))
+        by = {h['key']: h for h in ctr.state()['hosts']}
+        self.assertEqual(by['lab']['outcome'], 'patched')
+        self.assertNotIn('rollback', by['lab']['steps'])
+        self.assertEqual(by['prod']['outcome'], 'awaiting_approval')
+        self.assertNotIn('deploy', by['prod']['steps'])
+        ctr.configure(ao_call=None)
+
+
+class StaleAoRecord(unittest.TestCase):
+    def test_an_approved_gate_ao_still_shows_is_settled_from_aap(self):
+        # Seen on the lab: approved, the prod steps ran in AAP, but AO's record stayed "paused" at the gate.
+        demo()
+        ctr.configure(ao_call=lambda path, method='GET', body=None: {'resources': [
+            {'temporal_activity_id': 'approval_prod', 'status': 'waiting'}]} if path.endswith('/activities') else {'status': 'paused'})
+        jobs = {'CTR - Notify': [{'status': 'successful', 'extra_vars': json.dumps({'run_id': 'r1', 'namespace': 'nfvo-prod', 'outcome': 'patched'})}],
+                'CTR - Verify (ACS)': [{'status': 'successful', 'extra_vars': json.dumps({'namespace': 'nfvo-prod'}),
+                                        'artifacts': {'verified': True, 'detail': 'ACS: runs with 5.3.18.rhlw-00010'}}]}
+        ctr.configure(aap_call=lambda path, method='GET', body=None:
+                      {'results': next(v for k, v in jobs.items() if k.replace(' ', '%20').replace('(', '%28').replace(')', '%29') in path)})
+        with ctr._LOCK:
+            ctr._RUN.update(status='awaiting_approval', run_id='r1', hosts=[{'key': 'p', 'namespace': 'nfvo-prod', 'execution_id': 'ex',
+                                                                             'outcome': 'running', 'steps': {}, 'approved_at': time.time() - 120}])
+        self.assertTrue(ctr._read_execution('p'))
+        h = ctr.state()['hosts'][0]
+        self.assertEqual((h['outcome'], h['detail']), ('patched', 'ACS: runs with 5.3.18.rhlw-00010'))
+        ctr.configure(ao_call=None, aap_call=None)
+
+
 class Siblings(unittest.TestCase):
     def test_every_lightwell_build_for_the_image_rides_one_rebuild(self):
         demo()

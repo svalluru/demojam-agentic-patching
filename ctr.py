@@ -36,6 +36,7 @@ class _Hooks:
     rag_search = None          # (store, query) -> [text] (the console's history search)
     acs_call = None            # tests: (method, path, params, body) -> dict
     ao_call = None             # (path, method='GET', body=None) -> dict (the console's AO helper)
+    aap_call = None            # (path, method='GET', body=None) -> dict (the console's AAP helper)
 
 
 H = _Hooks()
@@ -601,9 +602,11 @@ def _host(key: str, **kw) -> None:
         for h in _RUN.get('hosts') or []:
             if h['key'] == key:
                 steps = kw.pop('steps', None)
+                replace = kw.pop('replace_steps', False)
                 h.update(kw)
-                if steps:
-                    h['steps'].update(steps)
+                if steps is not None:
+                    # A reading of the AO execution is the whole truth: replace, so nothing stale survives.
+                    h['steps'] = dict(steps) if replace else {**h['steps'], **steps}
     _persist()
 
 
@@ -643,7 +646,10 @@ def _read_execution(key: str) -> bool:
     if not h or not h.get('execution_id'):
         return True
     ex = H.ao_call(f"/api/v1/executions/{h['execution_id']}") or {}
-    acts = _activities(h['execution_id'])
+    every = _activities(h['execution_id'])
+    # AO lists every node from the start: 'pending' (not reached) and 'skipped' (the branch not taken) never ran.
+    acts = {k: a for k, a in every.items() if str(a.get('status', '')).lower() not in ('pending', 'skipped')}
+    gate = str((every.get('approval_prod') or {}).get('status', '')).lower() == 'waiting'
     steps = {}
     for node, step in NODE_STEP.items():
         if node in acts:
@@ -654,20 +660,27 @@ def _read_execution(key: str) -> bool:
                                   'pipelinerun': build.get('pipelinerun'), 'health': health.get('health'),
                                   'acs': verify.get('detail'), 'verified': verify.get('verified')}.items() if v not in (None, '')}
     status = str(ex.get('status', '')).lower()
-    if steps.get('approval') == 'waiting':
-        _host(key, outcome='awaiting_approval', steps=steps, evidence=evidence,
+    if gate and h.get('approved_at') and time.time() - float(h['approved_at']) > 60:
+        # Approved, yet AO still reports the gate: on the lab's AO the execution record can stop updating after a
+        # resume while the workflow runs on. AAP ran the steps, so its jobs for this run settle the site.
+        settled = _settle_from_aap(h, state().get('run_id', ''))
+        if settled:
+            _host(key, replace_steps=True, **settled)
+            return True
+    if gate:
+        _host(key, outcome='awaiting_approval', steps=steps, replace_steps=True, evidence=evidence,
               detail=f"built {str(build.get('image_digest', ''))[:19]} · {build.get('scan_summary', '')}; waiting for approval")
         return False
-    done = status in ('completed', 'succeeded', 'failed', 'cancelled', 'canceled')
+    done = status in ('completed', 'succeeded', 'failed', 'cancelled', 'canceled')     # 'paused' is at the gate
     if not done:
-        _host(key, outcome='running', steps=steps, evidence=evidence)
+        _host(key, outcome='running', steps=steps, replace_steps=True, evidence=evidence)
         return False
     if 'notify_build_failed' in acts or build.get('build_outcome') == 'failed':
         outcome, detail = 'failed', f"build or scan failed, nothing deployed: {build.get('failed_reason', '')} {build.get('scan_summary', '')}".strip()
     elif any(n in acts for n in ('notify_rolled_back', 'notify_rolled_back_prod')) or rollback:
         outcome = 'rolled_back' if str(rollback.get('rolled_back')).lower() == 'true' else 'failed'
         detail = f"{health.get('failed_step', '')}: {health.get('failed_reason', '')}; {rollback.get('restored', 'rollback did not finish')}"
-    elif steps.get('approval') == 'failed' or 'approval_prod' in acts and not any(n in acts for n in ('deploy_prod',)):
+    elif 'approval_prod' in acts and 'deploy_prod' not in acts:
         outcome, detail = (h.get('outcome') if h.get('outcome') == 'deferred' else 'rejected'), h.get('detail') or 'rejected at the gate'
     elif any(n in acts for n in ('notify_patched', 'notify_patched_prod')):
         ok = str(verify.get('verified')).lower() == 'true'
@@ -675,8 +688,39 @@ def _read_execution(key: str) -> bool:
         detail = verify.get('detail') or 'rolled out'
     else:
         outcome, detail = 'failed', str(ex.get('error_details') or ex.get('error') or f'execution {status}')[:300]
-    _host(key, outcome=outcome, steps=steps, evidence=evidence, detail=detail)
+    _host(key, outcome=outcome, steps=steps, replace_steps=True, evidence=evidence, detail=detail)
     return True
+
+
+def _settle_from_aap(h: dict, run_id: str) -> dict | None:
+    """The site's outcome from AAP: the CTR - Notify job of this run and namespace, with CTR - Verify's verdict."""
+    if not H.aap_call:
+        return None
+    def jobs(name):
+        found = H.aap_call('/jobs/?name=' + urllib.parse.quote(name) + '&order_by=-id&page_size=50') or {}
+        for j in found.get('results') or []:
+            try:
+                ev = json.loads(j.get('extra_vars') or '{}')
+            except ValueError:
+                continue
+            if ev.get('run_id', run_id) == run_id and ev.get('namespace') == h['namespace'] and j.get('status') == 'successful':
+                yield j, ev
+    notify = next(jobs('CTR - Notify'), None)
+    if not notify:
+        return None
+    outcome = notify[1].get('outcome', '')
+    verify = next((j for j, _ in jobs('CTR - Verify (ACS)')), None)
+    art = (verify or {}).get('artifacts') or {}
+    if outcome == 'patched':
+        ok = str(art.get('verified')).lower() == 'true'
+        return {'outcome': 'patched' if ok else 'not_verified', 'detail': art.get('detail') or 'rolled out',
+                'steps': {'commit': 'done', 'build_scan': 'done', 'approval': 'done', 'deploy': 'done', 'health': 'done',
+                          'verify': 'done', 'notify': 'done'}}
+    if outcome == 'rolled_back':
+        return {'outcome': 'rolled_back', 'detail': notify[1].get('detail', 'rolled back'),
+                'steps': {'commit': 'done', 'build_scan': 'done', 'approval': 'done', 'deploy': 'done', 'health': 'failed',
+                          'rollback': 'done', 'notify': 'done'}}
+    return None
 
 
 def _follow_live(key: str) -> None:
@@ -770,6 +814,8 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
         _set(status='running')
     if decision == 'approved':
         _step(key, 'approval', 'done', 'running', '')
+        if not H.demo_mode():
+            _host(key, approved_at=time.time())
         if H.demo_mode():
             threading.Thread(target=_after_approve, args=(h, st['fix']), daemon=True).start()
     else:
