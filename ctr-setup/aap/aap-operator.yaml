@@ -1,0 +1,26 @@
+# Ansible Automation Platform operator, namespace-scoped, for the Containers side (ctr-setup/install-aap-ao.sh).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aap
+  labels: { app.kubernetes.io/part-of: agentic-patching }
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: aap
+  namespace: aap
+spec:
+  targetNamespaces: [aap]
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ansible-automation-platform
+  namespace: aap
+spec:
+  name: ansible-automation-platform-operator
+  channel: stable-2.6
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

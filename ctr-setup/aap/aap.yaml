@@ -1,0 +1,29 @@
+# The smallest Ansible Automation Platform the Containers runs need: the platform gateway and the automation
+# controller, with the operator's PostgreSQL. No Hub, no EDA, no Lightspeed. Requests are set low on purpose: the
+# cluster has about 10.5 vCPU free to schedule, shared with AO, Nexus and the build pipeline. Limits leave headroom.
+apiVersion: aap.ansible.com/v1alpha1
+kind: AnsibleAutomationPlatform
+metadata:
+  name: aap
+  namespace: aap
+spec:
+  api:
+    replicas: 1
+    resource_requirements: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+  redis:
+    resource_requirements: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  database:
+    resource_requirements: { requests: { cpu: 200m, memory: 512Mi }, limits: { cpu: "1", memory: 2Gi } }
+    storage_requirements: { requests: { storage: 20Gi } }
+    postgres_storage_class: gp3-csi
+  controller:
+    disabled: false
+    web_resource_requirements: { requests: { cpu: 200m, memory: 512Mi }, limits: { cpu: "1", memory: 2Gi } }
+    task_resource_requirements: { requests: { cpu: 300m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }
+    ee_resource_requirements: { requests: { cpu: 200m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+    redis_resource_requirements: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 512Mi } }
+    rsyslog_resource_requirements: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+    init_container_resource_requirements: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  hub: { disabled: true }
+  eda: { disabled: true }
+  lightspeed: { disabled: true }

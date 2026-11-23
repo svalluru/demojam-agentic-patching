@@ -1,0 +1,31 @@
+# The Automation Orchestrator instance for the Containers side: one replica per component, low requests, an OpenShift
+# Route, the PostgreSQL in this namespace (no TLS inside the namespace). No file storage: uploads are not used.
+apiVersion: aap.ansible.com/v1alpha1
+kind: AutomationOrchestrator
+metadata:
+  name: ao
+  namespace: ao
+spec:
+  ingress: { type: Route }
+  postgres:
+    host: ao-postgres.ao.svc
+    port: 5432
+    sslMode: disable
+    backendDatabase: { secretRef: { name: ao-backend-db } }
+    temporalDatabase: { secretRef: { name: ao-temporal-db } }
+  backend:
+    replicas: 1
+    resources: { requests: { cpu: 200m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  worker:
+    replicas: 1
+    resources: { requests: { cpu: 200m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  ui:
+    replicas: 1
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  redis:
+    replicas: 1
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  temporal:
+    server:
+      replicas: 1
+      resources: { requests: { cpu: 200m, memory: 512Mi }, limits: { cpu: "1", memory: 2Gi } }
