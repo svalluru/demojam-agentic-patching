@@ -1,0 +1,31 @@
+---
+# Containers · Notify. The card for one deployment's outcome. Posts to Mattermost when CTR_MATTERMOST_WEBHOOK is set
+# in the credential; otherwise the card is the job's output (AO shows it on the node).
+#
+# extra_vars: app, namespace, outcome (patched|rolled_back|build_failed|failed), detail, run_id
+- name: Post the outcome card
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    hook: "{{ lookup('env', 'CTR_MATTERMOST_WEBHOOK') }}"
+    icon: "{{ {'patched': ':white_check_mark:', 'rolled_back': ':rewind:', 'build_failed': ':warning:'}.get(outcome, ':x:') }}"
+    card: "{{ icon }} **{{ namespace }}/{{ app }}**: {{ outcome | replace('_', ' ') }} (Containers run {{ run_id }}). {{ detail | default('') }}"
+  tasks:
+    - name: The card
+      ansible.builtin.debug:
+        msg: "{{ card }}"
+
+    - name: Post it
+      ansible.builtin.uri:
+        url: "{{ hook }}"
+        method: POST
+        body_format: json
+        body: { text: "{{ card }}" }
+      when: hook | length > 0
+
+    - name: Hand it to the workflow
+      ansible.builtin.set_stats:
+        data:
+          notified: "{{ outcome }}"
+          card: "{{ card }}"

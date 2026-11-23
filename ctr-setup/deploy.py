@@ -136,6 +136,30 @@ def read_file(project: dict, path: str, branch: str = 'main') -> str:
     return base64.b64decode(cur['content']).decode() if cur else ''
 
 
+# Lightwell's public demo repository has only spring-webmvc, spring-expression and spring-core; their rhlw POMs depend
+# on the sibling Spring modules at the same rhlw version, which only the full Lightwell repository has. Pinning the
+# siblings at the upstream release lets Maven build with the demo repository: the three Lightwell builds come from
+# Lightwell, the rest stay upstream.
+SIBLING_PINS = {'org.springframework': ['spring-aop', 'spring-beans', 'spring-context', 'spring-web', 'spring-jcl']}
+
+
+def pin_siblings(pom: str, bom: dict) -> str:
+    deps = app_source.maven_deps(bom)
+    pins = []
+    for group, arts in SIBLING_PINS.items():
+        mine = [d for d in deps if d['group'] == group]
+        if not mine:
+            continue
+        version = appv2.upstream(mine[0]['version'])
+        pins += [f'      <dependency><groupId>{group}</groupId><artifactId>{a}</artifactId><version>{version}</version></dependency>'
+                 for a in arts if a not in {d['artifact'] for d in mine}]
+    if not pins or '<dependencyManagement>' in pom:
+        return pom
+    block = ('  <!-- Spring modules Lightwell\'s demo repository does not have: the upstream release (see ctr-setup/deploy.py). -->\n'
+             '  <dependencyManagement>\n    <dependencies>\n' + '\n'.join(pins) + '\n    </dependencies>\n  </dependencyManagement>\n\n')
+    return pom.replace('  <dependencies>', block + '  <dependencies>', 1)
+
+
 def containerfile(app: str) -> str:
     return (f'# {app}: the Containers demo image. The base and the jars are what ACS scans; a fix edits the FROM line\n'
             f'# (a newer UBI) or pom.xml (a Lightwell build), and the image is rebuilt, never patched in place.\n'
@@ -250,6 +274,7 @@ def repos() -> dict[str, dict]:
     for app in APPS:
         bom = json.loads((ROOT / 'app-data' / 'bom' / f'{app}.json').read_text())
         files = app_source.render(bom, appv2.PROBE_CLASS)
+        files['pom.xml'] = pin_siblings(files['pom.xml'], bom)
         files['Containerfile'] = containerfile(app)
         p = ensure_project(gid, f'app-{app}')
         print(f"  app-{app}: {'committed' if commit(p, files, f'{app}: source from the BOM') else 'up to date'}")

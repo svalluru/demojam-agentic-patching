@@ -1,0 +1,98 @@
+---
+# Containers · Commit. The change the console prepared, on branch fix/<run_id> of the app's GitLab repo: a Lightwell
+# build in pom.xml, or a pinned UBI digest in the Containerfile. GitOps edits are not made here (CTR - Deploy does).
+# Idempotent: every AO execution of one run (lab, prod) calls it; the second finds the branch already done.
+#
+# extra_vars: app, run_id, changes_json ([{file, what, from, to}], from the console)
+# env (credential "Containers"): CTR_GITLAB_URL, CTR_GITLAB_TOKEN
+# artifacts: commit_sha, branch, commit_url, changed (files)
+- name: Commit the container fix to its branch
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    gitlab: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}"
+    token: "{{ lookup('env', 'CTR_GITLAB_TOKEN') }}"
+    project: "{{ ('telco/app-' ~ app) | urlencode | replace('/', '%2F') }}"
+    branch: "fix/{{ run_id }}"
+    changes: "{{ changes_json | from_json if changes_json is string else changes_json }}"
+    headers: { PRIVATE-TOKEN: "{{ token }}" }
+  tasks:
+    - name: Does the branch exist
+      ansible.builtin.uri:
+        url: "{{ gitlab }}/api/v4/projects/{{ project }}/repository/branches/{{ branch | urlencode | replace('/', '%2F') }}"
+        headers: "{{ headers }}"
+        status_code: [200, 404]
+      register: have_branch
+
+    - name: Create it from main
+      ansible.builtin.uri:
+        url: "{{ gitlab }}/api/v4/projects/{{ project }}/repository/branches?branch={{ branch | urlencode }}&ref=main"
+        method: POST
+        headers: "{{ headers }}"
+        status_code: [201]
+      when: have_branch.status == 404
+
+    - name: Read the files the change touches
+      ansible.builtin.uri:
+        url: "{{ gitlab }}/api/v4/projects/{{ project }}/repository/files/{{ item | urlencode | replace('/', '%2F') }}?ref={{ branch | urlencode }}"
+        headers: "{{ headers }}"
+      loop: "{{ changes | map(attribute='file') | select('in', ['pom.xml', 'Containerfile']) | unique | list }}"
+      register: files
+
+    - name: Apply the edits
+      ansible.builtin.set_fact:
+        # A Jinja namespace: a plain `set` inside a loop does not carry to the next iteration.
+        edited: >-
+          {%- set out = {} -%}
+          {%- for f in files.results -%}
+            {%- set ns = namespace(text=(f.json.content | b64decode)) -%}
+            {%- for c in changes if c.file == f.item -%}
+              {%- if c.file == 'pom.xml' -%}
+                {%- set art = c.what.split(' ')[0] -%}
+                {%- set ns.text = ns.text | regex_replace('(<artifactId>' ~ (art | regex_escape) ~ '</artifactId>\\s*<version>)' ~ (c['from'] | regex_escape) ~ '(</version>)', '\\g<1>' ~ c.to ~ '\\g<2>') -%}
+              {%- else -%}
+                {%- set ns.text = ns.text | regex_replace('(?m)^FROM .*$', c.to) -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set _ = out.update({f.item: ns.text}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Work out which files really changed
+      ansible.builtin.set_fact:
+        actions: >-
+          {%- set acts = [] -%}
+          {%- for f in files.results -%}
+            {%- if (f.json.content | b64decode) != edited[f.item] -%}
+              {%- set _ = acts.append({'action': 'update', 'file_path': f.item, 'content': edited[f.item]}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ acts }}
+
+    - name: Commit them
+      ansible.builtin.uri:
+        url: "{{ gitlab }}/api/v4/projects/{{ project }}/repository/commits"
+        method: POST
+        headers: "{{ headers }}"
+        body_format: json
+        body:
+          branch: "{{ branch }}"
+          commit_message: "Containers run {{ run_id }}: {{ changes | selectattr('file', 'in', ['pom.xml', 'Containerfile']) | map(attribute='what') | join(', ') }}"
+          actions: "{{ actions }}"
+        status_code: [201]
+      when: actions | length > 0
+
+    - name: The branch head
+      ansible.builtin.uri:
+        url: "{{ gitlab }}/api/v4/projects/{{ project }}/repository/branches/{{ branch | urlencode | replace('/', '%2F') }}"
+        headers: "{{ headers }}"
+      register: head
+
+    - name: Hand the commit to the workflow
+      ansible.builtin.set_stats:
+        data:
+          commit_sha: "{{ head.json.commit.id }}"
+          branch: "{{ branch }}"
+          commit_url: "{{ head.json.commit.web_url }}"
+          changed: "{{ actions | map(attribute='file_path') | join(',') or 'none (already on the branch)' }}"

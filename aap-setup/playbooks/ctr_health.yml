@@ -1,0 +1,61 @@
+---
+# Containers · Rollout health. Wait until the deployment runs the new digest on every replica (Argo CD syncs it from
+# GitOps), then ask the app's /health which jars it loaded. Fails cleanly, so the workflow takes its rollback route.
+#
+# extra_vars: app, namespace, image_digest, port, timeout (seconds, default 600)
+# env (credential "Containers"): CTR_OCP_API, CTR_OCP_TOKEN
+# artifacts: outcome (patched|failed), health, failed_step, failed_reason, rollback_json
+- name: Wait for the rollout and check /health
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    api: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}"
+    headers: { Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}" }
+    dep_url: "{{ api }}/apis/apps/v1/namespaces/{{ namespace }}/deployments/{{ app }}"
+  tasks:
+    - block:
+        - name: Wait for every replica on the new digest
+          ansible.builtin.uri:
+            url: "{{ dep_url }}"
+            headers: "{{ headers }}"
+            validate_certs: false
+          register: dep
+          vars:
+            s: "{{ dep.json.status | default({}) }}"
+          until: >-
+            image_digest in dep.json.spec.template.spec.containers[0].image
+            and (dep.json.status.observedGeneration | default(0)) >= dep.json.metadata.generation
+            and (dep.json.status.updatedReplicas | default(0)) == dep.json.spec.replicas
+            and (dep.json.status.readyReplicas | default(0)) == dep.json.spec.replicas
+            and (dep.json.status.replicas | default(0)) == dep.json.spec.replicas
+          retries: "{{ ((timeout | default(600)) | int / 10) | int }}"
+          delay: 10
+
+        - name: Ask /health through the service proxy
+          ansible.builtin.uri:
+            url: "{{ api }}/api/v1/namespaces/{{ namespace }}/services/{{ app }}:{{ port }}/proxy/health"
+            headers: "{{ headers }}"
+            validate_certs: false
+            return_content: true
+          register: health
+          retries: 6
+          delay: 5
+          until: health.status == 200
+
+        - name: Hand the result to the workflow
+          ansible.builtin.set_stats:
+            data:
+              outcome: patched
+              health: "{{ health.content }}"
+              failed_step: ""
+              failed_reason: ""
+      rescue:
+        - name: Hand the failure to the rollback route
+          ansible.builtin.set_stats:
+            data:
+              outcome: failed
+              health: ""
+              failed_step: "{{ ansible_failed_task.name | default('rollout') }}"
+              failed_reason: "{{ (ansible_failed_result.msg | default('timed out')) | string | truncate(300) }}"
+              rollback_json: "{{ {'namespace': namespace, 'app': app} | to_json }}"

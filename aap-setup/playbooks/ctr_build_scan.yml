@@ -1,0 +1,89 @@
+---
+# Containers · Build and Scan. One ctr-build PipelineRun (ctr-setup/pipeline.yaml) on branch fix/<run_id>: Maven
+# through Nexus, buildah, roxctl image check (enforced), cosign sign. Every AO execution of one run calls this; the
+# first starts the build, the others find it by its labels and wait for the same result, so an image is built once.
+#
+# extra_vars: app, run_id, branch (default fix/<run_id>), lightwell_fixed (CVEs the Lightwell build fixes, comma-separated)
+# env (credential "Containers"): CTR_OCP_API, CTR_OCP_TOKEN, CTR_GITLAB_URL, CTR_NEXUS_URL
+# artifacts: build_outcome (passed|failed), image_digest, image_ref, scan_summary, pipelinerun, failed_reason
+- name: Build, scan and sign the image
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    api: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}"
+    headers: { Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}" }
+    prs: "{{ api }}/apis/tekton.dev/v1/namespaces/agentic-patching/pipelineruns"
+    branch_name: "{{ branch | default('fix/' ~ run_id) }}"
+    selector: "ctr/run={{ run_id }},ctr/app={{ app }}"
+  tasks:
+    - name: Is the build for this run already started
+      ansible.builtin.uri:
+        url: "{{ prs }}?labelSelector={{ selector | urlencode }}"
+        headers: "{{ headers }}"
+        validate_certs: false
+      register: existing
+
+    - name: Start it
+      ansible.builtin.uri:
+        url: "{{ prs }}"
+        method: POST
+        headers: "{{ headers }}"
+        validate_certs: false
+        body_format: json
+        status_code: [201]
+        body:
+          apiVersion: tekton.dev/v1
+          kind: PipelineRun
+          metadata:
+            generateName: "ctr-build-{{ app }}-"
+            labels: { ctr/run: "{{ run_id }}", ctr/app: "{{ app }}", ctr/purpose: run }
+          spec:
+            pipelineRef: { name: ctr-build }
+            params:
+              - { name: repo_url, value: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}/telco/app-{{ app }}.git" }
+              - { name: revision, value: "{{ branch_name }}" }
+              - { name: app, value: "{{ app }}" }
+              - { name: tag, value: "{{ run_id }}" }
+              - { name: nexus_url, value: "{{ lookup('env', 'CTR_NEXUS_URL') }}" }
+              - { name: enforce, value: "true" }
+              - { name: lightwell_fixed, value: "{{ lightwell_fixed | default('') }}" }
+            workspaces:
+              - name: source
+                volumeClaimTemplate:
+                  spec: { accessModes: [ReadWriteOnce], storageClassName: gp3-csi, resources: { requests: { storage: 1Gi } } }
+              - { name: git-auth, secret: { secretName: ctr-gitlab-auth } }
+            taskRunTemplate: { serviceAccountName: pipeline }
+      register: started
+      when: existing.json['items'] | length == 0
+
+    - name: The PipelineRun
+      ansible.builtin.set_fact:
+        pr_name: "{{ started.json.metadata.name if (existing.json['items'] | length == 0) else existing.json['items'][0].metadata.name }}"
+
+    - name: Wait for it (up to 25 minutes)
+      ansible.builtin.uri:
+        url: "{{ prs }}/{{ pr_name }}"
+        headers: "{{ headers }}"
+        validate_certs: false
+      register: pr
+      until: >-
+        (pr.json.status | default({})).conditions | default([]) | selectattr('type', 'equalto', 'Succeeded')
+        | rejectattr('status', 'equalto', 'Unknown') | list | length > 0
+      retries: 150
+      delay: 10
+
+    - name: Read the result
+      ansible.builtin.set_fact:
+        cond: "{{ pr.json.status.conditions | selectattr('type', 'equalto', 'Succeeded') | first }}"
+        results: "{{ dict((pr.json.status.results | default([])) | map(attribute='name') | zip((pr.json.status.results | default([])) | map(attribute='value'))) }}"
+
+    - name: Hand the image to the workflow
+      ansible.builtin.set_stats:
+        data:
+          build_outcome: "{{ 'passed' if cond.status == 'True' else 'failed' }}"
+          image_digest: "{{ results.IMAGE_DIGEST | default('') }}"
+          image_ref: "image-registry.openshift-image-registry.svc:5000/agentic-patching/{{ app }}@{{ results.IMAGE_DIGEST | default('') }}"
+          scan_summary: "{{ results.SCAN_SUMMARY | default('') }}"
+          pipelinerun: "{{ pr_name }}"
+          failed_reason: "{{ '' if cond.status == 'True' else (cond.message | default('the build failed')) }}"

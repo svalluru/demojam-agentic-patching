@@ -1,0 +1,95 @@
+# The OpenShift identity the AAP "CTR -" jobs use (credential "Containers"): start and read ctr-build PipelineRuns,
+# watch the app rollouts and call their /health through the service proxy, and refresh our Argo CD Applications.
+# Nothing else: no secrets, no writes to the app namespaces (Argo CD deploys from GitOps).
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: ctr-runner, namespace: agentic-patching }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ctr-runner-token
+  namespace: agentic-patching
+  annotations: { kubernetes.io/service-account.name: ctr-runner }
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: agentic-patching }
+rules:
+  - { apiGroups: [tekton.dev], resources: [pipelineruns], verbs: [create, get, list, watch] }
+  - { apiGroups: [tekton.dev], resources: [taskruns], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: agentic-patching }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: openshift-gitops }
+rules:
+  - { apiGroups: [argoproj.io], resources: [applications], verbs: [get, list, patch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: openshift-gitops }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: nfvo-lab }
+rules:
+  - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods], verbs: [get, list] }
+  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: nfvo-lab }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: nfvo-prod }
+rules:
+  - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods], verbs: [get, list] }
+  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: nfvo-prod }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: oss-lab }
+rules:
+  - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods], verbs: [get, list] }
+  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: oss-lab }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: ctr-runner, namespace: oss-prod }
+rules:
+  - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods], verbs: [get, list] }
+  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: ctr-runner, namespace: oss-prod }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: ctr-runner }
+subjects: [{ kind: ServiceAccount, name: ctr-runner, namespace: agentic-patching }]

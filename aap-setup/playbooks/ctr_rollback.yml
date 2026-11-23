@@ -1,0 +1,37 @@
+---
+# Containers · Rollback. Put the digest the deploy replaced back into GitOps and let Argo CD sync it, then wait for
+# the old replicas to be ready again. Nothing on the cluster is edited by hand: GitOps stays the record.
+#
+# extra_vars: app, namespace, gitops_path, previous_digest, run_id, port
+# env (credential "Containers"): CTR_GITLAB_URL, CTR_GITLAB_TOKEN, CTR_OCP_API, CTR_OCP_TOKEN
+# artifacts: rolled_back (true|false), restored
+- name: Roll the deployment back to its previous digest
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Pin the previous digest again
+      ansible.builtin.include_tasks: ctr_pin.yml
+      vars:
+        pin_digest: "{{ previous_digest }}"
+        pin_message: "Containers run {{ run_id }}: roll {{ namespace }}/{{ app }} back to {{ previous_digest[:19] }}"
+
+    - name: Wait for the old replicas
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}/apis/apps/v1/namespaces/{{ namespace }}/deployments/{{ app }}"
+        headers: { Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}" }
+        validate_certs: false
+      register: dep
+      until: >-
+        previous_digest in dep.json.spec.template.spec.containers[0].image
+        and (dep.json.status.readyReplicas | default(0)) == dep.json.spec.replicas
+        and (dep.json.status.updatedReplicas | default(0)) == dep.json.spec.replicas
+      retries: 60
+      delay: 10
+      ignore_errors: true
+
+    - name: Hand the result to the workflow
+      ansible.builtin.set_stats:
+        data:
+          rolled_back: "{{ dep is succeeded }}"
+          restored: "{{ namespace }}/{{ app }} on {{ previous_digest[:19] }}"

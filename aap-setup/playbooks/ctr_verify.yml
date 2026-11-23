@@ -1,0 +1,64 @@
+---
+# Containers · Verify (ACS). After the rollout: does ACS see the deployment running the new digest, and which version
+# of the fixed component does it report there? ACS takes a minute to see a new pod, so it is asked a few times.
+#
+# extra_vars: app, namespace, image_digest, fix_component (artifact), fix_group, fix_version
+# ACS names a jar group:artifact when it carries Maven metadata (the Lightwell builds do), else by artifact: both match.
+# env (credential "Containers"): CTR_ACS_URL, CTR_ACS_TOKEN
+# artifacts: verified (true|false), acs_version, detail
+- name: Ask ACS what runs now
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    acs: "{{ lookup('env', 'CTR_ACS_URL') | regex_replace('/$', '') }}"
+    headers: { Authorization: "Bearer {{ lookup('env', 'CTR_ACS_TOKEN') }}" }
+  tasks:
+    - name: The deployment, as ACS sees it
+      ansible.builtin.uri:
+        url: "{{ acs }}/v1/deployments?query={{ ('Namespace:' ~ namespace ~ '+Deployment:' ~ app) | urlencode }}"
+        headers: "{{ headers }}"
+        validate_certs: false
+      register: deps
+      until: deps.json.deployments | default([]) | length > 0
+      retries: 12
+      delay: 10
+
+    - name: Its image, once ACS has the new digest
+      ansible.builtin.uri:
+        url: "{{ acs }}/v1/deployments/{{ (deps.json.deployments | selectattr('name', 'equalto', app) | first).id }}"
+        headers: "{{ headers }}"
+        validate_certs: false
+      register: dep
+      until: image_digest in (dep.json.containers[0].image.id | default(''))
+      retries: 18
+      delay: 10
+      ignore_errors: true
+
+    - name: The fixed component in that image
+      ansible.builtin.uri:
+        url: "{{ acs }}/v1/images/{{ image_digest }}"
+        headers: "{{ headers }}"
+        validate_certs: false
+      register: img
+      until: (img.json.scan | default({})).components | default([]) | length > 0
+      retries: 18
+      delay: 10
+      ignore_errors: true
+
+    - name: Read it
+      ansible.builtin.set_fact:
+        running: "{{ image_digest in (dep.json.containers[0].image.id | default('')) if dep is succeeded else false }}"
+        found: >-
+          {{ ((img.json.scan | default({})).components | default([]))
+             | selectattr('name', 'in', [fix_component, (fix_component.split(':') | last), (fix_group | default('')) ~ ':' ~ (fix_component.split(':') | last)])
+             | map(attribute='version') | list | first | default('') }}
+
+    - name: Hand the verdict to the workflow
+      ansible.builtin.set_stats:
+        data:
+          verified: "{{ running and found == fix_version }}"
+          acs_version: "{{ found }}"
+          detail: >-
+            {{ 'ACS: ' ~ namespace ~ '/' ~ app ~ ' runs ' ~ image_digest[:19] ~ ' with ' ~ fix_component ~ ' ' ~ found
+               if running else 'ACS does not yet show ' ~ namespace ~ '/' ~ app ~ ' on ' ~ image_digest[:19] }}

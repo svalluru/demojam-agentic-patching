@@ -54,33 +54,64 @@ spec:
   params:
     - { name: image, type: string }
     - { name: enforce, type: string, default: "true" }
-    - { name: cluster, type: string, default: production }
+    # CVEs the Lightwell build in this image fixes (comma-separated, from the Lightwell API). ACS matches a jar by its
+    # upstream version (5.3.18.rhlw-00010 reads as 5.3.18, "fixed in 5.3.26") and cannot see the backport, so its
+    # policies flag CVEs the build has fixed. Those are waived here, by name; anything else still fails the check.
+    - { name: lightwell_fixed, type: string, default: "" }
   results:
     - { name: SCAN_SUMMARY, type: string }
   steps:
     - name: roxctl-check
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: registry.access.redhat.com/ubi9/python-311:latest
       computeResources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
       env:
         - name: ROX_ENDPOINT
           valueFrom: { secretKeyRef: { name: ctr-acs, key: endpoint } }
         - name: ROX_API_TOKEN
           valueFrom: { secretKeyRef: { name: ctr-acs, key: token } }
+        - { name: IMAGE, value: $(params.image) }
+        - { name: ENFORCE, value: $(params.enforce) }
+        - { name: LIGHTWELL_FIXED, value: $(params.lightwell_fixed) }
+        - { name: RESULT, value: $(results.SCAN_SUMMARY.path) }
       script: |
-        #!/usr/bin/env bash
-        set -uo pipefail
+        #!/usr/bin/env python3
+        import json, os, re, ssl, subprocess, sys, urllib.request
+        ep, tok = os.environ['ROX_ENDPOINT'], os.environ['ROX_API_TOKEN']
         # roxctl from the Central itself, so its version always matches.
-        curl -fsSk -H "Authorization: Bearer $ROX_API_TOKEN" -o /tmp/roxctl "https://$ROX_ENDPOINT/api/cli/download/roxctl-linux" && chmod +x /tmp/roxctl
-        # Central reads the image through its integration for the internal registry (ctr-setup/acs-registry.yaml);
-        # delegated scanning (--cluster) is not enabled on this Central.
-        /tmp/roxctl image check --image "$(params.image)" -e "$ROX_ENDPOINT:443" \
-            --insecure-skip-tls-verify -o table > /tmp/check.txt 2>&1
-        rc=$?
-        tail -n 25 /tmp/check.txt
-        if [ $rc -eq 0 ]; then msg="roxctl image check passed"; else msg="roxctl image check: policy violations (exit $rc)"; fi
-        printf '%s' "$msg" > "$(results.SCAN_SUMMARY.path)"
-        if [ $rc -ne 0 ] && [ "$(params.enforce)" = "true" ]; then echo "$msg: stopping before anything is deployed"; exit $rc; fi
-        exit 0
+        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(f'https://{ep}/api/cli/download/roxctl-linux', headers={'Authorization': f'Bearer {tok}'})
+        open('/tmp/roxctl', 'wb').write(urllib.request.urlopen(req, context=ctx, timeout=120).read()); os.chmod('/tmp/roxctl', 0o755)
+        # Central reads the image through its integration for the internal registry (ctr-setup/acs-registry.yaml).
+        r = subprocess.run(['/tmp/roxctl', 'image', 'check', '--image', os.environ['IMAGE'], '-e', f'{ep}:443',
+                            '--insecure-skip-tls-verify', '-o', 'json'], capture_output=True, text=True,
+                           env={**os.environ, 'ROX_API_TOKEN': tok})
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            msg = f'roxctl image check did not run: {(r.stderr or r.stdout).strip()[-300:]}'
+            print(msg); open(os.environ['RESULT'], 'w').write(msg[:400]); sys.exit(1 if os.environ['ENFORCE'] == 'true' else 0)
+        waived = {c.strip() for c in os.environ.get('LIGHTWELL_FIXED', '').split(',') if c.strip()}
+        failing, left, seen = [], set(), set()
+        for res in out.get('results') or []:
+            for pol in res.get('violatedPolicies') or []:
+                cves = set(re.findall(r'CVE-\d{4}-\d+', ' '.join(pol.get('violation') or [])))
+                seen |= cves
+                print(f"policy {pol.get('name')} ({pol.get('severity')}, {'breaks build' if pol.get('failingCheck') else 'informs'}): "
+                      f"{len(cves)} CVE(s)" + (f", {len(cves & waived)} fixed by the Lightwell build" if cves else ''))
+                if pol.get('failingCheck'):
+                    rest = cves - waived
+                    if rest or not cves:                  # a failing policy that is not about waived CVEs still fails
+                        failing.append(pol.get('name')); left |= rest
+        n_w = len(seen & waived)
+        if failing:
+            msg = (f"roxctl: {', '.join(failing)} failing" + (f" on {len(left)} CVE(s) not fixed by Lightwell ({', '.join(sorted(left)[:5])})" if left else '')
+                   + (f"; {n_w} CVE(s) waived (fixed by the Lightwell build, ACS matches the upstream version)" if n_w else ''))
+        else:
+            msg = 'roxctl image check passed' + (f'; {n_w} CVE(s) waived: fixed by the Lightwell build (ACS matches the upstream version)' if n_w else '')
+        print(msg)
+        open(os.environ['RESULT'], 'w').write(msg[:400])
+        if failing and os.environ['ENFORCE'] == 'true':
+            print('stopping before anything is deployed'); sys.exit(1)
 ---
 apiVersion: tekton.dev/v1
 kind: Task
@@ -129,6 +160,7 @@ spec:
     - { name: tag, type: string }
     - { name: nexus_url, type: string }
     - { name: enforce, type: string, default: "true" }
+    - { name: lightwell_fixed, type: string, default: "" }
   workspaces:
     - { name: source }
     - { name: git-auth }
@@ -179,6 +211,7 @@ spec:
         - name: image
           value: image-registry.openshift-image-registry.svc:5000/agentic-patching/$(params.app)@$(tasks.build.results.IMAGE_DIGEST)
         - { name: enforce, value: $(params.enforce) }
+        - { name: lightwell_fixed, value: $(params.lightwell_fixed) }
     - name: sign
       runAfter: [scan]
       taskRef: { name: ctr-sign }

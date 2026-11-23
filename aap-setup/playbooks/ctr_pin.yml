@@ -1,0 +1,31 @@
+---
+# Containers · shared tasks: pin a digest in the GitOps kustomization of one deployment and ask Argo CD to sync now.
+# Used by ctr_rollback.yml. vars: app, namespace, gitops_path, pin_digest, pin_message
+- name: Read the kustomization
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}/api/v4/projects/telco%2Fgitops/repository/files/{{ gitops_path | urlencode | replace('/', '%2F') }}?ref=main"
+    headers: { PRIVATE-TOKEN: "{{ lookup('env', 'CTR_GITLAB_TOKEN') }}" }
+  register: pin_cur
+
+- name: Pin the digest
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}/api/v4/projects/telco%2Fgitops/repository/files/{{ gitops_path | urlencode | replace('/', '%2F') }}"
+    method: PUT
+    headers: { PRIVATE-TOKEN: "{{ lookup('env', 'CTR_GITLAB_TOKEN') }}" }
+    body_format: json
+    body:
+      branch: main
+      commit_message: "{{ pin_message }}"
+      content: "{{ (pin_cur.json.content | b64decode) | regex_replace('digest:\\s*sha256:[0-9a-f]{64}', 'digest: ' ~ pin_digest) }}"
+  when: pin_digest not in (pin_cur.json.content | b64decode)
+
+- name: Ask Argo CD to sync now
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}/apis/argoproj.io/v1alpha1/namespaces/openshift-gitops/applications/ctr-{{ namespace }}-{{ app }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}"
+      Content-Type: application/merge-patch+json
+    body_format: json
+    body: { metadata: { annotations: { argocd.argoproj.io/refresh: hard } } }
+    validate_certs: false

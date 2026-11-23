@@ -1,0 +1,59 @@
+---
+# Containers · Deploy. Pin the new image digest in the GitOps repo for one deployment, then ask Argo CD to sync now
+# (it would otherwise poll every few minutes). The digest it replaced is handed on, for the rollback route.
+#
+# extra_vars: app, namespace, gitops_path (apps/<cluster>/<ns>/<app>/kustomization.yaml), image_digest, run_id
+# env (credential "Containers"): CTR_GITLAB_URL, CTR_GITLAB_TOKEN, CTR_OCP_API, CTR_OCP_TOKEN
+# artifacts: previous_digest, gitops_commit, deployed_digest
+- name: Pin the new digest in GitOps
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    gitlab: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}"
+    headers: { PRIVATE-TOKEN: "{{ lookup('env', 'CTR_GITLAB_TOKEN') }}" }
+    repo: "telco%2Fgitops"
+    file_url: "{{ gitlab }}/api/v4/projects/{{ repo }}/repository/files/{{ gitops_path | urlencode | replace('/', '%2F') }}"
+    api: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}"
+  tasks:
+    - name: Read the kustomization
+      ansible.builtin.uri:
+        url: "{{ file_url }}?ref=main"
+        headers: "{{ headers }}"
+      register: cur
+
+    - name: The digest it pins now
+      ansible.builtin.set_fact:
+        text: "{{ cur.json.content | b64decode }}"
+        previous: "{{ (cur.json.content | b64decode) | regex_search('digest:\\s*(sha256:[0-9a-f]{64})', '\\1') | first }}"
+
+    - name: Pin the new one
+      ansible.builtin.uri:
+        url: "{{ file_url }}"
+        method: PUT
+        headers: "{{ headers }}"
+        body_format: json
+        body:
+          branch: main
+          commit_message: "Containers run {{ run_id }}: {{ namespace }}/{{ app }} to {{ image_digest[:19] }}"
+          content: "{{ text | regex_replace('digest:\\s*sha256:[0-9a-f]{64}', 'digest: ' ~ image_digest) }}"
+      when: previous != image_digest
+      register: put
+
+    - name: Ask Argo CD to sync now
+      ansible.builtin.uri:
+        url: "{{ api }}/apis/argoproj.io/v1alpha1/namespaces/openshift-gitops/applications/ctr-{{ namespace }}-{{ app }}"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}"
+          Content-Type: application/merge-patch+json
+        body_format: json
+        body: { metadata: { annotations: { argocd.argoproj.io/refresh: hard } } }
+        validate_certs: false
+
+    - name: Hand the change to the workflow
+      ansible.builtin.set_stats:
+        data:
+          previous_digest: "{{ previous }}"
+          deployed_digest: "{{ image_digest }}"
+          gitops_commit: "{{ (put.json | default({})).get('file_path', 'unchanged') if put is not skipped else 'unchanged (already pinned)' }}"
