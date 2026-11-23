@@ -1,0 +1,24 @@
+# Workaround for the ACS lab: after a cluster restart the rhacs operator left Sensor without a security context
+# constraint it may use (it created use-*-scc roles for Central and the scanners, none for Sensor), so the Sensor pod
+# (UID 4000, fsGroup 4000) was refused and Central stopped seeing the cluster. This gives the sensor service account
+# the nonroot-v2 SCC, the same shape as the operator's roles. Remove it if the operator recreates its own.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: use-sensor-scc
+  namespace: stackrox
+  labels: { app.kubernetes.io/part-of: agentic-patching }
+rules:
+  - apiGroups: [security.openshift.io]
+    resources: [securitycontextconstraints]
+    resourceNames: [nonroot-v2]
+    verbs: [use]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sensor-use-scc
+  namespace: stackrox
+  labels: { app.kubernetes.io/part-of: agentic-patching }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: use-sensor-scc }
+subjects: [{ kind: ServiceAccount, name: sensor, namespace: stackrox }]

@@ -224,26 +224,46 @@ def _image_detail(iid: str) -> dict:
             'base': (((d.get('metadata') or {}).get('v1') or {}).get('labels') or {}).get('base', '')}
 
 
+def _scope() -> str:
+    """'+Namespace:a,b' when CTR_NAMESPACES limits the queries to the app namespaces (the rest of the cluster is not
+    this console's to patch)."""
+    ns = env('CTR_NAMESPACES')
+    return f'+Namespace:{ns}' if ns else ''
+
+
+def _has(iid: str, names: set[str], versions: set[str], cache: dict) -> bool:
+    """ACS search is fuzzy (Component:json matches json-path, json-smart...): confirm the exact component."""
+    if iid not in cache:
+        cache[iid] = _image_detail(iid)['components']
+    return any(c.get('name') in names and c.get('version') in versions for c in cache[iid])
+
+
 def _lightwell_fixes() -> list[dict]:
-    out = []
+    out, cache = [], {}
     for ev in appv2.events().all():
-        comp, up = ev['artifact'], appv2.upstream(ev['version'])
-        found = []
-        for ver in dict.fromkeys([up, appv2._canon(up)]):         # org.json: 20220320 in the jar, 20220320.0.0 at Lightwell
-            found = acs_get('/v1/images', query=f'Component:{comp}+Component Version:{ver}', **{'pagination.limit': 50}).get('images') or []
-            if found:
-                break
+        group, comp, up = ev['group'], ev['artifact'], appv2.upstream(ev['version'])
+        # ACS names a jar from its Maven metadata when it has some (org.json:json), else by artifact (spring-webmvc).
+        names = {f'{group}:{comp}', comp}
+        versions = set(dict.fromkeys([up, appv2._canon(up)]))          # org.json: 20220320 in the jar, 20220320.0.0 at Lightwell
+        found: dict[str, dict] = {}
+        for name in names:
+            for ver in versions:
+                for i in acs_get('/v1/images', query=f'Component:{name}+Component Version:{ver}{_scope()}',
+                                 **{'pagination.limit': 50}).get('images') or []:
+                    if i['id'] not in found and _has(i['id'], names, versions, cache):
+                        found[i['id']] = i
         if found:
             out.append({'id': f"lw-{ev['id']}", 'kind': 'lightwell', 'component': comp, 'from': up, 'to': ev['version'],
                         'cves': list(ev.get('cves') or []), 'source': 'Lightwell build in Nexus → ACS query',
-                        'images': [{'id': i['id'], 'name': i['name']} for i in found]})
+                        'images': [{'id': i['id'], 'name': i['name']} for i in found.values()]})
     return out
 
 
 def _base_fixes() -> list[dict]:
     """The reconcile query: fixable images (capped), whose OS packages a newer UBI fixes."""
     # ACS's paging parameter is 'pagination.limit' (checked against ACS 4.9: anything else is ignored).
-    rows = acs_get('/v1/images', query='Fixable:true', **{'pagination.limit': int(env('CTR_RECONCILE_LIMIT', '50'))}).get('images') or []
+    rows = acs_get('/v1/images', query='Fixable:true' + _scope(),
+                   **{'pagination.limit': int(env('CTR_RECONCILE_LIMIT', '50'))}).get('images') or []
     imgs, cves = [], []
     for r in rows:
         d = _image_detail(r['id'])
