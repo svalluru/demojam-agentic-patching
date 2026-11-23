@@ -1,0 +1,23 @@
+# Lets ACS Central read the app images in agentic-patching's internal registry (roxctl image check in ctr-build):
+# a service account that can only pull images here, with a long-lived token for the ACS registry integration.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: acs-registry-reader
+  namespace: agentic-patching
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acs-registry-reader
+  namespace: agentic-patching
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:image-puller }
+subjects: [{ kind: ServiceAccount, name: acs-registry-reader, namespace: agentic-patching }]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: acs-registry-reader-token
+  namespace: agentic-patching
+  annotations: { kubernetes.io/service-account.name: acs-registry-reader }
+type: kubernetes.io/service-account-token

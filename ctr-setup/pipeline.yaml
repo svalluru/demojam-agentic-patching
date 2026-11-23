@@ -1,0 +1,187 @@
+# Containers: build, scan and sign one app image (namespace agentic-patching). Started by the AAP job
+# "CTR - Build and Scan" (and once per app by ctr-setup/deploy.py for the first images).
+#
+#   clone    OpenShift Pipelines' git-clone: the app's GitLab repo at a branch (fix/<run>, or main)
+#   package  mvn package through the Nexus proxies (maven-central, and the Lightwell repositories): target/lib
+#   build    OpenShift Pipelines' buildah: the app's Containerfile, pushed to the internal registry
+#   scan     roxctl image check (Central reads the image through its internal-registry integration). With
+#            enforce=true a policy failure (a fixable critical CVE) fails the run before anything is deployed
+#   sign     cosign, with the key pair in secret ctr-cosign (no transparency-log upload: a lab key, not keyless)
+#
+# Results: IMAGE_DIGEST, IMAGE_URL, SCAN_SUMMARY.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ctr-package
+  namespace: agentic-patching
+spec:
+  params:
+    - { name: nexus_url, type: string }
+  workspaces:
+    - { name: source }
+  steps:
+    - name: mvn-package
+      image: registry.access.redhat.com/ubi9/openjdk-17:latest
+      workingDir: $(workspaces.source.path)
+      computeResources: { requests: { cpu: 300m, memory: 768Mi }, limits: { cpu: "2", memory: 2Gi } }
+      env:
+        - { name: HOME, value: $(workspaces.source.path)/.home }
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        mkdir -p "$HOME"
+        N="$(params.nexus_url)"
+        cat > "$HOME/settings.xml" <<XML
+        <settings>
+          <mirrors><mirror><id>nexus-central</id><mirrorOf>central</mirrorOf><url>$N/repository/maven-central/</url></mirror></mirrors>
+          <profiles><profile><id>lightwell</id><repositories><repository><id>lightwell-demo-remediated</id>
+            <url>$N/repository/lightwell-demo-remediated/</url></repository><repository><id>lightwell-remediated</id>
+            <url>$N/repository/lightwell-remediated/</url></repository></repositories></profile></profiles>
+          <activeProfiles><activeProfile>lightwell</activeProfile></activeProfiles>
+        </settings>
+        XML
+        # Once more on failure: a cold Nexus proxy can time out the first fetch of an artifact it then serves.
+        mvn -B -ntp -s "$HOME/settings.xml" -Dmaven.repo.local="$HOME/.m2" -DskipTests package \
+          || mvn -B -ntp -s "$HOME/settings.xml" -Dmaven.repo.local="$HOME/.m2" -DskipTests package
+        echo "jars in the image:"; ls target/lib
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ctr-scan
+  namespace: agentic-patching
+spec:
+  params:
+    - { name: image, type: string }
+    - { name: enforce, type: string, default: "true" }
+    - { name: cluster, type: string, default: production }
+  results:
+    - { name: SCAN_SUMMARY, type: string }
+  steps:
+    - name: roxctl-check
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      computeResources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+      env:
+        - name: ROX_ENDPOINT
+          valueFrom: { secretKeyRef: { name: ctr-acs, key: endpoint } }
+        - name: ROX_API_TOKEN
+          valueFrom: { secretKeyRef: { name: ctr-acs, key: token } }
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+        # roxctl from the Central itself, so its version always matches.
+        curl -fsSk -H "Authorization: Bearer $ROX_API_TOKEN" -o /tmp/roxctl "https://$ROX_ENDPOINT/api/cli/download/roxctl-linux" && chmod +x /tmp/roxctl
+        # Central reads the image through its integration for the internal registry (ctr-setup/acs-registry.yaml);
+        # delegated scanning (--cluster) is not enabled on this Central.
+        /tmp/roxctl image check --image "$(params.image)" -e "$ROX_ENDPOINT:443" \
+            --insecure-skip-tls-verify -o table > /tmp/check.txt 2>&1
+        rc=$?
+        tail -n 25 /tmp/check.txt
+        if [ $rc -eq 0 ]; then msg="roxctl image check passed"; else msg="roxctl image check: policy violations (exit $rc)"; fi
+        printf '%s' "$msg" > "$(results.SCAN_SUMMARY.path)"
+        if [ $rc -ne 0 ] && [ "$(params.enforce)" = "true" ]; then echo "$msg: stopping before anything is deployed"; exit $rc; fi
+        exit 0
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ctr-sign
+  namespace: agentic-patching
+spec:
+  params:
+    - { name: image, type: string }
+  steps:
+    - name: cosign-sign
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      computeResources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+      env:
+        - name: COSIGN_PASSWORD
+          valueFrom: { secretKeyRef: { name: ctr-cosign, key: cosign.password } }
+        - name: COSIGN_KEY
+          valueFrom: { secretKeyRef: { name: ctr-cosign, key: cosign.key } }
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        V=v2.4.1
+        cd /tmp   # saved under its release name: the checksum file refers to it by that name
+        curl -fsSL -o cosign-linux-amd64 "https://github.com/sigstore/cosign/releases/download/$V/cosign-linux-amd64"
+        curl -fsSL -o cosign.sha "https://github.com/sigstore/cosign/releases/download/$V/cosign_checksums.txt"
+        grep ' cosign-linux-amd64$' cosign.sha | sha256sum -c - && chmod +x cosign-linux-amd64 && mv cosign-linux-amd64 /tmp/cosign
+        printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+        # Registry credentials written directly: cosign login has no insecure-registry flag, cosign sign does.
+        REG=image-registry.openshift-image-registry.svc:5000
+        export HOME=/tmp DOCKER_CONFIG=/tmp/.docker && mkdir -p "$DOCKER_CONFIG"
+        AUTH=$(printf 'serviceaccount:%s' "$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | base64 -w0)
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$REG" "$AUTH" > "$DOCKER_CONFIG/config.json"
+        /tmp/cosign sign --yes --key /tmp/cosign.key --tlog-upload=false --allow-insecure-registry "$(params.image)"
+        echo "signed $(params.image)"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ctr-build
+  namespace: agentic-patching
+spec:
+  params:
+    - { name: repo_url, type: string }
+    - { name: revision, type: string, default: main }
+    - { name: app, type: string }
+    - { name: tag, type: string }
+    - { name: nexus_url, type: string }
+    - { name: enforce, type: string, default: "true" }
+  workspaces:
+    - { name: source }
+    - { name: git-auth }
+  results:
+    - { name: IMAGE_DIGEST, value: $(tasks.build.results.IMAGE_DIGEST) }
+    - { name: IMAGE_URL, value: $(tasks.build.results.IMAGE_URL) }
+    - { name: SCAN_SUMMARY, value: $(tasks.scan.results.SCAN_SUMMARY) }
+  tasks:
+    - name: clone
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: openshift-pipelines }
+      params:
+        - { name: URL, value: $(params.repo_url) }
+        - { name: REVISION, value: $(params.revision) }
+      workspaces:
+        - { name: output, workspace: source }
+        - { name: basic-auth, workspace: git-auth }
+    - name: package
+      runAfter: [clone]
+      taskRef: { name: ctr-package }
+      params:
+        - { name: nexus_url, value: $(params.nexus_url) }
+      workspaces:
+        - { name: source, workspace: source }
+    - name: build
+      runAfter: [package]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah }
+          - { name: namespace, value: openshift-pipelines }
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/agentic-patching/$(params.app):$(params.tag)
+        - { name: DOCKERFILE, value: ./Containerfile }
+        - { name: TLSVERIFY, value: "false" }
+      workspaces:
+        - { name: source, workspace: source }
+    - name: scan
+      runAfter: [build]
+      taskRef: { name: ctr-scan }
+      params:
+        - name: image
+          value: image-registry.openshift-image-registry.svc:5000/agentic-patching/$(params.app)@$(tasks.build.results.IMAGE_DIGEST)
+        - { name: enforce, value: $(params.enforce) }
+    - name: sign
+      runAfter: [scan]
+      taskRef: { name: ctr-sign }
+      params:
+        - name: image
+          value: image-registry.openshift-image-registry.svc:5000/agentic-patching/$(params.app)@$(tasks.build.results.IMAGE_DIGEST)
