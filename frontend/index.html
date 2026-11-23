@@ -9415,7 +9415,7 @@ const ctr = { fixes: null, state: {}, timer: null, sel: null, at: 0, err: '' };
 const CTR_KIND = { lightwell: ['good', 'Lightwell build'], base: ['info', 'Base image'], policy: ['warn', 'ACS policy'] };
 const CTR_BUSY = ['assessing', 'generating', 'running', 'awaiting_approval'];
 const CTR_STEP = { commit: 'Commit', build_scan: 'Build + roxctl', sign: 'Sign', deploy: 'Deploy', health: 'Health',
-                   approval: 'Approval', verify: 'ACS rescan', notify: 'Notify' };
+                   approval: 'Approval', verify: 'ACS verify', rollback: 'Rollback', notify: 'Notify' };
 
 async function ctrApi(path, body) {
   const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -9510,7 +9510,9 @@ function ctrRun(s) {
       <table class="c-t"><tr><th>File</th><th>What</th><th>From</th><th>To</th></tr>
         ${s.change.map(e => `<tr><td class="mono">${esc(e.file)}</td><td>${esc(e.what)}</td><td class="mono">${esc(e.from)}</td><td class="mono">${esc(e.to)}</td></tr>`).join('')}</table>
       <div class="c-chips" style="margin-top:10px">${(s.checks || []).map(c => `<span class="pill-s ${c.ok ? 'good' : 'crit'}" title="${esc(c.detail)}">${c.ok ? '✓' : '✕'} ${esc(c.id)}: ${esc(c.detail)}</span>`).join('')}</div>
-      <div class="c-note">Then: build in OpenShift Pipelines and <span class="mono">roxctl image check</span>, cosign sign, roll out lab first, production after approval, ACS rescan.</div>
+      ${(s.siblings || []).length ? `<div class="c-note">One rebuild for the image: ${s.siblings.map(x => `${esc(x.component)} → <span class="mono">${esc(x.to)}</span>`).join(', ')} ride along with the fix.</div>` : ''}
+      ${(s.lightwell_fixed || []).length ? `<div class="c-note">The roxctl gate waives the ${s.lightwell_fixed.length} CVE(s) these Lightwell builds fix (ACS matches the upstream version and cannot see the backport); any other policy violation fails it.</div>` : ''}
+      <div class="c-note">Then: build in OpenShift Pipelines and <span class="mono">roxctl image check</span>, cosign sign, roll out lab first, production after approval, ACS verify.</div>
       ${s.status === 'generated' ? `<div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="dispatch" ${s.ok ? '' : 'disabled'}>Run on ${(s.selected || []).length} deployment${(s.selected || []).length === 1 ? '' : 's'}</button>
         <button type="button" class="c-btn" data-ctr-act="reset">Cancel</button></div>` : ''}</section>`);
   }
@@ -9518,7 +9520,8 @@ function ctrRun(s) {
     const sm = s.summary || {};
     out.push(`<section class="c-box"><h3>Result</h3>
       ${s.status === 'failed' ? `<div class="c-alert">${esc(s.error || 'failed')}</div>`
-        : `<div>${sm.patched || 0} rolled out and verified · ${sm.deferred || 0} deferred in ACS · ${sm.failed || 0} failed</div>`}
+        : `<div>${sm.patched || 0} rolled out and verified${sm.not_verified ? ` · ${sm.not_verified} not verified by ACS` : ''}${sm.rolled_back ? ` · ${sm.rolled_back} rolled back` : ''}
+            · ${sm.deferred || 0} deferred in ACS${sm.rejected ? ` · ${sm.rejected} rejected` : ''} · ${sm.failed || 0} failed</div>`}
       ${(s.deferrals || []).map(d => `<div class="c-note">Deferral for ${esc(d.key)}: <span class="mono">${esc(d.ref)}</span>, expires ${esc(d.request.exceptionExpiry.expiresOn)}</div>`).join('')}
       <div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button></div></section>`);
   }
@@ -9530,9 +9533,13 @@ function ctrHostCell(h) {
   return `<div>${h.outcome === 'awaiting_approval'
       ? `<div class="c-actions" style="margin:0 0 6px"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}">Approve</button>
          <button type="button" class="c-btn" data-ctr-decide="rejected" data-key="${esc(h.key)}" title="Reject and defer the CVEs in ACS for 30 days">Reject + defer</button></div>`
-      : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : h.outcome === 'deferred' ? 'off' : h.outcome === 'failed' ? 'crit' : 'info'}">${esc(h.outcome)}</span>`}
+      : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : ['deferred', 'rejected'].includes(h.outcome) ? 'off'
+          : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.replace('_', ' '))}</span>`}
     <div class="c-chips" style="margin-top:4px">${steps.map(([k, v]) => `<span class="pill-s ${v === 'done' ? 'good' : v === 'waiting' ? 'warn' : v === 'rejected' ? 'off' : 'info'}">${esc(CTR_STEP[k] || k)}</span>`).join('')}</div>
-    ${h.detail ? `<div class="c-note" style="margin:4px 0 0">${esc(h.detail)}</div>` : ''}</div>`;
+    ${h.detail ? `<div class="c-note" style="margin:4px 0 0">${esc(h.detail)}</div>` : ''}
+    ${h.evidence ? `<div class="c-note" style="margin:2px 0 0">${[h.evidence.image_digest ? `<span class="mono">${esc(h.evidence.image_digest.slice(0, 19))}…</span>` : '',
+        h.evidence.scan_summary ? esc(h.evidence.scan_summary) : '', h.execution_id ? `AO <span class="mono">${esc(String(h.execution_id).slice(0, 8))}</span>` : '']
+        .filter(Boolean).join(' · ')}</div>` : ''}</div>`;
 }
 
 function ctrRender() {

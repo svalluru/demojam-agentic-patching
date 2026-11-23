@@ -35,6 +35,7 @@ class _Hooks:
     llm = None                 # prompt -> text (the console's vLLM)
     rag_search = None          # (store, query) -> [text] (the console's history search)
     acs_call = None            # tests: (method, path, params, body) -> dict
+    ao_call = None             # (path, method='GET', body=None) -> dict (the console's AO helper)
 
 
 H = _Hooks()
@@ -164,6 +165,7 @@ def _demo_api(method: str, path: str, params: dict, body: Any) -> dict:
         if not d:
             raise AcsError(f'ACS: no deployment {path}')
         return {'id': path.rsplit('/', 1)[1], 'name': d['name'], 'namespace': d['namespace'],
+                'ports': [{'containerPort': 8090 if d['name'] == 'workflow-engine' else 8091}],
                 'clusterName': DEMO_CLUSTER['name'], 'clusterId': DEMO_CLUSTER['id'], 'replicas': d['replicas'],
                 'labels': d['labels'], 'containers': [{'image': {'id': d['image'],
                                                                  'name': DEMO_IMAGES[d['image']]['name']}}]}
@@ -253,7 +255,7 @@ def _lightwell_fixes() -> list[dict]:
                     if i['id'] not in found and _has(i['id'], names, versions, cache):
                         found[i['id']] = i
         if found:
-            out.append({'id': f"lw-{ev['id']}", 'kind': 'lightwell', 'component': comp, 'from': up, 'to': ev['version'],
+            out.append({'id': f"lw-{ev['id']}", 'kind': 'lightwell', 'group': group, 'component': comp, 'from': up, 'to': ev['version'],
                         'cves': list(ev.get('cves') or []), 'source': 'Lightwell build in Nexus → ACS query',
                         'images': [{'id': i['id'], 'name': i['name']} for i in found.values()]})
     return out
@@ -435,6 +437,8 @@ def _assess(fix: dict) -> None:
                 t = {'key': f"{cluster}/{ns}/{dd.get('name', '')}", 'deployment_id': d['id'],
                      'cluster': cluster, 'namespace': ns, 'name': dd.get('name', ''),
                      'env': envname, 'replicas': int(dd.get('replicas') or 1), 'image': img['name'], 'image_id': img['id'],
+                     'app': _image_app(img['name']),
+                     'port': str(next((pt.get('containerPort') for pt in dd.get('ports') or [] if pt.get('containerPort')), '')),
                      'runtime': runtime, 'callers': DEMO_CALLERS.get(d['id'], []) if H.demo_mode() else [],
                      'window': DEMO_WINDOWS.get(ns, '') if H.demo_mode() else json.loads(env('CTR_WINDOWS', '{}') or '{}').get(ns, '')}
                 t['risk'], t['risk_why'] = _risk(fix, envname == 'prod', bool(runtime), t['replicas'])
@@ -458,21 +462,28 @@ def _assess(fix: dict) -> None:
 
 # ---------------------------------------------------------------------------- plan and checks
 
-ALLOWED_FILES = re.compile(r'^(pom\.xml|Containerfile|gitops/[\w.-]+/[\w.-]+/[\w.-]+/kustomization\.yaml)$')
+ALLOWED_FILES = re.compile(r'^(pom\.xml|Containerfile|apps/[\w.-]+/[\w.-]+/[\w.-]+/kustomization\.yaml)$')
 PINNED = re.compile(r'@sha256:([0-9a-f]{64}|\$\{BUILD_DIGEST\})$')
 
 
-def build_change(fix: dict, targets: list[dict]) -> list[dict]:
-    """The change for each image: pom.xml to the Lightwell build, the base to a pinned UBI digest, and each
-    deployment's GitOps image reference to the digest the build produces."""
+def gitops_path(t: dict) -> str:
+    return f"apps/{t['cluster']}/{t['namespace']}/{t.get('app') or t['name']}/kustomization.yaml"
+
+
+def build_change(fix: dict, targets: list[dict], siblings: list[dict] | None = None) -> list[dict]:
+    """The change for each image: pom.xml to the Lightwell build (and every other Lightwell build available for the
+    same image: one rebuild), the base to a pinned UBI digest, and each deployment's GitOps image reference to the
+    digest the build produces."""
     edits = []
-    if fix['kind'] == 'lightwell':
-        edits.append({'file': 'pom.xml', 'what': f"{fix['component']} version", 'from': fix['from'], 'to': fix['to']})
+    for f in ([fix] + list(siblings or [])) if fix['kind'] == 'lightwell' else []:
+        # The jar says 20220320 where Lightwell says 20220320.0.0: pom.xml has the jar's number.
+        edits.append({'file': 'pom.xml', 'what': f"{f['component']} version", 'from': f.get('pom_from') or appv2._canon(f['from'])
+                      if re.fullmatch(r'[0-9.]+', f['from'] or '') and f['from'].endswith('.0.0') else f['from'], 'to': f['to']})
     if fix['kind'] == 'base':
         edits.append({'file': 'Containerfile', 'what': 'FROM', 'from': f"FROM {fix['from']}", 'to': f"FROM {fix['to']}"})
     for t in targets:
         repo = t['image'].split('@')[0].rsplit(':', 1)[0]
-        edits.append({'file': f"gitops/{t['cluster']}/{t['namespace']}/{t['name']}/kustomization.yaml", 'what': 'image',
+        edits.append({'file': gitops_path(t), 'what': 'image',
                       'from': t['image'], 'to': f'{repo}@sha256:${{BUILD_DIGEST}}'})
     return edits
 
@@ -484,7 +495,7 @@ def check_container_change(edits: list[dict]) -> list[dict]:
     bad_files = [f for f in files if not ALLOWED_FILES.match(f)]
     poms = [e for e in edits if e['file'] == 'pom.xml']
     froms = [e for e in edits if e['file'] == 'Containerfile']
-    gitops = [e for e in edits if e['file'].startswith('gitops/')]
+    gitops = [e for e in edits if e['file'].startswith('apps/')]
     allowed_reg = [r.strip() for r in env('CTR_ALLOWED_REGISTRIES', 'registry.access.redhat.com,registry.redhat.io').split(',') if r.strip()]
     return [
         {'id': 'files', 'ok': not bad_files, 'detail': 'only pom.xml, the Containerfile and GitOps image references'
@@ -505,11 +516,21 @@ def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
     targets = [t for t in st['impact']['targets'] if keys is None or t['key'] in keys]
     if not targets:
         return 400, {'ok': False, 'error': 'no deployment selected'}
-    edits = build_change(st['fix'], targets)
+    fix, siblings = st['fix'], []
+    if fix['kind'] == 'lightwell':
+        ids = {i['id'] for i in fix['images']}
+        try:
+            siblings = [f for f in fixes()['fixes'] if f['kind'] == 'lightwell' and f['id'] != fix['id']
+                        and ids & {i['id'] for i in f['images']}]
+        except AcsError:
+            siblings = []
+    edits = build_change(fix, targets, siblings)
     checks = check_container_change(edits)
+    waived = sorted({c for f in [fix] + siblings for c in f.get('cves') or []})
     with _LOCK:
         _RUN.update(status='generated', selected=[t['key'] for t in targets], change=edits, checks=checks,
-                    ok=all(c['ok'] for c in checks))
+                    ok=all(c['ok'] for c in checks), siblings=[{k: f[k] for k in ('id', 'component', 'from', 'to')} for f in siblings],
+                    lightwell_fixed=waived)
         _RUN['stages']['plan'] = 'done'
     return 200, {'ok': True}
 
@@ -522,14 +543,158 @@ def start_dispatch() -> tuple[int, dict]:
         return 409, {'ok': False, 'error': 'prepare the change first'}
     if not st.get('ok'):
         return 400, {'ok': False, 'error': 'the change failed its checks'}
-    if not H.demo_mode():
-        return 503, {'ok': False, 'error': 'The container run is not set up on this lab yet (AO workflow "Container Patch" '
-                     'and its AAP templates). Intake and assessment read ACS live; the run is shown in demo mode.'}
     sel = set(st['selected'])
     hosts = [dict(t, outcome='pending', steps={}, detail='') for t in st['impact']['targets'] if t['key'] in sel]
+    if not H.demo_mode():
+        if not H.ao_call:
+            return 503, {'ok': False, 'error': 'Automation Orchestrator is not configured (AO_URL / AO_USERNAME / AO_PASSWORD)'}
+        try:
+            wf = _workflow_id()
+        except Exception as e:
+            return 503, {'ok': False, 'error': f'AO: {e}'}
+        _set(status='running', hosts=hosts, workflow_id=wf)
+        _persist()
+        threading.Thread(target=_dispatch_live, args=(wf,), daemon=True).start()
+        return 200, {'ok': True}
     _set(status='running', hosts=hosts)
     threading.Thread(target=_simulate, daemon=True).start()
     return 200, {'ok': True}
+
+
+# ---------------------------------------------------------------------------- run (live: AO workflow "Container Patch")
+
+# AO node -> the console's step. Lab and prod branches share step names.
+NODE_STEP = {'commit': 'commit', 'build_scan': 'build_scan', 'approval_prod': 'approval',
+             'deploy': 'deploy', 'deploy_prod': 'deploy', 'health': 'health', 'health_prod': 'health',
+             'verify': 'verify', 'verify_prod': 'verify', 'rollback': 'rollback', 'rollback_prod': 'rollback',
+             'notify_patched': 'notify', 'notify_patched_prod': 'notify', 'notify_rolled_back': 'notify',
+             'notify_rolled_back_prod': 'notify', 'notify_build_failed': 'notify'}
+AO_STATE = {'completed': 'done', 'succeeded': 'done', 'failed': 'failed', 'running': 'active', 'waiting': 'waiting',
+            'pending': 'waiting', 'skipped': 'skipped', 'cancelled': 'failed'}
+_WF: dict[str, str] = {}
+
+
+def _workflow_id() -> str:
+    name = env('CTR_AO_WORKFLOW', 'Container Patch')
+    if name not in _WF:
+        found = H.ao_call('/api/v1/workflows') or {}
+        for w in found.get('resources') or []:
+            if w.get('name') == name:
+                _WF[name] = w['id']
+        if name not in _WF:
+            raise RuntimeError(f'no AO workflow named {name!r}: DEF_FILE=ao-setup/ctr_workflow.json WF_NAME="{name}" ./ao-setup/create-ao-workflow.sh')
+    return _WF[name]
+
+
+def _inputs(st: dict, h: dict) -> dict:
+    fix = st['fix']
+    return {'app': h.get('app') or h['name'], 'run_id': st['run_id'], 'namespace': h['namespace'], 'cluster': h['cluster'],
+            'group': 'prod_review' if h['env'] == 'prod' else 'lab_auto',
+            'changes_json': json.dumps([e for e in st.get('change') or [] if e['file'] in ('pom.xml', 'Containerfile')]),
+            'gitops_path': gitops_path(h), 'port': h.get('port') or '8080',
+            'fix_component': fix.get('component', ''), 'fix_group': fix.get('group', ''), 'fix_version': fix.get('to', ''),
+            'lightwell_fixed': ','.join(st.get('lightwell_fixed') or []), 'cves': ', '.join(fix.get('cves') or [])}
+
+
+def _host(key: str, **kw) -> None:
+    with _LOCK:
+        for h in _RUN.get('hosts') or []:
+            if h['key'] == key:
+                steps = kw.pop('steps', None)
+                h.update(kw)
+                if steps:
+                    h['steps'].update(steps)
+    _persist()
+
+
+def _dispatch_live(wf: str) -> None:
+    st = state()
+    for h in st['hosts']:
+        try:
+            created = H.ao_call('/api/v1/executions', 'POST', {'workflow_id': wf, 'trigger_node_id': 'trigger_manual',
+                                                              'input_data': _inputs(st, h)}) or {}
+        except Exception as e:
+            _host(h['key'], outcome='failed', detail=f'not dispatched: {e}', steps={'commit': 'failed'})
+            continue
+        if not created.get('id'):
+            _host(h['key'], outcome='failed', detail=f'AO did not start the execution: {str(created)[:160]}')
+            continue
+        _host(h['key'], execution_id=created['id'], outcome='running', steps={'commit': 'active'})
+        _trace(f"{h['key']}: AO execution {created['id'][:8]} started")
+        threading.Thread(target=_follow_live, args=(h['key'],), daemon=True).start()
+    _settle()
+
+
+def _activities(exec_id: str) -> dict[str, dict]:
+    found = H.ao_call(f'/api/v1/executions/{exec_id}/activities') or {}
+    return {(a.get('temporal_activity_id') or a.get('activity_name')): a for a in found.get('resources') or []}
+
+
+def _art(a: dict | None) -> dict:
+    out = (a or {}).get('output_data') or {}
+    if isinstance(out, dict) and isinstance(out.get('artifacts'), dict):
+        return out['artifacts']
+    return out if isinstance(out, dict) else {}
+
+
+def _read_execution(key: str) -> bool:
+    """One look at a site's execution: steps, evidence, outcome. True once it has settled."""
+    h = next((x for x in state().get('hosts') or [] if x['key'] == key), None)
+    if not h or not h.get('execution_id'):
+        return True
+    ex = H.ao_call(f"/api/v1/executions/{h['execution_id']}") or {}
+    acts = _activities(h['execution_id'])
+    steps = {}
+    for node, step in NODE_STEP.items():
+        if node in acts:
+            steps[step] = AO_STATE.get(str(acts[node].get('status', '')).lower(), 'active')
+    build, health = _art(acts.get('build_scan')), _art(acts.get('health_prod') or acts.get('health'))
+    verify, rollback = _art(acts.get('verify_prod') or acts.get('verify')), _art(acts.get('rollback_prod') or acts.get('rollback'))
+    evidence = {k: v for k, v in {'image_digest': build.get('image_digest'), 'scan_summary': build.get('scan_summary'),
+                                  'pipelinerun': build.get('pipelinerun'), 'health': health.get('health'),
+                                  'acs': verify.get('detail'), 'verified': verify.get('verified')}.items() if v not in (None, '')}
+    status = str(ex.get('status', '')).lower()
+    if steps.get('approval') == 'waiting':
+        _host(key, outcome='awaiting_approval', steps=steps, evidence=evidence,
+              detail=f"built {str(build.get('image_digest', ''))[:19]} · {build.get('scan_summary', '')}; waiting for approval")
+        return False
+    done = status in ('completed', 'succeeded', 'failed', 'cancelled', 'canceled')
+    if not done:
+        _host(key, outcome='running', steps=steps, evidence=evidence)
+        return False
+    if 'notify_build_failed' in acts or build.get('build_outcome') == 'failed':
+        outcome, detail = 'failed', f"build or scan failed, nothing deployed: {build.get('failed_reason', '')} {build.get('scan_summary', '')}".strip()
+    elif any(n in acts for n in ('notify_rolled_back', 'notify_rolled_back_prod')) or rollback:
+        outcome = 'rolled_back' if str(rollback.get('rolled_back')).lower() == 'true' else 'failed'
+        detail = f"{health.get('failed_step', '')}: {health.get('failed_reason', '')}; {rollback.get('restored', 'rollback did not finish')}"
+    elif steps.get('approval') == 'failed' or 'approval_prod' in acts and not any(n in acts for n in ('deploy_prod',)):
+        outcome, detail = (h.get('outcome') if h.get('outcome') == 'deferred' else 'rejected'), h.get('detail') or 'rejected at the gate'
+    elif any(n in acts for n in ('notify_patched', 'notify_patched_prod')):
+        ok = str(verify.get('verified')).lower() == 'true'
+        outcome = 'patched' if ok else 'not_verified'
+        detail = verify.get('detail') or 'rolled out'
+    else:
+        outcome, detail = 'failed', str(ex.get('error_details') or ex.get('error') or f'execution {status}')[:300]
+    _host(key, outcome=outcome, steps=steps, evidence=evidence, detail=detail)
+    return True
+
+
+def _follow_live(key: str) -> None:
+    deadline = time.time() + int(env('AO_POLL_TIMEOUT', '2400'))
+    while time.time() < deadline:
+        try:
+            if _read_execution(key):
+                break
+        except Exception as e:
+            _trace(f'{key}: could not read the execution ({e}); retrying')
+        if any(h['outcome'] == 'awaiting_approval' for h in state().get('hosts') or []):
+            if state().get('status') == 'running':
+                _set(status='awaiting_approval')
+        time.sleep(float(env('CTR_POLL_SECONDS', '5')))
+        # A gate is answered by decide(): keep following after it.
+    else:
+        _host(key, outcome='failed', detail='timed out following the execution')
+    _settle()
 
 
 def _step(key: str, step: str, value: str, outcome: str | None = None, detail: str | None = None) -> None:
@@ -596,9 +761,17 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
     h = next((x for x in st.get('hosts') or [] if x['key'] == key), None)
     if not h or h.get('outcome') != 'awaiting_approval':
         return 409, {'ok': False, 'error': f'{key} is not waiting for approval'}
+    if not H.demo_mode():
+        try:
+            H.ao_call(f"/api/v1/executions/{h['execution_id']}/activities/approval_prod/signal", 'POST',
+                      {'signal_data': {'decision': decision}})
+        except Exception as e:
+            return 502, {'ok': False, 'error': f'AO did not take the decision: {e}'}
+        _set(status='running')
     if decision == 'approved':
         _step(key, 'approval', 'done', 'running', '')
-        threading.Thread(target=_after_approve, args=(h, st['fix']), daemon=True).start()
+        if H.demo_mode():
+            threading.Thread(target=_after_approve, args=(h, st['fix']), daemon=True).start()
     else:
         expiry = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 30 * 86400))
         req = {'cves': list(st['fix'].get('cves') or []),
@@ -622,22 +795,78 @@ def _after_approve(h: dict, fix: dict) -> None:
     _settle()
 
 
+SETTLED = ('patched', 'not_verified', 'deferred', 'rejected', 'rolled_back', 'failed')
+
+
 def _settle() -> None:
     st = state()
-    if all(x['outcome'] in ('patched', 'deferred', 'failed') for x in st.get('hosts') or []):
-        _finish()
+    hosts = st.get('hosts') or []
+    if hosts and all(x['outcome'] in SETTLED for x in hosts):
+        if st.get('status') != 'complete':
+            _finish()
+    elif any(x['outcome'] == 'awaiting_approval' for x in hosts) and not any(x['outcome'] in ('running', 'pending') for x in hosts):
+        _set(status='awaiting_approval')
 
 
 def _finish() -> None:
     with _LOCK:
         hosts = _RUN.get('hosts') or []
-        _RUN['summary'] = {k: sum(1 for h in hosts if h['outcome'] == k) for k in ('patched', 'deferred', 'failed')}
+        _RUN['summary'] = {k: sum(1 for h in hosts if h['outcome'] == k)
+                           for k in ('patched', 'not_verified', 'deferred', 'rejected', 'rolled_back', 'failed')}
         _RUN['status'] = 'complete'
         _RUN['finished_at'] = now_iso()
         for s in ('gate', 'prod', 'verify'):
             _RUN['stages'][s] = 'done'
         rec = json.loads(json.dumps(_RUN))
     _HISTORY.append({k: rec.get(k) for k in ('run_id', 'fix', 'started_at', 'finished_at', 'summary', 'simulated')})
+    _persist(history=True)
+
+
+# ---------------------------------------------------------------------------- live persistence
+
+def _state_file(name: str):
+    from pathlib import Path
+    return Path(env('APPV2_STATE_DIR') or (appv2.ROOT / 'runs')) / name
+
+
+def _persist(history: bool = False) -> None:
+    """Live mode keeps the run (and its history) on disk, so a console restart picks the run up again."""
+    if H.demo_mode():
+        return
+    try:
+        p = _state_file('ctr-run.json')
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state()))
+        if history and _HISTORY:
+            with _state_file('ctr-history.jsonl').open('a') as f:
+                f.write(json.dumps(_HISTORY[-1]) + '\n')
+    except OSError:
+        pass
+
+
+def restore() -> dict:
+    """At console start (live): the saved run, and a follower for every site still running or at its gate."""
+    if H.demo_mode():
+        return {'restored': False}
+    try:
+        saved = json.loads(_state_file('ctr-run.json').read_text())
+    except (OSError, ValueError):
+        saved = {}
+    try:
+        _HISTORY[:] = [json.loads(l) for l in _state_file('ctr-history.jsonl').read_text().splitlines() if l.strip()]
+    except (OSError, ValueError):
+        pass
+    if not saved:
+        return {'restored': False}
+    if saved.get('status') in ('assessing', 'generating'):
+        saved.update(status='failed', error=f"the console restarted during {saved['status'][:-3]}e; assess again")
+    with _LOCK:
+        _RUN.clear()
+        _RUN.update(saved)
+    resumed = [h['key'] for h in saved.get('hosts') or [] if h.get('execution_id') and h.get('outcome') in ('running', 'pending', 'awaiting_approval')]
+    for key in resumed:
+        threading.Thread(target=_follow_live, args=(key,), daemon=True).start()
+    return {'restored': True, 'resumed': resumed}
 
 
 def runs() -> list[dict]:

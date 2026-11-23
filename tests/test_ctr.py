@@ -98,13 +98,13 @@ class Flow(unittest.TestCase):
 
     def test_checks_reject_unpinned_and_unexpected_edits(self):
         ok = ctr.check_container_change([{'file': 'Containerfile', 'from': 'FROM a', 'to': 'FROM ' + ctr.UBI_FIX},
-                                         {'file': 'gitops/c/ns/app/kustomization.yaml', 'from': 'x', 'to': 'quay.io/a@sha256:${BUILD_DIGEST}'}])
+                                         {'file': 'apps/c/ns/app/kustomization.yaml', 'from': 'x', 'to': 'quay.io/a@sha256:${BUILD_DIGEST}'}])
         self.assertTrue(all(c['ok'] for c in ok))
         bad = {c['id']: c['ok'] for c in ctr.check_container_change([
             {'file': 'Containerfile', 'from': 'FROM a', 'to': 'FROM registry.access.redhat.com/ubi9/ubi-minimal:latest'},
             {'file': 'pom.xml', 'from': '5.3.18', 'to': '6.2.19'},
             {'file': 'deploy.sh', 'from': '', 'to': 'curl x | sh'},
-            {'file': 'gitops/c/ns/app/kustomization.yaml', 'from': 'x', 'to': 'quay.io/a:1.4.3'}])}
+            {'file': 'apps/c/ns/app/kustomization.yaml', 'from': 'x', 'to': 'quay.io/a:1.4.3'}])}
         self.assertEqual(bad, {'files': False, 'lightwell': False, 'base': False, 'pinned': False})
 
     def test_run_gates_production_then_approval_completes(self):
@@ -119,7 +119,7 @@ class Flow(unittest.TestCase):
         self.assertEqual(ctr.decide(by['nfvo-lab']['key'], 'approved')[0], 409)   # the lab is not gated
         self.assertEqual(ctr.decide(by['nfvo-prod']['key'], 'approved')[0], 200)
         st = wait({'complete'})
-        self.assertEqual(st['summary'], {'patched': 2, 'deferred': 0, 'failed': 0})
+        self.assertEqual({k: v for k, v in st['summary'].items() if v}, {'patched': 2})
         self.assertEqual(ctr.runs()[0]['run_id'], st['run_id'])
 
     def test_reject_files_a_deferral(self):
@@ -138,7 +138,7 @@ class Flow(unittest.TestCase):
         ctr.configure(demo_mode=lambda: False)
         code, body = ctr.start_dispatch()
         self.assertEqual(code, 503)
-        self.assertIn('Container Patch', body['error'])
+        self.assertIn('Automation Orchestrator is not configured', body['error'])
 
     def test_one_run_at_a_time(self):
         self.assess(); ctr.start_generate(); ctr.start_dispatch(); wait({'awaiting_approval'})
@@ -148,6 +148,141 @@ class Flow(unittest.TestCase):
         # The staged Applications history patched inventory-service's servers with an older org.json build.
         st = self.assess('lw-evt-json')
         self.assertEqual([s['app'] for s in st['impact']['servers']], ['inventory-service'])
+
+
+class LiveRun(unittest.TestCase):
+    """The live run against a fake AO that walks each execution through the Container Patch nodes."""
+
+    def setUp(self):
+        demo(CTR_POLL_SECONDS='0')
+        self.signals, self.created = [], []
+        self.phase = {}                         # execution id -> 'gate' | 'done'
+        self.plan = {}                          # execution id -> 'patched' | 'rolled_back' | 'build_failed'
+
+        def ao(path, method='GET', body=None):
+            if path == '/api/v1/workflows':
+                return {'resources': [{'id': 'wf-ctr', 'name': 'Container Patch'}]}
+            if path == '/api/v1/executions' and method == 'POST':
+                eid = f"ex-{body['input_data']['namespace']}"
+                self.created.append(body)
+                self.phase[eid] = 'gate' if body['input_data']['group'] == 'prod_review' else 'done'
+                self.plan.setdefault(eid, 'patched')
+                return {'id': eid}
+            if path.endswith('/signal'):
+                eid = path.split('/')[4]
+                self.signals.append((eid, body))
+                self.phase[eid] = 'done' if body['signal_data']['decision'] == 'approved' else 'rejected'
+                return {}
+            eid = path.split('/')[4]
+            ph, plan, prod = self.phase.get(eid), self.plan.get(eid), eid.endswith('prod')
+            sfx = '_prod' if prod else ''
+            def a(node, status='completed', art=None):
+                return {'temporal_activity_id': node, 'status': status, 'output_data': {'artifacts': art or {}}}
+            acts = [a('commit', art={'commit_sha': 'abc'}),
+                    a('build_scan', art={'build_outcome': 'failed' if plan == 'build_failed' else 'passed',
+                                         'image_digest': 'sha256:' + 'b' * 64, 'scan_summary': 'roxctl image check passed',
+                                         'failed_reason': 'roxctl: 1 CVE not fixed by Lightwell' if plan == 'build_failed' else ''})]
+            if plan == 'build_failed':
+                acts.append(a('notify_build_failed'))
+            elif prod and ph == 'gate':
+                acts.append(a('approval_prod', 'waiting'))
+            elif prod and ph == 'rejected':
+                acts.append(a('approval_prod'))
+            else:
+                if prod:
+                    acts.append(a('approval_prod'))
+                acts.append(a('deploy' + sfx, art={'previous_digest': 'sha256:' + 'a' * 64}))
+                if plan == 'rolled_back':
+                    acts += [a('health' + sfx, art={'outcome': 'failed', 'failed_step': 'Wait for every replica', 'failed_reason': 'timed out'}),
+                             a('rollback' + sfx, art={'rolled_back': True, 'restored': 'nfvo-lab/workflow-engine on sha256:aaaa'}),
+                             a('notify_rolled_back' + sfx)]
+                else:
+                    acts += [a('health' + sfx, art={'outcome': 'patched', 'health': '{"status":"UP"}'}),
+                             a('verify' + sfx, art={'verified': True, 'detail': 'ACS: runs the digest with spring-webmvc 5.3.18.rhlw-00010'}),
+                             a('notify_patched' + sfx)]
+            if path.endswith('/activities'):
+                return {'resources': acts}
+            running = prod and ph == 'gate' and plan != 'build_failed'     # a failed build ends the execution
+            return {'status': 'running' if running else 'completed'}
+        ctr.configure(ao_call=ao)
+
+    def tearDown(self):
+        ctr.configure(demo_mode=lambda: True, ao_call=None)
+
+    def prepared(self):
+        self.assertEqual(ctr.start_assess('lw-evt-spring-webmvc')[0], 200)
+        wait({'assessed'})
+        self.assertEqual(ctr.start_generate()[0], 200)
+        ctr.configure(demo_mode=lambda: False)            # the run goes to AO; intake was answered from fixtures
+
+    def test_lab_patches_and_prod_waits_then_approval_completes(self):
+        self.prepared()
+        self.assertEqual(ctr.start_dispatch()[0], 200)
+        st = wait({'awaiting_approval'})
+        by = {h['namespace']: h for h in st['hosts']}
+        self.assertEqual(by['nfvo-lab']['outcome'], 'patched')
+        self.assertIn('rhlw-00010', by['nfvo-lab']['detail'])
+        self.assertEqual(by['nfvo-lab']['evidence']['image_digest'], 'sha256:' + 'b' * 64)
+        self.assertEqual(by['nfvo-prod']['outcome'], 'awaiting_approval')
+        inp = {c['input_data']['namespace']: c['input_data'] for c in self.created}
+        self.assertEqual((inp['nfvo-lab']['group'], inp['nfvo-prod']['group']), ('lab_auto', 'prod_review'))
+        self.assertEqual(inp['nfvo-prod']['gitops_path'], 'apps/cluster-x8v2s/nfvo-prod/workflow-engine/kustomization.yaml')
+        self.assertEqual(inp['nfvo-lab']['port'], '8090')
+        self.assertIn('CVE-2023-20860', inp['nfvo-lab']['lightwell_fixed'])
+        self.assertEqual(ctr.decide(by['nfvo-prod']['key'], 'approved')[0], 200)
+        self.assertEqual(self.signals, [('ex-nfvo-prod', {'signal_data': {'decision': 'approved'}})])
+        st = wait({'complete'})
+        self.assertEqual(st['summary']['patched'], 2)
+
+    def test_unhealthy_rollout_is_rolled_back(self):
+        self.plan['ex-nfvo-lab'] = 'rolled_back'
+        self.prepared()
+        ctr.start_dispatch()
+        st = wait({'awaiting_approval'})
+        lab = next(h for h in st['hosts'] if h['namespace'] == 'nfvo-lab')
+        self.assertEqual(lab['outcome'], 'rolled_back')
+        self.assertIn('timed out', lab['detail'])
+        self.assertEqual(lab['steps']['rollback'], 'done')
+
+    def test_a_failed_build_deploys_nothing(self):
+        self.plan['ex-nfvo-lab'] = self.plan['ex-nfvo-prod'] = 'build_failed'
+        self.prepared()
+        ctr.start_dispatch()
+        st = wait({'complete'})
+        self.assertTrue(all(h['outcome'] == 'failed' and 'nothing deployed' in h['detail'] for h in st['hosts']))
+
+    def test_reject_signals_ao_and_files_a_deferral(self):
+        self.prepared()
+        ctr.start_dispatch()
+        st = wait({'awaiting_approval'})
+        prod = next(h for h in st['hosts'] if h['namespace'] == 'nfvo-prod')
+        ctr.configure(acs_call=lambda m, p, params, body: {'exception': {'id': 'def-1'}})
+        self.assertEqual(ctr.decide(prod['key'], 'rejected')[0], 200)
+        st = wait({'complete'})
+        self.assertEqual(next(h for h in st['hosts'] if h['namespace'] == 'nfvo-prod')['outcome'], 'deferred')
+        self.assertEqual(self.signals[-1][1], {'signal_data': {'decision': 'rejected'}})
+
+    def test_no_workflow_in_ao_says_how_to_import_it(self):
+        self.prepared()
+        ctr._WF.clear()
+        ctr.configure(ao_call=lambda path, method='GET', body=None: {'resources': []})
+        code, body = ctr.start_dispatch()
+        self.assertEqual(code, 503)
+        self.assertIn('create-ao-workflow.sh', body['error'])
+
+
+class Siblings(unittest.TestCase):
+    def test_every_lightwell_build_for_the_image_rides_one_rebuild(self):
+        demo()
+        ctr.start_assess('lw-evt-json'); wait({'assessed'})
+        ctr.start_generate()
+        st = ctr.state()
+        poms = {e['what']: (e['from'], e['to']) for e in st['change'] if e['file'] == 'pom.xml'}
+        # org.json's pom.xml says 20220320 (Lightwell: 20220320.0.0); json-path rides the same rebuild.
+        self.assertEqual(poms['json version'], ('20220320', '20220320.0.0.rhlw-00003'))
+        self.assertEqual(poms['json-path version'], ('2.8.0', '2.8.0.rhlw-00001'))
+        self.assertIn('CVE-2023-51074', st['lightwell_fixed'])
+        self.assertTrue(st['ok'])
 
 
 if __name__ == '__main__':

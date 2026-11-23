@@ -1,0 +1,652 @@
+{
+  "name": "Container Patch",
+  "schema_version": "2.0.0",
+  "description": "Containers: commit the fix, build and scan and sign, roll out lab first, production after approval, check health (roll back through GitOps if not), verify with ACS, post the card.",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "name": "Container fix",
+      "type": "manual_trigger",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "parameters": {
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "app",
+            "run_id",
+            "namespace",
+            "group",
+            "changes_json",
+            "gitops_path"
+          ],
+          "properties": {
+            "app": {
+              "type": "string",
+              "default": "workflow-engine",
+              "description": "The app (its GitLab repo is telco/app-<app>)"
+            },
+            "run_id": {
+              "type": "string",
+              "default": "",
+              "description": "The console's run id: branch fix/<run_id>, image tag"
+            },
+            "namespace": {
+              "type": "string",
+              "default": "nfvo-lab",
+              "description": "The deployment namespace"
+            },
+            "cluster": {
+              "type": "string",
+              "default": "production",
+              "description": "The ACS cluster name"
+            },
+            "group": {
+              "type": "string",
+              "default": "lab_auto",
+              "description": "lab_auto rolls out straight away; prod_review waits for approval"
+            },
+            "changes_json": {
+              "type": "string",
+              "default": "[]",
+              "description": "The change from the console: [{file, what, from, to}]"
+            },
+            "gitops_path": {
+              "type": "string",
+              "default": "",
+              "description": "apps/<cluster>/<namespace>/<app>/kustomization.yaml"
+            },
+            "port": {
+              "type": "string",
+              "default": "8090",
+              "description": "The app's port, for /health"
+            },
+            "fix_component": {
+              "type": "string",
+              "default": "",
+              "description": "The fixed library (artifact)"
+            },
+            "fix_group": {
+              "type": "string",
+              "default": "",
+              "description": "Its Maven group"
+            },
+            "fix_version": {
+              "type": "string",
+              "default": "",
+              "description": "The version the image should report afterwards"
+            },
+            "lightwell_fixed": {
+              "type": "string",
+              "default": "",
+              "description": "CVEs the Lightwell build fixes (waived in the roxctl gate)"
+            },
+            "cves": {
+              "type": "string",
+              "default": "",
+              "description": "For the cards"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "commit",
+      "name": "Commit the fix (GitLab)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 240,
+        "y": 300
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "run_id": "${trigger.run_id}",
+          "changes_json": "${trigger.changes_json}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Commit",
+        "organization_name": "Default"
+      },
+      "settings": {
+        "retry_policy": {
+          "max_retries": 2,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      }
+    },
+    {
+      "id": "build_scan",
+      "name": "Build, scan (roxctl) and sign",
+      "type": "aap_job_template",
+      "position": {
+        "x": 480,
+        "y": 300
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "run_id": "${trigger.run_id}",
+          "lightwell_fixed": "${trigger.lightwell_fixed}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Build and Scan",
+        "organization_name": "Default"
+      },
+      "settings": {
+        "retry_policy": {
+          "max_retries": 2,
+          "initial_interval": 10,
+          "backoff_coefficient": 2.0
+        }
+      }
+    },
+    {
+      "id": "build_switch",
+      "name": "Build passed?",
+      "type": "switch",
+      "position": {
+        "x": 720,
+        "y": 300
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Passed: to the deployment",
+            "condition": "${build_scan.artifacts.build_outcome} == 'passed'"
+          },
+          {
+            "port": "case_1",
+            "label": "Failed: nothing deployed",
+            "condition": "${build_scan.artifacts.build_outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "notify_build_failed",
+      "name": "Card: build or scan failed",
+      "type": "aap_job_template",
+      "position": {
+        "x": 960,
+        "y": 560
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "run_id": "${trigger.run_id}",
+          "outcome": "build_failed",
+          "detail": "${build_scan.artifacts.failed_reason} ${build_scan.artifacts.scan_summary}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Notify",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "route_switch",
+      "name": "Lab or production?",
+      "type": "switch",
+      "position": {
+        "x": 960,
+        "y": 300
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Lab (no approval)",
+            "condition": "${trigger.group} == 'lab_auto'"
+          },
+          {
+            "port": "case_1",
+            "label": "Production (approval)",
+            "condition": "${trigger.group} == 'prod_review'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "approval_prod",
+      "name": "Approve production rollout",
+      "type": "approval",
+      "position": {
+        "x": 1200,
+        "y": 480
+      },
+      "parameters": {}
+    },
+    {
+      "id": "deploy",
+      "name": "Pin the digest in GitOps",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1200,
+        "y": 120
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "gitops_path": "${trigger.gitops_path}",
+          "run_id": "${trigger.run_id}",
+          "image_digest": "${build_scan.artifacts.image_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Deploy",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "health",
+      "name": "Rollout health",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1440,
+        "y": 120
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "port": "${trigger.port}",
+          "image_digest": "${build_scan.artifacts.image_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Rollout Health",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "outcome_switch",
+      "name": "Healthy?",
+      "type": "switch",
+      "position": {
+        "x": 1680,
+        "y": 120
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Healthy",
+            "condition": "${health.artifacts.outcome} == 'patched'"
+          },
+          {
+            "port": "case_1",
+            "label": "Unhealthy: roll back",
+            "condition": "${health.artifacts.outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "verify",
+      "name": "Verify with ACS",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1920,
+        "y": 0
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "image_digest": "${build_scan.artifacts.image_digest}",
+          "fix_component": "${trigger.fix_component}",
+          "fix_group": "${trigger.fix_group}",
+          "fix_version": "${trigger.fix_version}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Verify (ACS)",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "notify_patched",
+      "name": "Card: patched",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2160,
+        "y": 0
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "run_id": "${trigger.run_id}",
+          "outcome": "patched",
+          "detail": "${verify.artifacts.detail}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Notify",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "rollback",
+      "name": "Roll back through GitOps",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1920,
+        "y": 240
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "gitops_path": "${trigger.gitops_path}",
+          "run_id": "${trigger.run_id}",
+          "port": "${trigger.port}",
+          "previous_digest": "${deploy.artifacts.previous_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Rollback",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "notify_rolled_back",
+      "name": "Card: rolled back",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2160,
+        "y": 240
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "run_id": "${trigger.run_id}",
+          "outcome": "rolled_back",
+          "detail": "${health.artifacts.failed_step}: ${health.artifacts.failed_reason}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Notify",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "deploy_prod",
+      "name": "Pin the digest in GitOps (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1440,
+        "y": 480
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "gitops_path": "${trigger.gitops_path}",
+          "run_id": "${trigger.run_id}",
+          "image_digest": "${build_scan.artifacts.image_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Deploy",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "health_prod",
+      "name": "Rollout health (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 1680,
+        "y": 480
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "port": "${trigger.port}",
+          "image_digest": "${build_scan.artifacts.image_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Rollout Health",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "outcome_switch_prod",
+      "name": "Healthy? (prod)",
+      "type": "switch",
+      "position": {
+        "x": 1920,
+        "y": 480
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Healthy",
+            "condition": "${health_prod.artifacts.outcome} == 'patched'"
+          },
+          {
+            "port": "case_1",
+            "label": "Unhealthy: roll back",
+            "condition": "${health_prod.artifacts.outcome} == 'failed'"
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "verify_prod",
+      "name": "Verify with ACS (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2160,
+        "y": 360
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "image_digest": "${build_scan.artifacts.image_digest}",
+          "fix_component": "${trigger.fix_component}",
+          "fix_group": "${trigger.fix_group}",
+          "fix_version": "${trigger.fix_version}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Verify (ACS)",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "notify_patched_prod",
+      "name": "Card: patched (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2400,
+        "y": 360
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "run_id": "${trigger.run_id}",
+          "outcome": "patched",
+          "detail": "${verify_prod.artifacts.detail}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Notify",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "rollback_prod",
+      "name": "Roll back through GitOps (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2160,
+        "y": 600
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "gitops_path": "${trigger.gitops_path}",
+          "run_id": "${trigger.run_id}",
+          "port": "${trigger.port}",
+          "previous_digest": "${deploy_prod.artifacts.previous_digest}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Rollback",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "notify_rolled_back_prod",
+      "name": "Card: rolled back (prod)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2400,
+        "y": 600
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app": "${trigger.app}",
+          "namespace": "${trigger.namespace}",
+          "run_id": "${trigger.run_id}",
+          "outcome": "rolled_back",
+          "detail": "${health_prod.artifacts.failed_step}: ${health_prod.artifacts.failed_reason}"
+        },
+        "credential_id": "REPLACED_BY_create-ao-workflow.sh",
+        "integration_id": "REPLACED_BY_create-ao-workflow.sh",
+        "job_template_name": "CTR - Notify",
+        "organization_name": "Default"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "trigger_manual",
+      "to": "commit"
+    },
+    {
+      "from": "commit",
+      "to": "build_scan"
+    },
+    {
+      "from": "build_scan",
+      "to": "build_switch"
+    },
+    {
+      "from": "build_switch",
+      "to": "route_switch",
+      "from_port": "case_0"
+    },
+    {
+      "from": "build_switch",
+      "to": "notify_build_failed",
+      "from_port": "case_1"
+    },
+    {
+      "from": "route_switch",
+      "to": "deploy",
+      "from_port": "case_0"
+    },
+    {
+      "from": "route_switch",
+      "to": "approval_prod",
+      "from_port": "case_1"
+    },
+    {
+      "from": "approval_prod",
+      "to": "deploy_prod",
+      "from_port": "approved"
+    },
+    {
+      "from": "deploy",
+      "to": "health"
+    },
+    {
+      "from": "health",
+      "to": "outcome_switch"
+    },
+    {
+      "from": "outcome_switch",
+      "to": "verify",
+      "from_port": "case_0"
+    },
+    {
+      "from": "verify",
+      "to": "notify_patched"
+    },
+    {
+      "from": "outcome_switch",
+      "to": "rollback",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback",
+      "to": "notify_rolled_back"
+    },
+    {
+      "from": "deploy_prod",
+      "to": "health_prod"
+    },
+    {
+      "from": "health_prod",
+      "to": "outcome_switch_prod"
+    },
+    {
+      "from": "outcome_switch_prod",
+      "to": "verify_prod",
+      "from_port": "case_0"
+    },
+    {
+      "from": "verify_prod",
+      "to": "notify_patched_prod"
+    },
+    {
+      "from": "outcome_switch_prod",
+      "to": "rollback_prod",
+      "from_port": "case_1"
+    },
+    {
+      "from": "rollback_prod",
+      "to": "notify_rolled_back_prod"
+    }
+  ]
+}

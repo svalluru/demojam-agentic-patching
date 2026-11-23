@@ -4998,7 +4998,8 @@ appv2.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause,
                 rag_add=app_history_add, osv_lookup=osv_lookup, lightwell_builds=lightwell_builds,
                 k8s_get=k8s_get, k8s_patch=k8s_patch, aap_call=aap_call, lab_ping=lab_ping, roi=appv2_roi,
                 http_head=nexus_head)
-ctr.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause, llm=llm_answer, rag_search=app_history_search)
+ctr.configure(env=env, demo_mode=demo_mode, demo_pause=demo_pause, llm=llm_answer, rag_search=app_history_search,
+              ao_call=ao_call)
 
 _RUN: dict[str, Any] = {'status': 'idle', 'events': []}
 _RUN_LOCK = threading.Lock()
@@ -5816,6 +5817,9 @@ def serve(host: str, port: int) -> None:
     lab_note = lab_guard()
     if lab_note:
         print(f'  lab: {lab_note}')
+    ctr_restored = ctr.restore()
+    if ctr_restored.get('restored'):
+        print('  containers: restored run' + (f", following {', '.join(ctr_restored['resumed'])}" if ctr_restored['resumed'] else ''))
     restored = appv2.restore()
     if restored.get('restored'):
         print(f'  apps v2: restored run ({restored["status"]})'
