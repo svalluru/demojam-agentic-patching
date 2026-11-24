@@ -327,6 +327,68 @@ class StaleAoRecord(unittest.TestCase):
         ctr.configure(ao_call=None, aap_call=None)
 
 
+class ResetDemo(unittest.TestCase):
+    def setUp(self):
+        demo(CTR_POLL_SECONDS='0')
+        ctr._RESET.clear()
+
+    def tearDown(self):
+        ctr.configure(demo_mode=lambda: True, aap_call=None)
+        ctr._RESET.clear()
+
+    def test_demo_mode_clears_the_run(self):
+        ctr.start_assess('lw-evt-spring-webmvc'); wait({'assessed'})
+        code, body = ctr.reset_demo()
+        self.assertEqual((code, ctr.state()['status'], body['demo_reset']['status']), (200, 'idle', 'done'))
+
+    def aap(self, final='successful', artifacts=None):
+        self.calls = []
+        def call(path, method='GET', body=None):
+            self.calls.append((method, path))
+            if path.startswith('/job_templates/?name='):
+                return {'results': [{'id': 77, 'name': 'CTR - Reset Demo'}]}
+            if path == '/job_templates/77/launch/':
+                return {'id': 501}
+            if path == '/jobs/501/':
+                return {'status': final, 'artifacts': artifacts if artifacts is not None else
+                        {'reset_ok': True, 'reset': [{'app': 'workflow-engine', 'namespace': 'nfvo-lab', 'ready': True}]}}
+            raise AssertionError(path)
+        ctr.configure(demo_mode=lambda: False, aap_call=call)
+
+    def wait_reset(self):
+        for _ in range(200):
+            if ctr._RESET.get('status') != 'running':
+                return dict(ctr._RESET)
+            time.sleep(0.01)
+        raise AssertionError('reset still running')
+
+    def test_live_launches_the_aap_job_and_clears_the_run(self):
+        with ctr._LOCK:
+            ctr._RUN.update(status='complete', run_id='old')
+        ctr._FIX_CACHE['v'] = (time.time(), {'fixes': []})
+        self.aap()
+        code, body = ctr.reset_demo()
+        self.assertEqual((code, body['demo_reset']['job_id']), (200, 501))
+        self.assertIn(('POST', '/job_templates/77/launch/'), self.calls)
+        r = self.wait_reset()
+        self.assertEqual((r['status'], r['reset'][0]['namespace']), ('done', 'nfvo-lab'))
+        self.assertEqual(ctr.state()['status'], 'idle')
+        self.assertEqual(ctr._FIX_CACHE, {})                      # the inbox re-reads ACS
+
+    def test_a_failed_job_is_reported(self):
+        self.aap(final='failed', artifacts={})
+        ctr.reset_demo()
+        r = self.wait_reset()
+        self.assertEqual(r['status'], 'failed')
+        self.assertIn('501', r['note'])
+
+    def test_refused_while_a_run_is_at_the_gate(self):
+        with ctr._LOCK:
+            ctr._RUN.update(status='awaiting_approval')
+        self.aap()
+        self.assertEqual(ctr.reset_demo()[0], 409)
+
+
 class Siblings(unittest.TestCase):
     def test_every_lightwell_build_for_the_image_rides_one_rebuild(self):
         demo()

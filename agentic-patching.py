@@ -5713,6 +5713,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/ctr/dispatch': ctr.start_dispatch,
             '/api/ctr/decide': lambda: ctr.decide(str(payload.get('key', '')), str(payload.get('decision', ''))),
             '/api/ctr/reset': ctr.reset,
+            '/api/ctr/reset-demo': ctr.reset_demo,
         }
         if path not in routes:
             self._send(404, {'ok': False, 'error': 'not found'})

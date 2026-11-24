@@ -2462,6 +2462,9 @@
   .g-flow td:nth-child(3) { color: var(--muted); width: 22%; }
   .g-flow td:nth-child(4) { width: 24%; }
   .g-flow tr { cursor: default; }
+  .ctr-reset-row { display: flex; gap: 14px; align-items: flex-start; padding: 8px 0 14px; }
+  .ctr-reset-row > div { flex: 1; }
+  .ctr-reset-row b { font-size: calc(12.5px * var(--ts)); }
 </style>
 <script>
   // Before first paint, on purpose: applied from the main script instead,
@@ -3339,11 +3342,14 @@
         <section>
           <h3>Between demos</h3>
           <ul>
-            <li><strong>Put the sites back on the old image.</strong> In GitLab <code>telco/gitops</code>, the history of
-              <code>apps/production/nfvo-lab/workflow-engine/kustomization.yaml</code> (and nfvo-prod) shows the original
-              digest. Pin it again, or launch AAP <em>CTR - Rollback</em> with <code>previous_digest</code> set to it.
-              Argo CD syncs in seconds.</li>
-            <li><strong>Clear the run:</strong> Containers → Back to fixes (or <code>POST /api/ctr/reset</code>).</li>
+            <li><strong>Put the sites back on the old images:</strong> Settings (gear) → Advanced → <em>Containers demo</em> →
+              <strong>Reset…</strong>. It runs the AAP job <em>CTR - Reset Demo</em>: each app's original image (its first
+              build) is pinned again in GitOps for nfvo-lab, nfvo-prod, oss-lab and oss-prod, Argo CD syncs, and the run is
+              cleared. About a minute; the Containers header says "Resetting images…" meanwhile, then the inbox lists the
+              Spring and JSON fixes again.</li>
+            <li><strong>By hand, if needed:</strong> in GitLab <code>telco/gitops</code> the history of each
+              <code>apps/production/&lt;namespace&gt;/&lt;app&gt;/kustomization.yaml</code> shows the original digest; pin it
+              again, or launch AAP <em>CTR - Rollback</em> with <code>previous_digest</code> set to it.</li>
             <li>PipelineRuns and <code>fix/…</code> branches stay: they are part of the record (and PipelineRuns are never
               deleted in agentic-patching).</li>
           </ul>
@@ -3444,6 +3450,18 @@
             changes. Small is what the console looked like before this existed.</div>
         </div>
         <div id="settings-advanced"></div>
+        <!-- Not a setting: a presenter's tool, kept out of the main flow on purpose. -->
+        <div class="set-group">Containers demo</div>
+        <div class="ctr-reset-row">
+          <div>
+            <b>Reset images to original</b>
+            <div class="muted-sm">Puts workflow-engine (nfvo-lab, nfvo-prod) and inventory-service (oss-lab, oss-prod)
+              back on their original images through GitOps, so ACS finds the old jars and the Containers use cases can be
+              run again. About a minute. The patched images stay in the registry; GitLab keeps every commit.</div>
+            <div class="muted-sm" id="ctr-reset-msg"></div>
+          </div>
+          <button type="button" class="ghost-btn" id="ctr-reset-btn">Reset…</button>
+        </div>
       </div>
     </div>
     <div class="drawer-foot">
@@ -9636,7 +9654,11 @@ async function ctrLoad(force) {
   } catch (e) { ctr.err = e.message; }
   if (!document.getElementById('ctr-pane').hidden) ctrRender();
   clearTimeout(ctr.timer);
-  if (CTR_BUSY.includes(ctr.state.status)) ctr.timer = setTimeout(() => ctrLoad(), 900);
+  const resetting = (ctr.state.demo_reset || {}).status === 'running';
+  if (resetting) ctr.wasResetting = true;
+  else if (ctr.wasResetting) { ctr.wasResetting = false; ctr.at = 0; return ctrLoad(true); }   // done: re-read ACS
+  ctrResetMsg();
+  if (CTR_BUSY.includes(ctr.state.status) || resetting) ctr.timer = setTimeout(() => ctrLoad(), resetting ? 3000 : 900);
 }
 
 // The Applications side's cross-link: a Lightwell fix that ACS also found inside container images.
@@ -9754,6 +9776,7 @@ function ctrRender() {
     <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc((ctr.fixes || {}).cluster || '')}</span>
       <span class="c-tag" ${live ? 'style="color:var(--blue);border-color:rgba(0,102,204,.35);background:rgba(0,102,204,.07)"' : ''}
         title="${live ? 'Intake and assessment read ACS; the run is a simulator until the container workflow exists in AO' : 'ACS answered from fixtures; nothing is called'}">${live ? 'Live ACS' : 'Demo data'}</span>
+      ${(s.demo_reset || {}).status === 'running' ? '<span class="pill-s warn" title="Settings → Advanced → Containers demo">Resetting images to original…</span>' : ''}
       ${s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh" style="margin-left:auto">Refresh</button>'}</div>
     ${ctr.err ? `<div class="c-alert">${esc(ctr.err)}</div>` : ''}
     ${ctr.fixes || ctr.err ? body : '<div class="empty"><div class="spinner"></div><span>Asking ACS…</span></div>'}
@@ -9802,6 +9825,30 @@ document.addEventListener('click', async e => {
   }
   ctrLoad();
 });
+// Settings → Advanced → Containers demo → Reset images to original.
+function ctrResetMsg() {
+  const el = document.getElementById('ctr-reset-msg'); if (!el) return;
+  const d = (ctr.state || {}).demo_reset || {}, busy = CTR_BUSY.includes((ctr.state || {}).status);
+  const btn = document.getElementById('ctr-reset-btn');
+  if (btn) { btn.disabled = busy || d.status === 'running'; btn.title = busy ? 'A Containers run is open: finish or cancel it first' : ''; }
+  el.textContent = d.status === 'running' ? `Resetting… (AAP job ${d.job_id})`
+    : d.status === 'done' ? `Last reset ${String(d.finished_at || d.at || '').replace('T', ' ').slice(0, 16)}${d.note ? ' · ' + d.note : ''}`
+    : d.status === 'failed' ? `Last reset failed: ${d.note || ''}` : '';
+}
+document.getElementById('ctr-reset-btn').addEventListener('click', async () => {
+  const ok = await apDialog({ title: 'Reset the Containers demo', ok: 'Reset images', cancel: 'Cancel',
+    body: `<p>Puts nfvo-lab, nfvo-prod, oss-lab and oss-prod back on their original images through GitOps (AAP job
+      <em>CTR - Reset Demo</em>), and clears the Containers run. Takes about a minute; the Containers inbox then lists the
+      Spring and JSON fixes again.</p>` });
+  if (!ok) return;
+  try {
+    const r = await ctrApi('/api/ctr/reset-demo', {});
+    ctr.state = { ...(ctr.state || {}), demo_reset: r.demo_reset };
+    ctrResetMsg();
+    ctrLoad(true);
+  } catch (e) { apNotice({ title: 'Reset the Containers demo', body: `<p>${esc(e.message)}</p>` }); }
+});
+
 // The Applications cross-link needs the Containers fixes; ask once, quietly, after the page settles.
 setTimeout(() => ctrLoad(), 1500);
 

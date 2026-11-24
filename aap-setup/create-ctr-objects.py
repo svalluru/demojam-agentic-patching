@@ -14,7 +14,7 @@
   inventory     CTR localhost             one host, localhost (the jobs only call APIs)
   project       CTR Automation            telco/ctr-automation
   templates     CTR - Commit, CTR - Build and Scan, CTR - Deploy, CTR - Rollout Health, CTR - Verify (ACS),
-                CTR - Rollback, CTR - Notify
+                CTR - Rollback, CTR - Notify, CTR - Reset Demo
 
 Settings from .env: AAP_BASE_URL, AAP_TOKEN, CTR_GITLAB_TOKEN, OCP_API_URL, ACS_URL, ACS_TOKEN, NEXUS_URL, and
 optionally CTR_MATTERMOST_WEBHOOK. oc must be logged in to OCP_API_URL (for the ctr-runner token).
@@ -47,6 +47,7 @@ TEMPLATES = {
     'CTR - Verify (ACS)': ('ctr_verify.yml', 'ACS: the deployment runs the digest, with the fixed component version'),
     'CTR - Rollback': ('ctr_rollback.yml', 'Put the previous digest back through GitOps'),
     'CTR - Notify': ('ctr_notify.yml', 'The outcome card (Mattermost when configured)'),
+    'CTR - Reset Demo': ('ctr_reset.yml', 'Put every Containers deployment back on its original image (GitOps), to run the use cases again'),
 }
 PLAYBOOK_DIR = 'aap-setup/playbooks'
 

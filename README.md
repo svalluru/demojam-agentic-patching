@@ -870,6 +870,10 @@ CVE in a running container image from finding to a verified rollout, the same wa
 separate copy, and a swap changes nothing in git. Assess names the Applications run that patched the app's servers.
 After **Rebuild from source**, the pom.xml fix is already in branch `fix/<run>`.
 
+**Run it again:** Settings → Advanced → *Containers demo* → **Reset…** puts every Containers deployment back on its
+original image (the AAP job `CTR - Reset Demo` pins each app's first build in GitOps; Argo CD syncs) and clears the
+run, so ACS finds the old jars and the use cases can be repeated.
+
 **Live ACS:** set `ACS_URL` (the Central route), `ACS_TOKEN` (an API token whose access scope covers the clusters this
 console is responsible for), and optionally `ACS_VERIFY_TLS=false`, `CTR_WEBHOOK_TOKEN`, `CTR_WINDOWS` (JSON,
 namespace to window) and `CTR_VECTOR_DB_ID` (a container rollout history store). Intake and assessment then read ACS

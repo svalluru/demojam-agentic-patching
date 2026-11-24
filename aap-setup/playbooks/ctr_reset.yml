@@ -1,0 +1,90 @@
+---
+# Containers · Reset Demo. Put every Containers deployment back on its original image, so ACS finds the old jars
+# again and the use cases can be run once more. The original image of each app is the newest successful first build
+# ctr-setup/deploy.py made (PipelineRun labelled ctr/purpose=seed). Same route as a rollback: the digest is pinned in
+# GitOps and Argo CD syncs it; nothing on the cluster is edited by hand. Idempotent.
+#
+# extra_vars (optional): cluster (default production), deployments ([{app, namespace}], default the four below)
+# env (credential "Containers"): CTR_GITLAB_URL, CTR_GITLAB_TOKEN, CTR_OCP_API, CTR_OCP_TOKEN
+# artifacts: reset_ok, reset (per deployment: app, namespace, digest, ready)
+- name: Reset the Containers demo
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    api: "{{ lookup('env', 'CTR_OCP_API') | regex_replace('/$', '') }}"
+    ocp: { Authorization: "Bearer {{ lookup('env', 'CTR_OCP_TOKEN') }}" }
+    the_cluster: "{{ cluster | default('production') }}"
+    targets: >-
+      {{ deployments | default([
+           {'app': 'workflow-engine', 'namespace': 'nfvo-lab'}, {'app': 'workflow-engine', 'namespace': 'nfvo-prod'},
+           {'app': 'inventory-service', 'namespace': 'oss-lab'}, {'app': 'inventory-service', 'namespace': 'oss-prod'}]) }}
+  tasks:
+    - name: The first builds of each app
+      ansible.builtin.uri:
+        url: "{{ api }}/apis/tekton.dev/v1/namespaces/agentic-patching/pipelineruns?labelSelector={{ ('ctr/purpose=seed,ctr/app=' ~ item) | urlencode }}"
+        headers: "{{ ocp }}"
+        validate_certs: false
+      loop: "{{ targets | map(attribute='app') | unique | list }}"
+      register: seeds
+
+    - name: Each app's original image (the newest successful first build)
+      ansible.builtin.set_fact:
+        original: >-
+          {%- set out = {} -%}
+          {%- for r in seeds.results -%}
+            {%- set ok = [] -%}
+            {%- for pr in r.json['items'] | default([]) -%}
+              {%- set cond = (pr.status | default({})).conditions | default([]) | selectattr('type', 'equalto', 'Succeeded') | list -%}
+              {%- set dig = ((pr.status | default({})).results | default([]) | selectattr('name', 'equalto', 'IMAGE_DIGEST') | map(attribute='value') | list) -%}
+              {%- if cond and cond[0].status == 'True' and dig -%}
+                {%- set _ = ok.append({'at': pr.metadata.creationTimestamp, 'digest': dig[0]}) -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if ok -%}{%- set _ = out.update({r.item: (ok | sort(attribute='at') | last).digest}) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Every app needs an original image
+      ansible.builtin.assert:
+        that: "{{ targets | map(attribute='app') | unique | reject('in', original) | list | length == 0 }}"
+        fail_msg: "no successful first build (ctr/purpose=seed) for: {{ targets | map(attribute='app') | unique | reject('in', original) | join(', ') }}"
+
+    - name: Pin it in GitOps for each deployment
+      ansible.builtin.include_tasks: ctr_pin.yml
+      loop: "{{ targets }}"
+      loop_control: { loop_var: t, label: "{{ t.namespace }}/{{ t.app }}" }
+      vars:
+        app: "{{ t.app }}"
+        namespace: "{{ t.namespace }}"
+        gitops_path: "apps/{{ the_cluster }}/{{ t.namespace }}/{{ t.app }}/kustomization.yaml"
+        pin_digest: "{{ original[t.app] }}"
+        pin_message: "Containers demo reset: {{ t.namespace }}/{{ t.app }} to its original image {{ original[t.app][:19] }}"
+
+    - name: Wait for every replica on the original image
+      ansible.builtin.uri:
+        url: "{{ api }}/apis/apps/v1/namespaces/{{ t.namespace }}/deployments/{{ t.app }}"
+        headers: "{{ ocp }}"
+        validate_certs: false
+      loop: "{{ targets }}"
+      loop_control: { loop_var: t, label: "{{ t.namespace }}/{{ t.app }}" }
+      register: rolled
+      until: >-
+        original[t.app] in rolled.json.spec.template.spec.containers[0].image
+        and (rolled.json.status.readyReplicas | default(0)) == rolled.json.spec.replicas
+        and (rolled.json.status.updatedReplicas | default(0)) == rolled.json.spec.replicas
+        and (rolled.json.status.replicas | default(0)) == rolled.json.spec.replicas
+      retries: 60
+      delay: 5
+      ignore_errors: true
+
+    - name: Hand the result to the console
+      ansible.builtin.set_stats:
+        data:
+          reset_ok: "{{ rolled.results | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0 }}"
+          reset: >-
+            {%- set out = [] -%}
+            {%- for r in rolled.results -%}
+              {%- set _ = out.append({'app': r.t.app, 'namespace': r.t.namespace, 'digest': original[r.t.app], 'ready': not (r.failed | default(false))}) -%}
+            {%- endfor -%}
+            {{ out }}

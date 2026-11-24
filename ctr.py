@@ -338,7 +338,10 @@ BUSY = ('assessing', 'generating', 'running', 'awaiting_approval')
 
 def state() -> dict:
     with _LOCK:
-        return json.loads(json.dumps(_RUN))
+        out = json.loads(json.dumps(_RUN))
+    if _RESET:
+        out['demo_reset'] = dict(_RESET)
+    return out
 
 
 def _set(**kw) -> None:
@@ -358,6 +361,62 @@ def reset() -> tuple[int, dict]:
         _RUN.clear()
         _RUN['status'] = 'idle'
     return 200, {'ok': True}
+
+
+# ---------------------------------------------------------------------------- reset the demo
+
+_RESET: dict[str, Any] = {}
+
+
+def reset_demo() -> tuple[int, dict]:
+    """Put every Containers deployment back on its original image, so the use cases can be run again. Live: the AAP job
+    "CTR - Reset Demo" (GitOps, the first builds' digests), followed in a thread; demo: only the run is cleared."""
+    if state().get('status') in BUSY:
+        return 409, {'ok': False, 'error': 'a Containers run is open: finish or cancel it first'}
+    if _RESET.get('status') == 'running':
+        return 409, {'ok': False, 'error': 'a reset is already running'}
+    if H.demo_mode():
+        reset()
+        _FIX_CACHE.clear()
+        _RESET.clear(); _RESET.update(status='done', at=now_iso(), note='demo mode: the run was cleared (the fixtures never change)')
+        return 200, {'ok': True, 'demo_reset': dict(_RESET)}
+    if not H.aap_call:
+        return 503, {'ok': False, 'error': 'AAP is not configured (AAP_BASE_URL / AAP_TOKEN)'}
+    name = env('CTR_RESET_TEMPLATE', 'CTR - Reset Demo')
+    try:
+        found = (H.aap_call('/job_templates/?name=' + urllib.parse.quote(name)) or {}).get('results') or []
+        jt = next((j for j in found if j.get('name') == name), None)
+        if not jt:
+            return 503, {'ok': False, 'error': f'no AAP job template {name!r}: run ./aap-setup/create-ctr-objects.py'}
+        job = H.aap_call(f"/job_templates/{jt['id']}/launch/", 'POST', {'extra_vars': {}}) or {}
+    except Exception as e:
+        return 502, {'ok': False, 'error': f'AAP: {e}'}
+    if not job.get('id'):
+        return 502, {'ok': False, 'error': f'AAP did not start the job: {str(job)[:160]}'}
+    _RESET.clear(); _RESET.update(status='running', job_id=job['id'], started_at=now_iso())
+    threading.Thread(target=_follow_reset, args=(job['id'],), daemon=True).start()
+    return 200, {'ok': True, 'demo_reset': dict(_RESET)}
+
+
+def _follow_reset(job_id: int) -> None:
+    deadline = time.time() + int(env('CTR_RESET_TIMEOUT', '900'))
+    while time.time() < deadline:
+        try:
+            j = H.aap_call(f'/jobs/{job_id}/') or {}
+        except Exception:
+            j = {}
+        st = j.get('status', '')
+        if st in ('successful', 'failed', 'error', 'canceled'):
+            art = j.get('artifacts') or {}
+            ok = st == 'successful' and str(art.get('reset_ok', 'true')).lower() == 'true'
+            _RESET.update(status='done' if ok else 'failed', finished_at=now_iso(), reset=art.get('reset') or [],
+                          note='' if ok else f'AAP job {job_id} {st}')
+            if ok:
+                reset()
+                _FIX_CACHE.clear()
+            return
+        time.sleep(float(env('CTR_POLL_SECONDS', '5')))
+    _RESET.update(status='failed', note=f'AAP job {job_id} did not finish in time')
 
 
 def _servers_patched(app: str, component: str) -> dict | None:
