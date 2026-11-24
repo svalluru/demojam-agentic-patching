@@ -7,6 +7,13 @@
     headers: { PRIVATE-TOKEN: "{{ lookup('env', 'CTR_GITLAB_TOKEN') }}" }
   register: pin_cur
 
+- name: Exactly one image, and a real digest to pin
+  ansible.builtin.assert:
+    that:
+      - (pin_cur.json.content | b64decode) | regex_findall('digest:\\s*sha256:[0-9a-f]{64}') | length == 1
+      - pin_digest is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "{{ gitops_path }} must pin exactly one digest, and '{{ pin_digest }}' must be one: nothing was changed"
+
 - name: Pin the digest
   ansible.builtin.uri:
     url: "{{ lookup('env', 'CTR_GITLAB_URL') | regex_replace('/$', '') }}/api/v4/projects/telco%2Fgitops/repository/files/{{ gitops_path | urlencode | replace('/', '%2F') }}"

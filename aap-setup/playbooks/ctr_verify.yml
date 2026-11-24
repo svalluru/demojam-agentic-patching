@@ -7,7 +7,8 @@
 # carries the fixes. ACS names a jar group:artifact when it has Maven metadata (the Lightwell builds do), else by
 # artifact: both are matched.
 #
-# extra_vars: app, namespace, image_digest, fixes_json ([{group, component, version}]); or, for one fix,
+# extra_vars: app, namespace, image_digest, run_id, fixes_json ([{group, component, version}]), fix_kind and cves (a
+#             base-image fix: those CVEs must be gone from the image); or, for one fix,
 #             fix_component, fix_group, fix_version
 # env (credential "Containers"): CTR_ACS_URL, CTR_ACS_TOKEN
 # artifacts: verified (true|false), acs_version (the picked fix), components (json: per component), detail
@@ -18,10 +19,12 @@
   vars:
     acs: "{{ lookup('env', 'CTR_ACS_URL') | regex_replace('/$', '') }}"
     headers: { Authorization: "Bearer {{ lookup('env', 'CTR_ACS_TOKEN') }}" }
+    # fixes_json, when given (even "[]"), is the whole list: a base-image fix has no Lightwell build to look for.
     wanted: >-
       {{ (fixes_json | from_json if fixes_json is string else fixes_json)
-         if (fixes_json | default('') | string | length > 2)
+         if (fixes_json is defined and fixes_json | string | length > 0)
          else [{'group': fix_group | default(''), 'component': fix_component, 'version': fix_version}] }}
+    base_cves: "{{ (cves | default('')).replace(' ', '').split(',') | select | list if (fix_kind | default('')) == 'base' else [] }}"
   tasks:
     - name: The deployment, as ACS sees it
       ansible.builtin.uri:
@@ -72,6 +75,12 @@
             {%- set ok = found == w.version or (same_base and got_build >= want_build and got_build > 0) -%}
             {%- set _ = out.append({'component': art, 'want': w.version, 'found': found, 'ok': ok}) -%}
           {%- endfor -%}
+          {%- if base_cves -%}
+            {#- A base-image fix: ACS reads OS packages correctly, so the CVEs themselves must be gone from the image. -#}
+            {%- set left = comps | map(attribute='vulns') | map('default', []) | flatten | map(attribute='cve') | select('in', base_cves) | unique | list -%}
+            {%- set _ = out.append({'component': 'base image', 'want': 'no ' ~ (base_cves | join(', ')),
+                                    'found': ('still ' ~ (left | join(', '))) if left else 'CVEs gone', 'ok': (comps | length > 0) and not left}) -%}
+          {%- endif -%}
           {{ out }}
 
     - name: Hand the verdict to the workflow

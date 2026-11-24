@@ -326,7 +326,9 @@ class StaleAoRecord(unittest.TestCase):
         ctr.configure(ao_call=lambda path, method='GET', body=None: {'resources': [
             {'temporal_activity_id': 'approval_prod', 'status': 'waiting'}]} if path.endswith('/activities') else {'status': 'paused'})
         jobs = {'CTR - Notify': [{'status': 'successful', 'extra_vars': json.dumps({'run_id': 'r1', 'namespace': 'nfvo-prod', 'outcome': 'patched'})}],
-                'CTR - Verify (ACS)': [{'status': 'successful', 'extra_vars': json.dumps({'namespace': 'nfvo-prod'}),
+                'CTR - Verify (ACS)': [{'status': 'successful', 'extra_vars': json.dumps({'run_id': 'r0', 'namespace': 'nfvo-prod'}),
+                                        'artifacts': {'verified': True, 'detail': 'an earlier run'}},
+                                       {'status': 'successful', 'extra_vars': json.dumps({'run_id': 'r1', 'namespace': 'nfvo-prod'}),
                                         'artifacts': {'verified': True, 'detail': 'ACS: runs with 5.3.18.rhlw-00010'}}]}
         ctr.configure(aap_call=lambda path, method='GET', body=None:
                       {'results': next(v for k, v in jobs.items() if k.replace(' ', '%20').replace('(', '%28').replace(')', '%29') in path)})
@@ -421,6 +423,124 @@ class Siblings(unittest.TestCase):
         self.assertIn('json-path', sib)
         self.assertEqual(sib['json-path']['to'], '2.8.0.rhlw-00001')
         self.assertIn('CVE-2023-51074', sib['json-path']['cves'])
+
+
+class ReviewFixes(unittest.TestCase):
+    """The corner cases a review found: decisions, resets, restores, scopes, policy fixes."""
+
+    def setUp(self):
+        demo(CTR_POLL_SECONDS='0')
+
+    def tearDown(self):
+        ctr.configure(demo_mode=lambda: True, ao_call=None, aap_call=None)
+        ctr._RESET.clear()
+
+    def gate(self, lab_outcome='patched', decided=''):
+        with ctr._LOCK:
+            ctr._RUN.clear()
+            ctr._RUN.update(status='awaiting_approval', run_id='r1', fix={'kind': 'lightwell', 'cves': ['CVE-1']}, stages={},
+                            hosts=[{'key': 'lab', 'env': 'lab', 'image': 'r/x@sha256:1', 'outcome': lab_outcome, 'steps': {}},
+                                   {'key': 'prod', 'env': 'prod', 'image': 'r/x@sha256:1', 'outcome': 'awaiting_approval',
+                                    'steps': {}, 'execution_id': 'ex', 'decided': decided}])
+
+    def test_a_decision_is_taken_once(self):
+        self.gate()
+        self.assertEqual(ctr.decide('prod', 'rejected')[0], 200)
+        self.assertEqual(ctr.decide('prod', 'rejected')[0], 409)
+        self.assertEqual(len(ctr.state().get('deferrals') or []), 1)
+
+    def test_approve_waits_for_the_lab_of_the_same_image(self):
+        self.gate(lab_outcome='running')
+        self.assertEqual(ctr.decide('prod', 'approved')[0], 409)
+        self.gate(lab_outcome='rolled_back')
+        self.assertEqual(ctr.decide('prod', 'approved')[0], 409)
+        self.assertEqual(ctr.decide('prod', 'rejected')[0], 200)      # reject stays possible
+
+    def test_a_decided_gate_that_ao_still_shows_never_comes_back(self):
+        ctr.configure(demo_mode=lambda: False, aap_call=None,
+                      ao_call=lambda path, method='GET', body=None: {'resources': [
+                          {'temporal_activity_id': 'approval_prod', 'status': 'waiting'}]} if path.endswith('/activities') else {'status': 'paused'})
+        self.gate(decided='approved')
+        self.assertFalse(ctr._read_execution('prod'))
+        self.assertEqual(ctr.state()['hosts'][1]['outcome'], 'running')
+        self.gate(decided='rejected')
+        ctr._host('prod', outcome='deferred')
+        self.assertTrue(ctr._read_execution('prod'))                   # settled: the follower stops
+        self.assertEqual(ctr.state()['hosts'][1]['outcome'], 'deferred')
+
+    def test_reset_refuses_an_open_run(self):
+        self.gate()
+        self.assertEqual(ctr.reset()[0], 409)
+        ctr._set(status='assessing')
+        self.assertEqual(ctr.reset()[0], 409)
+
+    def test_no_assessment_while_the_demo_reset_runs(self):
+        ctr._RESET.update(status='running')
+        self.assertEqual(ctr.start_assess('lw-evt-spring-webmvc')[0], 409)
+
+    def test_a_late_assessment_does_not_land_in_another_run(self):
+        ctr.start_assess('lw-evt-spring-webmvc'); wait({'assessed'})
+        fix = ctr.state()['fix']
+        ctr.reset()
+        ctr._assess(fix, 'gone')
+        self.assertEqual(ctr.state()['status'], 'idle')
+
+    def test_an_unexpected_error_ends_the_assessment(self):
+        def boom(*a, **k):
+            raise ValueError('not JSON')
+        ctr.start_assess('lw-evt-spring-webmvc'); wait({'assessed'})
+        fix, rid = ctr.state()['fix'], ctr.state()['run_id']
+        ctr.configure(acs_call=boom)
+        ctr._assess(fix, rid)
+        self.assertEqual(ctr.state()['status'], 'failed')
+        self.assertIn('not JSON', ctr.state()['error'])
+
+    def test_dispatch_is_claimed_once(self):
+        ctr.start_assess('lw-evt-spring-webmvc'); wait({'assessed'})
+        ctr.start_generate()
+        self.assertEqual(ctr.start_dispatch()[0], 200)
+        self.assertEqual(ctr.start_dispatch()[0], 409)
+
+    def test_a_policy_violation_is_not_prepared_as_a_rebuild(self):
+        with ctr._LOCK:
+            ctr._RUN.update(status='assessed', fix={'kind': 'policy', 'images': []}, impact={'targets': [{'key': 'k'}]})
+        code, body = ctr.start_generate()
+        self.assertEqual(code, 400)
+        self.assertIn('policy', body['error'])
+
+    def test_verify_gets_only_lightwell_builds(self):
+        st = {'run_id': 'r', 'fix': {'kind': 'base', 'to': 'registry.access.redhat.com/ubi9@sha256:' + 'a' * 64, 'cves': ['CVE-1']},
+              'siblings': [], 'change': []}
+        h = {'app': 'x', 'name': 'x', 'namespace': 'n', 'cluster': 'c', 'env': 'lab'}
+        inp = ctr._inputs(st, h)
+        self.assertEqual((json.loads(inp['fixes_json']), inp['fix_kind'], inp['health_path']), ([], 'base', '/health'))
+
+    def test_deferral_scope_for_digest_and_tag_images(self):
+        self.assertEqual(ctr._image_scope('image-registry.openshift-image-registry.svc:5000/agentic-patching/workflow-engine@sha256:' + 'a' * 64),
+                         {'registry': 'image-registry.openshift-image-registry.svc:5000', 'remote': 'agentic-patching/workflow-engine', 'tag': '.*'})
+        self.assertEqual(ctr._image_scope('quay.io/telco/inventory-service:2.4'),
+                         {'registry': 'quay.io', 'remote': 'telco/inventory-service', 'tag': '2.4'})
+
+    def test_restore_closes_what_cannot_be_followed(self):
+        d = tempfile.mkdtemp(prefix='ctr-restore-')
+        demo(APPV2_STATE_DIR=d)
+        Path(d, 'ctr-run.json').write_text(json.dumps({'status': 'running', 'run_id': 'r9', 'fix': {}, 'stages': {}, 'hosts': [
+            {'key': 'a', 'outcome': 'patched', 'steps': {}, 'execution_id': 'e1'},
+            {'key': 'b', 'outcome': 'pending', 'steps': {}}]}))
+        ctr.configure(demo_mode=lambda: False)
+        ctr.restore()
+        st = ctr.state()
+        self.assertEqual(st['status'], 'complete')
+        self.assertEqual(st['hosts'][1]['outcome'], 'failed')
+
+    def test_the_run_file_is_replaced_whole(self):
+        d = tempfile.mkdtemp(prefix='ctr-persist-')
+        demo(APPV2_STATE_DIR=d)
+        ctr.configure(demo_mode=lambda: False)
+        ctr._set(status='running', run_id='r2')
+        ctr._persist()
+        self.assertEqual(json.loads(Path(d, 'ctr-run.json').read_text())['run_id'], 'r2')
+        self.assertFalse(Path(d, 'ctr-run.json.tmp').exists())
 
 
 if __name__ == '__main__':

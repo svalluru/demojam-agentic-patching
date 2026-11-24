@@ -10,6 +10,17 @@
   connection: local
   gather_facts: false
   tasks:
+    - name: There must be a previous digest to go back to
+      ansible.builtin.set_stats:
+        data:
+          rolled_back: false
+          restored: "nothing to restore: the deploy handed over no previous digest for {{ namespace }}/{{ app }}"
+      when: not (previous_digest | default('') is match('^sha256:[0-9a-f]{64}$'))
+
+    - name: Stop here without one
+      ansible.builtin.meta: end_play
+      when: not (previous_digest | default('') is match('^sha256:[0-9a-f]{64}$'))
+
     - name: Pin the previous digest again
       ansible.builtin.include_tasks: ctr_pin.yml
       vars:

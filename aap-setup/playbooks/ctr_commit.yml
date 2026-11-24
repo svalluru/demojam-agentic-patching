@@ -43,21 +43,52 @@
     - name: Apply the edits
       ansible.builtin.set_fact:
         # A Jinja namespace: a plain `set` inside a loop does not carry to the next iteration.
+        # pom.xml: the <version> of that artifact (other elements may sit between), or the property it names
+        # (<version>${spring.version}</version> -> <spring.version>). Containerfile: only the final stage's FROM,
+        # keeping its "AS name"; builder stages stay as they are.
         edited: >-
           {%- set out = {} -%}
           {%- for f in files.results -%}
             {%- set ns = namespace(text=(f.json.content | b64decode)) -%}
             {%- for c in changes if c.file == f.item -%}
               {%- if c.file == 'pom.xml' -%}
-                {%- set art = c.what.split(' ')[0] -%}
-                {%- set ns.text = ns.text | regex_replace('(<artifactId>' ~ (art | regex_escape) ~ '</artifactId>\\s*<version>)' ~ (c['from'] | regex_escape) ~ '(</version>)', '\\g<1>' ~ c.to ~ '\\g<2>') -%}
+                {%- set art = c.what.split(' ')[0] | regex_escape -%}
+                {%- set dep = '<artifactId>' ~ art ~ '</artifactId>(?:(?!</dependency>|</plugin>|<artifactId>)[\\s\\S])*?<version>' -%}
+                {%- set ns.text = ns.text | regex_replace('(' ~ dep ~ ')' ~ (c['from'] | regex_escape) ~ '(</version>)', '\\g<1>' ~ c.to ~ '\\g<2>') -%}
+                {%- for prop in ns.text | regex_findall(dep ~ '\\$\\{([\\w.-]+)\\}</version>') -%}
+                  {%- set ns.text = ns.text | regex_replace('(<' ~ (prop | regex_escape) ~ '>)\\s*' ~ (c['from'] | regex_escape) ~ '\\s*(</' ~ (prop | regex_escape) ~ '>)', '\\g<1>' ~ c.to ~ '\\g<2>') -%}
+                {%- endfor -%}
               {%- else -%}
-                {%- set ns.text = ns.text | regex_replace('(?m)^FROM .*$', c.to) -%}
+                {%- set lines = ns.text.split('\n') -%}
+                {%- set last = namespace(i=-1) -%}
+                {%- for l in lines -%}{%- if l is match('^\\s*FROM\\s') -%}{%- set last.i = loop.index0 -%}{%- endif -%}{%- endfor -%}
+                {%- set rebuilt = [] -%}
+                {%- for l in lines -%}
+                  {%- if loop.index0 == last.i -%}
+                    {%- set _ = rebuilt.append(c.to ~ (l | regex_search('\\s+[Aa][Ss]\\s+\\S+\\s*$') or '')) -%}
+                  {%- else -%}
+                    {%- set _ = rebuilt.append(l) -%}
+                  {%- endif -%}
+                {%- endfor -%}
+                {%- set ns.text = rebuilt | join('\n') -%}
               {%- endif -%}
             {%- endfor -%}
             {%- set _ = out.update({f.item: ns.text}) -%}
           {%- endfor -%}
           {{ out }}
+
+    - name: Every planned version must be in the file now (a pom that keeps it elsewhere is not built unchanged)
+      ansible.builtin.assert:
+        that: missing | length == 0
+        fail_msg: "not applied, nothing committed: {{ missing | join(', ') }}"
+      vars:
+        missing: >-
+          {%- set m = [] -%}
+          {%- for c in changes if c.file in ['pom.xml', 'Containerfile'] -%}
+            {%- set want = ('>' ~ c.to ~ '<') if c.file == 'pom.xml' else c.to -%}
+            {%- if want not in edited[c.file] -%}{%- set _ = m.append(c.what ~ ' ' ~ c.to) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ m }}
 
     - name: Work out which files really changed
       ansible.builtin.set_fact:

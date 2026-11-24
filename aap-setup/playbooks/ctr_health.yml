@@ -1,8 +1,9 @@
 ---
 # Containers · Rollout health. Wait until the deployment runs the new digest on every replica (Argo CD syncs it from
-# GitOps), then ask the app's /health which jars it loaded. Fails cleanly, so the workflow takes its rollback route.
+# GitOps), then ask the app's health path (default /health; empty: rollout only) through the Service port that
+# targets the container port. Fails cleanly, so the workflow takes its rollback route.
 #
-# extra_vars: app, namespace, image_digest, port, timeout (seconds, default 600)
+# extra_vars: app, namespace, image_digest, port (the container port), health_path, timeout (seconds, default 600)
 # env (credential "Containers"): CTR_OCP_API, CTR_OCP_TOKEN
 # artifacts: outcome (patched|failed), health, failed_step, failed_reason, rollback_json
 - name: Wait for the rollout and check /health
@@ -32,9 +33,26 @@
           retries: "{{ ((timeout | default(600)) | int / 10) | int }}"
           delay: 10
 
-        - name: Ask /health through the service proxy
+        - name: The app's Service
           ansible.builtin.uri:
-            url: "{{ api }}/api/v1/namespaces/{{ namespace }}/services/{{ app }}:{{ port }}/proxy/health"
+            url: "{{ api }}/api/v1/namespaces/{{ namespace }}/services/{{ app }}"
+            headers: "{{ headers }}"
+            validate_certs: false
+          register: svc
+          when: (health_path | default('/health')) | length > 0
+
+        - name: Its port that reaches the container port (the Service port may differ from it)
+          ansible.builtin.set_fact:
+            svc_port: >-
+              {{ ((svc.json.spec.ports | default([])) | selectattr('targetPort', 'equalto', port | int) | map(attribute='port') | list
+                  + (svc.json.spec.ports | default([])) | selectattr('targetPort', 'equalto', port | string) | map(attribute='port') | list
+                  + (svc.json.spec.ports | default([])) | selectattr('port', 'equalto', port | int) | map(attribute='port') | list
+                  + (svc.json.spec.ports | default([])) | map(attribute='port') | list) | first | default(port) }}
+          when: (health_path | default('/health')) | length > 0
+
+        - name: Ask the health path through the service proxy
+          ansible.builtin.uri:
+            url: "{{ api }}/api/v1/namespaces/{{ namespace }}/services/{{ app }}:{{ svc_port }}/proxy{{ health_path | default('/health') }}"
             headers: "{{ headers }}"
             validate_certs: false
             return_content: true
@@ -42,12 +60,13 @@
           retries: 6
           delay: 5
           until: health.status == 200
+          when: (health_path | default('/health')) | length > 0
 
         - name: Hand the result to the workflow
           ansible.builtin.set_stats:
             data:
               outcome: patched
-              health: "{{ health.content }}"
+              health: "{{ health.content if health is not skipped else 'no health path configured: rollout only' }}"
               failed_step: ""
               failed_reason: ""
       rescue:

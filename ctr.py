@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import ssl
 import threading
@@ -356,8 +357,8 @@ def _trace(msg: str) -> None:
 
 def reset() -> tuple[int, dict]:
     with _LOCK:
-        if _RUN.get('status') in ('running',):
-            return 409, {'ok': False, 'error': 'a run is in progress'}
+        if _RUN.get('status') in BUSY:
+            return 409, {'ok': False, 'error': f"a run is {_RUN['status'].replace('_', ' ')}: finish it first"}
         _RUN.clear()
         _RUN['status'] = 'idle'
     return 200, {'ok': True}
@@ -466,6 +467,8 @@ def _reasoning(t: dict, fix: dict) -> tuple[str, str]:
 def start_assess(fix_id: str) -> tuple[int, dict]:
     if state().get('status') in BUSY:
         return 409, {'ok': False, 'error': 'a containers run is open: finish or reset it first'}
+    if _RESET.get('status') == 'running':
+        return 409, {'ok': False, 'error': 'the demo reset is running: wait for it to finish'}
     try:
         found = fixes()['fixes']
     except AcsError as e:
@@ -480,11 +483,16 @@ def start_assess(fix_id: str) -> tuple[int, dict]:
                     siblings=_sibling_rows(_siblings(fix, found)),
                     stages={k: 'pending' for k in STAGES}, simulated=bool(H.demo_mode()))
         _RUN['stages']['assess'] = 'active'
-    threading.Thread(target=_assess, args=(fix,), daemon=True).start()
+    threading.Thread(target=_assess, args=(fix, _RUN['run_id']), daemon=True).start()
     return 200, {'ok': True}
 
 
-def _assess(fix: dict) -> None:
+def _mine(run_id: str) -> bool:
+    with _LOCK:
+        return _RUN.get('run_id') == run_id
+
+
+def _assess(fix: dict, run_id: str = '') -> None:
     try:
         targets = []
         for img in fix['images']:
@@ -515,12 +523,15 @@ def _assess(fix: dict) -> None:
                 sp = _servers_patched(app, fix['component'])
                 if sp:
                     servers.append(dict(sp, app=app))
-        _set(status='assessed', impact={'targets': targets, 'servers': servers}, selected=[t['key'] for t in targets])
         with _LOCK:
+            if run_id and _RUN.get('run_id') != run_id:
+                return                              # the run was cleared meanwhile: this answer belongs to no one
+            _RUN.update(status='assessed', impact={'targets': targets, 'servers': servers}, selected=[t['key'] for t in targets])
             _RUN['stages']['assess'] = 'done'
         _trace(f'{len(targets)} deployment(s) run the affected image(s)')
-    except AcsError as e:
-        _set(status='failed', error=str(e))
+    except Exception as e:                          # ACS errors, a non-JSON answer, a bad CTR_WINDOWS
+        if not run_id or _mine(run_id):
+            _set(status='failed', error=f'{type(e).__name__}: {e}' if not isinstance(e, AcsError) else str(e))
 
 
 # ---------------------------------------------------------------------------- plan and checks
@@ -593,6 +604,9 @@ def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
     if not targets:
         return 400, {'ok': False, 'error': 'no deployment selected'}
     fix = st['fix']
+    if fix['kind'] not in ('lightwell', 'base'):
+        return 400, {'ok': False, 'error': 'an ACS policy violation is fixed in the app or its deployment, not by '
+                                           'rebuilding the image: this flow prepares Lightwell and base-image fixes'}
     try:
         siblings = _siblings(fix, fixes()['fixes'])
     except AcsError:
@@ -611,19 +625,24 @@ def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
 # ---------------------------------------------------------------------------- run (demo simulator)
 
 def start_dispatch() -> tuple[int, dict]:
+    # Check and claim in one step: a second click or a second tab finds the run already running.
+    with _LOCK:
+        if _RUN.get('status') != 'generated':
+            return 409, {'ok': False, 'error': 'prepare the change first' if _RUN.get('status') not in BUSY else 'the run is already started'}
+        if not _RUN.get('ok'):
+            return 400, {'ok': False, 'error': 'the change failed its checks'}
+        _RUN['status'] = 'running'
     st = state()
-    if st.get('status') != 'generated':
-        return 409, {'ok': False, 'error': 'prepare the change first'}
-    if not st.get('ok'):
-        return 400, {'ok': False, 'error': 'the change failed its checks'}
     sel = set(st['selected'])
     hosts = [dict(t, outcome='pending', steps={}, detail='') for t in st['impact']['targets'] if t['key'] in sel]
     if not H.demo_mode():
         if not H.ao_call:
+            _set(status='generated')
             return 503, {'ok': False, 'error': 'Automation Orchestrator is not configured (AO_URL / AO_USERNAME / AO_PASSWORD)'}
         try:
             wf = _workflow_id()
         except Exception as e:
+            _set(status='generated')
             return 503, {'ok': False, 'error': f'AO: {e}'}
         _set(status='running', hosts=hosts, workflow_id=wf)
         _persist()
@@ -665,11 +684,13 @@ def _inputs(st: dict, h: dict) -> dict:
             'group': 'prod_review' if h['env'] == 'prod' else 'lab_auto',
             'changes_json': json.dumps([e for e in st.get('change') or [] if e['file'] in ('pom.xml', 'Containerfile')]),
             'gitops_path': gitops_path(h), 'port': h.get('port') or '8080',
+            'fix_kind': fix.get('kind', ''), 'health_path': env('CTR_HEALTH_PATH', '/health'),
             'fix_component': fix.get('component', ''), 'fix_group': fix.get('group', ''), 'fix_version': fix.get('to', ''),
             'lightwell_fixed': ','.join(st.get('lightwell_fixed') or []), 'cves': ', '.join(fix.get('cves') or []),
             # Every Lightwell build this rebuild carries: ACS verify checks each one, not only the fix that was picked.
             'fixes_json': json.dumps([{'group': f.get('group', ''), 'component': f.get('component', ''), 'version': f.get('to', '')}
-                                      for f in ([fix] + list(st.get('siblings') or [])) if f.get('to')])}
+                                      for f in ([fix] + list(st.get('siblings') or []))
+                                      if f.get('to') and f.get('kind', 'lightwell') == 'lightwell' and fix['kind'] == 'lightwell'])}
 
 
 def _host(key: str, **kw) -> None:
@@ -742,6 +763,13 @@ def _read_execution(key: str) -> bool:
         if settled:
             _host(key, replace_steps=True, **settled)
             return True
+    if gate and h.get('decided') == 'rejected':
+        return True                                 # deferred by decide(); AO's record may lag, the site is settled
+    if gate and h.get('decided'):
+        # Approved (or the signal is on its way): AO's record lags. Never offer the gate again.
+        _host(key, outcome='running', steps={**steps, 'approval': 'done'}, replace_steps=True, evidence=evidence,
+              detail='approved; waiting for AO to resume the workflow')
+        return False
     if gate:
         _host(key, outcome='awaiting_approval', steps=steps, replace_steps=True, evidence=evidence,
               detail=f"built {str(build.get('image_digest', ''))[:19]} · {build.get('scan_summary', '')}; waiting for approval")
@@ -778,7 +806,9 @@ def _settle_from_aap(h: dict, run_id: str) -> dict | None:
                 ev = json.loads(j.get('extra_vars') or '{}')
             except ValueError:
                 continue
-            if ev.get('run_id', run_id) == run_id and ev.get('namespace') == h['namespace'] and j.get('status') == 'successful':
+            # Only this run's jobs: a job without run_id (an older workflow version) is never taken as evidence.
+            if (run_id and ev.get('run_id') == run_id and ev.get('namespace') == h['namespace']
+                    and ev.get('app', h.get('app') or h.get('name')) == (h.get('app') or h.get('name')) and j.get('status') == 'successful'):
                 yield j, ev
     notify = next(jobs('CTR - Notify'), None)
     if not notify:
@@ -880,15 +910,26 @@ def _rollout(h: dict, fix: dict) -> None:
 def decide(key: str, decision: str) -> tuple[int, dict]:
     if decision not in ('approved', 'rejected'):
         return 400, {'ok': False, 'error': 'decision is approved or rejected'}
-    st = state()
-    h = next((x for x in st.get('hosts') or [] if x['key'] == key), None)
-    if not h or h.get('outcome') != 'awaiting_approval':
-        return 409, {'ok': False, 'error': f'{key} is not waiting for approval'}
+    # Check and claim in one step, so a double click or a second tab cannot decide twice.
+    with _LOCK:
+        h = next((x for x in _RUN.get('hosts') or [] if x['key'] == key), None)
+        if not h or h.get('outcome') != 'awaiting_approval' or h.get('decided'):
+            return 409, {'ok': False, 'error': f'{key} is not waiting for approval'}
+        if decision == 'approved':
+            lab = [x for x in _RUN['hosts'] if x['env'] != 'prod' and x['image'] == h['image']]
+            if any(x['outcome'] not in SETTLED for x in lab):
+                return 409, {'ok': False, 'error': 'the lab rollout of this image has not finished yet: approve once it is verified'}
+            if any(x['outcome'] in ('failed', 'rolled_back', 'not_verified') for x in lab):
+                return 409, {'ok': False, 'error': 'the lab rollout of this image did not verify: reject, or run again after fixing it'}
+        h['decided'] = decision
+        st = json.loads(json.dumps(_RUN))
+        h = dict(h)
     if not H.demo_mode():
         try:
             H.ao_call(f"/api/v1/executions/{h['execution_id']}/activities/approval_prod/signal", 'POST',
                       {'signal_data': {'decision': decision}})
         except Exception as e:
+            _host(key, decided='')
             return 502, {'ok': False, 'error': f'AO did not take the decision: {e}'}
         _set(status='running')
     if decision == 'approved':
@@ -900,7 +941,7 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
     else:
         expiry = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 30 * 86400))
         req = {'cves': list(st['fix'].get('cves') or []),
-               'scope': {'imageScope': {'remote': h['image'].split('/', 1)[-1].split(':')[0], 'tag': h['image'].rsplit(':', 1)[-1]}},
+               'scope': {'imageScope': _image_scope(h['image'])},
                'comment': 'Rejected at the console gate: rebuild planned for the next window',
                'exceptionExpiry': {'expiryType': 'TIME', 'expiresOn': expiry}}
         try:
@@ -913,6 +954,17 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
             _RUN.setdefault('deferrals', []).append({'key': key, 'request': req, 'ref': ref})
         _settle()
     return 200, {'ok': True}
+
+
+def _image_scope(image: str) -> dict:
+    """An ACS image scope: registry, remote and tag. An image by digest has no tag, so every tag of it is in scope."""
+    ref, _, digest = image.partition('@')
+    first, _, rest = ref.partition('/')
+    registry, path = (first, rest) if rest and ('.' in first or ':' in first or first == 'localhost') else ('', ref)
+    remote, tag = path, ''
+    if ':' in path.rsplit('/', 1)[-1]:
+        remote, tag = path.rsplit(':', 1)
+    return {'registry': registry, 'remote': remote, 'tag': '.*' if digest or not tag else tag}
 
 
 def _after_approve(h: dict, fix: dict) -> None:
@@ -935,6 +987,8 @@ def _settle() -> None:
 
 def _finish() -> None:
     with _LOCK:
+        if _RUN.get('status') == 'complete':
+            return                                  # two followers can settle the last site at once
         hosts = _RUN.get('hosts') or []
         _RUN['summary'] = {k: sum(1 for h in hosts if h['outcome'] == k)
                            for k in ('patched', 'not_verified', 'deferred', 'rejected', 'rolled_back', 'failed')}
@@ -954,17 +1008,23 @@ def _state_file(name: str):
     return Path(env('APPV2_STATE_DIR') or (appv2.ROOT / 'runs')) / name
 
 
+_PLOCK = threading.Lock()
+
+
 def _persist(history: bool = False) -> None:
     """Live mode keeps the run (and its history) on disk, so a console restart picks the run up again."""
     if H.demo_mode():
         return
     try:
-        p = _state_file('ctr-run.json')
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(state()))
-        if history and _HISTORY:
-            with _state_file('ctr-history.jsonl').open('a') as f:
-                f.write(json.dumps(_HISTORY[-1]) + '\n')
+        with _PLOCK:                                # one writer at a time, and never a torn file
+            p = _state_file('ctr-run.json')
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(state()))
+            os.replace(tmp, p)
+            if history and _HISTORY:
+                with _state_file('ctr-history.jsonl').open('a') as f:
+                    f.write(json.dumps(_HISTORY[-1]) + '\n')
     except OSError:
         pass
 
@@ -988,9 +1048,15 @@ def restore() -> dict:
     with _LOCK:
         _RUN.clear()
         _RUN.update(saved)
-    resumed = [h['key'] for h in saved.get('hosts') or [] if h.get('execution_id') and h.get('outcome') in ('running', 'pending', 'awaiting_approval')]
+    # A site the console never handed to AO (it stopped mid-dispatch) has nothing to follow.
+    for h in saved.get('hosts') or []:
+        if not h.get('execution_id') and h.get('outcome') in ('running', 'pending', 'awaiting_approval'):
+            _host(h['key'], outcome='failed', detail='not dispatched: the console restarted before AO took it')
+    resumed = [h['key'] for h in state().get('hosts') or [] if h.get('execution_id') and h.get('outcome') in ('running', 'pending', 'awaiting_approval')]
     for key in resumed:
         threading.Thread(target=_follow_live, args=(key,), daemon=True).start()
+    if saved.get('hosts') and not resumed and saved.get('status') in BUSY:
+        _settle()                                   # every site settled, but the run was never closed
     return {'restored': True, 'resumed': resumed}
 
 

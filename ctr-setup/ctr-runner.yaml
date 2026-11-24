@@ -44,7 +44,7 @@ metadata: { name: ctr-runner, namespace: nfvo-lab }
 rules:
   - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
   - { apiGroups: [""], resources: [pods], verbs: [get, list] }
-  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+  - { apiGroups: [""], resources: [services, services/proxy], verbs: [get] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -58,7 +58,7 @@ metadata: { name: ctr-runner, namespace: nfvo-prod }
 rules:
   - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
   - { apiGroups: [""], resources: [pods], verbs: [get, list] }
-  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+  - { apiGroups: [""], resources: [services, services/proxy], verbs: [get] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -72,7 +72,7 @@ metadata: { name: ctr-runner, namespace: oss-lab }
 rules:
   - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
   - { apiGroups: [""], resources: [pods], verbs: [get, list] }
-  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+  - { apiGroups: [""], resources: [services, services/proxy], verbs: [get] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -86,7 +86,7 @@ metadata: { name: ctr-runner, namespace: oss-prod }
 rules:
   - { apiGroups: [apps], resources: [deployments, replicasets], verbs: [get, list] }
   - { apiGroups: [""], resources: [pods], verbs: [get, list] }
-  - { apiGroups: [""], resources: [services/proxy], verbs: [get] }
+  - { apiGroups: [""], resources: [services, services/proxy], verbs: [get] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

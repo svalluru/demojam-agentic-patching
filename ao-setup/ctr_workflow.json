@@ -92,6 +92,16 @@
               "type": "string",
               "default": "[]",
               "description": "Every Lightwell build in this rebuild: [{group, component, version}] (ACS verify checks each)"
+            },
+            "fix_kind": {
+              "type": "string",
+              "default": "lightwell",
+              "description": "lightwell or base: what verify checks"
+            },
+            "health_path": {
+              "type": "string",
+              "default": "/health",
+              "description": "The app health path; empty checks the rollout only"
             }
           }
         }
@@ -273,7 +283,8 @@
           "app": "${trigger.app}",
           "namespace": "${trigger.namespace}",
           "port": "${trigger.port}",
-          "image_digest": "${build_scan.artifacts.image_digest}"
+          "image_digest": "${build_scan.artifacts.image_digest}",
+          "health_path": "${trigger.health_path}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -322,7 +333,10 @@
           "fix_component": "${trigger.fix_component}",
           "fix_group": "${trigger.fix_group}",
           "fix_version": "${trigger.fix_version}",
-          "fixes_json": "${trigger.fixes_json}"
+          "fixes_json": "${trigger.fixes_json}",
+          "run_id": "${trigger.run_id}",
+          "fix_kind": "${trigger.fix_kind}",
+          "cves": "${trigger.cves}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -437,7 +451,8 @@
           "app": "${trigger.app}",
           "namespace": "${trigger.namespace}",
           "port": "${trigger.port}",
-          "image_digest": "${build_scan.artifacts.image_digest}"
+          "image_digest": "${build_scan.artifacts.image_digest}",
+          "health_path": "${trigger.health_path}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -486,7 +501,10 @@
           "fix_component": "${trigger.fix_component}",
           "fix_group": "${trigger.fix_group}",
           "fix_version": "${trigger.fix_version}",
-          "fixes_json": "${trigger.fixes_json}"
+          "fixes_json": "${trigger.fixes_json}",
+          "run_id": "${trigger.run_id}",
+          "fix_kind": "${trigger.fix_kind}",
+          "cves": "${trigger.cves}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",

@@ -3666,7 +3666,9 @@ function cacheClear() { pageCache.clear(); }
 
 const esc = v => {
   if (v === null || v === undefined || v === '') return '—';
-  const d = document.createElement('span'); d.textContent = String(v); return d.innerHTML;
+  // innerHTML escapes & < > only; the quotes matter too, because esc() output also goes into attributes.
+  const d = document.createElement('span'); d.textContent = String(v);
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 };
 // The workflow's display name. AO resolves it by its full name, which ends in
 // "- Demo Jam" on the lab; that suffix is ours, not something to put on screen.
@@ -9729,6 +9731,7 @@ renderStages({});
 const ctr = { fixes: null, state: {}, timer: null, sel: null, at: 0, err: '' };
 const CTR_KIND = { lightwell: ['good', 'Lightwell build'], base: ['info', 'Base image'], policy: ['warn', 'ACS policy'] };
 const CTR_BUSY = ['assessing', 'generating', 'running', 'awaiting_approval'];
+const CTR_SETTLED = ['patched', 'not_verified', 'deferred', 'rejected', 'rolled_back', 'failed'];
 const CTR_STEP = { commit: 'Commit', build_scan: 'Build + roxctl', sign: 'Sign', deploy: 'Deploy', health: 'Health',
                    approval: 'Approval', verify: 'ACS verify', rollback: 'Rollback', notify: 'Notify' };
 
@@ -9746,7 +9749,8 @@ async function ctrLoad(force) {
     ctr.state = await ctrApi('/api/ctr/state');
     ctr.err = '';
   } catch (e) { ctr.err = e.message; }
-  if (!document.getElementById('ctr-pane').hidden) ctrRender();
+  // While a click is on its way the poll keeps the state but does not redraw: that would re-enable the button.
+  if (!document.getElementById('ctr-pane').hidden && !ctr.acting) ctrRender();
   clearTimeout(ctr.timer);
   const resetting = (ctr.state.demo_reset || {}).status === 'running';
   if (resetting) ctr.wasResetting = true;
@@ -9871,7 +9875,7 @@ function ctrRun(s) {
         <td>${(x.callers || []).map(c => `<span class="pill-s off">${esc(c)}</span>`).join(' ') || '<span class="c-note">—</span>'}
           <div class="c-note" style="margin:4px 0 0">${x.window ? 'Window ' + esc(x.window) : 'Any time'}</div></td>
         <td style="max-width:360px">${esc(x.reasoning)}<div class="c-note" style="margin:2px 0 0">${esc(x.reasoning_source)}</div></td>
-        <td>${h ? ctrHostCell(h) : '<span class="c-note">—</span>'}</td>
+        <td>${h ? ctrHostCell(h, s.hosts) : '<span class="c-note">—</span>'}</td>
         <td style="max-width:340px">${h ? ctrHostDetail(h) : '<span class="c-note">—</span>'}</td></tr>`; }).join('')}
     </table><div class="c-src">ACS GET /v1/deployments?query=Image Sha:… · /v1/deployments/{id} · /v1/alerts · network graph · app history store + LLM</div>
     ${pick ? `<div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="generate">Prepare change</button>
@@ -9900,9 +9904,14 @@ function ctrRun(s) {
 }
 
 // Status: the outcome only (or the approval buttons at the gate). Details: the stages, notes and evidence.
-function ctrHostCell(h) {
+function ctrHostCell(h, hosts) {
+  // Approve waits for the lab rollout of the same image to be verified; Reject stays possible.
+  const lab = (hosts || []).filter(x => x.env !== 'prod' && x.image === h.image);
+  const labWait = lab.some(x => !CTR_SETTLED.includes(x.outcome)) ? 'The lab rollout of this image has not finished yet'
+    : lab.some(x => ['failed', 'rolled_back', 'not_verified'].includes(x.outcome)) ? 'The lab rollout of this image did not verify' : '';
   return h.outcome === 'awaiting_approval'
-      ? `<div class="c-actions" style="margin:0"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}">Approve</button>
+      ? `<div class="c-actions" style="margin:0"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}"
+           ${labWait ? `disabled title="${esc(labWait)}"` : ''}>Approve</button>
          <button type="button" class="c-btn" data-ctr-decide="rejected" data-key="${esc(h.key)}" title="Reject and defer the CVEs in ACS for 30 days">Reject + defer</button></div>`
       : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : ['deferred', 'rejected'].includes(h.outcome) ? 'off'
           : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.replace('_', ' '))}</span>`;
@@ -9955,46 +9964,55 @@ const CTR_BUSY_LABEL = { generate: 'Preparing change…', dispatch: 'Starting th
                          refresh: 'Refreshing…', approved: 'Approving…', rejected: 'Rejecting and deferring…' };
 document.getElementById('ctr-pane').addEventListener('click', async e => {
   const t = e.target;
-  let undo = null;
+  const sel = t.closest('[data-ctr-sel]');
+  if (sel && ctr.sel) { sel.checked ? ctr.sel.keys.add(sel.dataset.ctrSel) : ctr.sel.keys.delete(sel.dataset.ctrSel); return; }
+  const toApps = t.closest('[data-ctr-apps]');
+  if (toApps) {
+    const art = toApps.dataset.ctrApps, st = v2.state || {};
+    v2.focus = art;
+    v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
+    paneShow('appv2');
+    return;
+  }
+  const a = t.closest('[data-ctr-assess]'), d = t.closest('[data-ctr-decide]'), act = t.closest('[data-ctr-act]');
+  if (!a && !d && !act) return;
+  if (ctr.acting) return;                                       // one action at a time
+  if (d && d.dataset.ctrDecide === 'rejected' && !(await apDialog({ title: 'Reject and defer in ACS', ok: 'Reject and defer', cancel: 'Cancel',
+      body: `<p>Production stays on the old image. The console files an ACS deferral for these CVEs, expiring in 30 days, so the
+      exposure stays on record and comes back.</p>` }))) return;
+  const btn = a || d || act, k = act ? act.dataset.ctrAct : '';
+  const undo = ctrBusy(btn, a ? 'Assessing…' : d ? (CTR_BUSY_LABEL[d.dataset.ctrDecide] || 'Working…')
+    : k === 'reset' && act.textContent.trim() === 'Back to fixes' ? 'Loading fixes…' : (CTR_BUSY_LABEL[k] || 'Working…'));
+  ctr.acting = true;
+  let force = false;
   try {
-    const a = t.closest('[data-ctr-assess]');
-    if (a) { undo = ctrBusy(a, 'Assessing…'); await ctrApi('/api/ctr/assess', { fix_id: a.dataset.ctrAssess }); return await ctrLoad(); }
-    const sel = t.closest('[data-ctr-sel]');
-    if (sel && ctr.sel) { sel.checked ? ctr.sel.keys.add(sel.dataset.ctrSel) : ctr.sel.keys.delete(sel.dataset.ctrSel); return; }
-    const d = t.closest('[data-ctr-decide]');
-    if (d) {
-      if (d.dataset.ctrDecide === 'rejected' && !(await apDialog({ title: 'Reject and defer in ACS', ok: 'Reject and defer', cancel: 'Cancel',
-          body: `<p>Production stays on the old image. The console files an ACS deferral for these CVEs, expiring in 30 days, so the
-          exposure stays on record and comes back.</p>` }))) return;
-      undo = ctrBusy(d, CTR_BUSY_LABEL[d.dataset.ctrDecide] || 'Working…');
-      await ctrApi('/api/ctr/decide', { key: d.dataset.key, decision: d.dataset.ctrDecide }); return ctrLoad();
-    }
-    const toApps = t.closest('[data-ctr-apps]');
-    if (toApps) {
-      const art = toApps.dataset.ctrApps, st = v2.state || {};
-      v2.focus = art;
-      v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
-      paneShow('appv2');
-      return;
-    }
-    const act = t.closest('[data-ctr-act]');
-    if (!act) return;
-    const k = act.dataset.ctrAct;
-    undo = ctrBusy(act, k === 'reset' && act.textContent.trim() === 'Back to fixes' ? 'Loading fixes…' : (CTR_BUSY_LABEL[k] || 'Working…'));
-    if (k === 'refresh') return await ctrLoad(true);
-    if (k === 'generate') await ctrApi('/api/ctr/generate', { targets: [...(ctr.sel ? ctr.sel.keys : [])] });
-    if (k === 'dispatch') await ctrApi('/api/ctr/dispatch', {});
-    if (k === 'reset') { await ctrApi('/api/ctr/reset', {}); await ctrLoad(true); return; }
-    await ctrLoad();
-  } catch (err) { if (undo) undo(); apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` }); }
+    if (a) await ctrApi('/api/ctr/assess', { fix_id: a.dataset.ctrAssess });
+    else if (d) await ctrApi('/api/ctr/decide', { key: d.dataset.key, decision: d.dataset.ctrDecide });
+    else if (k === 'refresh') force = true;
+    else if (k === 'generate') await ctrApi('/api/ctr/generate', { targets: [...(ctr.sel ? ctr.sel.keys : [])] });
+    else if (k === 'dispatch') await ctrApi('/api/ctr/dispatch', {});
+    else if (k === 'reset') { await ctrApi('/api/ctr/reset', {}); force = true; }
+  } catch (err) {
+    ctr.acting = false; undo();
+    apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` });
+    return;
+  }
+  ctr.acting = false;
+  await ctrLoad(force);
 });
 // Applications → Containers cross-link: open Containers on that fix (assessed, if nothing else is open).
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-ctr-open]');
   if (!b) return;
   paneShow('ctr');
-  if (!CTR_BUSY.includes((ctr.state || {}).status)) {
-    try { await ctrApi('/api/ctr/reset', {}); await ctrApi('/api/ctr/assess', { fix_id: b.dataset.ctrOpen }); } catch (err) { /* shown by ctrLoad */ }
+  // Assess it only when nothing is in progress: an open run, or an assessed or prepared draft, stays as it is.
+  try { ctr.state = await ctrApi('/api/ctr/state'); } catch (err) { /* shown by ctrLoad */ }
+  const now = (ctr.state || {}).status || 'idle';
+  if (['idle', 'complete', 'failed'].includes(now)) {
+    try {
+      if (now !== 'idle') await ctrApi('/api/ctr/reset', {});
+      await ctrApi('/api/ctr/assess', { fix_id: b.dataset.ctrOpen });
+    } catch (err) { apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` }); }
   }
   ctrLoad();
 });

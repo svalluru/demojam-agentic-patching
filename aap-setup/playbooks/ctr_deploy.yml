@@ -25,7 +25,20 @@
     - name: The digest it pins now
       ansible.builtin.set_fact:
         text: "{{ cur.json.content | b64decode }}"
-        previous: "{{ (cur.json.content | b64decode) | regex_search('digest:\\s*(sha256:[0-9a-f]{64})', '\\1') | first }}"
+        pinned: "{{ (cur.json.content | b64decode) | regex_findall('digest:\\s*(sha256:[0-9a-f]{64})') }}"
+
+    - name: Exactly one image, and a real digest to pin
+      ansible.builtin.assert:
+        that:
+          - pinned | length == 1
+          - image_digest is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: >-
+          {{ gitops_path }} pins {{ pinned | length }} digest(s) (expected exactly one), or the build handed over
+          '{{ image_digest }}': nothing was changed
+
+    - name: The previous one
+      ansible.builtin.set_fact:
+        previous: "{{ pinned | first }}"
 
     - name: Pin the new one
       ansible.builtin.uri:
