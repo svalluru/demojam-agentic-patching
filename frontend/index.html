@@ -3216,7 +3216,8 @@
                 spring-webmvc <code>5.3.18.rhlw-00010</code>.</td>
                 <td>AAP <em>CTR - Verify (ACS)</em></td><td>The site's <em>Details</em> column: "ACS: … runs … spring-webmvc 5.3.18.rhlw-00010, spring-expression …, spring-core …"</td></tr>
               <tr><td>9</td><td><b>Production waits.</b> The prod execution stops at an approval gate. Approve: the same
-                deploy, health and verify run for nfvo-prod. Reject: an ACS deferral is filed for 30 days, so the
+                deploy, health and verify run for nfvo-prod. Reject: an ACS deferral request is filed for 30 days
+                (pending until an ACS approver accepts it: Vulnerability Management → Exception management), so the
                 exposure stays on record.</td>
                 <td>AO approval node; console Approve / Reject + defer</td><td>The Approve button on nfvo-prod</td></tr>
               <tr><td>10</td><td><b>If a rollout is unhealthy</b>, the workflow takes its rollback route: the previous
