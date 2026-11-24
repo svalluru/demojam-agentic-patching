@@ -9919,7 +9919,7 @@ function ctrHostCell(h, hosts) {
            ${labWait ? `disabled title="${esc(labWait)}"` : ''}>Approve</button>
          <button type="button" class="c-btn" data-ctr-decide="rejected" data-key="${esc(h.key)}" title="Reject and defer the CVEs in ACS for 30 days">Reject + defer</button></div>`
       : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : ['deferred', 'rejected'].includes(h.outcome) ? 'off'
-          : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.replace('_', ' '))}</span>`;
+          : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.charAt(0).toUpperCase() + h.outcome.slice(1).replace(/_/g, ' '))}</span>`;
 }
 
 function ctrHostDetail(h) {
