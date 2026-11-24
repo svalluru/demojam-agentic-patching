@@ -9671,17 +9671,62 @@ function ctrAlso(ev) {
     are rebuilt. <button type="button" data-ctr-open="${esc(f.id)}">Open in Containers →</button></div>`;
 }
 
+// 'quay.io/telco/workflow-engine@sha256:9f0a…' -> {app: 'workflow-engine', ref: '9f0a5fd…'}
+function ctrImageName(name) {
+  const last = String(name || '').split('/').pop();
+  const app = last.split('@')[0].split(':')[0];
+  const at = last.includes('@') ? last.split('@')[1] : last.split(':')[1] || '';
+  return { app, ref: at.replace(/^sha256:/, '').slice(0, 12) };
+}
+// Group by app: on unless turned off, remembered in this browser.
+ctr.groupBy = localStorage.getItem('ctr-group-by') !== 'off';
+
+function ctrFixRow(f) {
+  return `<tr><td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span></td>
+    <td><b>${esc(f.component)}</b>${f.to ? ` <span class="mono">${esc(f.from)} → ${esc(f.to.length > 60 ? f.to.slice(0, 60) + '…' : f.to)}</span>` : ''}
+      <div class="c-note" style="margin:2px 0 0">${esc(f.source)}${f.detail ? ' · ' + esc(f.detail) : ''}</div></td>
+    <td>${f.cves.length || '–'}</td>
+    <td class="mono">${f.images.map(i => { const n = ctrImageName(i.name); return `<span title="${esc(i.name)}">${esc(n.app)} @ ${esc(n.ref)}…</span>`; }).join('<br>')}</td>
+    <td><button type="button" class="c-btn go" data-ctr-assess="${esc(f.id)}">Assess</button></td></tr>`;
+}
+
+// One row per app image: every fix that applies to it, one Assess. Prepare already bundles every Lightwell build for the
+// image into one rebuild, so assessing the image's first Lightwell fix is the whole job for that image.
+function ctrGroupRows(fx) {
+  const groups = new Map();
+  for (const f of fx) {
+    for (const i of f.images) {
+      const n = ctrImageName(i.name), key = i.id || i.name;
+      if (!groups.has(key)) groups.set(key, { app: n.app, ref: n.ref, name: i.name, fixes: [] });
+      groups.get(key).fixes.push(f);
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.app.localeCompare(b.app)).map(g => {
+    const cves = new Set(g.fixes.flatMap(f => f.cves));
+    const lead = g.fixes.find(f => f.kind === 'lightwell') || g.fixes[0];
+    const lw = g.fixes.filter(f => f.kind === 'lightwell').length;
+    return `<tr><td><b>${esc(g.app)}</b><div class="c-note mono" style="margin:2px 0 0" title="${esc(g.name)}">@ ${esc(g.ref)}…</div></td>
+      <td><div class="c-chips">${g.fixes.map(f => `<span class="pill-s ${CTR_KIND[f.kind][0]}" title="${esc(f.source)}">${esc(f.component)}
+          ${f.to ? `${esc(f.from)} → ${esc(f.to.length > 40 ? f.to.slice(0, 40) + '…' : f.to)}` : ''}</span>`).join('')}</div>
+        <div class="c-note" style="margin:4px 0 0">${lw > 1 ? `${lw} Lightwell builds, one rebuild of the image` : esc(lead.source)}${
+          lw && g.fixes.some(f => f.kind !== 'lightwell') ? ' · the base-image fix is assessed on its own (ungroup to pick it)' : ''}</div></td>
+      <td>${cves.size || '–'}</td>
+      <td><button type="button" class="c-btn go" data-ctr-assess="${esc(lead.id)}" title="Assess ${esc(lead.component)}${lw > 1 ? '; Prepare adds the other Lightwell builds for this image' : ''}">Assess</button></td></tr>`;
+  });
+}
+
 function ctrInbox() {
   const fx = (ctr.fixes || {}).fixes || [];
   const errs = (ctr.fixes || {}).errors || [];
-  return `<section class="c-box"><h3>Fixes for running images<b>${fx.length}</b></h3>
+  const grouped = ctr.groupBy && fx.length;
+  const rows = grouped ? ctrGroupRows(fx) : fx.map(ctrFixRow);
+  return `<section class="c-box"><h3>Fixes for running images<b>${grouped ? `${rows.length} app${rows.length === 1 ? '' : 's'} · ${fx.length} fixes` : fx.length}</b></h3>
+    <label class="c-note" style="display:inline-flex;gap:6px;align-items:center;margin:-4px 0 6px;cursor:pointer">
+      <input type="checkbox" id="ctr-group-by" ${ctr.groupBy ? 'checked' : ''}> Group by app</label>
     ${errs.length ? `<div class="c-alert">${errs.map(esc).join('<br>')}</div>` : ''}
-    ${fx.length ? `<table class="c-t"><tr><th>Source</th><th>Fix</th><th>CVEs</th><th>Images</th><th></th></tr>
-      ${fx.map(f => `<tr><td><span class="pill-s ${CTR_KIND[f.kind][0]}">${esc(CTR_KIND[f.kind][1])}</span></td>
-        <td><b>${esc(f.component)}</b>${f.to ? ` <span class="mono">${esc(f.from)} → ${esc(f.to.length > 60 ? f.to.slice(0, 60) + '…' : f.to)}</span>` : ''}
-          <div class="c-note" style="margin:2px 0 0">${esc(f.source)}${f.detail ? ' · ' + esc(f.detail) : ''}</div></td>
-        <td>${f.cves.length || '–'}</td><td class="mono">${f.images.map(i => esc(i.name.split('/').pop())).join('<br>')}</td>
-        <td><button type="button" class="c-btn go" data-ctr-assess="${esc(f.id)}">Assess</button></td></tr>`).join('')}</table>`
+    ${fx.length ? (grouped
+        ? `<table class="c-t"><tr><th>App</th><th>Fixes</th><th>CVEs</th><th></th></tr>${rows.join('')}</table>`
+        : `<table class="c-t"><tr><th>Source</th><th>Fix</th><th>CVEs</th><th>Images</th><th></th></tr>${rows.join('')}</table>`)
       : '<div class="c-note">No fixes for running images right now.</div>'}
     <div class="c-src">Lightwell builds (Applications inbox) → ACS GET /v1/images?query=Component:…+Component Version:… ·
       reconcile ?query=Fixable:true · POST /api/ctr/webhook (ACS notifier)</div></section>
@@ -9783,6 +9828,12 @@ function ctrRender() {
   </div>`;
 }
 
+document.getElementById('ctr-pane').addEventListener('change', e => {
+  if (e.target.id !== 'ctr-group-by') return;
+  ctr.groupBy = e.target.checked;
+  localStorage.setItem('ctr-group-by', ctr.groupBy ? 'on' : 'off');
+  ctrRender();
+});
 document.getElementById('ctr-pane').addEventListener('click', async e => {
   const t = e.target;
   try {
