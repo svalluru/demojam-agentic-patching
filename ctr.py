@@ -467,14 +467,17 @@ def start_assess(fix_id: str) -> tuple[int, dict]:
     if state().get('status') in BUSY:
         return 409, {'ok': False, 'error': 'a containers run is open: finish or reset it first'}
     try:
-        fix = next((f for f in fixes()['fixes'] if f['id'] == fix_id), None)
+        found = fixes()['fixes']
     except AcsError as e:
         return 503, {'ok': False, 'error': str(e)}
+    fix = next((f for f in found if f['id'] == fix_id), None)
     if not fix:
         return 404, {'ok': False, 'error': f'no fix {fix_id}'}
     with _LOCK:
         _RUN.clear()
+        # The other Lightwell builds for the same image ride the same rebuild: show them from the start.
         _RUN.update(status='assessing', run_id=uuid.uuid4().hex[:8], fix=fix, started_at=now_iso(), events=[],
+                    siblings=_sibling_rows(_siblings(fix, found)),
                     stages={k: 'pending' for k in STAGES}, simulated=bool(H.demo_mode()))
         _RUN['stages']['assess'] = 'active'
     threading.Thread(target=_assess, args=(fix,), daemon=True).start()
@@ -569,6 +572,19 @@ def check_container_change(edits: list[dict]) -> list[dict]:
     ]
 
 
+def _siblings(fix: dict, found: list[dict]) -> list[dict]:
+    """The other Lightwell fixes for an image this fix touches: they are built into the same rebuild."""
+    if fix['kind'] != 'lightwell':
+        return []
+    ids = {i['id'] for i in fix['images']}
+    return [f for f in found if f['kind'] == 'lightwell' and f['id'] != fix['id'] and ids & {i['id'] for i in f['images']}]
+
+
+def _sibling_rows(siblings: list[dict]) -> list[dict]:
+    return [dict({k: f.get(k, '') for k in ('id', 'group', 'component', 'from', 'to')}, cves=list(f.get('cves') or []))
+            for f in siblings]
+
+
 def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
     st = state()
     if st.get('status') != 'assessed':
@@ -576,20 +592,17 @@ def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
     targets = [t for t in st['impact']['targets'] if keys is None or t['key'] in keys]
     if not targets:
         return 400, {'ok': False, 'error': 'no deployment selected'}
-    fix, siblings = st['fix'], []
-    if fix['kind'] == 'lightwell':
-        ids = {i['id'] for i in fix['images']}
-        try:
-            siblings = [f for f in fixes()['fixes'] if f['kind'] == 'lightwell' and f['id'] != fix['id']
-                        and ids & {i['id'] for i in f['images']}]
-        except AcsError:
-            siblings = []
+    fix = st['fix']
+    try:
+        siblings = _siblings(fix, fixes()['fixes'])
+    except AcsError:
+        siblings = []
     edits = build_change(fix, targets, siblings)
     checks = check_container_change(edits)
     waived = sorted({c for f in [fix] + siblings for c in f.get('cves') or []})
     with _LOCK:
         _RUN.update(status='generated', selected=[t['key'] for t in targets], change=edits, checks=checks,
-                    ok=all(c['ok'] for c in checks), siblings=[{k: f.get(k, '') for k in ('id', 'group', 'component', 'from', 'to')} for f in siblings],
+                    ok=all(c['ok'] for c in checks), siblings=_sibling_rows(siblings),
                     lightwell_fixed=waived)
         _RUN['stages']['plan'] = 'done'
     return 200, {'ok': True}

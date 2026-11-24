@@ -402,6 +402,14 @@ class Siblings(unittest.TestCase):
         self.assertIn('CVE-2023-51074', st['lightwell_fixed'])
         self.assertTrue(st['ok'])
 
+    def test_assess_already_names_the_other_builds(self):
+        demo()
+        ctr.start_assess('lw-evt-json'); wait({'assessed'})
+        sib = {x['component']: x for x in ctr.state()['siblings']}
+        self.assertIn('json-path', sib)
+        self.assertEqual(sib['json-path']['to'], '2.8.0.rhlw-00001')
+        self.assertIn('CVE-2023-51074', sib['json-path']['cves'])
+
 
 if __name__ == '__main__':
     unittest.main()

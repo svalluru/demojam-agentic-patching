@@ -9745,17 +9745,24 @@ function ctrRun(s) {
   const servers = (s.impact || {}).servers || [];
   const lwApp = f.kind === 'lightwell';
   const out = [];
-  out.push(`<section class="c-box"><h3>${esc(f.component || '')} <span class="pill-s ${(CTR_KIND[f.kind] || ['off'])[0]}">${esc((CTR_KIND[f.kind] || ['', ''])[1])}</span>
+  // Every Lightwell build for the image goes into one rebuild: name them all, not only the one clicked.
+  const builds = [f].concat(s.siblings || []);
+  const many = lwApp && builds.length > 1;
+  const cveN = new Set(builds.flatMap(b => b.cves || [])).size;
+  const imgApp = f.images && f.images.length ? ctrImageName(f.images[0].name).app : f.component;
+  out.push(`<section class="c-box"><h3>${esc(many ? imgApp : (f.component || ''))} <span class="pill-s ${(CTR_KIND[f.kind] || ['off'])[0]}">${many ? `${builds.length} Lightwell builds` : esc((CTR_KIND[f.kind] || ['', ''])[1])}</span>
       <b>${esc(s.status)}</b></h3>
-    <div class="mono">${esc(f.from || '')}${f.to ? ' → ' + esc(f.to) : ''}</div>
-    <div class="c-note">${esc(f.source || '')} · ${(f.cves || []).length} CVE${(f.cves || []).length === 1 ? '' : 's'} · ${f.images ? f.images.map(i => esc(i.name)).join(', ') : ''}</div>
+    ${many ? `<div class="c-chips">${builds.map(b => `<span class="pill-s good mono">${esc(b.component)} ${esc(b.from)} → ${esc(b.to)}</span>`).join(' ')}</div>
+      <div class="c-note">One rebuild of the image carries all ${builds.length} builds.</div>`
+           : `<div class="mono">${esc(f.from || '')}${f.to ? ' → ' + esc(f.to) : ''}</div>`}
+    <div class="c-note">${esc(f.source || '')} · ${cveN} CVE${cveN === 1 ? '' : 's'} · ${f.images ? f.images.map(i => esc(i.name)).join(', ') : ''}</div>
     ${servers.map(sv => `<div class="c-sec"><div class="c-alert" style="border-color:rgba(154,99,0,.45);background:rgba(154,99,0,.06)">
       <b style="color:var(--c-amber)">! Servers patched, image not</b> · ${esc(sv.app)} was patched on ${sv.patched} server${sv.patched === 1 ? '' : 's'}
       by Applications run <span class="mono">${esc(String(sv.run_id).slice(0, 8))}</span> (${sv.mode === 'source' ? 'rebuilt from source' : 'jar swap'},
       <span class="mono">${esc(sv.version)}</span>). The image is a separate copy and still carries the old jar.
       ${sv.mode === 'source' ? `The pom.xml fix is in branch <span class="mono">fix/${esc(sv.run_id)}</span>: build the image from it.`
                              : 'A jar swap changes nothing in git, so the change below edits pom.xml.'}</div></div>`).join('')}
-    ${lwApp ? `<div class="c-note">Same Lightwell build on the Applications side: <button type="button" class="c-link" data-ctr-apps="${esc(f.component)}">open the ${esc(f.component)} fix →</button></div>` : ''}
+    ${lwApp ? `<div class="c-note">Same Lightwell build${many ? 's' : ''} on the Applications side: ${builds.map(b => `<button type="button" class="c-link" data-ctr-apps="${esc(b.component)}">open the ${esc(b.component)} fix →</button>`).join(' ')}</div>` : ''}
   </section>`);
   if (s.status === 'assessing') out.push('<section class="c-box"><div class="empty"><div class="spinner"></div><span>Asking ACS which deployments run it…</span></div></section>');
   if (t.length) {
