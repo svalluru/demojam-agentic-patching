@@ -9307,6 +9307,81 @@ const FLOW_APPV2 = {
   ],
 };
 
+const FLOW_CTR = {
+  // The same ten columns and the same shape as the Applications tab, so flipping between them does not move the
+  // picture: commit and build at 4, the gate at 5, the rollout at 6 and 7, the card at 8.
+  cols: 10,
+  boxes: [
+    { c: 0, t: 'NEXUS POLLER', k: 'THE TRIGGER', ext: 1 },
+    { c: 1, t: '1 · INTAKE',   k: 'AGENT', k2: 'ACS QUERY', cls: 'ag' },
+    { c: 2, t: '2 · ASSESS',   k: 'AGENT', k2: 'DEPLOYMENTS', cls: 'ag' },
+    { c: 3, t: '3 · PREPARE',  k: 'AGENT', k2: 'CHANGE + CHECKS', cls: 'ag' },
+    { c: 4, t: '4 · COMMIT + BUILD', k: 'AO WORKFLOW', k2: 'AAP JOBS', cls: 'rh', ext: 1 },
+    { c: 5, t: '5 · APPROVAL', k: 'YOU', k2: 'PROD ONLY', cls: 'gate' },
+    { c: 6, t: '6 · DEPLOY',   k: 'AO WORKFLOW', k2: 'AAP JOB', cls: 'rh', ext: 1 },
+    { c: 7, t: 'VERIFY · ROLL BACK', k: 'AO SWITCH', k2: 'AAP JOBS', cls: 'rh', ext: 1 },
+    { c: 8, t: 'NOTIFY', k: 'AAP JOB', k2: 'CARD · HISTORY', cls: 'rh', ext: 1 },
+
+    { c: 0, lane: 1, cls: 'svc', t: 'NEXUS', s: 'proxy of Lightwell' },
+    { c: 1, lane: 1, cls: 'svc rh', t: 'RED HAT ACS', s: 'images · components' },
+    { c: 2, lane: 1, cls: 'svc rh', t: 'RED HAT ACS', s: 'deployments · alerts' },
+    { c: 4, lane: 1, cls: 'svc', t: 'GITLAB', s: 'app repos · gitops' },
+    { c: 5, lane: 1, cls: 'svc rh', t: 'OCP PIPELINES', s: 'ctr-build · roxctl · cosign' },
+    { c: 6, lane: 1, cls: 'svc rh', t: 'ARGO CD', s: 'OpenShift GitOps' },
+    { c: 7, lane: 1, cls: 'svc rh', t: 'OPENSHIFT', s: 'nfvo · oss namespaces' },
+    { c: 8, lane: 1, cls: 'svc', t: 'MATTERMOST', s: 'a card per deployment' },
+  ],
+  groups: [],
+  edges: [
+    down(0, '1', 'Nexus', 'Poller',
+      'A new <em>.rhlw-</em> build in Nexus (the same poller as Applications); its CVEs come from the Lightwell API.'),
+    hop(0, 1, '2', 'Poller', 'Intake',
+      'Each build becomes one question for ACS, never “scan every image”.'),
+    up(1, '3', 'Intake', 'Red Hat ACS',
+      'Which running images hold <em>this</em> component and version, in our namespaces; each answer confirmed '
+      + 'exactly.'),
+    hop(1, 2, '4', 'Intake', 'Assess',
+      'One row per fix, or one per image with <em>Group by app</em>.'),
+    up(2, '5', 'Assess', 'Red Hat ACS',
+      'The deployments running the image: env, replicas, runtime alerts, risk and the change window.'),
+    hop(2, 3, '6', 'Assess', 'Prepare',
+      'You choose the deployments, then <strong>Prepare change</strong>.'),
+    hop(3, 4, '7', 'Prepare', 'Commit',
+      'pom.xml to every Lightwell build for the image (one rebuild), GitOps by digest; four checks. '
+      + '<strong>Run</strong>: one AO execution per deployment.'),
+    up(4, '8', 'Commit', 'GitLab',
+      'The change on branch <em>fix/&lt;run&gt;</em> of the app repo; the second execution finds it there.'),
+    lane(4, 5, '9', 'GitLab', 'OCP Pipelines',
+      'One build per run: Maven through Nexus, buildah, <em>roxctl image check</em> (it waives only the CVEs the '
+      + 'Lightwell builds fix), cosign sign.'),
+    hop(4, 5, '10', 'Build', 'Approval',
+      'Prod stops for a person, with the digest and scan in front of them. The lab goes straight through.'),
+    hop(5, 6, '11', 'Approval', 'Deploy',
+      '<strong>Approve</strong> signals the gate. <strong>Reject + defer</strong> files an ACS deferral for 30 days.'),
+    up(6, '12', 'Deploy', 'Argo CD',
+      'The new digest pinned in <em>telco/gitops</em>, and Argo CD asked to sync now.', -1),
+    lane(6, 7, '13', 'Argo CD', 'OpenShift',
+      'Argo CD rolls the deployment to the new image; nothing is edited on the cluster by hand.'),
+    down(7, '14', 'OpenShift', 'Verify',
+      'Every replica ready, <em>/health</em> names the jars, ACS reports every Lightwell build. A failure puts the '
+      + 'previous digest back through GitOps.'),
+    hop(7, 8, '15', 'Verify', 'Notify',
+      'Patched, rolled back or build failed; the run goes to the history.'),
+    up(8, '16', 'Notify', 'Mattermost',
+      'Every route ends in a card (Mattermost when configured, else the job output).'),
+  ],
+  caps: [
+    '<strong>ACS at both ends.</strong> It says where an old jar runs (steps 3 and 5) and confirms what runs after '
+    + '(step 14). A container is never patched in place: the fix is a rebuilt image, and everything from step 8 is an '
+    + 'Automation Orchestrator workflow driving AAP. The console never touches git or the cluster.',
+    'The apps are <em>workflow-engine</em> (nfvo-lab, nfvo-prod: spring-webmvc, spring-expression, spring-core) and '
+    + '<em>inventory-service</em> (oss-lab, oss-prod: json, json-path, woodstox-core), built from Lightwell’s public demo '
+    + 'repository through Nexus.',
+    'Three checks stand between a fix and production: the four change checks at step 7, <em>roxctl</em> at step 9, '
+    + 'and health plus ACS at step 14 on the lab. The amber box is the only one a person is inside.',
+  ],
+};
+
 // What demo mode replaces, per tab: the caption under the greyed-out drawing.
 const FLOW_DEMO = {
   infra: 'Lightspeed, the risk model, the reasoning store, the orchestrator, AAP and the hosts are replaced by '
@@ -9318,6 +9393,9 @@ const FLOW_DEMO = {
        + 'app inventory and its reasoning are staged, and the App Patch v2 workflow and the test in a pod (its '
        + 'pipeline tasks included) are simulated, one LIVE site (workflow-engine on edge-site-1) staged to fail its '
        + 'health check and roll back. The agents and the playbook checks run for real.',
+  ctr: 'ACS answers from fixtures shaped like its API (images, deployments, alerts), and the Container Patch run is '
+     + 'simulated: commit, build and scan, lab rollout, the production gate, verify. The intake, the assessment and '
+     + 'the change checks run for real.',
 };
 
 // A box's cls is a space-separated token list — 'svc' is a shape, 'rh' and
@@ -9527,24 +9605,7 @@ const FLOW_LW_APIS = {
 
 // The Containers side: live on the ACS cluster, or fixtures in demo mode. How to run lists the steps, who does each,
 // and the calls behind them (a drawing like the other two sides' is still to come).
-const FLOW_CTR_HTML = `<h3 class="fd-mode">Live mode <span>ACS, AO, AAP, OpenShift Pipelines, GitLab, Argo CD, Nexus</span></h3>
-  <p class="fd-cap"><strong>Find, rebuild, roll out, verify.</strong> ACS knows which running images carry an old jar. A
-  container is never patched in place: the fix is a rebuilt image with the Lightwell jars (the same builds the Applications side
-  uses, through Nexus), built, scanned by <span class="mono">roxctl</span> and signed with cosign in OpenShift Pipelines, rolled
-  out through GitOps lab first and production after approval, and verified by ACS on the running deployment.</p>
-  <table class="fd-api"><thead><tr><th>#</th><th>Step</th><th>Who does it</th></tr></thead><tbody>
-    <tr><td>1</td><td>A Lightwell build arrives in Nexus; its CVEs come from the Lightwell API</td><td class="mono">Console (Nexus poller)</td></tr>
-    <tr><td>2</td><td>Which running images contain the old version: one targeted query per build, exact name and version</td><td class="mono">Console → ACS</td></tr>
-    <tr><td>3</td><td>Assess: the deployments running the image, env, replicas, risk, window</td><td class="mono">Console → ACS</td></tr>
-    <tr><td>4</td><td>Prepare: pom.xml to every Lightwell build for the image (one rebuild), GitOps by digest, four checks</td><td class="mono">Console</td></tr>
-    <tr><td>5</td><td>Commit to branch <span class="mono">fix/&lt;run&gt;</span> of the app repo</td><td class="mono">AO "Container Patch" → CTR - Commit</td></tr>
-    <tr><td>6</td><td>Build, <span class="mono">roxctl image check</span> (waives only the CVEs the Lightwell builds fix), cosign sign</td><td class="mono">CTR - Build and Scan → Tekton ctr-build</td></tr>
-    <tr><td>7</td><td>Lab: pin the digest in GitOps, Argo CD syncs, every replica ready, <span class="mono">/health</span> names the jars</td><td class="mono">CTR - Deploy, CTR - Rollout Health</td></tr>
-    <tr><td>8</td><td>ACS reports the new digest with every planned Lightwell build</td><td class="mono">CTR - Verify (ACS)</td></tr>
-    <tr><td>9</td><td>Production waits: Approve runs 7–8 for prod; Reject files an ACS deferral (30 days)</td><td class="mono">AO gate · you</td></tr>
-    <tr><td>10</td><td>An unhealthy rollout: the previous digest goes back through GitOps</td><td class="mono">CTR - Rollback</td></tr>
-    <tr><td>11</td><td>The outcome card; the run goes to the history</td><td class="mono">CTR - Notify · console</td></tr>
-  </tbody></table>
+const FLOW_CTR_HTML = `<h3 class="fd-mode">Containers calls <span>what the code calls, and where</span></h3>
   <table class="fd-api"><thead><tr><th>Call</th><th>What for</th></tr></thead><tbody>
     <tr><td class="mono">ACS GET /v1/images, /v1/images/{id}</td><td>Images with the component, and their components (intake, verify)</td></tr>
     <tr><td class="mono">ACS GET /v1/deployments, /v1/deployments/{id}</td><td>Where each image runs: namespace, replicas, current digest</td></tr>
@@ -9559,10 +9620,7 @@ const FLOW_CTR_HTML = `<h3 class="fd-mode">Live mode <span>ACS, AO, AAP, OpenShi
   <span class="mono">CTR_GITLAB_URL</span>/<span class="mono">_TOKEN</span>, and the AO and AAP settings. Setup:
   <span class="mono">ctr-setup/</span>, <span class="mono">aap-setup/create-ctr-objects.py</span>, the AO workflow
   <span class="mono">ao-setup/ctr_workflow.json</span> (README, <em>Containers live setup</em>). To run again: Settings → Advanced →
-  <em>Containers demo</em> → Reset.</p>
-  <h3 class="fd-mode">Demo mode <span>nothing outside the console is contacted</span></h3>
-  <p class="fd-cap">Without <span class="mono">ACS_URL</span>, ACS answers from fixtures shaped like its API (the chip says
-  <em>Demo data</em>), and the run is a simulator that walks the same steps, gate included.</p>`;
+  <em>Containers demo</em> → Reset.</p>`;
 
 function renderFlow() {
   const seg = document.getElementById('flow-toggle');
@@ -9570,8 +9628,7 @@ function renderFlow() {
   seg.querySelectorAll('.dt-btn').forEach(
     b => b.setAttribute('aria-pressed', String(b.dataset.pane === flowSide)));
   const body = document.getElementById('flow-body');
-  if (flowSide === 'ctr') { body.innerHTML = FLOW_CTR_HTML; return; }
-  const f = { app: FLOW_APP, appv2: FLOW_APPV2 }[flowSide] || FLOW_INFRA;
+  const f = { app: FLOW_APP, appv2: FLOW_APPV2, ctr: FLOW_CTR }[flowSide] || FLOW_INFRA;
   // Live mode first: what a real run needs. Then the same drawing in demo mode, with everything outside this
   // console greyed out, because demo mode contacts none of it.
   body.innerHTML = `<h3 class="fd-mode">Live mode <span>every box is a real component</span></h3>${flowSVG(f)}
@@ -9581,7 +9638,8 @@ function renderFlow() {
     + (FLOW_LW_APIS[flowSide] ? `<h3 class="fd-mode">Lightwell APIs used <span>what the code calls, and where</span></h3>
       <table class="fd-api"><thead><tr><th>Call</th><th>What for</th><th>Code</th></tr></thead><tbody>
       ${FLOW_LW_APIS[flowSide].map(([c, w, where]) => `<tr><td class="mono">${esc(c)}</td><td>${esc(w)}</td>
-        <td class="mono muted-sm">${esc(where)}</td></tr>`).join('')}</tbody></table>` : '');
+        <td class="mono muted-sm">${esc(where)}</td></tr>`).join('')}</tbody></table>` : '')
+    + (flowSide === 'ctr' ? FLOW_CTR_HTML : '');
   flowFit(body);
 }
 
