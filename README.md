@@ -847,38 +847,91 @@ apps are patched on servers that never were, and old hosts summarised as this la
 ### Containers (Red Hat ACS)
 
 The third side of the toggle, **Infrastructure | Applications | Containers** (`#containers`, code in `ctr.py`), takes a
-CVE in a running container image from finding to a verified rollout, the same way the other two sides do:
+CVE in a running container image from finding to a verified rollout, the same way the other two sides do. It is live
+end to end: ACS for intake and verification, AO "Container Patch" and eight AAP templates for the run, OpenShift
+Pipelines for the build, GitLab and Argo CD for the rollout.
 
 1. **Fixes for running images.** Intake never polls every image:
-   - **Lightwell builds:** each build in the Applications inbox becomes one targeted ACS query (`Component:… +
-     Component Version:…`) across every cluster on that Central.
+   - **Lightwell builds:** each build in the Applications inbox becomes one targeted ACS query across every cluster on
+     that Central, asked under both names ACS uses for a jar (`group:artifact` with Maven metadata, else `artifact`),
+     then confirmed by exact name and version (ACS search is fuzzy). `CTR_NAMESPACES` limits the scope.
    - **Base image:** a narrow reconcile query (`Fixable:true`, capped by `CTR_RECONCILE_LIMIT`) finds OS packages a
      newer UBI fixes.
    - **ACS policy:** violations ACS pushes to `POST /api/ctr/webhook` through a generic-webhook notifier, with the
      header `X-Console-Token: $CTR_WEBHOOK_TOKEN`.
+   - **Group by app** (checkbox, remembered in the browser) shows one row per image with every fix as a chip and one
+     Assess; the base-image fix is still assessed on its own.
 2. **Assess → 1 · Deployments.** The deployments running the affected images become the sites: cluster, namespace, env,
    replicas, a risk score (CVEs, production, runtime alert, replicas), who calls them, the change window, and per
-   deployment reasoning (the history store and the LLM in live mode).
-3. **Prepare → 2 · Change.** The change is `pom.xml` to the Lightwell build, the Containerfile `FROM` to a pinned UBI
-   digest, and each deployment's GitOps image reference to the digest the build produces. `check_container_change`
-   allows only those files and requires pinned digests.
-4. **Run.** Commit, build and `roxctl image check`, cosign sign, lab rollout and health, then **Approve** or
-   **Reject + defer** at the production gate (the reject files an ACS deferral with a 30-day expiry), then ACS rescan
-   and notify.
+   deployment reasoning (the history store and the LLM in live mode). The header names every Lightwell build for the
+   image, because they all ride one rebuild.
+3. **Prepare → 2 · Change.** `pom.xml` to every Lightwell build for that image (one rebuild), the Containerfile `FROM`
+   to a pinned UBI digest for a base fix, and each deployment's GitOps image reference
+   (`apps/<cluster>/<ns>/<app>/kustomization.yaml`) to the digest the build produces. Four checks: only those files,
+   the Lightwell versions, the base image, pinned digests.
+4. **Run.** One AO execution per deployment; lab goes straight through, production waits at the gate:
+
+   | AAP template | Does |
+   |---|---|
+   | CTR - Commit | the change on branch `fix/<run>` of `telco/app-<app>` (the second execution finds it done) |
+   | CTR - Build and Scan | Tekton `ctr-build`: Maven through Nexus, buildah, `roxctl image check` (enforced), cosign sign; built once per run, found again by its labels `ctr/run`, `ctr/app` |
+   | CTR - Deploy | pins the new digest in `telco/gitops` and asks Argo CD to sync now |
+   | CTR - Rollout Health | every replica on the new digest, then `/health` names the Lightwell jars |
+   | CTR - Verify (ACS) | ACS sees the new digest and every planned Lightwell build (a newer `.rhlw-` build of the same version passes; the upstream jar never does) |
+   | CTR - Rollback | the previous digest back through GitOps, on a failed health check |
+   | CTR - Notify | the outcome card (Mattermost when `CTR_MATTERMOST_WEBHOOK` is set) |
+   | CTR - Reset Demo | not in the workflow: the hidden reset below |
+
+   **Approve** or **Reject + defer** at the production gate (the reject files an ACS deferral with a 30-day expiry).
+   The table shows the outcome in *Status* and the stages, digest, scan summary and AO execution in *Details*.
+
+**The roxctl waiver.** ACS matches CVEs by the upstream version, so it still flags the CVEs a Lightwell build fixed
+(`5.3.18.rhlw-00010` looks like `5.3.18`). The build waives exactly the CVEs this run's Lightwell builds fix; any
+other policy violation fails it.
 
 **Servers patched, image not.** A jar swap on the Applications side fixes the servers, not the images: the image is a
 separate copy, and a swap changes nothing in git. Assess names the Applications run that patched the app's servers.
 After **Rebuild from source**, the pom.xml fix is already in branch `fix/<run>`.
 
 **Run it again:** Settings → Advanced → *Containers demo* → **Reset…** puts every Containers deployment back on its
-original image (the AAP job `CTR - Reset Demo` pins each app's first build in GitOps; Argo CD syncs) and clears the
-run, so ACS finds the old jars and the use cases can be repeated.
+original image (the AAP job `CTR - Reset Demo` pins each app's first build, the PipelineRun labelled
+`ctr/purpose=seed`, in GitOps; Argo CD syncs) and clears the run, so ACS finds the old jars and the use cases can be
+repeated. It is refused while a Containers run is open.
 
-**Live ACS:** set `ACS_URL` (the Central route), `ACS_TOKEN` (an API token whose access scope covers the clusters this
-console is responsible for), and optionally `ACS_VERIFY_TLS=false`, `CTR_WEBHOOK_TOKEN`, `CTR_WINDOWS` (JSON,
-namespace to window) and `CTR_VECTOR_DB_ID` (a container rollout history store). Intake and assessment then read ACS
-(the chip says *Live ACS*). **The run stays a demo simulator** until an AO workflow "Container Patch" and its AAP
-templates exist; live mode says so instead of pretending. The dashboard's Containers tab is still static demo data.
+#### Containers live setup
+
+On the ACS cluster (OpenShift 4.20 here), with `oc` logged in as cluster admin and `.env` pointing at it:
+
+```bash
+./ctr-setup/install-aap-ao.sh              # AAP 2.6 and AO (operators, PostgreSQL for AO); skip if they exist
+oc apply -f ctr-setup/acs-sensor-scc.yaml  # only if Sensor reports nothing (its SCC was missing on this cluster)
+oc apply -f ctr-setup/acs-registry.yaml    # a pull-only token for ACS; add it in ACS as an image integration for
+                                           #   image-registry.openshift-image-registry.svc:5000 (roxctl needs it)
+oc apply -f ctr-setup/ctr-runner.yaml      # the service account the AAP jobs use
+./ctr-setup/deploy.py                      # namespaces, GitLab repos, pipeline, cosign key, seed builds, GitOps, Argo CD
+./aap-setup/create-ctr-objects.py          # credential type and credential, inventory, project, the eight templates
+DEF_FILE=ao-setup/ctr_workflow.json WF_NAME="Container Patch" ./ao-setup/create-ao-workflow.sh
+```
+
+Settings in `.env` (see `.env.example`): `ACS_URL`, `ACS_TOKEN` (an API token whose access scope covers the clusters
+this console is responsible for), `ACS_VERIFY_TLS`, `CTR_NAMESPACES`, `CTR_GITLAB_URL`, `CTR_GITLAB_TOKEN`, `NEXUS_URL`,
+`AAP_*`, `AO_*`, and optionally `CTR_WEBHOOK_TOKEN`, `CTR_WINDOWS` (JSON, namespace to window), `CTR_VECTOR_DB_ID`,
+`CTR_MATTERMOST_WEBHOOK`. Without `ACS_URL` the side runs on fixtures (the chip says *Demo data*).
+
+**Where to look:** the build is a PipelineRun in `agentic-patching` (filter `ctr/run=<run id>`;
+`tkn pipelinerun logs <name> -n agentic-patching`), the change is branch `fix/<run>` in GitLab, the rollout is a
+commit in `telco/gitops` and the Argo CD app, the run is in AO and the jobs in AAP. A finished run is kept in
+`runs/ctr-run.json` (restored at start) and `runs/ctr-history.jsonl`.
+
+**Known gaps (Containers):**
+- The fix branch is not merged to `main`; open a merge request in GitLab after a run.
+- A run is saved once it is dispatched; an assessed or prepared draft is lost when the console restarts.
+- AO sometimes keeps an execution *paused* after the gate is answered. The console settles it from the AAP jobs after
+  60 s; the AO record itself stays paused and cannot be cancelled.
+- On OpenShift 4.20 with OpenShift Pipelines 1.16 the console's Pipelines menu does not appear (the plugin is too old);
+  the PipelineRun pages still open by URL. Moving the operator to a newer channel fixes it.
+- ACS Collector runs on 2 of 3 nodes here; runtime alerts can miss one node.
+- The dashboard's Containers tab is static demo data.
 
 ### Dashboard
 
@@ -1258,6 +1311,8 @@ discover-hosts.py          what AAP can patch, found in Insights — uuids and t
 agentic-patching.py        everything server-side: common code, Supervisor,
                            Info agent, Patching agent, and the HTTP server
                            (page, API, /lightwell/ on :8788)
+ctr.py                     Containers: ACS intake, assess, the checked change, the AO run,
+                           ACS verify, the demo reset
 appv2.py                   Applications v2: Nexus intake, BOM impact, Change list,
                            playbook agent and its checks, the App Patch v2 run,
                            test-in-a-pod status, Cancel run, Telco estate
@@ -1265,7 +1320,7 @@ app_source.py              Applications v2: an app's Maven source, rendered from
 app-data/
   bom/                     the apps, their sites and libraries (Applications v2)
   history/                 synthetic app patch history (the app history store)
-tests/test_appv2.py        python3 -m unittest discover -s tests
+tests/                     python3 -m unittest discover -s tests (test_appv2.py, test_ctr.py)
 fallbacks.py               every stored default, in one editable file
 communication.py           agent 3 — renders the patch status report
 results.py                 agent 4 — feeds outcomes back to RAG + training data
@@ -1277,14 +1332,18 @@ ao-setup/
   create-ao-workflow.sh    imports the workflow below and publishes it
   demojam_lab_workflow.json  the workflow the console dispatches to
   app_v2_workflow.json     the App Patch v2 workflow (commit, test in a pod, gate, run)
+  ctr_workflow.json        the Container Patch workflow (Containers side)
 aap-setup/
   create-verify-template.sh  CVE - Verify Patch — the one AAP object that is ours
   create-app-v2-objects.py   Applications v2 projects, templates, apps, Gitea repos
+  create-ctr-objects.py      Containers: the CTR templates, credential, project (GitLab)
   playbooks/                 cve_verify_patch.yml; app_v2_*.yml (commit, test in a pod,
                              seed repos, deploy the apps); files/ (runner, HealthServer,
-                             apply_dependency_changes.py)
+                             apply_dependency_changes.py); ctr_*.yml (Containers)
 nexus-setup/               Nexus with the lightwell-demo-remediated and maven-central proxies
 pipelines-setup/           OpenShift Pipelines: app-v2-test, app-v2-build, the AAP token
+ctr-setup/                 Containers estate on the ACS cluster: AAP + AO install, ctr-build
+                           pipeline, GitLab repos, GitOps, Argo CD apps, seed builds
 lightwell/                 Applications v1's dependency scanner (osv.dev, Lightwell API)
 rag-setup/
   deploy.sh                Milvus + Llama Stack as plain Pods (no RHOAI)

@@ -3214,7 +3214,7 @@
                 <td>GitLab <code>telco/gitops</code> commit; the Argo CD app <code>ctr-nfvo-lab-workflow-engine</code></td></tr>
               <tr><td>8</td><td><b>ACS verifies.</b> ACS must show the deployment on the new digest, reporting
                 spring-webmvc <code>5.3.18.rhlw-00010</code>.</td>
-                <td>AAP <em>CTR - Verify (ACS)</em></td><td>The site's status line: "ACS: … runs … 5.3.18.rhlw-00010"</td></tr>
+                <td>AAP <em>CTR - Verify (ACS)</em></td><td>The site's <em>Details</em> column: "ACS: … runs … spring-webmvc 5.3.18.rhlw-00010, spring-expression …, spring-core …"</td></tr>
               <tr><td>9</td><td><b>Production waits.</b> The prod execution stops at an approval gate. Approve: the same
                 deploy, health and verify run for nfvo-prod. Reject: an ACS deferral is filed for 30 days, so the
                 exposure stays on record.</td>
@@ -3245,11 +3245,16 @@
               <em>Container Patch</em>, published.</li>
             <li><strong>The console</strong> started on this code, in live mode. The <em>Containers</em> tab shows
               <em>Live ACS</em>, and its inbox lists spring-webmvc, spring-expression and spring-core against
-              <code>workflow-engine</code>.</li>
+              <code>workflow-engine</code>, and json, json-path and woodstox-core against <code>inventory-service</code>.
+              Tick <em>Group by app</em> for one row per image.</li>
+            <li><strong>No run left open.</strong> The Containers page shows the inbox, not an old run (use <em>Back to
+              fixes</em>, top right, on a finished one).</li>
             <li><strong>The sites on the old jars.</strong> <code>nfvo-lab</code> and <code>nfvo-prod</code> must run the
               original image, so that ACS finds 5.3.18. If a rehearsal patched them, reset them (<em>Between demos</em>).</li>
             <li><strong>Tabs to open:</strong> ACS (Vulnerability Management, the workflow-engine deployment), GitLab
-              <code>telco/gitops</code>, the OpenShift console on agentic-patching PipelineRuns, Argo CD.</li>
+              <code>telco/gitops</code>, the OpenShift console on agentic-patching PipelineRuns, Argo CD. The console's
+              Pipelines menu does not show on this lab (Pipelines 1.16 on OpenShift 4.20): open
+              <code>/k8s/ns/agentic-patching/tekton.dev~v1~PipelineRun</code> on the console URL directly.</li>
           </ul>
         </section>
 
@@ -3266,8 +3271,9 @@
           </div></div>
           <div class="g-beat"><div class="g-n">2</div><div>
             <h4>Assess and prepare <span class="t">2 min</span></h4>
-            <div class="g-do"><b>Do</b><span><strong>Assess</strong>: nfvo-lab (lab) and nfvo-prod (prod, 3 replicas,
-              higher risk). <strong>Prepare change</strong>: the pom.xml lines, the two GitOps files, the green checks.</span></div>
+            <div class="g-do"><b>Do</b><span><strong>Assess</strong>: the header names all three Spring builds; nfvo-lab
+              (lab) and nfvo-prod (prod, 3 replicas, higher risk). <strong>Prepare change</strong>: the pom.xml lines,
+              the two GitOps files, the green checks. Every button greys out and says what it is doing while it works.</span></div>
             <div class="g-say"><b>Say</b><span>“A container is never patched in place: the fix is a new image. The
               agents bundle every Lightwell build for this image into one rebuild, and the system checks the change:
               only these files, only Red Hat builds, images by digest, never a tag.”</span></div>
@@ -3283,15 +3289,18 @@
           </div></div>
           <div class="g-beat"><div class="g-n">4</div><div>
             <h4>Proof, then production <span class="t">2 min</span></h4>
-            <div class="g-do"><b>Do</b><span>nfvo-lab reads <em>patched</em> with "ACS: … 5.3.18.rhlw-00010". Open the
-              deployment in ACS to show the component version. On nfvo-prod, <strong>Approve</strong>.</span></div>
+            <div class="g-do"><b>Do</b><span>nfvo-lab's <em>Status</em> reads <em>patched</em>; its <em>Details</em> say
+              "ACS: … spring-webmvc 5.3.18.rhlw-00010, …". Open the deployment in ACS to show the component version. On
+              nfvo-prod, <strong>Approve</strong> (there is no time limit on the gate).</span></div>
             <div class="g-say"><b>Say</b><span>“The proof is not a green job. It is ACS, independently, reporting the new
               version on the running deployment. Production waits for a person, who sees exactly what the lab proved.
               Reject would file an ACS deferral with an expiry, so the risk stays on record.”</span></div>
           </div></div>
           <div class="g-beat"><div class="g-n">5</div><div>
             <h4>Close <span class="t">1 min</span></h4>
-            <div class="g-do"><b>Do</b><span>Both sites patched; back to the inbox: the Spring fixes are gone.</span></div>
+            <div class="g-do"><b>Do</b><span>Both sites patched; <strong>Back to fixes</strong> (top right): the Spring
+              fixes are gone. If there is time, the second use case: <code>inventory-service</code>, three Lightwell
+              builds (json, json-path, woodstox-core) in one rebuild for oss-lab and oss-prod, same steps.</span></div>
             <div class="g-say"><b>Say</b><span>“ACS told us what was exposed. Lightwell gave us a fix without a migration.
               The agents did the work in between, safely, and ACS confirmed the result.”</span></div>
           </div></div>
@@ -3340,6 +3349,10 @@
             <li>AO can keep showing an approved execution as paused while it runs on. The console then reads the outcome
               from AAP's jobs after a minute; the run page is right, AO's own page may lag.</li>
             <li>ACS's vulnerability data is an offline bundle from 2026-08-17, so no base-image (UBI) fixes are listed.</li>
+            <li>The console keeps a run on disk once it is dispatched. Restarting the console after Assess or Prepare
+              drops that draft: Assess again.</li>
+            <li>One old AO execution (4fca0412, 2026-11-23) stays <em>paused</em> in AO and cannot be cancelled. It runs
+              nothing; ignore it.</li>
           </ul>
         </section>
 
@@ -9512,25 +9525,44 @@ const FLOW_LW_APIS = {
   ],
 };
 
-// The Containers side is demo data for now, so How to run describes the flow and the ACS calls a live version makes.
-const FLOW_CTR_HTML = `<h3 class="fd-mode">Containers <span>demo data: nothing here calls ACS yet</span></h3>
-  <p class="fd-cap"><strong>Find, rebuild, roll out, verify.</strong> Red Hat Advanced Cluster Security (ACS) finds CVEs in the
-  images and deployments on OpenShift (Scanner V4 reads OS packages and the Java jars inside them), ranks deployments by risk, and
-  adds what it observes at run time (process baselines, the network graph). A container is never patched in place: the fix is a
-  rebuilt image, with a Lightwell jar (the same build the Applications side uses, through Nexus) or a newer UBI base, built and
-  scanned in OpenShift Pipelines, signed with cosign, rolled out lab first and production after approval, and rescanned by ACS.
-  An image that cannot be fixed yet is deferred in ACS with a reason and an expiry.</p>
-  <table class="fd-api"><thead><tr><th>Call</th><th>What for</th></tr></thead><tbody>
-    <tr><td class="mono">GET /v1/images, /v1/images/{id}</td><td>Components and CVEs per image, with fixed-in versions</td></tr>
-    <tr><td class="mono">GET /v1/deployments</td><td>Where each image runs: namespace, replicas, risk</td></tr>
-    <tr><td class="mono">GET /v1/alerts</td><td>Policy violations and runtime alerts (exec outside the baseline)</td></tr>
-    <tr><td class="mono">GET /v1/networkgraph/cluster/{id}</td><td>Observed traffic: the blast radius of a rollout</td></tr>
-    <tr><td class="mono">roxctl image check / scan</td><td>The gate in the pipeline: no fixable critical CVEs, no policy violations</td></tr>
-    <tr><td class="mono">POST /v2/vulnerability-exceptions/deferral</td><td>Defer what cannot be fixed yet, with an approver and an expiry</td></tr>
-    <tr><td class="mono">GET /v1/nodes</td><td>The OpenShift node's own CVEs (fixed by a cluster update)</td></tr>
+// The Containers side: live on the ACS cluster, or fixtures in demo mode. How to run lists the steps, who does each,
+// and the calls behind them (a drawing like the other two sides' is still to come).
+const FLOW_CTR_HTML = `<h3 class="fd-mode">Live mode <span>ACS, AO, AAP, OpenShift Pipelines, GitLab, Argo CD, Nexus</span></h3>
+  <p class="fd-cap"><strong>Find, rebuild, roll out, verify.</strong> ACS knows which running images carry an old jar. A
+  container is never patched in place: the fix is a rebuilt image with the Lightwell jars (the same builds the Applications side
+  uses, through Nexus), built, scanned by <span class="mono">roxctl</span> and signed with cosign in OpenShift Pipelines, rolled
+  out through GitOps lab first and production after approval, and verified by ACS on the running deployment.</p>
+  <table class="fd-api"><thead><tr><th>#</th><th>Step</th><th>Who does it</th></tr></thead><tbody>
+    <tr><td>1</td><td>A Lightwell build arrives in Nexus; its CVEs come from the Lightwell API</td><td class="mono">Console (Nexus poller)</td></tr>
+    <tr><td>2</td><td>Which running images contain the old version: one targeted query per build, exact name and version</td><td class="mono">Console → ACS</td></tr>
+    <tr><td>3</td><td>Assess: the deployments running the image, env, replicas, risk, window</td><td class="mono">Console → ACS</td></tr>
+    <tr><td>4</td><td>Prepare: pom.xml to every Lightwell build for the image (one rebuild), GitOps by digest, four checks</td><td class="mono">Console</td></tr>
+    <tr><td>5</td><td>Commit to branch <span class="mono">fix/&lt;run&gt;</span> of the app repo</td><td class="mono">AO "Container Patch" → CTR - Commit</td></tr>
+    <tr><td>6</td><td>Build, <span class="mono">roxctl image check</span> (waives only the CVEs the Lightwell builds fix), cosign sign</td><td class="mono">CTR - Build and Scan → Tekton ctr-build</td></tr>
+    <tr><td>7</td><td>Lab: pin the digest in GitOps, Argo CD syncs, every replica ready, <span class="mono">/health</span> names the jars</td><td class="mono">CTR - Deploy, CTR - Rollout Health</td></tr>
+    <tr><td>8</td><td>ACS reports the new digest with every planned Lightwell build</td><td class="mono">CTR - Verify (ACS)</td></tr>
+    <tr><td>9</td><td>Production waits: Approve runs 7–8 for prod; Reject files an ACS deferral (30 days)</td><td class="mono">AO gate · you</td></tr>
+    <tr><td>10</td><td>An unhealthy rollout: the previous digest goes back through GitOps</td><td class="mono">CTR - Rollback</td></tr>
+    <tr><td>11</td><td>The outcome card; the run goes to the history</td><td class="mono">CTR - Notify · console</td></tr>
   </tbody></table>
-  <p class="fd-cap">Live wiring needs <span class="mono">ACS_URL</span> and an API token, and a cluster with room to build images
-  (the image build is switched off on the current lab).</p>`;
+  <table class="fd-api"><thead><tr><th>Call</th><th>What for</th></tr></thead><tbody>
+    <tr><td class="mono">ACS GET /v1/images, /v1/images/{id}</td><td>Images with the component, and their components (intake, verify)</td></tr>
+    <tr><td class="mono">ACS GET /v1/deployments, /v1/deployments/{id}</td><td>Where each image runs: namespace, replicas, current digest</td></tr>
+    <tr><td class="mono">ACS GET /v1/alerts</td><td>Runtime alerts that raise a deployment's risk</td></tr>
+    <tr><td class="mono">ACS POST /v2/vulnerability-exceptions/deferral</td><td>Reject + defer at the production gate</td></tr>
+    <tr><td class="mono">AO POST /api/v1/executions · …/approval_prod/signal</td><td>One execution per deployment; the gate decision</td></tr>
+    <tr><td class="mono">AAP /jobs/</td><td>The CTR jobs' artifacts; the fallback when AO's record lags</td></tr>
+    <tr><td class="mono">roxctl image check · cosign sign</td><td>The gate and the signature, inside ctr-build</td></tr>
+    <tr><td class="mono">GitLab telco/app-&lt;app&gt; · telco/gitops</td><td>The source change, and what should run</td></tr>
+  </tbody></table>
+  <p class="fd-cap">Settings: <span class="mono">ACS_URL</span>, <span class="mono">ACS_TOKEN</span>, <span class="mono">CTR_NAMESPACES</span>,
+  <span class="mono">CTR_GITLAB_URL</span>/<span class="mono">_TOKEN</span>, and the AO and AAP settings. Setup:
+  <span class="mono">ctr-setup/</span>, <span class="mono">aap-setup/create-ctr-objects.py</span>, the AO workflow
+  <span class="mono">ao-setup/ctr_workflow.json</span> (README, <em>Containers live setup</em>). To run again: Settings → Advanced →
+  <em>Containers demo</em> → Reset.</p>
+  <h3 class="fd-mode">Demo mode <span>nothing outside the console is contacted</span></h3>
+  <p class="fd-cap">Without <span class="mono">ACS_URL</span>, ACS answers from fixtures shaped like its API (the chip says
+  <em>Demo data</em>), and the run is a simulator that walks the same steps, gate included.</p>`;
 
 function renderFlow() {
   const seg = document.getElementById('flow-toggle');
