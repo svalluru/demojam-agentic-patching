@@ -229,6 +229,10 @@ class LiveRun(unittest.TestCase):
         self.assertEqual(inp['nfvo-prod']['gitops_path'], 'apps/cluster-x8v2s/nfvo-prod/workflow-engine/kustomization.yaml')
         self.assertEqual(inp['nfvo-lab']['port'], '8090')
         self.assertIn('CVE-2023-20860', inp['nfvo-lab']['lightwell_fixed'])
+        # Every Lightwell build in the rebuild goes to verify, with its group (ACS names Lightwell jars group:artifact).
+        import json as _json
+        self.assertEqual(_json.loads(inp['nfvo-lab']['fixes_json'])[0],
+                         {'group': 'org.springframework', 'component': 'spring-webmvc', 'version': '5.3.18.rhlw-00010'})
         self.assertEqual(ctr.decide(by['nfvo-prod']['key'], 'approved')[0], 200)
         self.assertEqual(self.signals, [('ex-nfvo-prod', {'signal_data': {'decision': 'approved'}})])
         st = wait({'complete'})

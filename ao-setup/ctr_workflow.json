@@ -87,6 +87,11 @@
               "type": "string",
               "default": "",
               "description": "For the cards"
+            },
+            "fixes_json": {
+              "type": "string",
+              "default": "[]",
+              "description": "Every Lightwell build in this rebuild: [{group, component, version}] (ACS verify checks each)"
             }
           }
         }
@@ -316,7 +321,8 @@
           "image_digest": "${build_scan.artifacts.image_digest}",
           "fix_component": "${trigger.fix_component}",
           "fix_group": "${trigger.fix_group}",
-          "fix_version": "${trigger.fix_version}"
+          "fix_version": "${trigger.fix_version}",
+          "fixes_json": "${trigger.fixes_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",
@@ -479,7 +485,8 @@
           "image_digest": "${build_scan.artifacts.image_digest}",
           "fix_component": "${trigger.fix_component}",
           "fix_group": "${trigger.fix_group}",
-          "fix_version": "${trigger.fix_version}"
+          "fix_version": "${trigger.fix_version}",
+          "fixes_json": "${trigger.fixes_json}"
         },
         "credential_id": "REPLACED_BY_create-ao-workflow.sh",
         "integration_id": "REPLACED_BY_create-ao-workflow.sh",

@@ -530,7 +530,7 @@ def start_generate(keys: list[str] | None = None) -> tuple[int, dict]:
     waived = sorted({c for f in [fix] + siblings for c in f.get('cves') or []})
     with _LOCK:
         _RUN.update(status='generated', selected=[t['key'] for t in targets], change=edits, checks=checks,
-                    ok=all(c['ok'] for c in checks), siblings=[{k: f[k] for k in ('id', 'component', 'from', 'to')} for f in siblings],
+                    ok=all(c['ok'] for c in checks), siblings=[{k: f.get(k, '') for k in ('id', 'group', 'component', 'from', 'to')} for f in siblings],
                     lightwell_fixed=waived)
         _RUN['stages']['plan'] = 'done'
     return 200, {'ok': True}
@@ -594,7 +594,10 @@ def _inputs(st: dict, h: dict) -> dict:
             'changes_json': json.dumps([e for e in st.get('change') or [] if e['file'] in ('pom.xml', 'Containerfile')]),
             'gitops_path': gitops_path(h), 'port': h.get('port') or '8080',
             'fix_component': fix.get('component', ''), 'fix_group': fix.get('group', ''), 'fix_version': fix.get('to', ''),
-            'lightwell_fixed': ','.join(st.get('lightwell_fixed') or []), 'cves': ', '.join(fix.get('cves') or [])}
+            'lightwell_fixed': ','.join(st.get('lightwell_fixed') or []), 'cves': ', '.join(fix.get('cves') or []),
+            # Every Lightwell build this rebuild carries: ACS verify checks each one, not only the fix that was picked.
+            'fixes_json': json.dumps([{'group': f.get('group', ''), 'component': f.get('component', ''), 'version': f.get('to', '')}
+                                      for f in ([fix] + list(st.get('siblings') or [])) if f.get('to')])}
 
 
 def _host(key: str, **kw) -> None:

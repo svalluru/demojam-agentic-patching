@@ -1,11 +1,16 @@
 ---
-# Containers · Verify (ACS). After the rollout: does ACS see the deployment running the new digest, and which version
-# of the fixed component does it report there? ACS takes a minute to see a new pod, so it is asked a few times.
+# Containers · Verify (ACS). After the rollout: does ACS see the deployment running the new digest, and does it report
+# every Lightwell build this rebuild carries? ACS takes a moment to see a new pod, so it is asked a few times.
 #
-# extra_vars: app, namespace, image_digest, fix_component (artifact), fix_group, fix_version
-# ACS names a jar group:artifact when it carries Maven metadata (the Lightwell builds do), else by artifact: both match.
+# A component passes when ACS reports the planned Lightwell build, or a newer Lightwell build of the same version
+# (5.3.18.rhlw-00011 for a planned 5.3.18.rhlw-00010). The upstream jar (5.3.18) never passes: only the .rhlw- build
+# carries the fixes. ACS names a jar group:artifact when it has Maven metadata (the Lightwell builds do), else by
+# artifact: both are matched.
+#
+# extra_vars: app, namespace, image_digest, fixes_json ([{group, component, version}]); or, for one fix,
+#             fix_component, fix_group, fix_version
 # env (credential "Containers"): CTR_ACS_URL, CTR_ACS_TOKEN
-# artifacts: verified (true|false), acs_version, detail
+# artifacts: verified (true|false), acs_version (the picked fix), components (json: per component), detail
 - name: Ask ACS what runs now
   hosts: localhost
   connection: local
@@ -13,6 +18,10 @@
   vars:
     acs: "{{ lookup('env', 'CTR_ACS_URL') | regex_replace('/$', '') }}"
     headers: { Authorization: "Bearer {{ lookup('env', 'CTR_ACS_TOKEN') }}" }
+    wanted: >-
+      {{ (fixes_json | from_json if fixes_json is string else fixes_json)
+         if (fixes_json | default('') | string | length > 2)
+         else [{'group': fix_group | default(''), 'component': fix_component, 'version': fix_version}] }}
   tasks:
     - name: The deployment, as ACS sees it
       ansible.builtin.uri:
@@ -35,7 +44,7 @@
       delay: 10
       ignore_errors: true
 
-    - name: The fixed component in that image
+    - name: The components in that image
       ansible.builtin.uri:
         url: "{{ acs }}/v1/images/{{ image_digest }}"
         headers: "{{ headers }}"
@@ -46,19 +55,33 @@
       delay: 10
       ignore_errors: true
 
-    - name: Read it
+    - name: Check every Lightwell build
       ansible.builtin.set_fact:
         running: "{{ image_digest in (dep.json.containers[0].image.id | default('')) if dep is succeeded else false }}"
-        found: >-
-          {{ ((img.json.scan | default({})).components | default([]))
-             | selectattr('name', 'in', [fix_component, (fix_component.split(':') | last), (fix_group | default('')) ~ ':' ~ (fix_component.split(':') | last)])
-             | map(attribute='version') | list | first | default('') }}
+        results: >-
+          {%- set comps = ((img.json.scan | default({})).components | default([])) if img is succeeded else [] -%}
+          {%- set out = [] -%}
+          {%- for w in wanted -%}
+            {%- set art = w.component.split(':') | last -%}
+            {%- set names = [art, w.component, (w.group ~ ':' ~ art)] -%}
+            {%- set found = comps | selectattr('name', 'in', names) | map(attribute='version') | list | first | default('') -%}
+            {%- set want_base = w.version | regex_replace('\\.rhlw-\\d+$', '') -%}
+            {%- set want_build = (w.version | regex_search('rhlw-(\\d+)$', '\\1') or ['0']) | first | int -%}
+            {%- set got_build = (found | regex_search('rhlw-(\\d+)$', '\\1') or ['-1']) | first | int -%}
+            {%- set same_base = (found | regex_replace('\\.rhlw-\\d+$', '')) == want_base -%}
+            {%- set ok = found == w.version or (same_base and got_build >= want_build and got_build > 0) -%}
+            {%- set _ = out.append({'component': art, 'want': w.version, 'found': found, 'ok': ok}) -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Hand the verdict to the workflow
       ansible.builtin.set_stats:
         data:
-          verified: "{{ running and found == fix_version }}"
-          acs_version: "{{ found }}"
+          verified: "{{ running and (results | length > 0) and (results | rejectattr('ok') | list | length == 0) }}"
+          acs_version: "{{ (results | first).found if results else '' }}"
+          components: "{{ results | to_json }}"
           detail: >-
-            {{ 'ACS: ' ~ namespace ~ '/' ~ app ~ ' runs ' ~ image_digest[:19] ~ ' with ' ~ fix_component ~ ' ' ~ found
+            {{ ('ACS: ' ~ namespace ~ '/' ~ app ~ ' runs ' ~ image_digest[:19] ~ ' with '
+                ~ (results | map(attribute='component') | zip(results | map(attribute='found')) | map('join', ' ') | join(', '))
+                ~ ((' · not as planned: ' ~ (results | rejectattr('ok') | map(attribute='component') | join(', '))) if results | rejectattr('ok') | list else ''))
                if running else 'ACS does not yet show ' ~ namespace ~ '/' ~ app ~ ' on ' ~ image_digest[:19] }}
