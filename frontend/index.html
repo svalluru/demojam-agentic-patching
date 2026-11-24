@@ -9804,8 +9804,7 @@ function ctrRun(s) {
       ${s.status === 'failed' ? `<div class="c-alert">${esc(s.error || 'failed')}</div>`
         : `<div>${sm.patched || 0} rolled out and verified${sm.not_verified ? ` · ${sm.not_verified} not verified by ACS` : ''}${sm.rolled_back ? ` · ${sm.rolled_back} rolled back` : ''}
             · ${sm.deferred || 0} deferred in ACS${sm.rejected ? ` · ${sm.rejected} rejected` : ''} · ${sm.failed || 0} failed</div>`}
-      ${(s.deferrals || []).map(d => `<div class="c-note">Deferral for ${esc(d.key)}: <span class="mono">${esc(d.ref)}</span>, expires ${esc(d.request.exceptionExpiry.expiresOn)}</div>`).join('')}
-      <div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button></div></section>`);
+      ${(s.deferrals || []).map(d => `<div class="c-note">Deferral for ${esc(d.key)}: <span class="mono">${esc(d.ref)}</span>, expires ${esc(d.request.exceptionExpiry.expiresOn)}</div>`).join('')}</section>`);
   }
   return out.join('');
 }
@@ -9838,7 +9837,8 @@ function ctrRender() {
       <span class="c-tag" ${live ? 'style="color:var(--blue);border-color:rgba(0,102,204,.35);background:rgba(0,102,204,.07)"' : ''}
         title="${live ? 'Intake and assessment read ACS; the run is a simulator until the container workflow exists in AO' : 'ACS answered from fixtures; nothing is called'}">${live ? 'Live ACS' : 'Demo data'}</span>
       ${(s.demo_reset || {}).status === 'running' ? '<span class="pill-s warn" title="Settings → Advanced → Containers demo">Resetting images to original…</span>' : ''}
-      ${s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh" style="margin-left:auto">Refresh</button>'}</div>
+      ${['complete', 'failed'].includes(s.status) ? '<div class="c-actions" style="margin:0 0 0 auto"><button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button></div>'
+        : s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh" style="margin-left:auto">Refresh</button>'}</div>
     ${ctr.err ? `<div class="c-alert">${esc(ctr.err)}</div>` : ''}
     ${ctr.fixes || ctr.err ? body : '<div class="empty"><div class="spinner"></div><span>Asking ACS…</span></div>'}
   </div>`;
