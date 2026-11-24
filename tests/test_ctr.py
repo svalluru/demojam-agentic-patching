@@ -449,6 +449,29 @@ class ReviewFixes(unittest.TestCase):
         self.assertEqual(ctr.decide('prod', 'rejected')[0], 409)
         self.assertEqual(len(ctr.state().get('deferrals') or []), 1)
 
+    def test_a_rejection_survives_the_finished_execution(self):
+        ctr.configure(demo_mode=lambda: False, aap_call=None, ao_call=lambda path, method='GET', body=None: {'resources': [
+            {'temporal_activity_id': 'approval_prod', 'status': 'completed'}]} if path.endswith('/activities') else {'status': 'completed'})
+        self.gate(decided='rejected')
+        ctr._host('prod', outcome='deferred', detail='deferred in ACS until …')
+        self.assertTrue(ctr._read_execution('prod'))
+        self.assertEqual(ctr.state()['hosts'][1]['outcome'], 'deferred')
+
+    def test_a_deferral_acs_refuses_is_not_called_deferred(self):
+        from ctr import AcsError
+        def refuse(method, path, params=None, body=None):
+            if method == 'POST':
+                self.sent = body
+                raise AcsError('HTTP 400 invalid Timestamp')
+            return {}
+        self.gate()
+        ctr.configure(acs_call=refuse)
+        self.assertEqual(ctr.decide('prod', 'rejected')[0], 200)
+        h = ctr.state()['hosts'][1]
+        self.assertEqual(h['outcome'], 'rejected')
+        self.assertIn('not filed', h['detail'])
+        self.assertRegex(self.sent['exceptionExpiry']['expiresOn'], r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+
     def test_approve_waits_for_the_lab_of_the_same_image(self):
         self.gate(lab_outcome='running')
         self.assertEqual(ctr.decide('prod', 'approved')[0], 409)

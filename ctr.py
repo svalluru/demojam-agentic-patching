@@ -701,6 +701,8 @@ def _host(key: str, **kw) -> None:
             if h['key'] == key:
                 steps = kw.pop('steps', None)
                 replace = kw.pop('replace_steps', False)
+                if kw.pop('keep_decision', False) and h.get('decided') == 'rejected' and h.get('outcome') in SETTLED:
+                    kw.pop('outcome', None); kw.pop('detail', None)      # decide() settled it; AO only confirms
                 h.update(kw)
                 if steps is not None:
                     # A reading of the AO execution is the whole truth: replace, so nothing stale survives.
@@ -793,7 +795,7 @@ def _read_execution(key: str) -> bool:
         detail = verify.get('detail') or 'rolled out'
     else:
         outcome, detail = 'failed', str(ex.get('error_details') or ex.get('error') or f'execution {status}')[:300]
-    _host(key, outcome=outcome, steps=steps, replace_steps=True, evidence=evidence, detail=detail)
+    _host(key, outcome=outcome, steps=steps, replace_steps=True, evidence=evidence, detail=detail, keep_decision=True)
     return True
 
 
@@ -941,17 +943,20 @@ def decide(key: str, decision: str) -> tuple[int, dict]:
         if H.demo_mode():
             threading.Thread(target=_after_approve, args=(h, st['fix']), daemon=True).start()
     else:
-        expiry = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 30 * 86400))
+        exp = time.gmtime(time.time() + 30 * 86400)
+        expiry = time.strftime('%Y-%m-%d', exp)
         req = {'cves': list(st['fix'].get('cves') or []),
                'scope': {'imageScope': _image_scope(h['image'])},
                'comment': 'Rejected at the console gate: rebuild planned for the next window',
-               'exceptionExpiry': {'expiryType': 'TIME', 'expiresOn': expiry}}
+               'exceptionExpiry': {'expiryType': 'TIME', 'expiresOn': time.strftime('%Y-%m-%dT%H:%M:%SZ', exp)}}   # a Timestamp
         try:
             res = acs_call('POST', '/v2/vulnerability-exceptions/deferral', body=req)
             ref = (res.get('exception') or {}).get('id', '')
+            _step(key, 'approval', 'rejected', 'deferred', f'deferred in ACS until {expiry} ({ref})')
         except AcsError as e:
             ref = f'not filed: {e}'
-        _step(key, 'approval', 'rejected', 'deferred', f'deferred in ACS until {expiry} ({ref})')
+            # Say what happened: rejected, and no deferral in ACS.
+            _step(key, 'approval', 'rejected', 'rejected', f'rejected; the ACS deferral was not filed: {str(e)[:200]}')
         with _LOCK:
             _RUN.setdefault('deferrals', []).append({'key': key, 'request': req, 'ref': ref})
         _settle()
