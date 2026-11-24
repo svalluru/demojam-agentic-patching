@@ -2453,6 +2453,15 @@
   .domain-toggle.with-ctr[data-pane="ctr"] .dt-thumb { transform:translateX(200%); }
   #appv2-pane tr.v2-focus td { background:rgba(204,0,0,.06); animation:v2Flash 1.6s ease-out 1; }
   @keyframes v2Flash { from { background:rgba(204,0,0,.22); } to { background:rgba(204,0,0,.06); } }
+  .g-flow { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
+  .g-flow th { position: static; text-align: left; font-size: calc(10.5px * var(--ts)); text-transform: uppercase;
+               letter-spacing: .04em; color: var(--muted); padding: 4px 8px 6px 0; background: none; border-bottom: 1px solid var(--border); }
+  .g-flow td { padding: 8px 8px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top;
+               font-size: calc(12.5px * var(--ts)); line-height: 1.45; }
+  .g-flow td:first-child { font-weight: 700; color: var(--red); width: 22px; }
+  .g-flow td:nth-child(3) { color: var(--muted); width: 22%; }
+  .g-flow td:nth-child(4) { width: 24%; }
+  .g-flow tr { cursor: default; }
 </style>
 <script>
   // Before first paint, on purpose: applied from the main script instead,
@@ -2590,6 +2599,7 @@
       <span class="g-tabs" role="tablist" aria-label="Which script">
         <button class="pill active" data-guide-tab="main" role="tab">Infrastructure</button>
         <button class="pill" data-guide-tab="v2" role="tab">Applications · live</button>
+        <button class="pill" data-guide-tab="ctr" role="tab">Containers · ACS</button>
       </span>
       <button class="icon-btn" id="popout-guide" title="Open in its own window, for a second screen" aria-label="Open in its own window">⧉</button>
       <button class="icon-btn" id="close-guide" title="Close" aria-label="Close">✕</button>
@@ -3147,6 +3157,195 @@
             <li>A lab restart breaks the history stores; restarting the console heals them (watch for
               <code>rebuilt</code>).</li>
             <li>Re-run <code>send-event.py</code> if the inbox was reset.</li>
+          </ul>
+        </section>
+      </div>
+      <div class="guide" id="guide-ctr" hidden>
+
+        <section>
+          <h3>What this act shows</h3>
+          <p class="g-pitch">A Red Hat Lightwell build lands. ACS knows which running containers carry the old jar.
+            The agents rebuild the image, never patch it in place, prove it in a pipeline, roll it out lab first and
+            production behind a person, and ACS confirms what now runs.</p>
+          <p class="muted-sm">Runs live on the ACS lab cluster: ACS Central and Sensor, Automation Orchestrator,
+            Ansible Automation Platform, OpenShift Pipelines, GitLab, OpenShift GitOps (Argo CD) and Nexus. The apps are
+            <code>workflow-engine</code> (nfvo-lab, nfvo-prod) and <code>inventory-service</code> (oss-lab, oss-prod).
+            First verified end to end on 2026-11-23 (run 63b017c7).</p>
+        </section>
+
+        <section>
+          <h3>How it works, end to end</h3>
+          <table class="g-flow">
+            <thead><tr><th>#</th><th>Step</th><th>Who does it</th><th>What to point at</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><b>A Lightwell build arrives.</b> spring-webmvc <code>5.3.18.rhlw-00010</code> appears in
+                Nexus (a proxy of Lightwell's public demo repository). Its CVEs come from the Lightwell API.</td>
+                <td>Console: Nexus poller</td><td>Applications · Incoming fixes</td></tr>
+              <tr><td>2</td><td><b>ACS says where it runs.</b> One targeted query to ACS Central: which images in our
+                namespaces contain spring-webmvc 5.3.18. Never "every image". The console then checks the exact name and
+                version, because ACS search is fuzzy.</td>
+                <td>Console → ACS <code>/v1/images</code></td><td>Containers · Fixes for running images</td></tr>
+              <tr><td>3</td><td><b>Assess.</b> The deployments running that image become the sites: cluster, namespace,
+                lab or prod, replicas, risk, and the change window.</td>
+                <td>Console → ACS <code>/v1/deployments</code></td><td>1 · Deployments</td></tr>
+              <tr><td>4</td><td><b>Prepare.</b> The change: pom.xml moves spring-webmvc, spring-expression and
+                spring-core to their Lightwell builds (every Lightwell build for the image rides one rebuild), and each
+                deployment's GitOps file gets the new image by digest. Four checks: allowed files only, Lightwell builds
+                only, pinned base, digests never tags.</td>
+                <td>Console</td><td>2 · Change, the green checks</td></tr>
+              <tr><td>5</td><td><b>Commit.</b> One AO execution per deployment starts. The first commits the change to
+                branch <code>fix/&lt;run&gt;</code> of the app's GitLab repo; the second finds it already there.</td>
+                <td>AO "Container Patch" → AAP <em>CTR - Commit</em></td><td>GitLab <code>telco/app-workflow-engine</code>, branch fix/…</td></tr>
+              <tr><td>6</td><td><b>Build, scan, sign.</b> One pipeline run for the image: Maven resolves the Lightwell
+                jars through Nexus, buildah builds the image into the internal registry, <code>roxctl image check</code>
+                runs ACS's policies, cosign signs it.</td>
+                <td>AAP <em>CTR - Build and Scan</em> → OpenShift Pipelines <code>ctr-build</code></td>
+                <td>The PipelineRun in agentic-patching; the scan line on the run page</td></tr>
+              <tr><td>7</td><td><b>Lab rollout.</b> The new digest is pinned in the GitOps repo and Argo CD syncs it.
+                The rollout must finish on every replica, and <code>/health</code> must name the Lightwell jars.</td>
+                <td>AAP <em>CTR - Deploy</em>, <em>CTR - Rollout Health</em>; Argo CD</td>
+                <td>GitLab <code>telco/gitops</code> commit; the Argo CD app <code>ctr-nfvo-lab-workflow-engine</code></td></tr>
+              <tr><td>8</td><td><b>ACS verifies.</b> ACS must show the deployment on the new digest, reporting
+                spring-webmvc <code>5.3.18.rhlw-00010</code>.</td>
+                <td>AAP <em>CTR - Verify (ACS)</em></td><td>The site's status line: "ACS: … runs … 5.3.18.rhlw-00010"</td></tr>
+              <tr><td>9</td><td><b>Production waits.</b> The prod execution stops at an approval gate. Approve: the same
+                deploy, health and verify run for nfvo-prod. Reject: an ACS deferral is filed for 30 days, so the
+                exposure stays on record.</td>
+                <td>AO approval node; console Approve / Reject + defer</td><td>The Approve button on nfvo-prod</td></tr>
+              <tr><td>10</td><td><b>If a rollout is unhealthy</b>, the workflow takes its rollback route: the previous
+                digest goes back into GitOps, Argo CD syncs it, a card says so. Nothing is edited on the cluster by hand.</td>
+                <td>AAP <em>CTR - Rollback</em></td><td>A second GitOps commit "roll … back to …"</td></tr>
+              <tr><td>11</td><td><b>Done.</b> The fix leaves the Containers inbox (nothing runs 5.3.18 any more), and the
+                run is in the history.</td>
+                <td>Console</td><td>The inbox now lists only inventory-service's fixes</td></tr>
+            </tbody>
+          </table>
+          <p class="muted-sm"><b>Who holds what.</b> ACS knows what runs where. Lightwell knows which build fixes which
+            CVE. GitLab holds the source and GitOps holds the record of what should run. Argo CD makes the cluster match
+            GitOps. AAP does each step, and AO strings the steps together and holds the gate. The console decides
+            and explains, and never touches the cluster itself.</p>
+        </section>
+
+        <section>
+          <h3>Before you open the door</h3>
+          <ul>
+            <li><strong>The cluster.</strong> <code>oc whoami --show-server</code> must match <code>OCP_API_URL</code>
+              in <code>.env</code> (the ACS lab).</li>
+            <li><strong>ACS sees the cluster.</strong> In ACS, Platform Configuration → Clusters: <code>production</code>
+              Sensor healthy. If Sensor is down after a lab restart, apply <code>ctr-setup/acs-sensor-scc.yaml</code> and
+              restart Sensor (a known lab issue: the operator leaves Sensor without its SCC).</li>
+            <li><strong>AAP and AO answer.</strong> The AAP subscription is valid, and AO shows the workflow
+              <em>Container Patch</em>, published.</li>
+            <li><strong>The console</strong> started on this code, in live mode. The <em>Containers</em> tab shows
+              <em>Live ACS</em>, and its inbox lists spring-webmvc, spring-expression and spring-core against
+              <code>workflow-engine</code>.</li>
+            <li><strong>The sites on the old jars.</strong> <code>nfvo-lab</code> and <code>nfvo-prod</code> must run the
+              original image, so that ACS finds 5.3.18. If a rehearsal patched them, reset them (<em>Between demos</em>).</li>
+            <li><strong>Tabs to open:</strong> ACS (Vulnerability Management, the workflow-engine deployment), GitLab
+              <code>telco/gitops</code>, the OpenShift console on agentic-patching PipelineRuns, Argo CD.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Run of show</h3>
+          <div class="g-beat"><div class="g-n">1</div><div>
+            <h4>The fix, and where it runs <span class="t">2 min</span></h4>
+            <div class="g-do"><b>Do</b><span>Containers tab. Point at spring-webmvc <code>5.3.18 → 5.3.18.rhlw-00010</code>,
+              9 CVEs, found in <code>workflow-engine</code>.</span></div>
+            <div class="g-say"><b>Say</b><span>“Red Hat rebuilt the exact Spring version we run with nine fixes. The
+              question is never 'is there a fix', it is 'where does it matter'. ACS answers that: it knows every image
+              running on the cluster and what is inside it.”</span></div>
+            <div class="g-why">One targeted ACS question per fix, scoped to our namespaces: it scales to a real estate.</div>
+          </div></div>
+          <div class="g-beat"><div class="g-n">2</div><div>
+            <h4>Assess and prepare <span class="t">2 min</span></h4>
+            <div class="g-do"><b>Do</b><span><strong>Assess</strong>: nfvo-lab (lab) and nfvo-prod (prod, 3 replicas,
+              higher risk). <strong>Prepare change</strong>: the pom.xml lines, the two GitOps files, the green checks.</span></div>
+            <div class="g-say"><b>Say</b><span>“A container is never patched in place: the fix is a new image. The
+              agents bundle every Lightwell build for this image into one rebuild, and the system checks the change:
+              only these files, only Red Hat builds, images by digest, never a tag.”</span></div>
+          </div></div>
+          <div class="g-beat"><div class="g-n">3</div><div>
+            <h4>Build, scan and sign, then the lab <span class="t">3–4 min</span></h4>
+            <div class="g-do"><b>Do</b><span><strong>Run on 2 deployments</strong>. Show the GitLab branch, then the
+              PipelineRun (clone, package, build, scan, sign). Read the scan line on the run page.</span></div>
+            <div class="g-say"><b>Say</b><span>“Maven pulls the Lightwell jars through our Nexus. ACS's own policies run
+              against the new image before anything is deployed, and the image is signed. Then the lab rolls out on its
+              own, through GitOps: the change is a commit, so it is reviewable and reversible.”</span></div>
+            <div class="g-why">The scan line says some CVEs were waived. That is beat 4's question: be ready for it.</div>
+          </div></div>
+          <div class="g-beat"><div class="g-n">4</div><div>
+            <h4>Proof, then production <span class="t">2 min</span></h4>
+            <div class="g-do"><b>Do</b><span>nfvo-lab reads <em>patched</em> with "ACS: … 5.3.18.rhlw-00010". Open the
+              deployment in ACS to show the component version. On nfvo-prod, <strong>Approve</strong>.</span></div>
+            <div class="g-say"><b>Say</b><span>“The proof is not a green job. It is ACS, independently, reporting the new
+              version on the running deployment. Production waits for a person, who sees exactly what the lab proved.
+              Reject would file an ACS deferral with an expiry, so the risk stays on record.”</span></div>
+          </div></div>
+          <div class="g-beat"><div class="g-n">5</div><div>
+            <h4>Close <span class="t">1 min</span></h4>
+            <div class="g-do"><b>Do</b><span>Both sites patched; back to the inbox: the Spring fixes are gone.</span></div>
+            <div class="g-say"><b>Say</b><span>“ACS told us what was exposed. Lightwell gave us a fix without a migration.
+              The agents did the work in between, safely, and ACS confirmed the result.”</span></div>
+          </div></div>
+        </section>
+
+        <section>
+          <h3>If they ask</h3>
+          <div class="g-qa"><b>“Why not do this from the ACS console?”</b>
+            <span>ACS finds, ranks, enforces and verifies; it does not fix. Nothing in ACS changes a pom.xml, rebuilds an
+              image or rolls it out. This flow does, and uses ACS at both ends.</span></div>
+          <div class="g-qa"><b>“The scan waived CVEs. Isn't that hiding problems?”</b>
+            <span>ACS matches a jar by its upstream version: it reads 5.3.18.rhlw-00010 as 5.3.18, "fixed in 5.3.26", and
+              cannot see Red Hat's backport. The gate waives exactly the CVEs the Lightwell API says this build fixes, by
+              name, and says how many. Any other policy violation still fails the build, and nothing is deployed.</span></div>
+          <div class="g-qa"><b>“What if the build fails?”</b>
+            <span>The workflow stops before any deployment and posts a build-failed card. No namespace is touched.</span></div>
+          <div class="g-qa"><b>“And if the new pods do not come up?”</b>
+            <span>The health step fails, and the workflow puts the previous digest back into GitOps; Argo CD restores it.
+              The rollback is itself a commit you can read.</span></div>
+          <div class="g-qa"><b>“Why GitOps instead of patching the deployment?”</b>
+            <span>What runs is declared in Git, so every change is reviewed, recorded and reversible, and nobody's
+              hand-edit is overwritten by the next sync.</span></div>
+          <div class="g-qa"><b>“Why are spring-aop and spring-web still upstream?”</b>
+            <span>Lightwell's public demo repository only publishes spring-webmvc, spring-expression and spring-core. The
+              full Lightwell repository has the rest; with it, those would move too.</span></div>
+        </section>
+
+        <section class="g-never">
+          <h3>Do not say</h3>
+          <ul>
+            <li><strong>Do not say ACS found these CVEs.</strong> The CVE list comes from the Lightwell API; ACS says
+              where the component runs (and its own Java data on this lab is incomplete).</li>
+            <li><strong>Do not say ACS shows the CVEs gone.</strong> Verification checks that the deployment runs the new
+              digest with the Lightwell version. ACS still lists the backported CVEs by upstream version.</li>
+            <li><strong>Do not claim signature enforcement.</strong> The image is signed; no ACS policy on this lab yet
+              refuses unsigned images.</li>
+            <li><strong>Do not claim the network graph or runtime alerts</strong> on this lab: Collector runs on two of
+              three nodes, and "who notices" is empty live.</li>
+            <li><strong>Do not present the Containers tab of the dashboard as live.</strong> It is demo data.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Known lab quirks</h3>
+          <ul>
+            <li>AO can keep showing an approved execution as paused while it runs on. The console then reads the outcome
+              from AAP's jobs after a minute; the run page is right, AO's own page may lag.</li>
+            <li>ACS's vulnerability data is an offline bundle from 2026-08-17, so no base-image (UBI) fixes are listed.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Between demos</h3>
+          <ul>
+            <li><strong>Put the sites back on the old image.</strong> In GitLab <code>telco/gitops</code>, the history of
+              <code>apps/production/nfvo-lab/workflow-engine/kustomization.yaml</code> (and nfvo-prod) shows the original
+              digest. Pin it again, or launch AAP <em>CTR - Rollback</em> with <code>previous_digest</code> set to it.
+              Argo CD syncs in seconds.</li>
+            <li><strong>Clear the run:</strong> Containers → Back to fixes (or <code>POST /api/ctr/reset</code>).</li>
+            <li>PipelineRuns and <code>fix/…</code> branches stay: they are part of the record (and PipelineRuns are never
+              deleted in agentic-patching).</li>
           </ul>
         </section>
       </div>
@@ -8598,9 +8797,13 @@ document.getElementById('settings-scrim').addEventListener('click', e => {
 // Nothing to fill in: the guide is static, and deliberately says nothing about
 // what this console is pointed at. The run of show does not change with it,
 // and the names the beats use are in the list either way.
+// The guide tab for the side the console is on.
+const guideSideTab = () => ({ appv2: 'v2', ctr: 'ctr' }[paneSide] || 'main');
+
 function guideTab(tab, doc = document) {
   doc.getElementById('guide-main').hidden = tab !== 'main';
   doc.getElementById('guide-v2').hidden = tab !== 'v2';
+  doc.getElementById('guide-ctr').hidden = tab !== 'ctr';
   doc.querySelectorAll('[data-guide-tab]').forEach(b => b.classList.toggle('active', b.dataset.guideTab === tab));
 }
 
@@ -8611,8 +8814,8 @@ let guideWin = null;
 
 function guideFollow() {
   if (!guideWin || guideWin.closed) return;
-  const tab = paneSide === 'appv2' ? 'v2' : 'main';
-  if (guideWin.document.getElementById('guide-v2').hidden === (tab === 'v2')) {
+  const tab = guideSideTab();
+  if (guideWin.document.getElementById('guide-' + tab).hidden) {
     guideTab(tab, guideWin.document);
     guideWin.document.querySelector('.drawer-body').scrollTop = 0;
   }
@@ -8635,12 +8838,12 @@ function popOutGuide() {
     guideTab(b.dataset.guideTab, d);
     d.querySelector('.drawer-body').scrollTop = 0;
   }));
-  guideTab(paneSide === 'appv2' ? 'v2' : 'main', d);
+  guideTab(guideSideTab(), d);
   closeGuide();
 }
 
 function openGuide() {
-  guideTab(paneSide === 'appv2' ? 'v2' : 'main');     // the script for the side you are on
+  guideTab(guideSideTab());     // the script for the side you are on
   document.getElementById('guide-scrim').hidden = false;
 }
 
