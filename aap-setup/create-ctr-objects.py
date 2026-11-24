@@ -106,13 +106,20 @@ def main() -> None:
     have = subprocess.run(['oc', 'whoami', '--show-server'], capture_output=True, text=True).stdout.strip()
     if have != env('OCP_API_URL'):
         sys.exit(f"oc is on '{have}', .env says '{env('OCP_API_URL')}'")
-    gl_url = 'https://' + subprocess.run(['oc', '-n', 'gitlab', 'get', 'route', '-o', 'jsonpath={.items[0].spec.host}'],
-                                         capture_output=True, text=True, check=True).stdout.strip()
+    # A cluster admin sees the GitLab route and the ctr-runner token; a less privileged login (user1) may not, so the
+    # GitLab URL can come from .env, and an unreadable token keeps the one AAP already holds.
+    route = subprocess.run(['oc', '-n', 'gitlab', 'get', 'route', '-o', 'jsonpath={.items[0].spec.host}'],
+                           capture_output=True, text=True)
+    gl_url = ('https://' + route.stdout.strip()) if route.returncode == 0 and route.stdout.strip() else env('CTR_GITLAB_URL', '').rstrip('/')
+    if not gl_url:
+        sys.exit('cannot read the GitLab route with this oc login: set CTR_GITLAB_URL in .env')
     runner = subprocess.run(['oc', '-n', 'agentic-patching', 'get', 'secret', 'ctr-runner-token', '-o', 'jsonpath={.data.token}'],
                             capture_output=True, text=True)
-    if runner.returncode or not runner.stdout:
-        sys.exit('secret ctr-runner-token not found: oc apply -f ctr-setup/ctr-runner.yaml')
-    ocp_token = base64.b64decode(runner.stdout).decode()
+    if runner.returncode == 0 and runner.stdout:
+        ocp_token = base64.b64decode(runner.stdout).decode()
+    else:
+        ocp_token = '$encrypted$'           # AAP keeps the stored secret
+        print('  (ctr-runner token not readable with this login: the Containers credential keeps its current token)')
     api = Controller(env('AAP_BASE_URL'), env('AAP_TOKEN'), env('AAP_CA_BUNDLE') or None)
 
     def say(t):
