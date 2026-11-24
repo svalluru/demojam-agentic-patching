@@ -556,7 +556,9 @@ def build_change(fix: dict, targets: list[dict], siblings: list[dict] | None = N
     if fix['kind'] == 'base':
         edits.append({'file': 'Containerfile', 'what': 'FROM', 'from': f"FROM {fix['from']}", 'to': f"FROM {fix['to']}"})
     for t in targets:
-        repo = t['image'].split('@')[0].rsplit(':', 1)[0]
+        # Drop a tag, never a registry port: 'reg:5000/ns/app:1.2' -> 'reg:5000/ns/app'.
+        ref = t['image'].split('@')[0]
+        repo = ref.rsplit(':', 1)[0] if ':' in ref.rsplit('/', 1)[-1] else ref
         edits.append({'file': gitops_path(t), 'what': 'image',
                       'from': t['image'], 'to': f'{repo}@sha256:${{BUILD_DIGEST}}'})
     return edits

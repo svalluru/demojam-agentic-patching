@@ -3299,8 +3299,12 @@
           <div class="g-beat"><div class="g-n">5</div><div>
             <h4>Close <span class="t">1 min</span></h4>
             <div class="g-do"><b>Do</b><span>Both sites patched; <strong>Back to fixes</strong> (top right): the Spring
-              fixes are gone. If there is time, the second use case: <code>inventory-service</code>, three Lightwell
-              builds (json, json-path, woodstox-core) in one rebuild for oss-lab and oss-prod, same steps.</span></div>
+              fixes are gone. If there is time, the second use case shows the gate saying no: <code>inventory-service</code>,
+              three Lightwell builds (json, json-path, woodstox-core) in one rebuild for oss-lab and oss-prod. The build
+              stops at <code>roxctl</code>: ACS finds CVE-2023-5072 in org.json, which this Lightwell build does not fix,
+              so it is not waived. Both sites read <em>failed: build or scan failed, nothing deployed</em>.</span></div>
+            <div class="g-say"><b>Say</b><span>“The waiver covers exactly what Red Hat fixed, nothing more. Here the
+              rebuild still carries a fixable Important CVE, so nothing ships. That is the gate working.”</span></div>
             <div class="g-say"><b>Say</b><span>“ACS told us what was exposed. Lightwell gave us a fix without a migration.
               The agents did the work in between, safely, and ACS confirmed the result.”</span></div>
           </div></div>

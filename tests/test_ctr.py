@@ -515,6 +515,15 @@ class ReviewFixes(unittest.TestCase):
         inp = ctr._inputs(st, h)
         self.assertEqual((json.loads(inp['fixes_json']), inp['fix_kind'], inp['health_path']), ([], 'base', '/health'))
 
+    def test_the_gitops_image_keeps_the_registry_port(self):
+        t = {'image': 'image-registry.openshift-image-registry.svc:5000/agentic-patching/workflow-engine@sha256:' + 'a' * 64,
+             'cluster': 'c', 'namespace': 'n', 'app': 'workflow-engine', 'name': 'workflow-engine'}
+        e = ctr.build_change({'kind': 'lightwell', 'component': 'x', 'from': '1', 'to': '1.rhlw-00001'}, [t])[-1]
+        self.assertEqual(e['to'], 'image-registry.openshift-image-registry.svc:5000/agentic-patching/workflow-engine@sha256:${BUILD_DIGEST}')
+        t['image'] = 'quay.io/telco/app:2.4'
+        self.assertEqual(ctr.build_change({'kind': 'lightwell', 'component': 'x', 'from': '1', 'to': '1.rhlw-00001'}, [t])[-1]['to'],
+                         'quay.io/telco/app@sha256:${BUILD_DIGEST}')
+
     def test_deferral_scope_for_digest_and_tag_images(self):
         self.assertEqual(ctr._image_scope('image-registry.openshift-image-registry.svc:5000/agentic-patching/workflow-engine@sha256:' + 'a' * 64),
                          {'registry': 'image-registry.openshift-image-registry.svc:5000', 'remote': 'agentic-patching/workflow-engine', 'tag': '.*'})

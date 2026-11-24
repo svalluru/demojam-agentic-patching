@@ -889,6 +889,10 @@ Pipelines for the build, GitLab and Argo CD for the rollout.
 (`5.3.18.rhlw-00010` looks like `5.3.18`). The build waives exactly the CVEs this run's Lightwell builds fix; any
 other policy violation fails it.
 
+**inventory-service stops at the gate.** Its rebuild (json, json-path, woodstox-core Lightwell builds) still carries
+CVE-2023-5072 in org.json, which `json 20220320.0.0.rhlw-00003` does not fix, so roxctl fails the build and nothing is
+deployed: the second use case shows the gate refusing, not a rollout.
+
 **Servers patched, image not.** A jar swap on the Applications side fixes the servers, not the images: the image is a
 separate copy, and a swap changes nothing in git. Assess names the Applications run that patched the app's servers.
 After **Rebuild from source**, the pom.xml fix is already in branch `fix/<run>`.
