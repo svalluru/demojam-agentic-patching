@@ -215,6 +215,18 @@ class LiveRun(unittest.TestCase):
         self.assertEqual(ctr.start_generate()[0], 200)
         ctr.configure(demo_mode=lambda: False)            # the run goes to AO; intake was answered from fixtures
 
+    def test_a_long_wait_at_the_gate_is_not_a_timeout(self):
+        base = ctr.H.env
+        ctr.configure(env=lambda k, d='': '1' if k == 'AO_POLL_TIMEOUT' else base(k, d))
+        self.prepared()
+        self.assertEqual(ctr.start_dispatch()[0], 200)
+        wait({'awaiting_approval'})
+        time.sleep(2.5)                                         # well past the follow budget
+        prod = next(h for h in ctr.state()['hosts'] if h['namespace'] == 'nfvo-prod')
+        self.assertEqual(prod['outcome'], 'awaiting_approval')
+        self.assertEqual(ctr.decide(prod['key'], 'approved')[0], 200)
+        self.assertEqual(wait({'complete'})['summary']['patched'], 2)
+
     def test_lab_patches_and_prod_waits_then_approval_completes(self):
         self.prepared()
         self.assertEqual(ctr.start_dispatch()[0], 200)

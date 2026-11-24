@@ -799,13 +799,17 @@ def _settle_from_aap(h: dict, run_id: str) -> dict | None:
 
 
 def _follow_live(key: str) -> None:
-    deadline = time.time() + int(env('AO_POLL_TIMEOUT', '2400'))
+    budget = int(env('AO_POLL_TIMEOUT', '2400'))
+    deadline = time.time() + budget
     while time.time() < deadline:
         try:
             if _read_execution(key):
                 break
         except Exception as e:
             _trace(f'{key}: could not read the execution ({e}); retrying')
+        # Waiting for a person is not a stuck execution: the clock starts again once the gate is answered.
+        if next((h for h in state().get('hosts') or [] if h['key'] == key), {}).get('outcome') == 'awaiting_approval':
+            deadline = time.time() + budget
         if any(h['outcome'] == 'awaiting_approval' for h in state().get('hosts') or []):
             if state().get('status') == 'running':
                 _set(status='awaiting_approval')
