@@ -9771,7 +9771,7 @@ function ctrRun(s) {
   if (s.status === 'assessing') out.push('<section class="c-box"><div class="empty"><div class="spinner"></div><span>Asking ACS which deployments run it…</span></div></section>');
   if (t.length) {
     out.push(`<section class="c-box"><h3>1 · Deployments<b>${t.length}</b></h3><table class="c-t">
-      <tr><th></th><th>Deployment</th><th>Env</th><th>Risk</th><th>Who notices · window</th><th>Reasoning</th><th>Status</th></tr>
+      <tr><th></th><th>Deployment</th><th>Env</th><th>Risk</th><th>Who notices · window</th><th>Reasoning</th><th>Status</th><th>Details</th></tr>
       ${t.map(x => { const h = hosts[x.key]; return `<tr>
         <td><input type="checkbox" data-ctr-sel="${esc(x.key)}" ${(pick ? ctr.sel.keys.has(x.key) : (s.selected || []).includes(x.key)) ? 'checked' : ''} ${pick ? '' : 'disabled'}></td>
         <td><b>${esc(x.namespace)}/${esc(x.name)}</b><div class="c-note" style="margin:2px 0 0">${esc(x.cluster)} · ${x.replicas} replica${x.replicas === 1 ? '' : 's'}</div>
@@ -9781,7 +9781,8 @@ function ctrRun(s) {
         <td>${(x.callers || []).map(c => `<span class="pill-s off">${esc(c)}</span>`).join(' ') || '<span class="c-note">—</span>'}
           <div class="c-note" style="margin:4px 0 0">${x.window ? 'Window ' + esc(x.window) : 'Any time'}</div></td>
         <td style="max-width:360px">${esc(x.reasoning)}<div class="c-note" style="margin:2px 0 0">${esc(x.reasoning_source)}</div></td>
-        <td>${h ? ctrHostCell(h) : '<span class="c-note">—</span>'}</td></tr>`; }).join('')}
+        <td>${h ? ctrHostCell(h) : '<span class="c-note">—</span>'}</td>
+        <td style="max-width:340px">${h ? ctrHostDetail(h) : '<span class="c-note">—</span>'}</td></tr>`; }).join('')}
     </table><div class="c-src">ACS GET /v1/deployments?query=Image Sha:… · /v1/deployments/{id} · /v1/alerts · network graph · app history store + LLM</div>
     ${pick ? `<div class="c-actions"><button type="button" class="c-btn go" data-ctr-act="generate">Prepare change</button>
       <button type="button" class="c-btn" data-ctr-act="reset">Cancel</button></div>` : ''}</section>`);
@@ -9809,18 +9810,22 @@ function ctrRun(s) {
   return out.join('');
 }
 
+// Status: the outcome only (or the approval buttons at the gate). Details: the stages, notes and evidence.
 function ctrHostCell(h) {
-  const steps = Object.entries(h.steps || {});
-  return `<div>${h.outcome === 'awaiting_approval'
-      ? `<div class="c-actions" style="margin:0 0 6px"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}">Approve</button>
+  return h.outcome === 'awaiting_approval'
+      ? `<div class="c-actions" style="margin:0"><button type="button" class="c-btn go" data-ctr-decide="approved" data-key="${esc(h.key)}">Approve</button>
          <button type="button" class="c-btn" data-ctr-decide="rejected" data-key="${esc(h.key)}" title="Reject and defer the CVEs in ACS for 30 days">Reject + defer</button></div>`
       : `<span class="pill-s ${h.outcome === 'patched' ? 'good' : ['deferred', 'rejected'].includes(h.outcome) ? 'off'
-          : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.replace('_', ' '))}</span>`}
-    <div class="c-chips" style="margin-top:4px">${steps.map(([k, v]) => `<span class="pill-s ${v === 'done' ? 'good' : v === 'waiting' ? 'warn' : v === 'rejected' ? 'off' : 'info'}">${esc(CTR_STEP[k] || k)}</span>`).join('')}</div>
+          : ['failed', 'rolled_back'].includes(h.outcome) ? 'crit' : h.outcome === 'not_verified' ? 'warn' : 'info'}">${esc(h.outcome.replace('_', ' '))}</span>`;
+}
+
+function ctrHostDetail(h) {
+  const steps = Object.entries(h.steps || {});
+  return `<div class="c-chips">${steps.map(([k, v]) => `<span class="pill-s ${v === 'done' ? 'good' : v === 'waiting' ? 'warn' : v === 'rejected' ? 'off' : 'info'}">${esc(CTR_STEP[k] || k)}</span>`).join('')}</div>
     ${h.detail ? `<div class="c-note" style="margin:4px 0 0">${esc(h.detail)}</div>` : ''}
-    ${h.evidence ? `<div class="c-note" style="margin:2px 0 0">${[h.evidence.image_digest ? `<span class="mono">${esc(h.evidence.image_digest.slice(0, 19))}…</span>` : '',
-        h.evidence.scan_summary ? esc(h.evidence.scan_summary) : '', h.execution_id ? `AO <span class="mono">${esc(String(h.execution_id).slice(0, 8))}</span>` : '']
-        .filter(Boolean).join(' · ')}</div>` : ''}</div>`;
+    ${h.evidence || h.execution_id ? `<div class="c-note" style="margin:2px 0 0">${[(h.evidence || {}).image_digest ? `<span class="mono">${esc(h.evidence.image_digest.slice(0, 19))}…</span>` : '',
+        (h.evidence || {}).scan_summary ? esc(h.evidence.scan_summary) : '', h.execution_id ? `AO <span class="mono">${esc(String(h.execution_id).slice(0, 8))}</span>` : '']
+        .filter(Boolean).join(' · ')}</div>` : ''}`;
 }
 
 function ctrRender() {
