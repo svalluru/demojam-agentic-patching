@@ -2438,6 +2438,10 @@
                      border:1px solid var(--red); color:var(--red); background:#fff; }
   #ctr-pane .c-btn.go { background:var(--red); color:#fff; }
   #ctr-pane .c-btn:hover { filter:brightness(.95); }
+  #ctr-pane .c-btn:disabled, #ctr-pane .c-link:disabled { cursor:default; filter:none; opacity:.55; }
+  #ctr-pane .c-btn:disabled { border-color:#9a9a9a; background:#e6e6e6; color:#555; }
+  #ctr-pane .c-btn.busy::before { content:''; display:inline-block; width:10px; height:10px; margin-right:6px; vertical-align:-1px;
+                                  border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
   #ctr-pane .c-link { font:inherit; font-size:12px; border:0; background:none; color:var(--blue); cursor:pointer; padding:0; }
   #ctr-pane .c-note { font-size:12px; color:var(--muted); margin-top:10px; }
   #ctr-pane .c-src { margin-top:10px; font:11px var(--mono); color:var(--muted); }
@@ -9841,11 +9845,25 @@ document.getElementById('ctr-pane').addEventListener('change', e => {
   localStorage.setItem('ctr-group-by', ctr.groupBy ? 'on' : 'off');
   ctrRender();
 });
+// A clicked action greys out at once, with every button beside it, and says what is happening; the next render
+// (after the backend answers) replaces it. On an error the buttons come back as they were.
+function ctrBusy(btn, label) {
+  const group = btn.closest('.c-actions, tr') || btn.parentElement;
+  const all = [...group.querySelectorAll('button')];
+  const was = all.map(b => [b, b.disabled, b.innerHTML]);
+  all.forEach(b => { b.disabled = true; });
+  btn.classList.add('busy');
+  btn.textContent = label;
+  return () => was.forEach(([b, d, h]) => { b.disabled = d; b.innerHTML = h; b.classList.remove('busy'); });
+}
+const CTR_BUSY_LABEL = { generate: 'Preparing change…', dispatch: 'Starting the run…', reset: 'Cancelling…',
+                         refresh: 'Refreshing…', approved: 'Approving…', rejected: 'Rejecting and deferring…' };
 document.getElementById('ctr-pane').addEventListener('click', async e => {
   const t = e.target;
+  let undo = null;
   try {
     const a = t.closest('[data-ctr-assess]');
-    if (a) { await ctrApi('/api/ctr/assess', { fix_id: a.dataset.ctrAssess }); return ctrLoad(); }
+    if (a) { undo = ctrBusy(a, 'Assessing…'); await ctrApi('/api/ctr/assess', { fix_id: a.dataset.ctrAssess }); return await ctrLoad(); }
     const sel = t.closest('[data-ctr-sel]');
     if (sel && ctr.sel) { sel.checked ? ctr.sel.keys.add(sel.dataset.ctrSel) : ctr.sel.keys.delete(sel.dataset.ctrSel); return; }
     const d = t.closest('[data-ctr-decide]');
@@ -9853,6 +9871,7 @@ document.getElementById('ctr-pane').addEventListener('click', async e => {
       if (d.dataset.ctrDecide === 'rejected' && !(await apDialog({ title: 'Reject and defer in ACS', ok: 'Reject and defer', cancel: 'Cancel',
           body: `<p>Production stays on the old image. The console files an ACS deferral for these CVEs, expiring in 30 days, so the
           exposure stays on record and comes back.</p>` }))) return;
+      undo = ctrBusy(d, CTR_BUSY_LABEL[d.dataset.ctrDecide] || 'Working…');
       await ctrApi('/api/ctr/decide', { key: d.dataset.key, decision: d.dataset.ctrDecide }); return ctrLoad();
     }
     const toApps = t.closest('[data-ctr-apps]');
@@ -9866,12 +9885,13 @@ document.getElementById('ctr-pane').addEventListener('click', async e => {
     const act = t.closest('[data-ctr-act]');
     if (!act) return;
     const k = act.dataset.ctrAct;
-    if (k === 'refresh') return ctrLoad(true);
+    undo = ctrBusy(act, k === 'reset' && act.textContent.trim() === 'Back to fixes' ? 'Loading fixes…' : (CTR_BUSY_LABEL[k] || 'Working…'));
+    if (k === 'refresh') return await ctrLoad(true);
     if (k === 'generate') await ctrApi('/api/ctr/generate', { targets: [...(ctr.sel ? ctr.sel.keys : [])] });
     if (k === 'dispatch') await ctrApi('/api/ctr/dispatch', {});
     if (k === 'reset') { await ctrApi('/api/ctr/reset', {}); await ctrLoad(true); return; }
     await ctrLoad();
-  } catch (err) { apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` }); }
+  } catch (err) { if (undo) undo(); apNotice({ title: 'Containers', body: `<p>${esc(err.message)}</p>` }); }
 });
 // Applications → Containers cross-link: open Containers on that fix (assessed, if nothing else is open).
 document.addEventListener('click', async e => {
