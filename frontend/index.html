@@ -9861,6 +9861,7 @@ function ctrRun(s) {
       <div class="c-note">One rebuild of the image carries all ${builds.length} builds.</div>`
            : `<div class="mono">${esc(f.from || '')}${f.to ? ' → ' + esc(f.to) : ''}</div>`}
     <div class="c-note">${esc(f.source || '')} · ${cveN} CVE${cveN === 1 ? '' : 's'} · ${f.images ? f.images.map(i => esc(i.name)).join(', ') : ''}</div>
+    ${ctr.view === 'past' ? `<div class="c-note">Run <span class="mono">${esc(s.run_id)}</span> · ${esc(String(s.started_at || '').replace('T', ' ').slice(0, 16))} → ${esc(String(s.finished_at || '').replace('T', ' ').slice(0, 16))} UTC · read-only${s.rebuilt ? ' · rebuilt from the AAP jobs of this run (it finished before run details were kept): risk and reasoning were not recorded' : ''}</div>` : ''}
     ${servers.map(sv => `<div class="c-sec"><div class="c-alert" style="border-color:rgba(154,99,0,.45);background:rgba(154,99,0,.06)">
       <b style="color:var(--c-amber)">! Servers patched, image not</b> · ${esc(sv.app)} was patched on ${sv.patched} server${sv.patched === 1 ? '' : 's'}
       by Applications run <span class="mono">${esc(String(sv.run_id).slice(0, 8))}</span> (${sv.mode === 'source' ? 'rebuilt from source' : 'jar swap'},

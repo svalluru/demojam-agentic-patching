@@ -361,6 +361,7 @@ def reset() -> tuple[int, dict]:
             return 409, {'ok': False, 'error': f"a run is {_RUN['status'].replace('_', ' ')}: finish it first"}
         _RUN.clear()
         _RUN['status'] = 'idle'
+    _persist()                                      # or a restart brings the cleared run back
     return 200, {'ok': True}
 
 
@@ -410,11 +411,11 @@ def _follow_reset(job_id: int) -> None:
         if st in ('successful', 'failed', 'error', 'canceled'):
             art = j.get('artifacts') or {}
             ok = st == 'successful' and str(art.get('reset_ok', 'true')).lower() == 'true'
-            _RESET.update(status='done' if ok else 'failed', finished_at=now_iso(), reset=art.get('reset') or [],
-                          note='' if ok else f'AAP job {job_id} {st}')
-            if ok:
+            if ok:                                  # cleared first, so whoever sees 'done' sees the fresh inbox
                 reset()
                 _FIX_CACHE.clear()
+            _RESET.update(status='done' if ok else 'failed', finished_at=now_iso(), reset=art.get('reset') or [],
+                          note='' if ok else f'AAP job {job_id} {st}')
             return
         time.sleep(float(env('CTR_POLL_SECONDS', '5')))
     _RESET.update(status='failed', note=f'AAP job {job_id} did not finish in time')
