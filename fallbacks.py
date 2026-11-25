@@ -583,6 +583,43 @@ ROI_APP_REVIEW_MIN = float(os.environ.get('ROI_APP_REVIEW_MIN', '6') or 6)
 ROI_APP_LEAD_HOURS = float(os.environ.get('ROI_APP_LEAD_HOURS', '240') or 240)
 
 
+# ------------------------------------------------------------- ROI: containers
+#
+# The Containers side: a Lightwell fix found by ACS inside running images, taken
+# to every deployment by rebuilding the image. By hand that is paid per image
+# (find it, move its jars, build, scan, sign) and again per deployment (roll it
+# out, check it, confirm in ACS). Approval paperwork, the operator's review and
+# the rework share come from the infrastructure figures above.
+
+# Per image: work out which running images carry the jar, which deployments run
+# them, and which Lightwell builds apply. ACS answers the first part; the rest is
+# reading.
+ROI_CTR_TRIAGE_MIN = float(os.environ.get('ROI_CTR_TRIAGE_MIN', '25') or 25)
+
+# Per component: move it to the Lightwell build in pom.xml, check nothing else
+# pins the old one.
+ROI_CTR_BUMP_MIN = float(os.environ.get('ROI_CTR_BUMP_MIN', '10') or 10)
+
+# Per image: build it, run the scan and read the findings (including the
+# backported CVEs a scanner still reports), sign it, push it.
+ROI_CTR_BUILD_MIN = float(os.environ.get('ROI_CTR_BUILD_MIN', '45') or 45)
+
+# Per deployment: change the image in GitOps, get it merged, watch the rollout
+# reach every replica, check the app's health.
+ROI_CTR_ROLLOUT_MIN = float(os.environ.get('ROI_CTR_ROLLOUT_MIN', '20') or 20)
+
+# Per deployment: confirm in ACS that it runs the new image with the fixed jars.
+ROI_CTR_VERIFY_MIN = float(os.environ.get('ROI_CTR_VERIFY_MIN', '10') or 10)
+
+# Per image, charged to the automated side: read the change and its checks,
+# press Run.
+ROI_CTR_REVIEW_MIN = float(os.environ.get('ROI_CTR_REVIEW_MIN', '5') or 5)
+
+# Elapsed hours from the fix being available to every deployment running it, by
+# hand. Wall clock: an image rebuild waits for a build slot, a reviewer and a
+# change window.
+ROI_CTR_LEAD_HOURS = float(os.environ.get('ROI_CTR_LEAD_HOURS', '120') or 120)
+
 # -------------------------------------------------------------------- mode
 
 def strict() -> bool:

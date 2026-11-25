@@ -3044,6 +3044,14 @@ ROI_INPUTS: tuple[tuple[str, str, str, str, str], ...] = (
     ('ROI_APP_REVIEW_MIN',  'app_review',  'Operator review per repository',      'min', 'app'),
     ('ROI_APP_LEAD_HOURS',  'app_lead_h',  'Manual time-to-fix, a dependency',    'h',   'app'),
 
+    ('ROI_CTR_TRIAGE_MIN',  'ctr_triage',  'Find images & deployments, per image', 'min', 'ctr'),
+    ('ROI_CTR_BUMP_MIN',    'ctr_bump',    'Move a jar to Lightwell, per component', 'min', 'ctr'),
+    ('ROI_CTR_BUILD_MIN',   'ctr_build',   'Build, scan & sign, per image',       'min', 'ctr'),
+    ('ROI_CTR_ROLLOUT_MIN', 'ctr_rollout', 'Roll out & health, per deployment',   'min', 'ctr'),
+    ('ROI_CTR_VERIFY_MIN',  'ctr_verify',  'Verify in ACS, per deployment',       'min', 'ctr'),
+    ('ROI_CTR_REVIEW_MIN',  'ctr_review',  'Operator review per image',           'min', 'ctr'),
+    ('ROI_CTR_LEAD_HOURS',  'ctr_lead_h',  'Manual time-to-fix, an image',        'h',   'ctr'),
+
     ('ROI_HOURLY_RATE',     'rate',        'Fully-loaded hourly rate',            '/h',  'shared'),
     ('ROI_SLA_HOURS',       'sla_h',       'Remediation deadline (policy)',       'h',   'shared'),
     ('ROI_BAND_PCT',        'band_pct',    'Uncertainty on the manual baseline',  '%',   'shared'),
@@ -3064,6 +3072,9 @@ ROI_LIMITS: dict[str, tuple[float, float]] = {
     'ROI_APP_BUILD_MIN': (0, 600), 'ROI_APP_PR_MIN': (0, 600),
     'ROI_APP_REVIEW_MIN': (0, 600), 'ROI_APP_BREAK_PCT': (0, 100),
     'ROI_APP_LEAD_HOURS': (0, 8760),
+    'ROI_CTR_TRIAGE_MIN': (0, 600), 'ROI_CTR_BUMP_MIN': (0, 600), 'ROI_CTR_BUILD_MIN': (0, 600),
+    'ROI_CTR_ROLLOUT_MIN': (0, 600), 'ROI_CTR_VERIFY_MIN': (0, 600), 'ROI_CTR_REVIEW_MIN': (0, 600),
+    'ROI_CTR_LEAD_HOURS': (0, 8760),
 }
 
 
@@ -3731,6 +3742,95 @@ def roi_appv2(st: dict, b: dict) -> dict | None:
     }
 
 
+def roi_ctr_effort(images: int, components: int, deployments: int, gated: int, b: dict) -> tuple[dict, dict]:
+    """Containers, by hand and with the console: per image (find, move the jars, build, scan, sign) and per deployment
+    (roll out, health, ACS), plus approval paperwork for production. One function for the run and the curve."""
+    hands_on = b['ctr_bump'] * components + b['ctr_build'] * images + b['ctr_rollout'] * deployments
+    manual = {
+        'Find the images and deployments': b['ctr_triage'] * images,
+        'Move the jars to the Lightwell builds': b['ctr_bump'] * components,
+        'Build, scan and sign the image': b['ctr_build'] * images,
+        'Roll out and check health, per deployment': b['ctr_rollout'] * deployments,
+        'Verify in ACS, per deployment': b['ctr_verify'] * deployments,
+        'Approval paperwork, production': b['approval'] * gated,
+        'Rework after a failed attempt': hands_on * b['rework_pct'] / 100.0,
+    }
+    auto = {
+        'Review the change and checks': b['ctr_review'] * images,
+        'Approve production deployments': b['review'] * gated,
+    }
+    return manual, auto
+
+
+def roi_ctr(st: dict, b: dict) -> dict | None:
+    """The Containers run against doing it by hand, or None if it reached no deployment. Deployments the run did not
+    patch are charged back at the manual rate; a run that patched none (a build the gate stopped) claims nothing."""
+    hosts = [h for h in (st.get('hosts') or []) if h.get('outcome') not in (None, '', 'pending')]
+    if not hosts:
+        return None
+    rate = b['rate']
+    cost = lambda mins: round(mins / 60.0 * rate, 2)
+    fix = st.get('fix') or {}
+    builds = [fix] + list(st.get('siblings') or [])
+    images = len({h.get('image') for h in hosts if h.get('image')}) or 1
+    components = len([x for x in builds if x.get('component')]) or 1
+    cves = set(fix.get('cves') or []) | {c for x in (st.get('siblings') or []) for c in x.get('cves') or []} \
+        | set(st.get('lightwell_fixed') or [])
+    deployments, gated = len(hosts), sum(1 for h in hosts if h.get('env') == 'prod')
+    patched = sum(1 for h in hosts if h.get('outcome') == 'patched')
+    settled = sum(1 for h in hosts if h.get('outcome') in ('patched', 'not_verified', 'deferred', 'rejected', 'rolled_back', 'failed'))
+
+    manual, auto = roi_ctr_effort(images, components, deployments, gated, b)
+    manual_min, auto_min = sum(manual.values()), sum(auto.values())
+    left_dep = deployments - patched
+    if patched:
+        left = {'Roll out and verify by hand': (b['ctr_rollout'] + b['ctr_verify']) * left_dep}
+    else:
+        left = {'The whole job, by hand (nothing was patched)': manual_min}
+    left_min = sum(left.values())
+    total_auto = auto_min + left_min
+    saved_min = manual_min - total_auto
+    band = b['band_pct'] / 100.0
+    low, high = cost(manual_min * (1 - band)), cost(manual_min * (1 + band))
+
+    prod_share = gated / deployments if deployments else 0
+    span = max(20, deployments * 5)
+    step = max(1, round(span / 8))
+    curve = []
+    for k in sorted(set(list(range(1, span + 1, step)) + [deployments, span])):
+        m, a = roi_ctr_effort(images, components, k, round(k * prod_share), b)
+        curve.append({'deployments': k, 'manual': cost(sum(m.values())), 'auto': cost(sum(a.values()))})
+
+    start = _parse_iso(st.get('started_at') or '')
+    end = _parse_iso(st.get('finished_at') or '') or (datetime.now(timezone.utc) if patched else None)
+    exposure_h = ((end - start).total_seconds() / 3600.0) if (patched and start and end) else None
+    img = ((fix.get('images') or [{}])[0].get('name') or '').rsplit('/', 1)[-1].split('@')[0].split(':')[0]
+
+    return {
+        'measured': {'deployments': deployments, 'gated': gated, 'images': images, 'image': img,
+                     'components': components, 'component_names': [x['component'] for x in builds if x.get('component')],
+                     'cves': len(cves), 'patched': patched, 'settled': settled, 'left_deployments': left_dep,
+                     'status': st.get('status'), 'run_id': st.get('run_id'), 'simulated': bool(st.get('simulated')),
+                     'from_history': bool(st.get('roi_from_history')), 'finished_at': st.get('finished_at'),
+                     'outcomes': {o: sum(1 for h in hosts if h.get('outcome') == o) for o in {h.get('outcome') for h in hosts}}},
+        'manual': {'breakdown': manual, 'minutes': round(manual_min, 1), 'cost': cost(manual_min),
+                   'cost_low': low, 'cost_high': high, 'lead_hours': b['ctr_lead_h']},
+        'auto': {'breakdown': auto, 'minutes': round(auto_min, 1), 'cost': cost(auto_min),
+                 'lead_hours': round(exposure_h, 4) if exposure_h is not None else None},
+        'left': {'breakdown': left, 'minutes': round(left_min, 1), 'cost': cost(left_min), 'deployments': left_dep},
+        'saved': {'minutes': round(saved_min, 1), 'cost': cost(saved_min),
+                  'cost_low': round(low - cost(total_auto), 2), 'cost_high': round(high - cost(total_auto), 2),
+                  'effort_x': round(manual_min / total_auto, 1) if total_auto and patched else None,
+                  'exposure_hours': round(b['ctr_lead_h'] - exposure_h, 2) if exposure_h is not None else None},
+        'total_auto_minutes': round(total_auto, 1),
+        'total_auto_cost': cost(total_auto),
+        'curve': curve,
+        'breakeven': {'shrink_pct': round((1 - total_auto / manual_min) * 100, 1) if manual_min else None},
+        'sla': {'hours': b['sla_h'], 'manual_within': b['ctr_lead_h'] <= b['sla_h'],
+                'auto_within': (exposure_h <= b['sla_h']) if exposure_h is not None else None},
+    }
+
+
 def nexus_head(url: str) -> tuple[int, str]:
     """(status, start of body) for one Nexus URL, for the Assess-time check that the fix's jar is servable. A GET of
     the first byte rather than a HEAD: Nexus puts the reason ("Repository not found") in the body."""
@@ -3991,7 +4091,8 @@ def roi_infra(state: dict, results: list[dict], b: dict) -> dict:
 def roi_report(state: dict, overrides: dict | None = None,
                runs: list[dict] | None = None,
                app_raw: dict | None = None,
-               v2_state: dict | None = None) -> dict:
+               v2_state: dict | None = None,
+               ctr_state: dict | None = None) -> dict:
     """Both halves of the console, against the manual baseline for each.
 
     Either half may be absent and the page copes: someone who has dispatched
@@ -4008,26 +4109,27 @@ def roi_report(state: dict, overrides: dict | None = None,
     app_in = roi_app_input(app_raw)
     results = (state.get('patch') or {}).get('results') or []
     appv2_roi = roi_appv2(v2_state or {}, b)
-    if not results and not app_in and not appv2_roi:
+    ctr_roi = roi_ctr(ctr_state or {}, b)
+    if not results and not app_in and not appv2_roi and not ctr_roi:
         raise BackendUnavailable(
             'roi', 'nothing has run yet',
-            'dispatch a patch plan on the Infrastructure side, scan a '
-            'repository on the Application side, or run a fix on Applications v2 — this compares against what '
-            'a run actually did, so it needs a run')
+            'dispatch a patch plan on Infrastructure, run a fix to its sites on Applications, or run an image '
+            'rebuild on Containers — this compares against what a run actually did, so it needs a run')
 
     infra = roi_infra(state, results, b) if results else None
     app = roi_app(app_in, b) if app_in else None
 
     # Hours and money, from whichever sides are present. Deliberately not a
     # count of anything.
-    parts = [(infra or {}).get('saved'), (app or {}).get('saved'), (appv2_roi or {}).get('saved')]
+    parts = [(infra or {}).get('saved'), (app or {}).get('saved'), (appv2_roi or {}).get('saved'),
+             (ctr_roi or {}).get('saved')]
     parts = [p for p in parts if p]
     combined = {
         'minutes': round(sum(p['minutes'] for p in parts), 1),
         'cost': round(sum(p['cost'] for p in parts), 2),
         'cost_low': round(sum(p['cost_low'] for p in parts), 2),
         'cost_high': round(sum(p['cost_high'] for p in parts), 2),
-        'both': sum(bool(x) for x in (infra, app, appv2_roi)) > 1,
+        'both': sum(bool(x) for x in (infra, app, appv2_roi, ctr_roi)) > 1,
     }
 
     # The payback card is the one place combining the two sides changes the
@@ -4040,7 +4142,8 @@ def roi_report(state: dict, overrides: dict | None = None,
         runs = [r for r in runs if not r.get('simulated')]
     lifetime = roi_history(runs, b) if runs else None
     recovered = ((lifetime or {}).get('cost') or 0) + ((app or {}).get('saved') or {}).get('cost', 0) \
-        + max(0, ((appv2_roi or {}).get('saved') or {}).get('cost', 0))
+        + max(0, ((appv2_roi or {}).get('saved') or {}).get('cost', 0)) \
+        + max(0, ((ctr_roi or {}).get('saved') or {}).get('cost', 0))
     per_host = (infra or {}).get('marginal_cost') or 0
     payback = {
         'platform_cost': b['platform'],
@@ -4055,10 +4158,11 @@ def roi_report(state: dict, overrides: dict | None = None,
     }
 
     return {
-        'sides': {'infra': bool(infra), 'app': bool(app), 'appv2': bool(appv2_roi)},
+        'sides': {'infra': bool(infra), 'app': bool(app), 'appv2': bool(appv2_roi), 'ctr': bool(ctr_roi)},
         'infra': infra,
         'app': app,
         'appv2': appv2_roi,
+        'ctr': ctr_roi,
         'combined': combined,
         # Hoisted out of the infrastructure half because the caveat is about
         # this console's clocks, and the page leads with it above both
@@ -4242,6 +4346,27 @@ SETTINGS: tuple[Setting, ...] = (
             'merged, by hand. Wall clock, not effort — mostly the advisory '
             'queueing behind feature work.',
             binds='fallbacks.ROI_APP_LEAD_HOURS'),
+    Setting('ROI_CTR_TRIAGE_MIN', 'ROI baseline (containers)', 'Find images & deployments, per image', 'float', '25',
+            'Which running images carry the jar, which deployments run them, which Lightwell builds apply.',
+            binds='fallbacks.ROI_CTR_TRIAGE_MIN'),
+    Setting('ROI_CTR_BUMP_MIN', 'ROI baseline (containers)', 'Move a jar to Lightwell, per component', 'float', '10',
+            'Edit pom.xml to the Lightwell build and check nothing else pins the old one.',
+            binds='fallbacks.ROI_CTR_BUMP_MIN'),
+    Setting('ROI_CTR_BUILD_MIN', 'ROI baseline (containers)', 'Build, scan & sign, per image', 'float', '45',
+            'Build the image, run the scan and read it (backported CVEs included), sign, push.',
+            binds='fallbacks.ROI_CTR_BUILD_MIN'),
+    Setting('ROI_CTR_ROLLOUT_MIN', 'ROI baseline (containers)', 'Roll out & health, per deployment', 'float', '20',
+            'Change the image in GitOps, get it merged, watch every replica roll, check health.',
+            binds='fallbacks.ROI_CTR_ROLLOUT_MIN'),
+    Setting('ROI_CTR_VERIFY_MIN', 'ROI baseline (containers)', 'Verify in ACS, per deployment', 'float', '10',
+            'Confirm in ACS that the deployment runs the new image with the fixed jars.',
+            binds='fallbacks.ROI_CTR_VERIFY_MIN'),
+    Setting('ROI_CTR_REVIEW_MIN', 'ROI baseline (containers)', 'Operator review per image', 'float', '5',
+            'Charged to the automated side: read the change and its checks, press Run.',
+            binds='fallbacks.ROI_CTR_REVIEW_MIN'),
+    Setting('ROI_CTR_LEAD_HOURS', 'ROI baseline (containers)', 'Manual time-to-fix, an image', 'float', '120',
+            'Elapsed hours from the fix being available to every deployment running it, by hand.',
+            binds='fallbacks.ROI_CTR_LEAD_HOURS'),
 
     # --- triage -----------------------------------------------------------
     Setting('REVIEW_THRESHOLD', 'Triage', 'Review threshold', 'float', '30',
@@ -5444,7 +5569,7 @@ class Handler(BaseHTTPRequestHandler):
         except BackendUnavailable as exc:
             runs, agent.runs_degraded = [], f'{exc.service}: {exc.cause}'
         try:
-            report = roi_report(snapshot, overrides, runs, app, appv2.roi_state())
+            report = roi_report(snapshot, overrides, runs, app, appv2.roi_state(), ctr.roi_state())
         except BackendUnavailable as exc:
             self._send(409, {'ok': False, 'error': str(exc.cause),
                              'detail': exc.fix})

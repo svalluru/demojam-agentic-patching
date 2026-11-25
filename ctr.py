@@ -1071,6 +1071,18 @@ def restore() -> dict:
     return {'restored': True, 'resumed': resumed}
 
 
+def roi_state() -> dict:
+    """The run Calculate ROI prices: the open one once it has reached a deployment, else the newest finished run
+    (live: a real one, not a simulation), marked roi_from_history so the page can say which run it is."""
+    st = state()
+    if any(h.get('outcome') not in (None, '', 'pending') for h in st.get('hosts') or []):
+        return st
+    for rec in runs():
+        if rec.get('hosts') and (H.demo_mode() or not rec.get('simulated')):
+            return {**rec, 'roi_from_history': True}
+    return st
+
+
 def runs() -> list[dict]:
     """Newest first, one row per run: a run settled twice (an early record, then a corrected one) shows its last."""
     seen, out = set(), []

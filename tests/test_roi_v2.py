@@ -62,7 +62,7 @@ class RoiV2(unittest.TestCase):
 
     def test_report_with_v2_only(self):
         rep = console.roi_report({}, None, [], None, run([('workflow-engine', 'qa', 'patched')]))
-        self.assertEqual(rep['sides'], {'infra': False, 'app': False, 'appv2': True})
+        self.assertEqual(rep['sides'], {'infra': False, 'app': False, 'appv2': True, 'ctr': False})
         self.assertEqual(rep['combined']['minutes'], rep['appv2']['saved']['minutes'])
 
     def test_pdf_report_carries_roi(self):

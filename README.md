@@ -1159,7 +1159,23 @@ and one scan of a handful of repositories routinely returns dozens.
 | `ROI_APP_REVIEW_MIN` | 6 | Per repository, charged to the **automated** side: read the change plan, press Approve and run |
 | `ROI_APP_LEAD_HOURS` | 240 | Elapsed hours from advisory to merged fix by hand |
 
-Shared by both:
+Containers (`roi_ctr()`): paid per image and again per deployment. Approval paperwork (`ROI_APPROVAL_MIN`, per
+production deployment), the operator's approval (`ROI_REVIEW_MIN`) and rework (`ROI_REWORK_PCT`) come from the
+infrastructure figures. It prices the open Containers run once it reaches a deployment, else the newest finished one
+(the page says which). Deployments not patched are charged back at the rollout and verify rate; a run that patched
+none (a build the scan gate stopped) is charged the whole job, so it claims no saving.
+
+| Variable | Default | Manual baseline |
+|---|---|---|
+| `ROI_CTR_TRIAGE_MIN` | 25 | Per image: which running images carry the jar, which deployments run them, which builds apply |
+| `ROI_CTR_BUMP_MIN` | 10 | Per component: move it to the Lightwell build in pom.xml |
+| `ROI_CTR_BUILD_MIN` | 45 | Per image: build, scan and read the findings, sign, push |
+| `ROI_CTR_ROLLOUT_MIN` | 20 | Per deployment: GitOps change and merge, watch the rollout, check health |
+| `ROI_CTR_VERIFY_MIN` | 10 | Per deployment: confirm in ACS it runs the new image with the fixed jars |
+| `ROI_CTR_REVIEW_MIN` | 5 | Per image, charged to the **automated** side: read the change and checks, press Run |
+| `ROI_CTR_LEAD_HOURS` | 120 | Elapsed hours from the fix being available to every deployment running it, by hand |
+
+Shared by every side:
 
 | Variable | Default | Manual baseline |
 |---|---|---|

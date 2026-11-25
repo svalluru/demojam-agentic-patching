@@ -7336,6 +7336,10 @@ const ROI_SLIDE = {
   ROI_APP_BUILD_MIN: [0, 180, 1], ROI_APP_PR_MIN: [0, 120, 1],
   ROI_APP_BREAK_PCT: [0, 50, 1], ROI_APP_REVIEW_MIN: [0, 60, 1],
   ROI_APP_LEAD_HOURS: [0, 1200, 6],
+  // Containers: an image build-scan-sign cycle and a GitOps rollout per deployment.
+  ROI_CTR_TRIAGE_MIN: [0, 120, 1], ROI_CTR_BUMP_MIN: [0, 60, 1], ROI_CTR_BUILD_MIN: [0, 180, 1],
+  ROI_CTR_ROLLOUT_MIN: [0, 120, 1], ROI_CTR_VERIFY_MIN: [0, 60, 1], ROI_CTR_REVIEW_MIN: [0, 60, 1],
+  ROI_CTR_LEAD_HOURS: [0, 1200, 6],
   ROI_SLA_HOURS: [1, 720, 1], ROI_BAND_PCT: [0, 60, 1],
   ROI_PLATFORM_COST: [0, 200000, 1000],
 };
@@ -7350,7 +7354,9 @@ const ROI_SIDES = [
   ['app', 'Application baseline', 'A dependency, by hand. A separate baseline '
     + 'because it is not the same work: a host patch is one unit per host, a '
     + 'dependency fix is paid per component and again per repository.'],
-  ['shared', 'Both sides', 'Rate, deadline and the margin on the guesswork.'],
+  ['ctr', 'Containers baseline', 'An image, by hand: paid per image (find, move the jars, build, scan, sign) and '
+    + 'again per deployment (roll out, health, ACS). Approval, review and rework come from the infrastructure figures.'],
+  ['shared', 'Every side', 'Rate, deadline and the margin on the guesswork.'],
 ];
 
 // Survives leaving the page and coming back, which is the point: someone who
@@ -7374,6 +7380,8 @@ function roiVal(a, v) {
 // The sliders roi_appv2() reads (agentic-patching.py roi_appv2_effort).
 const ROI_V2_KEYS = ['ROI_PREP_MIN', 'ROI_EXEC_MIN', 'ROI_APPROVAL_MIN', 'ROI_REWORK_PCT', 'ROI_REVIEW_MIN',
                      'ROI_LEAD_HOURS', 'ROI_APP_TRIAGE_MIN', 'ROI_APP_BUMP_MIN', 'ROI_APP_BUILD_MIN', 'ROI_APP_REVIEW_MIN'];
+// The infrastructure sliders roi_ctr() also reads (agentic-patching.py roi_ctr_effort).
+const ROI_CTR_SHARED = ['ROI_APPROVAL_MIN', 'ROI_REWORK_PCT', 'ROI_REVIEW_MIN'];
 
 function roiSliders(roi) {
   const one = a => {
@@ -7389,15 +7397,17 @@ function roiSliders(roi) {
   };
   const all = (roi.assumptions || []).filter(a => ROI_SLIDE[a.key]);
   const sides = roi.sides || {};
-  // Applications v2 is priced from sliders on both sides; with only v2 run, show just the ones it reads.
-  const v2only = sides.appv2 && !sides.infra && !sides.app;
+  // Applications v2 and Containers borrow some infrastructure sliders: without an infrastructure run, the
+  // infrastructure group shows only the ones they read (and the app group only for Applications).
+  const borrowed = [...(sides.appv2 ? ROI_V2_KEYS : []), ...(sides.ctr ? ROI_CTR_SHARED : [])];
   return ROI_SIDES.map(([side, title, blurb]) => {
-    if (side !== 'shared' && !sides[side] && !sides.appv2) return '';
+    const own = side === 'shared' || sides[side];
+    const lend = (side === 'infra' && (sides.appv2 || sides.ctr)) || (side === 'app' && sides.appv2);
+    if (!own && !lend) return '';
     // An older report, before the sides existed, has no `side` on its
     // assumptions. Everything then falls into the first group, which is the
     // layout this page had anyway.
-    const rows = all.filter(a => (a.side || 'infra') === side
-      && (!v2only || side === 'shared' || ROI_V2_KEYS.includes(a.key)));
+    const rows = all.filter(a => (a.side || 'infra') === side && (own || borrowed.includes(a.key)));
     if (!rows.length) return '';
     return `<div class="roi-slg">
         <div class="h">${esc(title)}<span>${esc(blurb)}</span></div>
@@ -7628,6 +7638,7 @@ function roiTotals(roi) {
   if (sides.app) parts.push(`${esc(roi.app.measured.repos)} repositor`
     + (roi.app.measured.repos === 1 ? 'y' : 'ies'));
   if (sides.appv2) parts.push(`${esc(roi.appv2.measured.sites)} site(s)`);
+  if (sides.ctr) parts.push(`${esc(roi.ctr.measured.deployments)} deployment(s)`);
 
   return `<div class="stats" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat"><div class="v">${esc(money(roi.currency, c.cost))}</div>
@@ -7711,6 +7722,76 @@ function roiV2Body(roi) {
       <h3>How wrong could this be</h3>
       <div class="sub">The margin the assumptions have before the conclusion changes.</div>
       ${roiBreakeven(roi, s)}
+      ${exp}
+    </div>`;
+}
+
+// ---- the Containers section ------------------------------------------------
+// One image rebuild taken to every deployment running it: priced per image (find, move the jars, build, scan,
+// sign) and per deployment (roll out, health, ACS). Deployments not patched are charged back at the manual rate,
+// and a run that patched none (a build the gate stopped) claims nothing.
+function roiCtrBody(roi) {
+  const s = roi.ctr, sv = s.saved, m = s.measured, left = s.left;
+  const aut = {
+    minutes: s.total_auto_minutes,
+    breakdown: Object.assign({}, s.auto.breakdown, left.minutes > 0 ? { 'Still left by hand': left.minutes } : {}),
+  };
+  const mult = sv.effort_x
+    ? `<div class="v">${esc(sv.effort_x)}&times;</div><div class="k">Less effort</div>`
+    : `<div class="v sm">Nothing patched</div><div class="k">Operator time</div>`;
+  const past = m.from_history ? `<div class="note">From the last finished Containers run (<span class="mono">${esc(m.run_id)}</span>${m.finished_at
+      ? `, finished ${esc(String(m.finished_at).slice(0, 16).replace('T', ' '))} UTC` : ''}): no run on screen has reached a deployment.</div>` : '';
+  const waiting = m.from_history || m.status === 'complete' ? '' : `<div class="note">The run is still <b>${esc(String(m.status).replace(/_/g, ' '))}</b>:
+      ${esc(m.settled)} of ${esc(m.deployments)} deployment(s) settled. Every deployment not yet patched is charged at the
+      manual rate until it is.</div>`;
+  const charge = left.minutes > 0 ? `<div class="roi-be">${m.patched
+      ? `<b>${esc(left.deployments)} deployment(s)</b> not patched by the run (deferred, rejected, rolled back, failed or still
+        waiting) are charged to the console at the manual rollout and verify rate`
+      : `<b>No deployment was patched</b> (for example a build the scan gate stopped), so the whole job is still left by hand
+        and charged to the console`}: <b>${esc(fmtMin(left.minutes))}</b>, ${esc(money(roi.currency, left.cost))}.</div>` : '';
+  const exp = s.auto.lead_hours != null ? `<div class="roi-be">From the run starting to it finishing:
+      <b>${esc(fmtMin(s.auto.lead_hours * 60))}</b>, against ${esc(s.manual.lead_hours)} h assumed by hand
+      (${s.sla.auto_within ? 'inside' : 'outside'} the ${esc(s.sla.hours)} h deadline).</div>` : '';
+  return `<h2 class="roi-sec">Containers
+      <span>${esc(m.image || 'image')} &middot; ${esc(m.components)} Lightwell build(s) &middot; ${esc(m.deployments)} deployment(s),
+        ${esc(m.gated)} production &middot; ${esc(money(roi.currency, sv.cost))} saved</span></h2>
+
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="v">${esc(money(roi.currency, sv.cost))}</div>
+        <div class="k">Labour saved</div>
+        <div class="roi-range">${esc(money(roi.currency, sv.cost_low))}&ndash;${esc(money(roi.currency, sv.cost_high))}
+          at &plusmn;${esc(roi.band_pct)}%</div></div>
+      <div class="stat"><div class="v">${esc(fmtMin(sv.minutes))}</div><div class="k">Engineer time saved</div></div>
+      <div class="stat">${mult}</div>
+      <div class="stat"><div class="v sm">${esc(m.patched)} of ${esc(m.deployments)}</div><div class="k">Deployments patched</div></div>
+    </div>
+
+    <div class="roi-card">
+      <h3>Where the effort goes</h3>
+      <div class="sub">${esc(m.components)} Lightwell build(s) (${esc(m.component_names.join(', '))}) fixing ${esc(m.cves)} CVE(s)
+        in ${esc(m.images)} image(s), taken to ${esc(m.deployments)} deployment(s). By hand: find the images and deployments,
+        move the jars, build, scan and sign each image, then roll out, check and verify in ACS per deployment, with the
+        approval paperwork for production. With the console: a person reviews the change and approves production; ACS,
+        AO, AAP, OpenShift Pipelines and Argo CD do the rest.</div>
+      ${roiBars(roi, s.manual, aut)}
+      ${charge}
+      ${past}${waiting}
+    </div>
+
+    <div class="roi-card">
+      <h3>How it scales</h3>
+      <div class="sub">Labour cost at ${esc(money(roi.currency, roi.rate))}/hour as the same image reaches more deployments,
+        holding this run's share in production. By hand every deployment is another rollout and check; here a lab
+        deployment costs nothing and a production one costs one approval.</div>
+      ${roiCurve(roi, s, 'deployments', m.deployments, 'Deployments running the image', `at ${m.deployments} deployment(s): this run`)}
+    </div>
+
+    <div class="roi-card">
+      <h3>How wrong could this be</h3>
+      <div class="sub">The margin the assumptions have before the conclusion changes.</div>
+      ${m.patched ? roiBreakeven(roi, s) : `<div class="roi-be">Nothing was patched, so there is no saving to defend:
+        the run cost its review time and delivered no rollout. The gate stopping a bad image is worth something, but
+        this page does not price it.</div>`}
       ${exp}
     </div>`;
 }
@@ -7935,7 +8016,7 @@ function roiBody(roi) {
   // Said plainly rather than left as an absence. A reader looking at an
   // infrastructure-only page should know the other half exists and is empty
   // because nothing ran there, not conclude the console does not do it.
-  const missing = (sides.infra && sides.app) || sides.appv2 ? '' : `<div class="roi-card">
+  const missing = (sides.infra && sides.app) || sides.appv2 || sides.ctr ? '' : `<div class="roi-card">
       <h3>${sides.infra ? 'Applications' : 'Infrastructure'}</h3>
       <div class="sub">Nothing has run on this side yet, so there is nothing to
         compare. ${sides.infra
@@ -7951,6 +8032,7 @@ function roiBody(roi) {
     + (sides.infra ? roiInfraBody(roi) : '')
     + (sides.app ? roiAppBody(roi) : '')
     + (sides.appv2 ? roiV2Body(roi) : '')
+    + (sides.ctr ? roiCtrBody(roi) : '')
     + missing
     + `<h2 class="roi-sec">The record
         <span>Published figures, the whole run store, and the build cost</span></h2>`
