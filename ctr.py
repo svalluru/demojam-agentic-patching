@@ -1004,7 +1004,10 @@ def _finish() -> None:
         for s in ('gate', 'prod', 'verify'):
             _RUN['stages'][s] = 'done'
         rec = json.loads(json.dumps(_RUN))
-    _HISTORY.append({k: rec.get(k) for k in ('run_id', 'fix', 'started_at', 'finished_at', 'summary', 'simulated')})
+    # The whole run but its event trace, so Patch runs can show it again read-only.
+    _HISTORY.append({k: rec.get(k) for k in ('run_id', 'fix', 'started_at', 'finished_at', 'summary', 'simulated', 'status',
+                                             'siblings', 'impact', 'selected', 'hosts', 'change', 'checks', 'ok',
+                                             'lightwell_fixed', 'deferrals', 'workflow_id')})
     _persist(history=True)
 
 
@@ -1068,4 +1071,10 @@ def restore() -> dict:
 
 
 def runs() -> list[dict]:
-    return list(reversed(_HISTORY))
+    """Newest first, one row per run: a run settled twice (an early record, then a corrected one) shows its last."""
+    seen, out = set(), []
+    for r in reversed(_HISTORY):
+        if r.get('run_id') not in seen:
+            seen.add(r.get('run_id'))
+            out.append(r)
+    return out

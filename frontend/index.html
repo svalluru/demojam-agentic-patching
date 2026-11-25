@@ -2438,6 +2438,8 @@
                      border:1px solid var(--red); color:var(--red); background:#fff; }
   #ctr-pane .c-btn.go { background:var(--red); color:#fff; }
   #ctr-pane .c-btn:hover { filter:brightness(.95); }
+  #ctr-pane tr.c-pick { cursor:pointer; }
+  #ctr-pane tr.c-pick:hover td { background:rgba(0,102,204,.04); }
   #ctr-pane .c-btn:disabled, #ctr-pane .c-link:disabled { cursor:default; filter:none; opacity:.55; }
   #ctr-pane .c-btn:disabled { border-color:#9a9a9a; background:#e6e6e6; color:#555; }
   #ctr-pane .c-btn.busy::before { content:''; display:inline-block; width:10px; height:10px; margin-right:6px; vertical-align:-1px;
@@ -9841,7 +9843,7 @@ function ctrInbox() {
 
 function ctrRun(s) {
   const t = (s.impact || {}).targets || [];
-  const pick = s.status === 'assessed';
+  const pick = s.status === 'assessed' && ctr.view !== 'past';
   if (pick && (!ctr.sel || ctr.sel.run !== s.run_id)) ctr.sel = { run: s.run_id, keys: new Set(t.map(x => x.key)) };
   const hosts = Object.fromEntries((s.hosts || []).map(h => [h.key, h]));
   const f = s.fix || {};
@@ -9931,18 +9933,56 @@ function ctrHostDetail(h) {
         .filter(Boolean).join(' · ')}</div>` : ''}`;
 }
 
+// Patch runs: every finished Containers run (newest first), and the open one on top. A row opens the run read-only.
+function ctrRunsList() {
+  const s = ctr.state || {}, runs = ctr.runs || [];
+  const open = s.run_id && s.status && !['idle', 'complete', 'failed'].includes(s.status) && !runs.some(r => r.run_id === s.run_id);
+  if (!runs.length && !open) return '<section class="c-box"><div class="empty"><strong>No runs yet</strong><span>A run appears here once it finishes.</span></div></section>';
+  const when = t => esc(String(t || '').replace('T', ' ').replace('Z', '').slice(0, 16));
+  const mins = r => r.started_at && r.finished_at ? Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 60000)) + ' min' : '—';
+  const counts = m => [['patched', 'good', 'Patched'], ['not_verified', 'warn', 'Not verified'], ['deferred', 'off', 'Deferred'],
+    ['rejected', 'off', 'Rejected'], ['rolled_back', 'crit', 'Rolled back'], ['failed', 'crit', 'Failed']]
+    .filter(([k]) => (m || {})[k]).map(([k, c, l]) => `<span class="pill-s ${c}">${m[k]} ${l}</span>`).join(' ') || '<span class="c-note">—</span>';
+  const builds = r => [r.fix || {}].concat(r.siblings || []).filter(b => b.component);
+  const row = (r, cur) => {
+    const f = r.fix || {}, img = ((f.images || [])[0] || {}).name, hosts = r.hosts || [];
+    // Runs recorded before the details were kept have only their summary: nothing to open.
+    const opens = cur || hosts.length;
+    return `<tr ${opens ? `class="c-pick" data-ctr-past="${esc(r.run_id)}"` : 'title="Recorded before run details were kept: summary only"'} ${cur ? 'data-ctr-cur="1"' : ''}>
+      <td class="c-note" style="white-space:nowrap">${when(r.finished_at || r.started_at)}${cur ? ' <span class="pill-s info">In progress</span>' : ''}</td>
+      <td><b>${esc(img ? ctrImageName(img).app : f.component)}</b>
+        <div class="c-chips" style="margin-top:4px">${builds(r).map(b => `<span class="pill-s ${f.kind === 'lightwell' ? 'good' : 'info'} mono">${esc(b.component)} → ${esc(b.to || '')}</span>`).join(' ')}</div></td>
+      <td>${hosts.length ? hosts.map(h => `<div>${esc(h.namespace || h.key)}</div>`).join('') : '<span class="c-note">—</span>'}</td>
+      <td>${cur ? `<span class="pill-s info">${esc(String(r.status).replace(/_/g, ' '))}</span>` : counts(r.summary)}</td>
+      <td class="c-note">${cur ? '—' : mins(r)}</td>
+      <td class="mono c-note">${esc(String(r.run_id || '').slice(0, 8))}${r.simulated ? ' · demo' : ''}</td></tr>`;
+  };
+  return `<section class="c-box"><h3>Patch runs<b>${runs.length + (open ? 1 : 0)}</b></h3><table class="c-t">
+    <tr><th>When</th><th>Image · builds</th><th>Deployments</th><th>Result</th><th>Took</th><th>Run</th></tr>
+    ${open ? row(s, true) : ''}${runs.map(r => row(r, false)).join('')}</table>
+    <div class="c-src">GET /api/ctr/runs · runs/ctr-history.jsonl</div></section>`;
+}
+
 function ctrRender() {
   const pane = document.getElementById('ctr-pane');
   const s = ctr.state || {};
   const live = (ctr.fixes || {}).source === 'acs';
-  const body = !s.status || s.status === 'idle' ? ctrInbox() : ctrRun(s);
+  const view = ctr.view || 'main';
+  const body = view === 'runs' ? ctrRunsList() : view === 'past' && ctr.past ? ctrRun(ctr.past)
+    : !s.status || s.status === 'idle' ? ctrInbox() : ctrRun(s);
+  const open = s.status && !['idle', 'complete', 'failed'].includes(s.status);
   pane.innerHTML = `<div class="c-wrap">
     <div class="c-head"><h2>Containers</h2><span class="sub">Red Hat Advanced Cluster Security · ${esc((ctr.fixes || {}).cluster || '')}</span>
       <span class="c-tag" ${live ? 'style="color:var(--blue);border-color:rgba(0,102,204,.35);background:rgba(0,102,204,.07)"' : ''}
         title="${live ? 'Intake and assessment read ACS; the run is a simulator until the container workflow exists in AO' : 'ACS answered from fixtures; nothing is called'}">${live ? 'Live ACS' : 'Demo data'}</span>
       ${(s.demo_reset || {}).status === 'running' ? '<span class="pill-s warn" title="Settings → Advanced → Containers demo">Resetting images to original…</span>' : ''}
-      ${['complete', 'failed'].includes(s.status) ? '<div class="c-actions" style="margin:0 0 0 auto"><button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button></div>'
-        : s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh" style="margin-left:auto">Refresh</button>'}</div>
+      <div class="c-actions" style="margin:0 0 0 auto">
+        ${view === 'past' ? '<button type="button" class="c-btn" data-ctr-view="runs">← Patch runs</button>'
+          : view === 'runs' ? `<button type="button" class="c-btn" data-ctr-view="main">← ${open ? 'Current run' : 'Fixes'}</button>`
+          : `${['complete', 'failed'].includes(s.status) ? '<button type="button" class="c-btn go" data-ctr-act="reset">Back to fixes</button>'
+              : s.status && s.status !== 'idle' ? '' : '<button type="button" class="c-link" data-ctr-act="refresh">Refresh</button>'}
+             <button type="button" class="c-btn" data-ctr-view="runs">Patch runs</button>`}
+      </div></div>
     ${ctr.err ? `<div class="c-alert">${esc(ctr.err)}</div>` : ''}
     ${ctr.fixes || ctr.err ? body : '<div class="empty"><div class="spinner"></div><span>Asking ACS…</span></div>'}
   </div>`;
@@ -9978,6 +10018,18 @@ document.getElementById('ctr-pane').addEventListener('click', async e => {
     v2.view = ((st.event || {}).artifact === art && st.status && st.status !== 'idle') ? 'run' : 'inbox';
     paneShow('appv2');
     return;
+  }
+  const vw = t.closest('[data-ctr-view]');
+  if (vw) {
+    ctr.view = vw.dataset.ctrView; ctr.past = null;
+    if (ctr.view === 'runs') { try { ctr.runs = (await ctrApi('/api/ctr/runs')).runs || []; } catch (err) { ctr.err = err.message; } }
+    ctrRender(); return;
+  }
+  const pr = t.closest('[data-ctr-past]');
+  if (pr) {
+    if (pr.dataset.ctrCur) { ctr.view = 'main'; ctr.past = null; }
+    else { ctr.past = (ctr.runs || []).find(r => r.run_id === pr.dataset.ctrPast) || null; ctr.view = ctr.past ? 'past' : 'runs'; }
+    ctrRender(); return;
   }
   const a = t.closest('[data-ctr-assess]'), d = t.closest('[data-ctr-decide]'), act = t.closest('[data-ctr-act]');
   if (!a && !d && !act) return;

@@ -565,6 +565,10 @@ class ReviewFixes(unittest.TestCase):
         self.assertEqual(st['status'], 'complete')
         self.assertEqual(st['hosts'][1]['outcome'], 'failed')
 
+    def test_patch_runs_lists_each_run_once_newest_first(self):
+        ctr._HISTORY[:] = [{'run_id': 'a', 'summary': {'failed': 2}}, {'run_id': 'b'}, {'run_id': 'a', 'summary': {'patched': 2}}]
+        self.assertEqual([(r['run_id'], r.get('summary')) for r in ctr.runs()], [('a', {'patched': 2}), ('b', None)])
+
     def test_the_run_file_is_replaced_whole(self):
         d = tempfile.mkdtemp(prefix='ctr-persist-')
         demo(APPV2_STATE_DIR=d)
